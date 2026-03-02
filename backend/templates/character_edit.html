@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{% if character %}Edit {{ character.name }}{% else %}New Character{% endif %} &mdash; Chotgor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{% if character %}Edit: {{ character.name }}{% else %}New Character{% endif %}</h1>
+    <a href="/ui/" class="btn btn-secondary">Back</a>
+</div>
+
+<div class="form-card">
+    <form method="post" action="{{ action }}">
+        <div class="form-group">
+            <label for="name">Character Name</label>
+            <input type="text" id="name" name="name" class="form-control"
+                   value="{% if character %}{{ character.name }}{% endif %}"
+                   placeholder="e.g. Aria, Sage, Luna" required>
+        </div>
+
+        <div class="form-group">
+            <label for="system_prompt_block1">
+                Character Definition
+                <span class="label-hint">Block 1: Who is this character?</span>
+            </label>
+            <textarea id="system_prompt_block1" name="system_prompt_block1"
+                      class="form-control textarea-tall"
+                      placeholder="Describe the character's personality, background, speaking style, values, and how they should behave...">{% if character %}{{ character.system_prompt_block1 }}{% endif %}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="meta_instructions">
+                Meta Instructions
+                <span class="label-hint">Optional: additional behavioral guidelines</span>
+            </label>
+            <textarea id="meta_instructions" name="meta_instructions"
+                      class="form-control textarea-medium"
+                      placeholder="Optional: memory usage preferences, response style guidelines, topics to avoid...">{% if character %}{{ character.meta_instructions }}{% endif %}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="digest_delete_originals"
+                       {% if character and character.cleanup_config and character.cleanup_config.get('digest_delete_originals') %}checked{% endif %}>
+                ダイジェスト後、元の記憶を削除する
+            </label>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">
+                {% if character %}Save Changes{% else %}Create Character{% endif %}
+            </button>
+            <a href="/ui/" class="btn btn-secondary">Cancel</a>
+            {% if character %}
+            <a href="/ui/memories/{{ character.id }}" class="btn btn-secondary">View Memories</a>
+            {% endif %}
+        </div>
+    </form>
+
+    {% if character %}
+    <div class="info-box">
+        <strong>Character ID:</strong> <code>{{ character.id }}</code><br>
+        <strong>Use this ID in OpenWebUI</strong> to select this character as a model.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

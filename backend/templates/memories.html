@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Memories: {{ character.name }} &mdash; Chotgor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Memories: {{ character.name }}</h1>
+    <a href="/ui/characters/{{ character.id }}" class="btn btn-secondary">Edit Character</a>
+</div>
+
+<div class="filter-bar">
+    <form method="get" action="/ui/memories/{{ character.id }}" class="filter-form">
+        <select name="category" class="form-control select-inline" onchange="this.form.submit()">
+            <option value="">All Categories</option>
+            {% for cat in categories %}
+            <option value="{{ cat }}" {% if selected_category == cat %}selected{% endif %}>{{ cat }}</option>
+            {% endfor %}
+        </select>
+        <label class="checkbox-label">
+            <input type="checkbox" name="include_deleted" value="true"
+                   {% if include_deleted %}checked{% endif %}
+                   onchange="this.form.submit()">
+            Show deleted
+        </label>
+    </form>
+    <span class="memory-count">{{ memories|length }} memories</span>
+</div>
+
+{% if memories %}
+<div class="memory-list">
+    {% for mem in memories %}
+    <div class="memory-card {% if mem.deleted_at %}memory-deleted{% endif %}">
+        <div class="memory-header">
+            <span class="memory-category badge badge-{{ mem.category }}">{{ mem.category }}</span>
+            <span class="memory-date">{{ mem.created_at[:10] if mem.created_at else "unknown" }}</span>
+            {% if mem.deleted_at %}
+            <span class="badge badge-deleted">deleted</span>
+            {% endif %}
+        </div>
+        <div class="memory-content">{{ mem.content }}</div>
+        <div class="memory-meta">
+            <span title="Contextual">C: {{ "%.1f"|format(mem.contextual_importance) }}</span>
+            <span title="Semantic">S: {{ "%.1f"|format(mem.semantic_importance) }}</span>
+            <span title="Identity">I: {{ "%.1f"|format(mem.identity_importance) }}</span>
+            <span title="User">U: {{ "%.1f"|format(mem.user_importance) }}</span>
+            <span>Access: {{ mem.access_count }}</span>
+        </div>
+        <div class="memory-actions">
+            {% if not mem.deleted_at %}
+            <form method="post" action="/ui/memories/{{ character.id }}/{{ mem.id }}/delete" class="inline-form">
+                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No memories yet. Start chatting with this character to build memories.</p>
+</div>
+{% endif %}
+{% endblock %}

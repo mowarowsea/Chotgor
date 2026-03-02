@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Chotgor{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <a href="/ui/">&#10024; Chotgor</a>
+        </div>
+        <div class="nav-links">
+            <a href="/ui/" class="nav-link">Dashboard</a>
+            <a href="/ui/characters/new" class="nav-link">+ New Character</a>
+            <a href="/ui/settings" class="nav-link">Settings</a>
+            <a href="/docs" class="nav-link" target="_blank">API Docs</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>Chotgor &mdash; AI Character Memory System</p>
+    </footer>
+</body>
+</html>

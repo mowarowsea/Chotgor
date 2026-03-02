@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Settings &mdash; Chotgor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Global Settings</h1>
+</div>
+
+{% if request.query_params.get("saved") %}
+<div class="alert alert-success">Settings saved successfully.</div>
+{% endif %}
+
+<div class="form-card">
+    <form method="post" action="/ui/settings">
+        <div class="form-group">
+            <label for="tavily_api_key">
+                Tavily API Key
+                <span class="label-hint">Optional — enables web_search tool</span>
+            </label>
+            <input type="password" id="tavily_api_key" name="tavily_api_key"
+                   class="form-control"
+                   placeholder="tvly-... (leave blank to keep current)"
+                   autocomplete="off">
+            {% if settings.get("tavily_api_key") %}
+            <p class="form-hint">Current key: configured</p>
+            {% else %}
+            <p class="form-hint">Not configured. Web search will be disabled.</p>
+            {% endif %}
+        </div>
+
+        <div class="form-group">
+            <label for="digest_time">
+                Daily Digest Time
+                <span class="label-hint">毎日この時刻に記憶を自動整理します</span>
+            </label>
+            <input type="time" id="digest_time" name="digest_time"
+                   value="{{ settings.get('digest_time', '03:00') }}"
+                   class="form-control">
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+        </div>
+    </form>
+
+    <div class="info-box">
+        <strong>OpenWebUI Connection</strong><br>
+        Set OpenAI API Base URL to: <code>http://localhost:8000/v1</code><br>
+        API Key: <code>chotgor-local</code> (any value works)
+    </div>
+</div>
+{% endblock %}
