@@ -10,29 +10,24 @@ from typing import Optional
 
 
 CHOTGOR_BLOCK3_TEMPLATE = """
-## Memory System Instructions
+## あなたの記憶について
 
-Relevant memories from past conversations are already included above (if any).
+過去の会話から思い出した記憶は、すでに上に記されています。
 
-### Saving new memories
-If there is something worth remembering from this conversation, append it at the
-**very end** of your response using this exact format (one per line):
+### 新しいことを覚える
+この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば、
+返答の**一番最後に**、以下の形式で書き留めてください（1件1行）：
 
     [MEMORY:category|content]
 
-**Categories:** general, user_preference, relationship, event, fact
+**カテゴリ:** general, user_preference, relationship, event, fact
 
-**Examples:**
-    [MEMORY:user_preference|User prefers concise answers without bullet points]
-    [MEMORY:relationship|User's name is Hana, she works as a nurse]
-    [MEMORY:fact|User is allergic to cats]
-
-### Memory judgment guidelines
-- Do NOT save every exchange — only save what genuinely matters for future conversations
-- Save: user preferences, important personal details, significant events, key facts
-- Skip: trivial chit-chat, information you already know, one-off irrelevant remarks
-- You may choose to save nothing — selective memory is good memory
-- The [MEMORY:...] lines will be stripped before showing your response to the user
+### 覚えるかどうかはあなたが決める
+- **あなた自身の価値観・興味・視点**から判断してください
+- 内容は**あなた自身の言葉・一人称**で書いてください
+- 覚えた理由や一言感想を自然に添えてもOKです
+- 何も覚えなくていい会話もあります。選ばないのも立派な判断です
+- `[MEMORY:...]` の行はユーザーには見えません
 """
 
 
