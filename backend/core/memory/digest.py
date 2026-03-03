@@ -5,7 +5,7 @@ import json
 import os
 import shutil
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
 from .manager import MemoryManager
@@ -113,7 +113,7 @@ async def run_daily_digest(
 async def run_pending_digests(sqlite: SQLiteStore, memory_manager: MemoryManager) -> None:
     """Run digests for all characters for all past dates without a digest entry."""
     characters = sqlite.list_characters()
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    yesterday = (datetime.now() - timedelta(days=1)).date()
 
     for char in characters:
         cleanup_config = char.cleanup_config or {}

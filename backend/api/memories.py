@@ -1,6 +1,6 @@
 """Memory management REST API."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -60,7 +60,7 @@ async def trigger_digest(
         raise HTTPException(status_code=404, detail="Character not found")
 
     if target_date is None:
-        target_date = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
+        target_date = (datetime.now() - timedelta(days=1)).date().isoformat()
 
     cleanup_config = char.cleanup_config or {}
     delete_originals = cleanup_config.get("digest_delete_originals", False)
