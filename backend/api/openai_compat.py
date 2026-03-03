@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..core.claude_wrapper import stream_chat
+from ..core.llm_service import stream_chat
 
 router = APIRouter()
 
