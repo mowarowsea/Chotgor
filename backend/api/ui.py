@@ -208,7 +208,7 @@ async def memories_view(
         category=category,
         include_deleted=include_deleted,
     )
-    categories = ["general", "user_preference", "relationship", "event", "fact"]
+    categories = ["identity", "user", "semantic", "contextual"]
     return get_templates().TemplateResponse(
         "memories.html",
         {

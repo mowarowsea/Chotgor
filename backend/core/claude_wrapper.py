@@ -24,9 +24,9 @@ from .providers.openai_provider import OpenAIProvider
 from .system_prompt import build_system_prompt
 from .web_fetch import fetch_urls, find_urls
 
-# [MEMORY:category|content] canonical form
-MEMORY_PATTERN = re.compile(r"\[MEMORY:(\w+)\|([^\]]+)\]", re.DOTALL)
-# Fallback: [MEMORY:category] content (no pipe, content outside bracket)
+# [MEMORY:category|impact|content] canonical form  impact = float e.g. 1.5
+MEMORY_PATTERN = re.compile(r"\[MEMORY:(\w+)\|([\d.]+)\|([^\]]+)\]", re.DOTALL)
+# Fallback: [MEMORY:category] content (no pipe/impact, content outside bracket)
 MEMORY_PATTERN_FALLBACK = re.compile(
     r"\[MEMORY:(\w+)\]\s*(.+?)(?=\[MEMORY:|\Z)", re.DOTALL
 )
@@ -119,15 +119,28 @@ async def stream_chat(
         yield "data: [DONE]\n\n"
         return
 
+    # カテゴリごとのベース重要度マトリクス
+    BASE_IMPORTANCE = {
+        "contextual": {"contextual": 0.8, "semantic": 0.2, "identity": 0.1, "user": 0.1},
+        "semantic":   {"contextual": 0.1, "semantic": 0.9, "identity": 0.3, "user": 0.1},
+        "identity":   {"contextual": 0.2, "semantic": 0.4, "identity": 0.9, "user": 0.3},
+        "user":       {"contextual": 0.3, "semantic": 0.2, "identity": 0.3, "user": 0.9},
+    }
     # --- 4. Extract [MEMORY:...] markers and save ---
     clean_text, memories = _extract_memories(response_text)
 
-    for category, content in memories:
+    for category, impact_str, content in memories:
+        impact = float(impact_str) if impact_str else 1.0
+        default_base = {k: 0.5 for k in ["contextual", "semantic", "identity", "user"]}
+        base = BASE_IMPORTANCE.get(category, default_base)
+        scores = {f"{k}_importance": v * impact for k, v in base.items()}
+
         try:
             memory_manager.write_memory(
                 character_id=character_id,
                 content=content.strip(),
                 category=category.strip(),
+                **scores,
             )
         except Exception:
             pass
@@ -150,15 +163,16 @@ async def stream_chat(
 
 
 def _extract_memories(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """Extract [MEMORY:category|content] markers; return (cleaned_text, memories)."""
+    """Extract [MEMORY:category|impact|content] markers; return (cleaned_text, memories)."""
     memories = MEMORY_PATTERN.findall(text)
     clean = MEMORY_PATTERN.sub("", text).strip()
 
     # Fallback: no pipe-form but [MEMORY:xxx] remnants exist
+    # impact省略時はデフォルト1.0を補う
     if not memories and "[MEMORY:" in clean:
         fb_memories = MEMORY_PATTERN_FALLBACK.findall(clean)
         if fb_memories:
-            memories = [(cat, content.strip()) for cat, content in fb_memories]
+            memories = [(cat, "1.0", content.strip()) for cat, content in fb_memories]
             clean = MEMORY_PATTERN_FALLBACK.sub("", clean).strip()
 
     return clean, memories

@@ -74,8 +74,8 @@ def make_tools(memory_manager: MemoryManager, character_id: str, tavily_key: Opt
                     },
                     "category": {
                         "type": "string",
-                        "description": "Category: general, user_preference, relationship, event, fact",
-                        "enum": ["general", "user_preference", "relationship", "event", "fact"],
+                        "description": "Category: identity, user, semantic, contextual",
+                        "enum": ["identity", "user", "semantic", "contextual"],
                     },
                     "contextual_importance": {
                         "type": "number",
