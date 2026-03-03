@@ -124,7 +124,11 @@ async def _run_claude(sys_path: str, msg_path: str) -> subprocess.CompletedProce
 
 
 def _format_conversation(messages: list[dict]) -> str:
-    """Convert OpenAI-format messages to a text prompt for the Claude CLI."""
+    """Convert OpenAI-format messages to a text prompt for the Claude CLI.
+
+    XMLタグ形式を使う。"User: / Assistant:" のようなプレーンテキスト形式だと
+    LLMがそのパターンを応答の中で継続してしまうため。
+    """
     if not messages:
         return ""
 
@@ -133,15 +137,18 @@ def _format_conversation(messages: list[dict]) -> str:
 
     history_parts = []
     for msg in messages[:-1]:
-        role = msg.get("role", "user").capitalize()
+        role = msg.get("role", "")
         content = msg.get("content", "")
-        if role == "System":
+        if role == "system":
             continue
-        history_parts.append(f"{role}: {content}")
+        if role == "user":
+            history_parts.append(f"<human>{content}</human>")
+        elif role == "assistant":
+            history_parts.append(f"<ai>{content}</ai>")
 
     last = messages[-1].get("content", "")
 
     if history_parts:
         history = "\n".join(history_parts)
-        return f"[Previous conversation]\n{history}\n\n[Current message]\n{last}"
+        return f"<history>\n{history}\n</history>\n\n{last}"
     return last
