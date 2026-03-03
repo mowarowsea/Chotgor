@@ -13,6 +13,74 @@
 <div class="form-card">
     <form method="post" action="/ui/settings">
         <div class="form-group">
+            <label for="anthropic_api_key">
+                Anthropic API Key
+                <span class="label-hint">provider: anthropic — Claude models via direct API</span>
+            </label>
+            <input type="password" id="anthropic_api_key" name="anthropic_api_key"
+                   class="form-control"
+                   placeholder="sk-ant-... (leave blank to keep current)"
+                   value="{{ '●' * (settings.get('anthropic_api_key') or '')|length }}"
+                   data-masked="{{ 'true' if settings.get('anthropic_api_key') else 'false' }}"
+                   autocomplete="off"
+                   onfocus="if(this.dataset.masked==='true'){this.value='';this.dataset.masked='false';}">
+            {% if not settings.get("anthropic_api_key") %}
+            <p class="form-hint">Not configured.</p>
+            {% endif %}
+        </div>
+
+        <div class="form-group">
+            <label for="openai_api_key">
+                OpenAI API Key
+                <span class="label-hint">provider: openai — GPT models</span>
+            </label>
+            <input type="password" id="openai_api_key" name="openai_api_key"
+                   class="form-control"
+                   placeholder="sk-... (leave blank to keep current)"
+                   value="{{ '●' * (settings.get('openai_api_key') or '')|length }}"
+                   data-masked="{{ 'true' if settings.get('openai_api_key') else 'false' }}"
+                   autocomplete="off"
+                   onfocus="if(this.dataset.masked==='true'){this.value='';this.dataset.masked='false';}">
+            {% if not settings.get("openai_api_key") %}
+            <p class="form-hint">Not configured.</p>
+            {% endif %}
+        </div>
+
+        <div class="form-group">
+            <label for="xai_api_key">
+                xAI API Key
+                <span class="label-hint">provider: xai — Grok models</span>
+            </label>
+            <input type="password" id="xai_api_key" name="xai_api_key"
+                   class="form-control"
+                   placeholder="xai-... (leave blank to keep current)"
+                   value="{{ '●' * (settings.get('xai_api_key') or '')|length }}"
+                   data-masked="{{ 'true' if settings.get('xai_api_key') else 'false' }}"
+                   autocomplete="off"
+                   onfocus="if(this.dataset.masked==='true'){this.value='';this.dataset.masked='false';}">
+            {% if not settings.get("xai_api_key") %}
+            <p class="form-hint">Not configured.</p>
+            {% endif %}
+        </div>
+
+        <div class="form-group">
+            <label for="google_api_key">
+                Google API Key
+                <span class="label-hint">provider: google — Gemini models</span>
+            </label>
+            <input type="password" id="google_api_key" name="google_api_key"
+                   class="form-control"
+                   placeholder="AIza... (leave blank to keep current)"
+                   value="{{ '●' * (settings.get('google_api_key') or '')|length }}"
+                   data-masked="{{ 'true' if settings.get('google_api_key') else 'false' }}"
+                   autocomplete="off"
+                   onfocus="if(this.dataset.masked==='true'){this.value='';this.dataset.masked='false';}">
+            {% if not settings.get("google_api_key") %}
+            <p class="form-hint">Not configured.</p>
+            {% endif %}
+        </div>
+
+        <div class="form-group">
             <label for="tavily_api_key">
                 Tavily API Key
                 <span class="label-hint">Optional — enables web_search tool</span>
@@ -20,10 +88,11 @@
             <input type="password" id="tavily_api_key" name="tavily_api_key"
                    class="form-control"
                    placeholder="tvly-... (leave blank to keep current)"
-                   autocomplete="off">
-            {% if settings.get("tavily_api_key") %}
-            <p class="form-hint">Current key: configured</p>
-            {% else %}
+                   value="{{ '●' * (settings.get('tavily_api_key') or '')|length }}"
+                   data-masked="{{ 'true' if settings.get('tavily_api_key') else 'false' }}"
+                   autocomplete="off"
+                   onfocus="if(this.dataset.masked==='true'){this.value='';this.dataset.masked='false';}">
+            {% if not settings.get("tavily_api_key") %}
             <p class="form-hint">Not configured. Web search will be disabled.</p>
             {% endif %}
         </div>

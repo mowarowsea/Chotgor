@@ -9,12 +9,38 @@ from fastapi.templating import Jinja2Templates
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
+PROVIDER_LABELS = {
+    "claude_cli": "Claude Code CLI (OAuth)",
+    "anthropic": "Anthropic API",
+    "openai": "OpenAI",
+    "xai": "xAI / Grok",
+    "google": "Google Gemini",
+}
+
+PROVIDER_DEFAULT_MODELS = {
+    "claude_cli": "",
+    "anthropic": "claude-sonnet-4-6",
+    "openai": "gpt-4o",
+    "xai": "grok-2-latest",
+    "google": "gemini-2.0-flash",
+}
+
+PROVIDER_ORDER = ["claude_cli", "anthropic", "openai", "xai", "google"]
+
+
+def _available_providers(settings: dict) -> list[str]:
+    """Return providers usable in the UI (claude_cli always, others if API key set)."""
+    result = ["claude_cli"]
+    for p in ("anthropic", "openai", "xai", "google"):
+        if settings.get(f"{p}_api_key"):
+            result.append(p)
+    return result
+
 
 def setup_templates(templates_dir: str) -> Jinja2Templates:
     return Jinja2Templates(directory=templates_dir)
 
 
-# Templates instance is set during app startup
 templates: Optional[Jinja2Templates] = None
 
 
@@ -39,27 +65,46 @@ async def dashboard(request: Request):
 
 @router.get("/characters/new", response_class=HTMLResponse)
 async def new_character_form(request: Request):
+    settings = request.app.state.sqlite.get_all_settings()
     return get_templates().TemplateResponse(
         "character_edit.html",
-        {"request": request, "character": None, "action": "/ui/characters/new"},
+        {
+            "request": request,
+            "character": None,
+            "action": "/ui/characters/new",
+            "available_providers": _available_providers(settings),
+            "provider_labels": PROVIDER_LABELS,
+            "provider_default_models": PROVIDER_DEFAULT_MODELS,
+        },
     )
 
 
 @router.post("/characters/new")
-async def create_character(
-    request: Request,
-    name: str = Form(...),
-    system_prompt_block1: str = Form(""),
-    meta_instructions: str = Form(""),
-    digest_delete_originals: bool = Form(False),
-):
+async def create_character(request: Request):
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    if not name:
+        return RedirectResponse(url="/ui/characters/new", status_code=303)
+
+    settings = request.app.state.sqlite.get_all_settings()
+    available = _available_providers(settings)
+
+    enabled_providers = {}
+    for p in available:
+        if form.get(f"provider_{p}_enabled"):
+            enabled_providers[p] = {
+                "model": form.get(f"provider_{p}_model", ""),
+                "additional_instructions": form.get(f"provider_{p}_additional_instructions", ""),
+            }
+
     char_id = str(uuid.uuid4())
     request.app.state.sqlite.create_character(
         character_id=char_id,
         name=name,
-        system_prompt_block1=system_prompt_block1,
-        meta_instructions=meta_instructions,
-        cleanup_config={"digest_delete_originals": digest_delete_originals},
+        system_prompt_block1=form.get("system_prompt_block1", ""),
+        meta_instructions=form.get("meta_instructions", ""),
+        cleanup_config={"digest_delete_originals": bool(form.get("digest_delete_originals"))},
+        enabled_providers=enabled_providers,
     )
     return RedirectResponse(url="/ui/", status_code=303)
 
@@ -69,34 +114,45 @@ async def edit_character_form(request: Request, character_id: str):
     char = request.app.state.sqlite.get_character(character_id)
     if not char:
         return RedirectResponse(url="/ui/", status_code=303)
+    settings = request.app.state.sqlite.get_all_settings()
     return get_templates().TemplateResponse(
         "character_edit.html",
         {
             "request": request,
             "character": char,
             "action": f"/ui/characters/{character_id}",
+            "available_providers": _available_providers(settings),
+            "provider_labels": PROVIDER_LABELS,
+            "provider_default_models": PROVIDER_DEFAULT_MODELS,
         },
     )
 
 
 @router.post("/characters/{character_id}")
-async def update_character(
-    request: Request,
-    character_id: str,
-    name: str = Form(...),
-    system_prompt_block1: str = Form(""),
-    meta_instructions: str = Form(""),
-    digest_delete_originals: bool = Form(False),
-):
+async def update_character(request: Request, character_id: str):
+    form = await request.form()
+    settings = request.app.state.sqlite.get_all_settings()
+    available = _available_providers(settings)
+
+    enabled_providers = {}
+    for p in available:
+        if form.get(f"provider_{p}_enabled"):
+            enabled_providers[p] = {
+                "model": form.get(f"provider_{p}_model", ""),
+                "additional_instructions": form.get(f"provider_{p}_additional_instructions", ""),
+            }
+
     char = request.app.state.sqlite.get_character(character_id)
     existing_config = (char.cleanup_config or {}) if char else {}
-    existing_config["digest_delete_originals"] = digest_delete_originals
+    existing_config["digest_delete_originals"] = bool(form.get("digest_delete_originals"))
+
     request.app.state.sqlite.update_character(
         character_id,
-        name=name,
-        system_prompt_block1=system_prompt_block1,
-        meta_instructions=meta_instructions,
+        name=(form.get("name") or "").strip(),
+        system_prompt_block1=form.get("system_prompt_block1", ""),
+        meta_instructions=form.get("meta_instructions", ""),
         cleanup_config=existing_config,
+        enabled_providers=enabled_providers,
     )
     return RedirectResponse(url="/ui/", status_code=303)
 
@@ -160,16 +216,27 @@ async def settings_form(request: Request):
 @router.post("/settings")
 async def save_settings(
     request: Request,
+    anthropic_api_key: str = Form(""),
+    openai_api_key: str = Form(""),
+    xai_api_key: str = Form(""),
+    google_api_key: str = Form(""),
     tavily_api_key: str = Form(""),
     digest_time: str = Form("03:00"),
 ):
-    if tavily_api_key:
-        request.app.state.sqlite.set_setting("tavily_api_key", tavily_api_key)
-    # Validate HH:MM format
+    store = request.app.state.sqlite
+    for key, value in [
+        ("anthropic_api_key", anthropic_api_key),
+        ("openai_api_key", openai_api_key),
+        ("xai_api_key", xai_api_key),
+        ("google_api_key", google_api_key),
+        ("tavily_api_key", tavily_api_key),
+    ]:
+        if value and set(value) != {"●"}:
+            store.set_setting(key, value)
     try:
         h, m = map(int, digest_time.split(":"))
         assert 0 <= h <= 23 and 0 <= m <= 59
-        request.app.state.sqlite.set_setting("digest_time", digest_time)
+        store.set_setting("digest_time", digest_time)
     except Exception:
         pass
     return RedirectResponse(url="/ui/settings?saved=1", status_code=303)

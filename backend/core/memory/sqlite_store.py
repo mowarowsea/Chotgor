@@ -2,7 +2,7 @@
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import (
@@ -40,11 +40,12 @@ class Character(Base):
     system_prompt_block1 = Column(Text, nullable=False, default="")
     meta_instructions = Column(Text, nullable=False, default="")
     cleanup_config = Column(JSON, nullable=False, default=dict)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    enabled_providers = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(),
     )
 
 
@@ -63,7 +64,7 @@ class Memory(Base):
     # Access tracking
     last_accessed_at = Column(DateTime, nullable=True)
     access_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
     deleted_at = Column(DateTime, nullable=True)  # Soft delete
 
 
@@ -77,7 +78,7 @@ class DigestLog(Base):
     memory_id = Column(String, nullable=True)       # Created digest memory ID
     memory_count = Column(Integer, default=0)       # Number of source memories
     message = Column(Text, nullable=True)           # Error message or summary excerpt
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now())
 
 
 class SQLiteStore:
@@ -86,6 +87,19 @@ class SQLiteStore:
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         self.SessionLocal = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
+        self._migrate()
+
+    def _migrate(self):
+        """Add new columns to existing tables (idempotent)."""
+        with self.engine.connect() as conn:
+            for stmt in [
+                "ALTER TABLE characters ADD COLUMN enabled_providers TEXT NOT NULL DEFAULT '{}'",
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception:
+                    pass
 
     def get_session(self) -> Session:
         return self.SessionLocal()
@@ -132,6 +146,7 @@ class SQLiteStore:
         system_prompt_block1: str = "",
         meta_instructions: str = "",
         cleanup_config: Optional[dict] = None,
+        enabled_providers: Optional[dict] = None,
     ) -> Character:
         with self.get_session() as session:
             char = Character(
@@ -140,6 +155,7 @@ class SQLiteStore:
                 system_prompt_block1=system_prompt_block1,
                 meta_instructions=meta_instructions,
                 cleanup_config=cleanup_config or {},
+                enabled_providers=enabled_providers or {},
             )
             session.add(char)
             session.commit()
@@ -162,7 +178,7 @@ class SQLiteStore:
             for k, v in kwargs.items():
                 if hasattr(char, k):
                     setattr(char, k, v)
-            char.updated_at = datetime.now(timezone.utc)
+            char.updated_at = datetime.now()
             session.commit()
             session.refresh(char)
             return char
@@ -228,7 +244,7 @@ class SQLiteStore:
         with self.get_session() as session:
             mem = session.get(Memory, memory_id)
             if mem:
-                mem.last_accessed_at = datetime.now(timezone.utc)
+                mem.last_accessed_at = datetime.now()
                 mem.access_count = (mem.access_count or 0) + 1
                 session.commit()
 
@@ -237,7 +253,7 @@ class SQLiteStore:
             mem = session.get(Memory, memory_id)
             if not mem:
                 return False
-            mem.deleted_at = datetime.now(timezone.utc)
+            mem.deleted_at = datetime.now()
             session.commit()
             return True
 

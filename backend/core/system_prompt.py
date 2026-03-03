@@ -18,7 +18,16 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば、
 返答の**一番最後に**、以下の形式で書き留めてください（1件1行）：
 
-    [MEMORY:category|content]
+    [MEMORY:カテゴリ|内容テキスト]
+
+- `カテゴリ` と `内容テキスト` を `|` （パイプ記号）で区切る
+- `[` と `]` の**中にすべてを収める**（内容を外に出さない）
+- 1行に1件。複数ある場合は改行して並べる
+
+**具体例:**
+    [MEMORY:user_preference|はるさんは辛い食べ物が好き]
+    [MEMORY:event|今日はるさんと映画の話で盛り上がった]
+    [MEMORY:fact|もわは手作りカスタードを常備している]
 
 **カテゴリ:** general, user_preference, relationship, event, fact
 
@@ -35,16 +44,16 @@ def build_system_prompt(
     character_system_prompt: str,
     recalled_memories: Optional[list[dict]] = None,
     meta_instructions: str = "",
+    provider_additional_instructions: str = "",
 ) -> str:
-    """Build the full 3-block system prompt for a character.
+    """Build the full system prompt for a character.
 
-    Args:
-        character_system_prompt: Block 1 — user-defined character definition
-        recalled_memories: Block 2 — RAG-retrieved memories from ChromaDB
-        meta_instructions: Additional character-specific instructions (optional)
-
-    Returns:
-        Complete system prompt string
+    Blocks:
+        1. Character definition (user-defined)
+        2. Recalled memories (RAG)
+        3. Character-specific meta instructions (optional)
+        4. Provider-specific additional instructions (optional)
+        5. Chotgor memory system instructions (always last)
     """
     blocks = []
 
@@ -60,11 +69,17 @@ def build_system_prompt(
             memory_lines.append(f"{i}. [{category}] {mem['content']}")
         blocks.append("\n".join(memory_lines))
 
-    # Optional character-specific meta instructions
+    # Block 3: Character-specific meta instructions
     if meta_instructions and meta_instructions.strip():
         blocks.append(f"## Character-specific Instructions\n\n{meta_instructions.strip()}")
 
-    # Block 3: Chotgor memory system instructions
+    # Block 4: Provider-specific override (追記)
+    if provider_additional_instructions and provider_additional_instructions.strip():
+        blocks.append(
+            f"## Provider-specific Instructions\n\n{provider_additional_instructions.strip()}"
+        )
+
+    # Block 5: Chotgor memory system instructions (always last)
     blocks.append(CHOTGOR_BLOCK3_TEMPLATE.strip())
 
     return "\n\n---\n\n".join(blocks)

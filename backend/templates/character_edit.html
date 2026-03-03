@@ -9,6 +9,7 @@
 
 <div class="form-card">
     <form method="post" action="{{ action }}">
+
         <div class="form-group">
             <label for="name">Character Name</label>
             <input type="text" id="name" name="name" class="form-control"
@@ -29,11 +30,70 @@
         <div class="form-group">
             <label for="meta_instructions">
                 Meta Instructions
-                <span class="label-hint">Optional: additional behavioral guidelines</span>
+                <span class="label-hint">Optional: additional behavioral guidelines (all providers)</span>
             </label>
             <textarea id="meta_instructions" name="meta_instructions"
                       class="form-control textarea-medium"
                       placeholder="Optional: memory usage preferences, response style guidelines, topics to avoid...">{% if character %}{{ character.meta_instructions }}{% endif %}</textarea>
+        </div>
+
+        <!-- Provider accordion -->
+        <div class="form-group">
+            <label>LLM Providers
+                <span class="label-hint">有効にしたプロバイダーが OpenWebUI のモデルリストに表示されます</span>
+            </label>
+
+            {% if available_providers %}
+            <div class="accordion">
+                {% for provider in available_providers %}
+                {% set cfg = (character.enabled_providers or {}).get(provider, none) if character else none %}
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <label class="accordion-label">
+                            <input type="checkbox"
+                                   name="provider_{{ provider }}_enabled"
+                                   value="1"
+                                   id="chk_{{ provider }}"
+                                   {% if cfg is not none %}checked{% endif %}
+                                   onchange="toggleProvider('{{ provider }}', this.checked)">
+                            <strong>{{ provider_labels[provider] }}</strong>
+                        </label>
+                        <button type="button" class="accordion-toggle"
+                                onclick="toggleProvider('{{ provider }}', document.getElementById('chk_{{ provider }}').checked, true)">
+                            ▾
+                        </button>
+                    </div>
+                    <div class="accordion-body" id="body_{{ provider }}"
+                         {% if cfg is none %}style="display:none"{% endif %}>
+                        <div class="form-group">
+                            <label>Model Name
+                                <span class="label-hint">空欄 = {{ provider_default_models[provider] or 'デフォルト' }}</span>
+                            </label>
+                            <input type="text"
+                                   name="provider_{{ provider }}_model"
+                                   class="form-control"
+                                   value="{{ cfg.get('model', '') if cfg else '' }}"
+                                   placeholder="{{ provider_default_models[provider] }}">
+                        </div>
+                        <div class="form-group">
+                            <label>Additional Instructions
+                                <span class="label-hint">このプロバイダー向けの追記指示（Base に追記、省略可）</span>
+                            </label>
+                            <textarea name="provider_{{ provider }}_additional_instructions"
+                                      class="form-control textarea-medium"
+                                      placeholder="例: 応答は必ず日本語で。絵文字は使わないで。">{{ cfg.get('additional_instructions', '') if cfg else '' }}</textarea>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="form-hint">
+                利用できるプロバイダーがありません。
+                <a href="/ui/settings">Settings</a> でAPIキーを設定してください。
+                （Claude Code CLI は常に利用可能です）
+            </p>
+            {% endif %}
         </div>
 
         <div class="form-group">
@@ -58,8 +118,60 @@
     {% if character %}
     <div class="info-box">
         <strong>Character ID:</strong> <code>{{ character.id }}</code><br>
-        <strong>Use this ID in OpenWebUI</strong> to select this character as a model.
+        <strong>OpenWebUI のモデルID形式:</strong> <code>{{ character.id }}@{provider}</code>
     </div>
     {% endif %}
 </div>
+
+<style>
+.accordion {
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.accordion-item + .accordion-item {
+    border-top: 1px solid var(--border-color, #ddd);
+}
+.accordion-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--surface-alt, #f8f8f8);
+    gap: 10px;
+}
+.accordion-label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    margin: 0;
+}
+.accordion-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-muted, #666);
+    padding: 0 4px;
+}
+.accordion-body {
+    padding: 14px 16px;
+    background: var(--surface, #fff);
+}
+.accordion-body .form-group:last-child {
+    margin-bottom: 0;
+}
+</style>
+
+<script>
+function toggleProvider(provider, checked, keepOpen) {
+    const body = document.getElementById('body_' + provider);
+    if (keepOpen) {
+        body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    } else {
+        body.style.display = checked ? 'block' : 'none';
+    }
+}
+</script>
 {% endblock %}
