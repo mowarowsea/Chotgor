@@ -8,7 +8,22 @@
 </div>
 
 <div class="form-card">
-    <form method="post" action="{{ action }}">
+    <form method="post" action="{{ action }}" enctype="multipart/form-data">
+
+        <div class="form-group">
+            <label for="image">Character Icon
+                <span class="label-hint">PNG / JPG / WebP — 2MB まで</span>
+            </label>
+            <div class="image-upload-row">
+                {% if character and character.image_data %}
+                <img src="{{ character.image_data }}" class="icon-preview" alt="current icon">
+                {% else %}
+                <div class="icon-placeholder">?</div>
+                {% endif %}
+                <input type="file" id="image" name="image" accept="image/*"
+                       class="form-control" style="flex:1">
+            </div>
+        </div>
 
         <div class="form-group">
             <label for="name">Character Name</label>
@@ -124,6 +139,32 @@
 </div>
 
 <style>
+.image-upload-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.icon-preview {
+    width: 72px;
+    height: 72px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 2px solid var(--border-color, #ddd);
+    flex-shrink: 0;
+}
+.icon-placeholder {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    border: 2px dashed var(--border-color, #ddd);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    color: var(--text-muted, #aaa);
+    flex-shrink: 0;
+}
+
 .accordion {
     border: 1px solid var(--border-color, #ddd);
     border-radius: 6px;

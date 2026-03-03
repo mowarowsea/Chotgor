@@ -1,5 +1,6 @@
 """Settings UI routes using Jinja2 templates."""
 
+import base64
 import uuid
 from typing import Optional
 
@@ -26,6 +27,24 @@ PROVIDER_DEFAULT_MODELS = {
 }
 
 PROVIDER_ORDER = ["claude_cli", "anthropic", "openai", "xai", "google"]
+
+
+MAX_IMAGE_BYTES = 2 * 1024 * 1024  # 2MB
+
+
+async def _read_image_data(form) -> Optional[str]:
+    """フォームから画像を読み込みbase64 data URIとして返す。画像がなければNone。"""
+    image_file = form.get("image")
+    if not image_file or not hasattr(image_file, "read"):
+        return None
+    content = await image_file.read()
+    if not content:
+        return None
+    if len(content) > MAX_IMAGE_BYTES:
+        return None  # サイズ超過は無視
+    content_type = image_file.content_type or "image/png"
+    b64 = base64.b64encode(content).decode()
+    return f"data:{content_type};base64,{b64}"
 
 
 def _available_providers(settings: dict) -> list[str]:
@@ -97,6 +116,8 @@ async def create_character(request: Request):
                 "additional_instructions": form.get(f"provider_{p}_additional_instructions", ""),
             }
 
+    image_data = await _read_image_data(form)
+
     char_id = str(uuid.uuid4())
     request.app.state.sqlite.create_character(
         character_id=char_id,
@@ -105,6 +126,7 @@ async def create_character(request: Request):
         meta_instructions=form.get("meta_instructions", ""),
         cleanup_config={"digest_delete_originals": bool(form.get("digest_delete_originals"))},
         enabled_providers=enabled_providers,
+        image_data=image_data,
     )
     return RedirectResponse(url="/ui/", status_code=303)
 
@@ -146,14 +168,18 @@ async def update_character(request: Request, character_id: str):
     existing_config = (char.cleanup_config or {}) if char else {}
     existing_config["digest_delete_originals"] = bool(form.get("digest_delete_originals"))
 
-    request.app.state.sqlite.update_character(
-        character_id,
+    update_kwargs: dict = dict(
         name=(form.get("name") or "").strip(),
         system_prompt_block1=form.get("system_prompt_block1", ""),
         meta_instructions=form.get("meta_instructions", ""),
         cleanup_config=existing_config,
         enabled_providers=enabled_providers,
     )
+    new_image = await _read_image_data(form)
+    if new_image:
+        update_kwargs["image_data"] = new_image
+
+    request.app.state.sqlite.update_character(character_id, **update_kwargs)
     return RedirectResponse(url="/ui/", status_code=303)
 
 

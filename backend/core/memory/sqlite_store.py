@@ -41,6 +41,7 @@ class Character(Base):
     meta_instructions = Column(Text, nullable=False, default="")
     cleanup_config = Column(JSON, nullable=False, default=dict)
     enabled_providers = Column(JSON, nullable=False, default=dict)
+    image_data = Column(Text, nullable=True)  # base64 data URI
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -94,6 +95,7 @@ class SQLiteStore:
         with self.engine.connect() as conn:
             for stmt in [
                 "ALTER TABLE characters ADD COLUMN enabled_providers TEXT NOT NULL DEFAULT '{}'",
+                "ALTER TABLE characters ADD COLUMN image_data TEXT",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -147,6 +149,7 @@ class SQLiteStore:
         meta_instructions: str = "",
         cleanup_config: Optional[dict] = None,
         enabled_providers: Optional[dict] = None,
+        image_data: Optional[str] = None,
     ) -> Character:
         with self.get_session() as session:
             char = Character(
@@ -156,6 +159,7 @@ class SQLiteStore:
                 meta_instructions=meta_instructions,
                 cleanup_config=cleanup_config or {},
                 enabled_providers=enabled_providers or {},
+                image_data=image_data,
             )
             session.add(char)
             session.commit()
