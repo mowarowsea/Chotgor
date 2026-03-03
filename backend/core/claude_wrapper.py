@@ -22,6 +22,7 @@ from .providers.claude_cli_provider import ClaudeCliProvider
 from .providers.google_provider import GoogleProvider
 from .providers.openai_provider import OpenAIProvider
 from .system_prompt import build_system_prompt
+from .web_fetch import fetch_urls, find_urls
 
 # [MEMORY:category|content] canonical form
 MEMORY_PATTERN = re.compile(r"\[MEMORY:(\w+)\|([^\]]+)\]", re.DOTALL)
@@ -89,10 +90,21 @@ async def stream_chat(
         except Exception:
             pass
 
-    # --- 2. Build system prompt (3-block structure) ---
+    # --- 1b. Fetch URLs found in the latest user message ---
+    fetched_contents = []
+    if last_user_msg:
+        urls = find_urls(last_user_msg)
+        if urls:
+            try:
+                fetched_contents = await fetch_urls(urls)
+            except Exception:
+                pass
+
+    # --- 2. Build system prompt ---
     system_prompt = build_system_prompt(
         character_system_prompt=character_system_prompt,
         recalled_memories=recalled,
+        fetched_contents=fetched_contents,
         meta_instructions=meta_instructions,
         provider_additional_instructions=provider_additional_instructions,
     )

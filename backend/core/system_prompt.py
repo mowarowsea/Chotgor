@@ -43,6 +43,7 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 def build_system_prompt(
     character_system_prompt: str,
     recalled_memories: Optional[list[dict]] = None,
+    fetched_contents: Optional[list[dict]] = None,
     meta_instructions: str = "",
     provider_additional_instructions: str = "",
 ) -> str:
@@ -51,9 +52,10 @@ def build_system_prompt(
     Blocks:
         1. Character definition (user-defined)
         2. Recalled memories (RAG)
-        3. Character-specific meta instructions (optional)
-        4. Provider-specific additional instructions (optional)
-        5. Chotgor memory system instructions (always last)
+        3. Fetched web content (optional, from URLs in user message)
+        4. Character-specific meta instructions (optional)
+        5. Provider-specific additional instructions (optional)
+        6. Chotgor memory system instructions (always last)
     """
     blocks = []
 
@@ -68,6 +70,21 @@ def build_system_prompt(
             category = mem.get("metadata", {}).get("category", "general")
             memory_lines.append(f"{i}. [{category}] {mem['content']}")
         blocks.append("\n".join(memory_lines))
+
+    # Block 3: Fetched web content
+    if fetched_contents:
+        fetch_lines = ["## Fetched Web Content\n"]
+        for item in fetched_contents:
+            url = item["url"]
+            if "error" in item:
+                fetch_lines.append(f"URL: {url}\nError: {item['error']}")
+            else:
+                text = item['content']
+                if item.get("truncated"):
+                    text += "\n[... 文字数制限により以降は省略されています ...]"
+                fetch_lines.append(f"URL: {url}\n{text}")
+            fetch_lines.append("")
+        blocks.append("\n".join(fetch_lines).strip())
 
     # Block 3: Character-specific meta instructions
     if meta_instructions and meta_instructions.strip():
