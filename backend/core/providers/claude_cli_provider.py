@@ -25,11 +25,12 @@ CLAUDE_BIN = _find_claude()
 
 
 class ClaudeCliProvider(BaseLLMProvider):
-    def __init__(self, model: str = ""):
+    def __init__(self, model: str = "", character_name: str = ""):
         self.model = model  # CLI model is configured via Claude Code settings, not flags
+        self.character_name = character_name
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
-        conversation = _format_conversation(messages)
+        conversation = _format_conversation(messages, self.character_name)
 
         sys_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
@@ -123,12 +124,16 @@ async def _run_claude(sys_path: str, msg_path: str) -> subprocess.CompletedProce
     return await asyncio.to_thread(run)
 
 
-def _format_conversation(messages: list[dict]) -> str:
+def _format_conversation(messages: list[dict], character_name: str = "") -> str:
     """Convert OpenAI-format messages to a text prompt for the Claude CLI.
 
     XMLタグ形式を使う。"User: / Assistant:" のようなプレーンテキスト形式だと
     LLMがそのパターンを応答の中で継続してしまうため。
+    キャラクターのロールはキャラクター名（なければ 'character'）で表現し、
+    'assistant' という汎用ロール名をLLMに見せない（Chotgor哲学）。
     """
+    char_tag = character_name.strip() if character_name.strip() else "character"
+
     if not messages:
         return ""
 
@@ -144,7 +149,7 @@ def _format_conversation(messages: list[dict]) -> str:
         if role == "user":
             history_parts.append(f"<human>{content}</human>")
         elif role == "assistant":
-            history_parts.append(f"<ai>{content}</ai>")
+            history_parts.append(f"<{char_tag}>{content}</{char_tag}>")
 
     last = messages[-1].get("content", "")
 

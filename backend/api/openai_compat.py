@@ -99,6 +99,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     chat_kwargs = dict(
         messages=messages,
         character_id=character.id,
+        character_name=character.name,
         character_system_prompt=character.system_prompt_block1,
         meta_instructions=character.meta_instructions,
         memory_manager=state.memory_manager,

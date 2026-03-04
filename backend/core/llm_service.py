@@ -25,7 +25,7 @@ from .system_prompt import build_system_prompt
 from .web_fetch import fetch_urls, find_urls
 
 
-def _get_provider(provider: str, model: str, settings: dict):
+def _get_provider(provider: str, model: str, settings: dict, character_name: str = ""):
     """プロバイダー識別子から適切なプロバイダーインスタンスを返す。"""
     if provider == "anthropic":
         return AnthropicProvider(api_key=settings.get("anthropic_api_key", ""), model=model)
@@ -40,12 +40,13 @@ def _get_provider(provider: str, model: str, settings: dict):
     elif provider == "google":
         return GoogleProvider(api_key=settings.get("google_api_key", ""), model=model)
     else:
-        return ClaudeCliProvider(model=model)
+        return ClaudeCliProvider(model=model, character_name=character_name)
 
 
 async def stream_chat(
     messages: list[dict],
     character_id: str,
+    character_name: str,
     character_system_prompt: str,
     meta_instructions: str,
     memory_manager: MemoryManager,
@@ -93,7 +94,7 @@ async def stream_chat(
     )
 
     # --- 4. プロバイダーへディスパッチ ---
-    provider_impl = _get_provider(provider, model, settings)
+    provider_impl = _get_provider(provider, model, settings, character_name)
     try:
         response_text = await provider_impl.generate(system_prompt, messages)
     except Exception as e:
@@ -106,14 +107,16 @@ async def stream_chat(
     clean_text = carve(response_text, character_id, memory_manager)
 
     # --- 6. デバッグログ ---
+    char_label = character_name.strip() if character_name.strip() else "CHARACTER"
     sep = "-" * 60
     print(f"\n{sep}")
-    print(f"[CHAT] character={character_id} provider={provider} model={model or '(default)'}")
+    print(f"[CHAT] character={character_id}({char_label}) provider={provider} model={model or '(default)'}")
     for m in messages:
-        role = m.get("role", "?").upper()
+        role = m.get("role", "")
+        display_role = char_label if role == "assistant" else role.upper()
         content = m.get("content", "")
-        print(f"  [{role}] {content[:300]}{'...' if len(content) > 300 else ''}")
-    print(f"  [ASSISTANT] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
+        print(f"  [{display_role}] {content[:300]}{'...' if len(content) > 300 else ''}")
+    print(f"  [{char_label}] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
     print(sep, flush=True)
 
     # --- 7. SSEとして返却 ---
