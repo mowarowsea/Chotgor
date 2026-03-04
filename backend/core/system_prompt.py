@@ -9,7 +9,7 @@ Constructs a 3-block system prompt:
 from typing import Optional
 
 
-CHOTGOR_BLOCK3_TEMPLATE = """
+CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE = """
 ## あなたの記憶について
 
 過去の会話から思い出した記憶は、すでに上に記されています。
@@ -103,6 +103,6 @@ def build_system_prompt(
         )
 
     # Block 5: Chotgor memory system instructions (always last)
-    blocks.append(CHOTGOR_BLOCK3_TEMPLATE.strip())
+    blocks.append(CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE.strip())
 
     return "\n\n---\n\n".join(blocks)

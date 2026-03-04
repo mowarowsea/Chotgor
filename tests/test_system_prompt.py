@@ -2,7 +2,7 @@
 
 import pytest
 
-from backend.core.system_prompt import build_system_prompt, CHOTGOR_BLOCK3_TEMPLATE
+from backend.core.system_prompt import build_system_prompt, CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE
 
 
 class TestBuildSystemPrompt:
@@ -15,7 +15,7 @@ class TestBuildSystemPrompt:
         result = build_system_prompt(character_system_prompt="テスト")
         assert "MEMORY:" in result
         # Block3 が最後のブロックであること
-        assert result.endswith(CHOTGOR_BLOCK3_TEMPLATE.strip())
+        assert result.endswith(CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE.strip())
 
     def test_recalled_memories_appear_in_prompt(self):
         memories = [

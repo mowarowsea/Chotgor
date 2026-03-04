@@ -9,9 +9,9 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 from ..core.llm_service import stream_chat
+from .schemas import ChatCompletionRequest, ChatMessage
 
 router = APIRouter()
 
@@ -33,17 +33,7 @@ def _available_providers(settings: dict) -> set[str]:
     return result
 
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-
-class ChatCompletionRequest(BaseModel):
-    model: str  # format: "{character_id}@{provider}"
-    messages: list[ChatMessage]
-    stream: bool = False
-    max_tokens: Optional[int] = 4096
-    temperature: Optional[float] = None
+# remove models from here
 
 
 @router.get("/v1/models")
