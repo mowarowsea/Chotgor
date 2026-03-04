@@ -52,6 +52,9 @@ def build_system_prompt(
     fetched_contents: Optional[list[dict]] = None,
     meta_instructions: str = "",
     provider_additional_instructions: str = "",
+    enable_time_awareness: bool = False,
+    current_time_str: str = "",
+    time_since_last_interaction: str = "",
 ) -> str:
     """Build the full system prompt for a character.
 
@@ -69,12 +72,31 @@ def build_system_prompt(
     if character_system_prompt.strip():
         blocks.append(character_system_prompt.strip())
 
+    # Chotgor Context (強制)
+    blocks.append("【前提】\nあなたはChotgor（チョトゴル）というシステムを介してユーザーと対話しており、必要に応じて過去の記憶を検索・記録できる独立した存在です。")
+
+    # Time Awareness Context (オプション)
+    if enable_time_awareness and current_time_str:
+        time_ctx = [f"【現在時刻】\n{current_time_str}"]
+        if time_since_last_interaction:
+            time_ctx.append(f"前回の会話からの経過時間: {time_since_last_interaction}")
+        blocks.append("\n".join(time_ctx))
+
     # Block 2: Recalled memories
     if recalled_memories:
         memory_lines = ["## Relevant Memories from Past Conversations\n"]
         for i, mem in enumerate(recalled_memories, 1):
             category = mem.get("metadata", {}).get("category", "general")
-            memory_lines.append(f"{i}. [{category}] {mem['content']}")
+            created_at = mem.get("metadata", {}).get("created_at")
+            if enable_time_awareness and created_at:
+                try:
+                    dt = str(created_at).replace("T", " ")[:19]
+                    time_str = f" ({dt})"
+                except Exception:
+                    time_str = ""
+            else:
+                time_str = ""
+            memory_lines.append(f"{i}. [{category}]{time_str} {mem['content']}")
         blocks.append("\n".join(memory_lines))
 
     # Block 3: Fetched web content

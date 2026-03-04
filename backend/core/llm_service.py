@@ -54,6 +54,9 @@ async def stream_chat(
     model: str = "",
     provider_additional_instructions: str = "",
     settings: Optional[dict] = None,
+    enable_time_awareness: bool = False,
+    current_time_str: str = "",
+    time_since_last_interaction: str = "",
     **kwargs,
 ) -> AsyncIterator[str]:
     """LLMにディスパッチしてSSEチャンクをyieldする。"""
@@ -91,6 +94,9 @@ async def stream_chat(
         fetched_contents=fetched_contents,
         meta_instructions=meta_instructions,
         provider_additional_instructions=provider_additional_instructions,
+        enable_time_awareness=enable_time_awareness,
+        current_time_str=current_time_str,
+        time_since_last_interaction=time_since_last_interaction,
     )
 
     # --- 4. プロバイダーへディスパッチ ---

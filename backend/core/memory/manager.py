@@ -60,9 +60,17 @@ class MemoryManager:
         """Recall memories by semantic similarity, updating access metadata."""
         results = self.chroma.recall_memory(query, character_id, top_k)
 
-        # Update access tracking in SQLite
+        # Update access tracking in SQLite and inject created_at
         for mem in results:
-            self.sqlite.touch_memory(mem["id"])
+            mem_id = mem.get("id")
+            if mem_id:
+                self.sqlite.touch_memory(mem_id)
+                try:
+                    m = self.sqlite.get_memory(mem_id)
+                    if m and m.created_at:
+                        mem.setdefault("metadata", {})["created_at"] = m.created_at.isoformat(timespec="seconds")
+                except Exception:
+                    pass
 
         return results
 

@@ -86,6 +86,35 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     settings = state.sqlite.get_all_settings()
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
+    from datetime import datetime
+    now = datetime.now()
+
+    enable_time_awareness = settings.get("enable_time_awareness", "true") == "true"
+    current_time_str = ""
+    time_since_last_interaction = ""
+
+    if enable_time_awareness:
+        current_time_str = now.isoformat(timespec="seconds")
+        last_str = settings.get(f"last_interaction_{character.id}")
+        if last_str:
+            try:
+                last_dt = datetime.fromisoformat(last_str)
+                diff = now - last_dt
+                hours = diff.total_seconds() / 3600
+                if hours < 1:
+                    m = int(hours * 60)
+                    time_since_last_interaction = f"約 {m} 分" if m > 0 else "数分以内"
+                elif hours < 24:
+                    time_since_last_interaction = f"約 {hours:.1f} 時間"
+                else:
+                    days = int(hours / 24)
+                    time_since_last_interaction = f"約 {days} 日"
+            except Exception:
+                pass
+
+    if messages and messages[-1]["role"] == "user":
+        state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
+
     chat_kwargs = dict(
         messages=messages,
         character_id=character.id,
@@ -97,6 +126,9 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         model=provider_config.get("model", ""),
         provider_additional_instructions=provider_config.get("additional_instructions", ""),
         settings=settings,
+        enable_time_awareness=enable_time_awareness,
+        current_time_str=current_time_str,
+        time_since_last_interaction=time_since_last_interaction,
     )
 
     if body.stream:
