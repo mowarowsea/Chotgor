@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from ..core.debug_logger import log_front_input, log_front_output
 from ..core.llm_service import stream_chat
 from .schemas import ChatCompletionRequest, ChatMessage
 
@@ -63,6 +64,7 @@ async def list_models(request: Request):
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatCompletionRequest):
     """OpenAI-compatible chat completions endpoint."""
+    log_front_input(body.model_dump())
     state = request.app.state
 
     if "@" not in body.model:
@@ -133,8 +135,18 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 
     if body.stream:
         async def generate():
+            full_text = ""
             async for chunk in stream_chat(**chat_kwargs):
+                if chunk.startswith("data: ") and not chunk.endswith("[DONE]\n\n"):
+                    try:
+                        import json
+                        data = json.loads(chunk[6:])
+                        delta = data["choices"][0]["delta"].get("content", "")
+                        full_text += delta
+                    except Exception:
+                        pass
                 yield chunk
+            log_front_output(full_text)
 
         return StreamingResponse(
             generate(),
@@ -156,6 +168,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     full_text += delta
                 except Exception:
                     pass
+
+        log_front_output(full_text)
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
         return {

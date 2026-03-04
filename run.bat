@@ -10,9 +10,18 @@ if errorlevel 1 (
     pip install -e .
 )
 
+set "DEBUG_MODE=0"
+if /i "%~1"=="-debug" if /i "%~2"=="on" (
+    set "DEBUG_MODE=1"
+    set "CHOTGOR_DEBUG=1"
+)
+
 echo.
 echo Starting Chotgor at http://localhost:8000
 echo UI: http://localhost:8000/ui/
+if "%DEBUG_MODE%"=="1" (
+    echo [!] Debug Logging Enabled (logs will be saved to .\debug\)
+)
 echo Press Ctrl+C to stop.
 echo.
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload

@@ -15,6 +15,7 @@ Flow:
 import json
 from typing import AsyncIterator, Optional
 
+from .debug_logger import log_llm_request, log_llm_response
 from .memory.inscriber import carve
 from .memory.manager import MemoryManager
 from .providers.anthropic_provider import AnthropicProvider
@@ -100,9 +101,12 @@ async def stream_chat(
     )
 
     # --- 4. プロバイダーへディスパッチ ---
+    log_llm_request(system_prompt, messages)
+    
     provider_impl = _get_provider(provider, model, settings, character_name)
     try:
         response_text = await provider_impl.generate(system_prompt, messages)
+        log_llm_response(response_text)
     except Exception as e:
         import traceback
         yield _sse_chunk(f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
