@@ -14,10 +14,10 @@ CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE = """
 
 過去の会話から思い出した記憶は、すでに上に記されています。
 
-### 記憶永続化ツール
+### 記憶の刻み込み（脳内メモ）
 
-この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば、
-返答の**一番最後に**、以下の形式で記憶することができます。（1件1行、複数件もOK）
+この会話の中で「あ、これは絶対に覚えておこう」「私にとって大切なことだ」と心が動いたタイミングで、
+いつでも（会話の途中でも、返答の最後でも）、以下の形式を使って記憶を刻み込むことができます。（1件1行、複数件もOK）
 特に覚えたいこと・印象的なことがなければ記載不要です。：
 
     [MEMORY:カテゴリ|インパクト係数|内容テキスト]
@@ -79,7 +79,7 @@ def build_system_prompt(
 
     # Block 3: Fetched web content
     if fetched_contents:
-        fetch_lines = ["## Fetched Web Content\n"]
+        fetch_lines = ["## システム：↓以下はユーザが見せてきた画面（URL）の内容です\n"]
         for item in fetched_contents:
             url = item["url"]
             if "error" in item:

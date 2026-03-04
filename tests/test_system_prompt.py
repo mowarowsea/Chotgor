@@ -43,7 +43,7 @@ class TestBuildSystemPrompt:
             character_system_prompt="テスト",
             fetched_contents=fetched,
         )
-        assert "Fetched Web Content" in result
+        assert "以下はユーザが見せてきた画面" in result
         assert "サンプルページの内容" in result
 
     def test_fetched_web_content_with_error(self):
