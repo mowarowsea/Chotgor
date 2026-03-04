@@ -54,7 +54,8 @@ def carve(text: str, character_id: str, memory_manager: MemoryManager) -> str:
         impact = float(impact_str) if impact_str else 1.0
         default_base = {k: 0.5 for k in ["contextual", "semantic", "identity", "user"]}
         base = _BASE_IMPORTANCE.get(category, default_base)
-        scores = {f"{k}_importance": min(v * impact, 1.0) for k, v in base.items()}
+        # impact係数をそのまま掛ける (1.0を超える値も許容)
+        scores = {f"{k}_importance": (v * impact) for k, v in base.items()}
         try:
             memory_manager.write_memory(
                 character_id=character_id,

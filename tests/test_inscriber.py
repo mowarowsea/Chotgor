@@ -81,14 +81,16 @@ class TestCarve:
         carve(text, "char-001", mock_memory_manager)
         mock_memory_manager.write_memory.assert_not_called()
 
-    def test_carve_impact_clamps_to_1(self, mock_memory_manager):
-        """impact=2.0 でも importance は 1.0 を超えない。"""
+    def test_carve_impact_exceeds_1(self, mock_memory_manager):
+        """impact=2.0 の場合、importance が 1.0 を超えることを許容する。"""
         text = "[MEMORY:identity|2.0|非常に重要な記憶。]"
         carve(text, "char-001", mock_memory_manager)
         call_kwargs = mock_memory_manager.write_memory.call_args.kwargs
-        for key in ("contextual_importance", "semantic_importance",
-                    "identity_importance", "user_importance"):
-            assert call_kwargs[key] <= 1.0, f"{key} が 1.0 を超えている"
+        
+        # identityカテゴリに対するベース値 (identity: 0.9) x 2.0 = 1.8 になるはず
+        assert call_kwargs["identity_importance"] == 1.8
+        # 他のスコアも同様に倍増していること (例: semantic: 0.4 x 2.0 = 0.8)
+        assert call_kwargs["semantic_importance"] == 0.8
 
     def test_carve_multiple_memories(self, mock_memory_manager):
         text = (
