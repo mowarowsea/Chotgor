@@ -13,7 +13,7 @@ Flow:
 """
 
 import json
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Union
 
 from .memory.inscriber import carve
 from .memory.manager import MemoryManager
@@ -27,20 +27,24 @@ from .web_fetch import fetch_urls, find_urls
 
 def _get_provider(provider: str, model: str, settings: dict):
     """プロバイダー識別子から適切なプロバイダーインスタンスを返す。"""
-    if provider == "anthropic":
-        return AnthropicProvider(api_key=settings.get("anthropic_api_key", ""), model=model)
-    elif provider == "openai":
-        return OpenAIProvider(api_key=settings.get("openai_api_key", ""), model=model)
-    elif provider == "xai":
-        return OpenAIProvider(
-            api_key=settings.get("xai_api_key", ""),
-            model=model,
-            base_url="https://api.x.ai/v1",
-        )
-    elif provider == "google":
-        return GoogleProvider(api_key=settings.get("google_api_key", ""), model=model)
-    else:
-        return ClaudeCliProvider(model=model)
+    # ... (unchanged)
+
+def extract_text_content(content: Union[str, list, None]) -> str:
+    """メッセージの content (str or list) からプレーンテキストのみを抽出する。"""
+    if not content:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                if part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+            elif isinstance(part, str):
+                parts.append(part)
+        return "".join(parts)
+    return ""
 
 
 async def stream_chat(
@@ -63,7 +67,7 @@ async def stream_chat(
     last_user_msg = ""
     for m in reversed(messages):
         if m.get("role") == "user":
-            last_user_msg = m.get("content", "")
+            last_user_msg = extract_text_content(m.get("content"))
             break
 
     recalled = []
@@ -111,7 +115,7 @@ async def stream_chat(
     print(f"[CHAT] character={character_id} provider={provider} model={model or '(default)'}")
     for m in messages:
         role = m.get("role", "?").upper()
-        content = m.get("content", "")
+        content = extract_text_content(m.get("content"))
         print(f"  [{role}] {content[:300]}{'...' if len(content) > 300 else ''}")
     print(f"  [ASSISTANT] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
     print(sep, flush=True)

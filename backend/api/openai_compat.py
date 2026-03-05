@@ -5,7 +5,7 @@ POST /v1/chat/completions - Chat with streaming SSE
 """
 
 import uuid
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -35,7 +35,7 @@ def _available_providers(settings: dict) -> set[str]:
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: Union[str, list, None] = None
 
 
 class ChatCompletionRequest(BaseModel):

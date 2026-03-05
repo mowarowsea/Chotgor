@@ -1,6 +1,8 @@
 """Google Gemini provider via google-genai SDK."""
 
 import asyncio
+import base64
+import re
 
 from .base import BaseLLMProvider
 
@@ -34,17 +36,45 @@ class GoogleProvider(BaseLLMProvider):
         system_injected = False
         for m in messages:
             role = m.get("role")
-            content = m.get("content", "")
-            if role == "user":
-                if not supports_system_instruction and not system_injected and system_prompt:
-                    content = f"{system_prompt}\n\n---\n\n{content}"
+            content = m.get("content")
+            
+            parts = []
+            
+            # プレーンテキストの場合
+            if isinstance(content, str):
+                text_to_add = content
+                if role == "user" and not supports_system_instruction and not system_injected and system_prompt:
+                    text_to_add = f"{system_prompt}\n\n---\n\n{text_to_add}"
                     system_injected = True
+                parts.append(types.Part(text=text_to_add))
+            
+            # リスト形式（マルチモーダル）の場合
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, str):
+                        parts.append(types.Part(text=item))
+                    elif isinstance(item, dict):
+                        itype = item.get("type")
+                        if itype == "text":
+                            parts.append(types.Part(text=item.get("text", "")))
+                        elif itype == "image_url":
+                            url = item.get("image_url", {}).get("url", "")
+                            if url.startswith("data:image/"):
+                                # data:image/jpeg;base64,xxxx
+                                match = re.match(r"data:image/(\w+);base64,(.+)", url)
+                                if match:
+                                    mime_type = f"image/{match.group(1)}"
+                                    b64_data = match.group(2)
+                                    parts.append(
+                                        types.Part.from_bytes(
+                                            data=base64.b64decode(b64_data),
+                                            mime_type=mime_type
+                                        )
+                                    )
+            
+            if parts:
                 contents.append(
-                    types.Content(role="user", parts=[types.Part(text=content)])
-                )
-            elif role == "assistant":
-                contents.append(
-                    types.Content(role="model", parts=[types.Part(text=content)])
+                    types.Content(role="model" if role == "assistant" else "user", parts=parts)
                 )
 
         def run():

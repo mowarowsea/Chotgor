@@ -30,6 +30,26 @@ class ClaudeCliProvider(BaseLLMProvider):
         self.character_name = character_name
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
+        # Detect if any image exists in messages
+        has_images = False
+        for m in messages:
+            content = m.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        has_images = True
+                        break
+            if has_images:
+                break
+        
+        # If images found, append a note to the system prompt
+        if has_images:
+            system_prompt += (
+                "\n\n[SYSTEM NOTE: The user has provided one or more images, "
+                "but you currently cannot 'see' them because of the current connection mode (Claude CLI). "
+                "Please inform the user naturally that you cannot see the images right now.]"
+            )
+
         conversation = _format_conversation(messages, self.character_name)
 
         sys_file = tempfile.NamedTemporaryFile(
@@ -138,22 +158,55 @@ def _format_conversation(messages: list[dict], character_name: str = "") -> str:
         return ""
 
     if len(messages) == 1:
-        return messages[0].get("content", "")
+        content = messages[0].get("content")
+        if isinstance(content, list):
+            # Extract text from list content
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            return "".join(parts)
+        return str(content or "")
 
     history_parts = []
     for msg in messages[:-1]:
         role = msg.get("role", "")
-        content = msg.get("content", "")
+        content = msg.get("content")
+        
+        text_content = ""
+        if isinstance(content, str):
+            text_content = content
+        elif isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            text_content = "".join(parts)
+        
         if role == "system":
             continue
         if role == "user":
-            history_parts.append(f"<human>{content}</human>")
+            history_parts.append(f"<human>{text_content}</human>")
         elif role == "assistant":
-            history_parts.append(f"<{char_tag}>{content}</{char_tag}>")
+            history_parts.append(f"<{char_tag}>{text_content}</{char_tag}>")
 
-    last = messages[-1].get("content", "")
+    last_content = messages[-1].get("content", "")
+    if isinstance(last_content, list):
+        parts = []
+        for item in last_content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+        last_text = "".join(parts)
+    else:
+        last_text = str(last_content)
 
     if history_parts:
         history = "\n".join(history_parts)
-        return f"<history>\n{history}\n</history>\n\n{last}"
-    return last
+        return f"<history>\n{history}\n</history>\n\n{last_text}"
+    return last_text
