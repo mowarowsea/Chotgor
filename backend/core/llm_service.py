@@ -27,7 +27,20 @@ from .web_fetch import fetch_urls, find_urls
 
 def _get_provider(provider: str, model: str, settings: dict):
     """プロバイダー識別子から適切なプロバイダーインスタンスを返す。"""
-    # ... (unchanged)
+    if provider == "anthropic":
+        return AnthropicProvider(api_key=settings.get("anthropic_api_key", ""), model=model)
+    elif provider == "openai":
+        return OpenAIProvider(api_key=settings.get("openai_api_key", ""), model=model)
+    elif provider == "xai":
+        return OpenAIProvider(
+            api_key=settings.get("xai_api_key", ""),
+            model=model,
+            base_url="https://api.x.ai/v1",
+        )
+    elif provider == "google":
+        return GoogleProvider(api_key=settings.get("google_api_key", ""), model=model)
+    else:
+        return ClaudeCliProvider(model=model)
 
 def extract_text_content(content: Union[str, list, None]) -> str:
     """メッセージの content (str or list) からプレーンテキストのみを抽出する。"""
