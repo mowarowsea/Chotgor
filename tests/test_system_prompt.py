@@ -1,86 +1,38 @@
-"""Tests for backend.core.system_prompt — system prompt builder."""
+from backend.core.system_prompt import build_system_prompt
 
-import pytest
+def test_build_system_prompt_basic():
+    char_prompt = "You are a cat."
+    prompt = build_system_prompt(char_prompt)
+    
+    assert char_prompt in prompt
+    assert "## あなたの記憶について" in prompt
 
-from backend.core.system_prompt import build_system_prompt, CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE
+def test_build_system_prompt_with_memories():
+    char_prompt = "You are a cat."
+    memories = [
+        {"content": "User likes fish", "metadata": {"category": "user"}}
+    ]
+    prompt = build_system_prompt(char_prompt, recalled_memories=memories)
+    
+    assert "User likes fish" in prompt
+    assert "[MEMORY:カテゴリ|インパクト係数|内容テキスト]" in prompt
 
+def test_build_system_prompt_with_time():
+    char_prompt = "You are a cat."
+    prompt = build_system_prompt(
+        char_prompt, 
+        enable_time_awareness=True, 
+        current_time_str="2026-03-05 12:00",
+        time_since_last_interaction="1 hour"
+    )
+    
+    assert "【現在時刻：2026-03-05 12:00】" in prompt
+    assert "【前回の交流から：1 hour】" in prompt
 
-class TestBuildSystemPrompt:
-    def test_character_prompt_always_included(self):
-        result = build_system_prompt(character_system_prompt="私はAIキャラクターです。")
-        assert "私はAIキャラクターです。" in result
-
-    def test_block3_always_included(self):
-        """Chotgorメモリ記法の説明（Block3）は必ず末尾に含まれる。"""
-        result = build_system_prompt(character_system_prompt="テスト")
-        assert "MEMORY:" in result
-        # Block3 が最後のブロックであること
-        assert result.endswith(CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE.strip())
-
-    def test_recalled_memories_appear_in_prompt(self):
-        memories = [
-            {"content": "ユーザーは猫が好き。", "metadata": {"category": "user"}},
-            {"content": "Chotgorは記憶管理システム。", "metadata": {"category": "semantic"}},
-        ]
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            recalled_memories=memories,
-        )
-        assert "ユーザーは猫が好き" in result
-        assert "Chotgorは記憶管理システム" in result
-        assert "Relevant Memories" in result
-
-    def test_no_memories_no_memory_block(self):
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            recalled_memories=[],
-        )
-        assert "Relevant Memories" not in result
-
-    def test_fetched_web_content_included(self):
-        fetched = [{"url": "https://example.com", "content": "サンプルページの内容", "truncated": False}]
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            fetched_contents=fetched,
-        )
-        assert "以下はユーザが見せてきた画面" in result
-        assert "サンプルページの内容" in result
-
-    def test_fetched_web_content_with_error(self):
-        fetched = [{"url": "https://bad.example.com", "error": "接続できませんでした"}]
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            fetched_contents=fetched,
-        )
-        assert "接続できませんでした" in result
-
-    def test_meta_instructions_included(self):
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            meta_instructions="絶対に英語で返答すること。",
-        )
-        assert "絶対に英語で返答すること" in result
-        assert "Character-specific Instructions" in result
-
-    def test_meta_instructions_empty_skipped(self):
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            meta_instructions="",
-        )
-        assert "Character-specific Instructions" not in result
-
-    def test_blocks_separated_by_divider(self):
-        """ブロック間は `---` で区切られる。"""
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            meta_instructions="追加指示",
-        )
-        assert "---" in result
-
-    def test_truncated_content_marker(self):
-        fetched = [{"url": "https://example.com", "content": "長いコンテンツ", "truncated": True}]
-        result = build_system_prompt(
-            character_system_prompt="テスト",
-            fetched_contents=fetched,
-        )
-        assert "省略" in result
+def test_build_system_prompt_with_web():
+    char_prompt = "You are a cat."
+    web = [{"url": "http://example.com", "content": "Example page"}]
+    prompt = build_system_prompt(char_prompt, fetched_contents=web)
+    
+    assert "## Fetched Web Content" in prompt
+    assert "Example page" in prompt

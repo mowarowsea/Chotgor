@@ -14,6 +14,7 @@ from .api import characters, memories, openai_compat
 from .api import ui as ui_module
 from .core.memory.chroma_store import ChromaStore
 from .core.memory.digest import run_pending_digests
+from .core.memory.forget import run_pending_forget
 from .core.memory.manager import MemoryManager
 from .core.memory.sqlite_store import SQLiteStore
 
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
     ui_module.templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
     asyncio.create_task(_digest_scheduler(app))
+    asyncio.create_task(_forget_scheduler(app))
 
     yield
     # Shutdown: nothing to clean up for SQLite/ChromaDB
@@ -75,6 +77,24 @@ async def _digest_scheduler(app: FastAPI) -> None:
             app.state.sqlite.set_setting("digest_last_run_date", today_str)
             try:
                 await run_pending_digests(app.state.sqlite, app.state.memory_manager)
+            except Exception:
+                pass
+
+
+async def _forget_scheduler(app: FastAPI) -> None:
+    """Background task: run pending forget process once per day at 04:00."""
+    while True:
+        await asyncio.sleep(60)
+        now = datetime.now()
+        # Default to 04:00 (after digest usually runs)
+        h, m = 4, 0
+        scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        today_str = now.date().isoformat()
+        last_run = app.state.sqlite.get_setting("forget_last_run_date", "")
+        if now >= scheduled and last_run != today_str:
+            app.state.sqlite.set_setting("forget_last_run_date", today_str)
+            try:
+                await run_pending_forget(app.state.sqlite, app.state.memory_manager)
             except Exception:
                 pass
 

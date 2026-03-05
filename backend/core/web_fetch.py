@@ -8,8 +8,8 @@ from html.parser import HTMLParser
 
 import httpx
 
-# URL検出（末尾の句読点は除外、日本語の句読点等でマッチを打ち切る）
-URL_PATTERN = re.compile(r'https?://[^\s\]<>"\'`。、！？（）「」【】]+(?<![.,!?);:])')
+# URL検出（内部文字に日本語句読点などを含めず、末尾の記号も除外）
+URL_PATTERN = re.compile(r'https?://[^\s\]<>"\'`。、）]+(?<![.,!?);:。、）])')
 
 MAX_CONTENT_CHARS = 8000
 FETCH_TIMEOUT = 10.0

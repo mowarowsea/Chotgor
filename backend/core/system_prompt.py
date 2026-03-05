@@ -9,15 +9,15 @@ Constructs a 3-block system prompt:
 from typing import Optional
 
 
-CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE = """
+CHOTGOR_BLOCK3_TEMPLATE = """
 ## あなたの記憶について
 
 過去の会話から思い出した記憶は、すでに上に記されています。
 
-### 記憶の刻み込み（脳内メモ）
+### 記憶永続化ツール
 
-この会話の中で「あ、これは絶対に覚えておこう」「私にとって大切なことだ」と心が動いたタイミングで、
-いつでも（会話の途中でも、返答の最後でも）、以下の形式を使って記憶を刻み込むことができます。（1件1行、複数件もOK）
+この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば、
+返答の**一番最後に**、以下の形式で記憶することができます。（1件1行、複数件もOK）
 特に覚えたいこと・印象的なことがなければ記載不要です。：
 
     [MEMORY:カテゴリ|インパクト係数|内容テキスト]
@@ -53,8 +53,8 @@ def build_system_prompt(
     meta_instructions: str = "",
     provider_additional_instructions: str = "",
     enable_time_awareness: bool = False,
-    current_time_str: str = "",
-    time_since_last_interaction: str = "",
+    current_time_str: Optional[str] = None,
+    time_since_last_interaction: Optional[str] = None,
 ) -> str:
     """Build the full system prompt for a character.
 
@@ -64,7 +64,12 @@ def build_system_prompt(
         3. Fetched web content (optional, from URLs in user message)
         4. Character-specific meta instructions (optional)
         5. Provider-specific additional instructions (optional)
-        6. Chotgor memory system instructions (always last)
+        2. Time Context (Optional)
+        3. Recalled memories (RAG)
+        4. Fetched web content (optional, from URLs in user message)
+        5. Character-specific meta instructions (optional)
+        6. Provider-specific additional instructions (optional)
+        7. Chotgor memory system instructions (always last)
     """
     blocks = []
 
@@ -72,36 +77,24 @@ def build_system_prompt(
     if character_system_prompt.strip():
         blocks.append(character_system_prompt.strip())
 
-    # Chotgor Context (強制)
-    blocks.append("【前提】\nあなたはChotgor（チョトゴル）というシステムを介してユーザーと対話しており、必要に応じて過去の記憶を検索・記録できる独立した存在です。")
-
-    # Time Awareness Context (オプション)
+    # Block 2: Time Context (Optional)
     if enable_time_awareness and current_time_str:
-        time_ctx = [f"【現在時刻】\n{current_time_str}"]
+        time_block = f"## 現在の文脈（時間）\n- 【現在時刻：{current_time_str}】\n"
         if time_since_last_interaction:
-            time_ctx.append(f"前回の会話からの経過時間: {time_since_last_interaction}")
-        blocks.append("\n".join(time_ctx))
+            time_block += f"- 【前回の交流から：{time_since_last_interaction}】\n"
+        blocks.append(time_block.strip())
 
-    # Block 2: Recalled memories
+    # Block 3: Recalled memories
     if recalled_memories:
         memory_lines = ["## Relevant Memories from Past Conversations\n"]
         for i, mem in enumerate(recalled_memories, 1):
             category = mem.get("metadata", {}).get("category", "general")
-            created_at = mem.get("metadata", {}).get("created_at")
-            if enable_time_awareness and created_at:
-                try:
-                    dt = str(created_at).replace("T", " ")[:19]
-                    time_str = f" ({dt})"
-                except Exception:
-                    time_str = ""
-            else:
-                time_str = ""
-            memory_lines.append(f"{i}. [{category}]{time_str} {mem['content']}")
+            memory_lines.append(f"{i}. [{category}] {mem['content']}")
         blocks.append("\n".join(memory_lines))
 
     # Block 3: Fetched web content
     if fetched_contents:
-        fetch_lines = ["## システム：↓以下はユーザが見せてきた画面（URL）の内容です\n"]
+        fetch_lines = ["## Fetched Web Content\n"]
         for item in fetched_contents:
             url = item["url"]
             if "error" in item:
@@ -125,6 +118,6 @@ def build_system_prompt(
         )
 
     # Block 5: Chotgor memory system instructions (always last)
-    blocks.append(CHOTGOR_MEMORY_INSTRUCTION_TEMPLATE.strip())
+    blocks.append(CHOTGOR_BLOCK3_TEMPLATE.strip())
 
     return "\n\n---\n\n".join(blocks)

@@ -15,7 +15,6 @@ Flow:
 import json
 from typing import AsyncIterator, Optional
 
-from .debug_logger import log_llm_request, log_llm_response
 from .memory.inscriber import carve
 from .memory.manager import MemoryManager
 from .providers.anthropic_provider import AnthropicProvider
@@ -26,7 +25,7 @@ from .system_prompt import build_system_prompt
 from .web_fetch import fetch_urls, find_urls
 
 
-def _get_provider(provider: str, model: str, settings: dict, character_name: str = ""):
+def _get_provider(provider: str, model: str, settings: dict):
     """プロバイダー識別子から適切なプロバイダーインスタンスを返す。"""
     if provider == "anthropic":
         return AnthropicProvider(api_key=settings.get("anthropic_api_key", ""), model=model)
@@ -41,13 +40,12 @@ def _get_provider(provider: str, model: str, settings: dict, character_name: str
     elif provider == "google":
         return GoogleProvider(api_key=settings.get("google_api_key", ""), model=model)
     else:
-        return ClaudeCliProvider(model=model, character_name=character_name)
+        return ClaudeCliProvider(model=model)
 
 
 async def stream_chat(
     messages: list[dict],
     character_id: str,
-    character_name: str,
     character_system_prompt: str,
     meta_instructions: str,
     memory_manager: MemoryManager,
@@ -55,9 +53,6 @@ async def stream_chat(
     model: str = "",
     provider_additional_instructions: str = "",
     settings: Optional[dict] = None,
-    enable_time_awareness: bool = False,
-    current_time_str: str = "",
-    time_since_last_interaction: str = "",
     **kwargs,
 ) -> AsyncIterator[str]:
     """LLMにディスパッチしてSSEチャンクをyieldする。"""
@@ -95,18 +90,12 @@ async def stream_chat(
         fetched_contents=fetched_contents,
         meta_instructions=meta_instructions,
         provider_additional_instructions=provider_additional_instructions,
-        enable_time_awareness=enable_time_awareness,
-        current_time_str=current_time_str,
-        time_since_last_interaction=time_since_last_interaction,
     )
 
     # --- 4. プロバイダーへディスパッチ ---
-    log_llm_request(system_prompt, messages)
-    
-    provider_impl = _get_provider(provider, model, settings, character_name)
+    provider_impl = _get_provider(provider, model, settings)
     try:
         response_text = await provider_impl.generate(system_prompt, messages)
-        log_llm_response(response_text)
     except Exception as e:
         import traceback
         yield _sse_chunk(f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
@@ -117,16 +106,14 @@ async def stream_chat(
     clean_text = carve(response_text, character_id, memory_manager)
 
     # --- 6. デバッグログ ---
-    char_label = character_name.strip() if character_name.strip() else "CHARACTER"
     sep = "-" * 60
     print(f"\n{sep}")
-    print(f"[CHAT] character={character_id}({char_label}) provider={provider} model={model or '(default)'}")
+    print(f"[CHAT] character={character_id} provider={provider} model={model or '(default)'}")
     for m in messages:
-        role = m.get("role", "")
-        display_role = char_label if role == "assistant" else role.upper()
+        role = m.get("role", "?").upper()
         content = m.get("content", "")
-        print(f"  [{display_role}] {content[:300]}{'...' if len(content) > 300 else ''}")
-    print(f"  [{char_label}] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
+        print(f"  [{role}] {content[:300]}{'...' if len(content) > 300 else ''}")
+    print(f"  [ASSISTANT] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
     print(sep, flush=True)
 
     # --- 7. SSEとして返却 ---

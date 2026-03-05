@@ -288,6 +288,18 @@ class SQLiteStore:
                 .all()
             )
 
+    def get_all_active_memories(self, character_id: str) -> list[Memory]:
+        """Return all active (non-deleted) memories for a character."""
+        with self.get_session() as session:
+            return (
+                session.query(Memory)
+                .filter(
+                    Memory.character_id == character_id,
+                    Memory.deleted_at.is_(None)
+                )
+                .all()
+            )
+
     def has_digest(self, character_id: str, date_str: str) -> bool:
         """Return True if any DigestLog entry exists for this character + date."""
         with self.get_session() as session:
