@@ -1,28 +1,14 @@
 """Routine to identify and forget memories that have time-decayed below a threshold."""
 
-import asyncio
-import json
 import logging
-import os
 import re
-import subprocess
 from datetime import datetime
 
+from ..providers.claude_cli_provider import invoke_claude_cli
 from .manager import MemoryManager
 from .sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
-
-
-def _find_claude() -> str:
-    for name in ("claude", "claude.cmd", "claude.ps1"):
-        import shutil
-        path = shutil.which(name)
-        if path:
-            return path
-    return "claude"
-
-CLAUDE_BIN = _find_claude()
 
 
 async def run_forget_process(
@@ -131,52 +117,5 @@ async def run_pending_forget(sqlite: SQLiteStore, memory_manager: MemoryManager)
 
 
 async def _call_claude_for_forget(system_prompt: str, memory_text: str) -> str:
-    """Invoke Claude CLI synchronously in a thread and return the summary text."""
-    _exclude = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
-    env = {k: v for k, v in os.environ.items() if k not in _exclude}
-
-    def run():
-        return subprocess.run(
-            [
-                CLAUDE_BIN,
-                "--output-format", "stream-json",
-                "--verbose",
-                "--print",
-                "--tools", "",
-                "--no-session-persistence",
-                "--system-prompt", system_prompt,
-            ],
-            input=memory_text.encode("utf-8"),
-            capture_output=True,
-            env=env,
-        )
-
-    result = await asyncio.to_thread(run)
-
-    if result.returncode != 0:
-        err = result.stderr.decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Claude CLI error (code {result.returncode}): {err[:500]}"
-        )
-
-    collected = ""
-    for line in result.stdout.decode("utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        etype = event.get("type")
-        if etype == "assistant":
-            for block in event.get("message", {}).get("content", []):
-                if block.get("type") == "text":
-                    collected += block["text"]
-        elif etype == "result":
-            result_text = event.get("result", "")
-            if result_text and not collected:
-                collected = result_text
-
-    return collected.strip() or "(No kept ids)"
+    result = await invoke_claude_cli(system_prompt, memory_text)
+    return result.strip() or "(No kept ids)"

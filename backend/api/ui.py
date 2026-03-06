@@ -8,25 +8,13 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ..core.providers.registry import (
+    PROVIDER_LABELS,
+    PROVIDER_ORDER,
+    get_default_model,
+)
+
 router = APIRouter(prefix="/ui", tags=["ui"])
-
-PROVIDER_LABELS = {
-    "claude_cli": "Claude Code CLI (OAuth)",
-    "anthropic": "Anthropic API",
-    "openai": "OpenAI",
-    "xai": "xAI / Grok",
-    "google": "Google Gemini",
-}
-
-PROVIDER_DEFAULT_MODELS = {
-    "claude_cli": "",
-    "anthropic": "claude-sonnet-4-6",
-    "openai": "gpt-4o",
-    "xai": "grok-2-latest",
-    "google": "gemini-2.0-flash",
-}
-
-PROVIDER_ORDER = ["claude_cli", "anthropic", "openai", "xai", "google"]
 
 
 MAX_IMAGE_BYTES = 2 * 1024 * 1024  # 2MB
@@ -93,7 +81,7 @@ async def new_character_form(request: Request):
             "action": "/ui/characters/new",
             "available_providers": _available_providers(settings),
             "provider_labels": PROVIDER_LABELS,
-            "provider_default_models": PROVIDER_DEFAULT_MODELS,
+            "provider_default_models": {p: get_default_model(p) for p in PROVIDER_ORDER},
         },
     )
 
@@ -145,7 +133,7 @@ async def edit_character_form(request: Request, character_id: str):
             "action": f"/ui/characters/{character_id}",
             "available_providers": _available_providers(settings),
             "provider_labels": PROVIDER_LABELS,
-            "provider_default_models": PROVIDER_DEFAULT_MODELS,
+            "provider_default_models": {p: get_default_model(p) for p in PROVIDER_ORDER},
         },
     )
 

@@ -1,6 +1,12 @@
 """Claude Code CLI provider.
 
 Calls the `claude` CLI as a subprocess using asyncio.to_thread (Windows-safe).
+
+Public helpers
+--------------
+invoke_claude_cli(system_prompt, input_text) -> str
+    Generic single-turn Claude CLI call shared by digest.py / forget.py.
+    Raises RuntimeError on non-zero exit.
 """
 
 import asyncio
@@ -23,26 +29,95 @@ def _find_claude() -> str:
 
 CLAUDE_BIN = _find_claude()
 
+# Env vars that must be stripped before spawning the Claude subprocess.
+# CLAUDECODE  : prevents nested-session error.
+# ANTHROPIC_API_KEY : forces OAuth fallback instead of using a possibly invalid key.
+_CLAUDE_ENV_EXCLUDES = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
+
+
+def _clean_env() -> dict:
+    return {k: v for k, v in os.environ.items() if k not in _CLAUDE_ENV_EXCLUDES}
+
+
+def _parse_stream_json(raw: str) -> str:
+    """Extract assistant text from Claude CLI stream-json output."""
+    collected = ""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        etype = event.get("type")
+        if etype == "assistant":
+            for block in event.get("message", {}).get("content", []):
+                if block.get("type") == "text":
+                    collected += block["text"]
+        elif etype == "result":
+            result_text = event.get("result", "")
+            if result_text and not collected:
+                collected = result_text
+    return collected
+
+
+async def invoke_claude_cli(system_prompt: str, input_text: str) -> str:
+    """Invoke Claude CLI with a system prompt and stdin input; return assistant text.
+
+    Used by digest.py and forget.py for batch / scheduled tasks.
+    Raises RuntimeError if the CLI exits with a non-zero return code.
+    """
+    env = _clean_env()
+
+    def run():
+        return subprocess.run(
+            [
+                CLAUDE_BIN,
+                "--output-format", "stream-json",
+                "--verbose",
+                "--print",
+                "--tools", "",
+                "--no-session-persistence",
+                "--system-prompt", system_prompt,
+            ],
+            input=input_text.encode("utf-8"),
+            capture_output=True,
+            env=env,
+        )
+
+    result = await asyncio.to_thread(run)
+
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Claude CLI exited with code {result.returncode}: {err[:500]}"
+        )
+
+    return _parse_stream_json(result.stdout.decode("utf-8", errors="replace"))
+
 
 class ClaudeCliProvider(BaseLLMProvider):
+    PROVIDER_ID = "claude_cli"
+    DEFAULT_MODEL = ""
+    REQUIRES_API_KEY = False
+
     def __init__(self, model: str = "", character_name: str = ""):
         self.model = model  # CLI model is configured via Claude Code settings, not flags
         self.character_name = character_name
 
+    @classmethod
+    def from_config(cls, model: str, settings: dict, character_name: str = "", **kwargs):
+        return cls(model=model, character_name=character_name)
+
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         # Detect if any image exists in messages
-        has_images = False
-        for m in messages:
-            content = m.get("content")
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "image_url":
-                        has_images = True
-                        break
-            if has_images:
-                break
-        
-        # If images found, append a note to the system prompt
+        has_images = any(
+            isinstance(item, dict) and item.get("type") == "image_url"
+            for m in messages
+            for item in (m.get("content") if isinstance(m.get("content"), list) else [])
+        )
+
         if has_images:
             system_prompt += (
                 "\n\n[SYSTEM NOTE: The user has provided one or more images, "
@@ -75,27 +150,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                     f"STDERR: {err_msg[:1000]}\nSTDOUT: {out_msg[:2000]}]"
                 )
 
-            collected_text = ""
-            for line in result.stdout.decode("utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                etype = event.get("type")
-                if etype == "assistant":
-                    for block in event.get("message", {}).get("content", []):
-                        if block.get("type") == "text":
-                            collected_text += block["text"]
-                elif etype == "result":
-                    result_text = event.get("result", "")
-                    if result_text and not collected_text:
-                        collected_text = result_text
-
-            return collected_text
+            return _parse_stream_json(result.stdout.decode("utf-8", errors="replace"))
 
         except FileNotFoundError:
             return (
@@ -115,10 +170,7 @@ class ClaudeCliProvider(BaseLLMProvider):
 
 async def _run_claude(sys_path: str, msg_path: str) -> subprocess.CompletedProcess:
     """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround)."""
-    # CLAUDECODE: remove to avoid nested session error
-    # ANTHROPIC_API_KEY: remove so Claude falls back to OAuth instead of invalid key
-    _exclude = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
-    env = {k: v for k, v in os.environ.items() if k not in _exclude}
+    env = _clean_env()
 
     with open(sys_path, encoding="utf-8") as f:
         system_content = f.read()
@@ -160,7 +212,6 @@ def _format_conversation(messages: list[dict], character_name: str = "") -> str:
     if len(messages) == 1:
         content = messages[0].get("content")
         if isinstance(content, list):
-            # Extract text from list content
             parts = []
             for item in content:
                 if isinstance(item, str):
@@ -174,7 +225,7 @@ def _format_conversation(messages: list[dict], character_name: str = "") -> str:
     for msg in messages[:-1]:
         role = msg.get("role", "")
         content = msg.get("content")
-        
+
         text_content = ""
         if isinstance(content, str):
             text_content = content
@@ -186,7 +237,7 @@ def _format_conversation(messages: list[dict], character_name: str = "") -> str:
                 elif isinstance(item, dict) and item.get("type") == "text":
                     parts.append(item.get("text", ""))
             text_content = "".join(parts)
-        
+
         if role == "system":
             continue
         if role == "user":

@@ -10,9 +10,17 @@ DEFAULT_MODEL = "gemini-2.0-flash"
 
 
 class GoogleProvider(BaseLLMProvider):
+    PROVIDER_ID = "google"
+    DEFAULT_MODEL = DEFAULT_MODEL
+    REQUIRES_API_KEY = True
+
     def __init__(self, api_key: str, model: str = ""):
         self.api_key = api_key
-        self.model = model or DEFAULT_MODEL
+        self.model = model or self.DEFAULT_MODEL
+
+    @classmethod
+    def from_config(cls, model: str, settings: dict, **kwargs) -> "GoogleProvider":
+        return cls(api_key=settings.get("google_api_key", ""), model=model)
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         try:
@@ -37,9 +45,9 @@ class GoogleProvider(BaseLLMProvider):
         for m in messages:
             role = m.get("role")
             content = m.get("content")
-            
+
             parts = []
-            
+
             # プレーンテキストの場合
             if isinstance(content, str):
                 text_to_add = content
@@ -47,7 +55,7 @@ class GoogleProvider(BaseLLMProvider):
                     text_to_add = f"{system_prompt}\n\n---\n\n{text_to_add}"
                     system_injected = True
                 parts.append(types.Part(text=text_to_add))
-            
+
             # リスト形式（マルチモーダル）の場合
             elif isinstance(content, list):
                 for item in content:
@@ -71,7 +79,7 @@ class GoogleProvider(BaseLLMProvider):
                                             mime_type=mime_type
                                         )
                                     )
-            
+
             if parts:
                 contents.append(
                     types.Content(role="model" if role == "assistant" else "user", parts=parts)

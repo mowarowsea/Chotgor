@@ -1,6 +1,8 @@
 """OpenAI-compatible provider (OpenAI and xAI/Grok).
 
-xAI uses the same OpenAI SDK with a different base_url.
+XAIProvider is a thin subclass of OpenAIProvider that fixes the base URL and
+default model, so the registry treats xAI as a first-class provider rather than
+a special-cased variant of OpenAI.
 """
 
 import asyncio
@@ -8,15 +10,20 @@ from typing import Optional
 
 from .base import BaseLLMProvider
 
-DEFAULT_MODEL = "gpt-4o"
-DEFAULT_XAI_MODEL = "grok-2-latest"
-
 
 class OpenAIProvider(BaseLLMProvider):
+    PROVIDER_ID = "openai"
+    DEFAULT_MODEL = "gpt-4o"
+    REQUIRES_API_KEY = True
+
     def __init__(self, api_key: str, model: str = "", base_url: Optional[str] = None):
         self.api_key = api_key
-        self.model = model or (DEFAULT_XAI_MODEL if base_url else DEFAULT_MODEL)
+        self.model = model or self.DEFAULT_MODEL
         self.base_url = base_url
+
+    @classmethod
+    def from_config(cls, model: str, settings: dict, **kwargs) -> "OpenAIProvider":
+        return cls(api_key=settings.get("openai_api_key", ""), model=model)
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         try:
@@ -51,3 +58,18 @@ class OpenAIProvider(BaseLLMProvider):
             return await asyncio.to_thread(run)
         except Exception as e:
             return f"[OpenAI API error: {e}]"
+
+
+class XAIProvider(OpenAIProvider):
+    """xAI / Grok — OpenAI-compatible API at a different base URL."""
+
+    PROVIDER_ID = "xai"
+    DEFAULT_MODEL = "grok-2-latest"
+    BASE_URL = "https://api.x.ai/v1"
+
+    def __init__(self, api_key: str, model: str = ""):
+        super().__init__(api_key=api_key, model=model or self.DEFAULT_MODEL, base_url=self.BASE_URL)
+
+    @classmethod
+    def from_config(cls, model: str, settings: dict, **kwargs) -> "XAIProvider":
+        return cls(api_key=settings.get("xai_api_key", ""), model=model)

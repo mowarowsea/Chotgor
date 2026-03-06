@@ -17,30 +17,9 @@ from typing import AsyncIterator, Optional, Union
 
 from .memory.inscriber import carve
 from .memory.manager import MemoryManager
-from .providers.anthropic_provider import AnthropicProvider
-from .providers.claude_cli_provider import ClaudeCliProvider
-from .providers.google_provider import GoogleProvider
-from .providers.openai_provider import OpenAIProvider
+from .providers.registry import create_provider
 from .system_prompt import build_system_prompt
 from .web_fetch import fetch_urls, find_urls
-
-
-def _get_provider(provider: str, model: str, settings: dict):
-    """プロバイダー識別子から適切なプロバイダーインスタンスを返す。"""
-    if provider == "anthropic":
-        return AnthropicProvider(api_key=settings.get("anthropic_api_key", ""), model=model)
-    elif provider == "openai":
-        return OpenAIProvider(api_key=settings.get("openai_api_key", ""), model=model)
-    elif provider == "xai":
-        return OpenAIProvider(
-            api_key=settings.get("xai_api_key", ""),
-            model=model,
-            base_url="https://api.x.ai/v1",
-        )
-    elif provider == "google":
-        return GoogleProvider(api_key=settings.get("google_api_key", ""), model=model)
-    else:
-        return ClaudeCliProvider(model=model)
 
 def extract_text_content(content: Union[str, list, None]) -> str:
     """メッセージの content (str or list) からプレーンテキストのみを抽出する。"""
@@ -110,7 +89,7 @@ async def stream_chat(
     )
 
     # --- 4. プロバイダーへディスパッチ ---
-    provider_impl = _get_provider(provider, model, settings)
+    provider_impl = create_provider(provider, model, settings)
     try:
         response_text = await provider_impl.generate(system_prompt, messages)
     except Exception as e:

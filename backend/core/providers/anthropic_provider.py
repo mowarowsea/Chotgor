@@ -8,9 +8,17 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
 class AnthropicProvider(BaseLLMProvider):
+    PROVIDER_ID = "anthropic"
+    DEFAULT_MODEL = DEFAULT_MODEL
+    REQUIRES_API_KEY = True
+
     def __init__(self, api_key: str, model: str = ""):
         self.api_key = api_key
-        self.model = model or DEFAULT_MODEL
+        self.model = model or self.DEFAULT_MODEL
+
+    @classmethod
+    def from_config(cls, model: str, settings: dict, **kwargs) -> "AnthropicProvider":
+        return cls(api_key=settings.get("anthropic_api_key", ""), model=model)
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         try:

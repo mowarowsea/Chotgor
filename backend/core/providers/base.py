@@ -2,6 +2,15 @@
 
 
 class BaseLLMProvider:
+    PROVIDER_ID: str = ""
+    DEFAULT_MODEL: str = ""
+    REQUIRES_API_KEY: bool = True
+
+    @classmethod
+    def from_config(cls, model: str, settings: dict, **kwargs) -> "BaseLLMProvider":
+        """Factory method. Subclasses override to pick their own settings keys."""
+        raise NotImplementedError(f"{cls.__name__}.from_config() is not implemented")
+
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """Generate a response from the LLM.
 
