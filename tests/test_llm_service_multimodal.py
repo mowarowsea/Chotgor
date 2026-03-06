@@ -1,5 +1,5 @@
 import pytest
-from backend.core.llm_service import extract_text_content
+from backend.core.chat.service import extract_text_content
 
 def test_extract_text_content_string():
     assert extract_text_content("hello") == "hello"

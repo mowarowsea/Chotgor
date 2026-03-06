@@ -10,8 +10,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from .api import characters, memories, openai_compat
+from .adapters.openai import router as openai_router
+from .api import characters, memories
 from .api import ui as ui_module
+from .core.chat.service import ChatService
 from .core.memory.chroma_store import ChromaStore
 from .core.memory.digest import run_pending_digests
 from .core.memory.forget import run_pending_forget
@@ -38,6 +40,7 @@ async def lifespan(app: FastAPI):
     app.state.sqlite = sqlite
     app.state.chroma = chroma
     app.state.memory_manager = memory_manager
+    app.state.chat_service = ChatService(memory_manager=memory_manager)
 
     # Seed optional Tavily key from environment if not already set
     if not sqlite.get_setting("tavily_api_key"):
@@ -111,7 +114,7 @@ if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Include routers
-app.include_router(openai_compat.router)
+app.include_router(openai_router.router)
 app.include_router(characters.router)
 app.include_router(memories.router)
 app.include_router(ui_module.router)

@@ -1,31 +1,24 @@
-"""OpenAI-compatible API endpoints.
+"""OpenAI互換 API エンドポイント。
 
-GET  /v1/models          - List available models (character@provider combinations)
-POST /v1/chat/completions - Chat with streaming SSE
+GET  /v1/models          - 利用可能なモデル一覧 (character@provider)
+POST /v1/chat/completions - チャット (streaming SSE / non-streaming)
 """
 
+import json
 import uuid
-from typing import Optional, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from ..core.llm_service import stream_chat
+from ...core.chat.models import ChatRequest, Message
+from ...core.providers.registry import PROVIDER_LABELS
+from .schemas import OAIChatRequest
 
 router = APIRouter()
 
-PROVIDER_LABELS = {
-    "claude_cli": "Claude CLI",
-    "anthropic": "Anthropic",
-    "openai": "OpenAI",
-    "xai": "xAI",
-    "google": "Google",
-}
-
 
 def _available_providers(settings: dict) -> set[str]:
-    """Return providers that have API keys configured (claude_cli always included)."""
+    """APIキーが設定済みのプロバイダーを返す (claude_cli は常に含む)。"""
     result = {"claude_cli"}
     for p in ("anthropic", "openai", "xai", "google"):
         if settings.get(f"{p}_api_key"):
@@ -33,22 +26,38 @@ def _available_providers(settings: dict) -> set[str]:
     return result
 
 
-class ChatMessage(BaseModel):
-    role: str
-    content: Union[str, list, None] = None
+def _sse_chunk(text: str) -> str:
+    payload = {
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
+    }
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-class ChatCompletionRequest(BaseModel):
-    model: str  # format: "{character_id}@{provider}"
-    messages: list[ChatMessage]
-    stream: bool = False
-    max_tokens: Optional[int] = 4096
-    temperature: Optional[float] = None
+def _format_completion(model: str, text: str) -> dict:
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+    return {
+        "id": completion_id,
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": -1,
+            "completion_tokens": -1,
+            "total_tokens": -1,
+        },
+    }
 
 
 @router.get("/v1/models")
 async def list_models(request: Request):
-    """Return all enabled character@provider combinations as model entries."""
+    """利用可能な character@provider の組み合わせをモデル一覧として返す。"""
     state = request.app.state
     settings = state.sqlite.get_all_settings()
     available = _available_providers(settings)
@@ -71,8 +80,8 @@ async def list_models(request: Request):
 
 
 @router.post("/v1/chat/completions")
-async def chat_completions(request: Request, body: ChatCompletionRequest):
-    """OpenAI-compatible chat completions endpoint."""
+async def chat_completions(request: Request, body: OAIChatRequest):
+    """OpenAI互換チャット補完エンドポイント。"""
     state = request.app.state
 
     if "@" not in body.model:
@@ -94,24 +103,27 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         )
 
     settings = state.sqlite.get_all_settings()
-    messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
-    chat_kwargs = dict(
-        messages=messages,
+    chat_request = ChatRequest(
         character_id=character.id,
-        character_system_prompt=character.system_prompt_block1,
-        meta_instructions=character.meta_instructions,
-        memory_manager=state.memory_manager,
+        character_name=character.name,
         provider=provider,
         model=provider_config.get("model", ""),
+        messages=[Message(role=m.role, content=m.content) for m in body.messages],
+        character_system_prompt=character.system_prompt_block1,
+        meta_instructions=character.meta_instructions,
         provider_additional_instructions=provider_config.get("additional_instructions", ""),
         settings=settings,
     )
 
+    chat_service = state.chat_service
+
     if body.stream:
         async def generate():
-            async for chunk in stream_chat(**chat_kwargs):
-                yield chunk
+            text = await chat_service.execute(chat_request)
+            if text:
+                yield _sse_chunk(text)
+            yield "data: [DONE]\n\n"
 
         return StreamingResponse(
             generate(),
@@ -123,32 +135,5 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             },
         )
     else:
-        full_text = ""
-        async for chunk in stream_chat(**chat_kwargs):
-            if chunk.startswith("data: ") and not chunk.strip().endswith("[DONE]"):
-                import json
-                try:
-                    data = json.loads(chunk[6:])
-                    delta = data["choices"][0]["delta"].get("content", "")
-                    full_text += delta
-                except Exception:
-                    pass
-
-        completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
-        return {
-            "id": completion_id,
-            "object": "chat.completion",
-            "model": body.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": full_text},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": -1,
-                "completion_tokens": -1,
-                "total_tokens": -1,
-            },
-        }
+        text = await chat_service.execute(chat_request)
+        return _format_completion(body.model, text)

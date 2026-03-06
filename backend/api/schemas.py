@@ -19,18 +19,3 @@ class CharacterUpdate(BaseModel):
     system_prompt_block1: Optional[str] = None
     meta_instructions: Optional[str] = None
     cleanup_config: Optional[dict] = None
-
-
-# --- OpenAI-compatible API Schemas ---
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-
-class ChatCompletionRequest(BaseModel):
-    model: str  # format: "{character_id}@{provider}"
-    messages: list[ChatMessage]
-    stream: bool = False
-    max_tokens: Optional[int] = 4096
-    temperature: Optional[float] = None
