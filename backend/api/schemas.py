@@ -12,6 +12,7 @@ class CharacterCreate(BaseModel):
     system_prompt_block1: str = ""
     meta_instructions: str = ""
     cleanup_config: dict = {}
+    ghost_model: Optional[str] = None
 
 
 class CharacterUpdate(BaseModel):
@@ -19,3 +20,4 @@ class CharacterUpdate(BaseModel):
     system_prompt_block1: Optional[str] = None
     meta_instructions: Optional[str] = None
     cleanup_config: Optional[dict] = None
+    ghost_model: Optional[str] = None

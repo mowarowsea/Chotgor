@@ -73,6 +73,7 @@ async def trigger_digest(
         memory_manager=request.app.state.memory_manager,
         sqlite=request.app.state.sqlite,
         delete_originals=delete_originals,
+        ghost_model=char.ghost_model,
     )
     return result
 

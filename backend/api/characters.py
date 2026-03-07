@@ -17,6 +17,7 @@ def _char_to_dict(char) -> dict:
         "system_prompt_block1": char.system_prompt_block1,
         "meta_instructions": char.meta_instructions,
         "cleanup_config": char.cleanup_config,
+        "ghost_model": char.ghost_model,
         "created_at": char.created_at.isoformat() if char.created_at else None,
         "updated_at": char.updated_at.isoformat() if char.updated_at else None,
     }
@@ -37,6 +38,7 @@ async def create_character(request: Request, body: CharacterCreate):
         system_prompt_block1=body.system_prompt_block1,
         meta_instructions=body.meta_instructions,
         cleanup_config=body.cleanup_config,
+        ghost_model=body.ghost_model,
     )
     return _char_to_dict(char)
 

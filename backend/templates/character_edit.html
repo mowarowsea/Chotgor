@@ -107,6 +107,24 @@
         </div>
 
         <div class="form-group">
+            <label for="ghost_model">
+                内省モデル (Ghost Model)
+                <span class="label-hint">ダイジェスト・忘却処理に使うモデル。有効なモデルから選択。</span>
+            </label>
+            <select id="ghost_model" name="ghost_model" class="form-control">
+                <option value="">(未設定)</option>
+                {% for preset in model_presets %}
+                {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}
+                <option value="{{ preset.id }}"
+                        {% if character and character.ghost_model == preset.id %}selected{% endif %}>
+                    {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                </option>
+                {% endif %}
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
             <label>
                 <input type="checkbox" name="digest_delete_originals"
                        {% if character and character.cleanup_config and character.cleanup_config.get('digest_delete_originals') %}checked{% endif %}>

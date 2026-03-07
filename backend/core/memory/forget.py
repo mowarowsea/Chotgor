@@ -3,9 +3,10 @@
 import logging
 import re
 from datetime import datetime
+from typing import Optional
 
 from ..debug_logger import log_llm_request, log_llm_response
-from ..providers.claude_cli_provider import invoke_claude_cli
+from ..providers.registry import create_provider
 from .manager import MemoryManager
 from .sqlite_store import SQLiteStore
 
@@ -19,6 +20,7 @@ async def run_forget_process(
     memory_manager: MemoryManager,
     sqlite: SQLiteStore,
     threshold: float = 0.2,
+    ghost_model: Optional[str] = None,
 ) -> dict:
     """Run forget process for a character.
     
@@ -64,7 +66,7 @@ async def run_forget_process(
     )
 
     try:
-        response_text = await _call_claude_for_forget(system_prompt, memory_text)
+        response_text = await _call_llm_for_forget(system_prompt, memory_text, ghost_model, sqlite)
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -111,15 +113,33 @@ async def run_pending_forget(sqlite: SQLiteStore, memory_manager: MemoryManager)
                 character_system_prompt=char.system_prompt_block1,
                 memory_manager=memory_manager,
                 sqlite=sqlite,
-                threshold=threshold
+                threshold=threshold,
+                ghost_model=char.ghost_model,
             )
         except Exception:
             pass
 
 
-async def _call_claude_for_forget(system_prompt: str, memory_text: str) -> str:
-    log_llm_request(system_prompt, [{"role": "user", "content": memory_text}])
-    result = await invoke_claude_cli(system_prompt, memory_text)
+async def _call_llm_for_forget(
+    system_prompt: str,
+    memory_text: str,
+    ghost_model: Optional[str],
+    sqlite: SQLiteStore,
+) -> str:
+    if not ghost_model:
+        raise RuntimeError("ghost_model が設定されていません。キャラクター設定で内省モデルを選択してください。")
+
+    preset = sqlite.get_model_preset(ghost_model)
+    if preset is None:
+        raise RuntimeError(f"ghost_model に指定されたプリセット '{ghost_model}' が見つかりません。")
+
+    messages = [{"role": "user", "content": memory_text}]
+    log_llm_request(system_prompt, messages)
+
+    settings = sqlite.get_all_settings()
+    provider = create_provider(preset.provider, preset.model_id, settings)
+    result = await provider.generate(system_prompt, messages)
+
     text = result.strip() or "(No kept ids)"
     log_llm_response(text)
     return text

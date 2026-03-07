@@ -92,6 +92,8 @@ async def create_character(request: Request):
     image_data = await _read_image_data(form)
 
     char_id = str(uuid.uuid4())
+    ghost_model = form.get("ghost_model") or None
+
     request.app.state.sqlite.create_character(
         character_id=char_id,
         name=name,
@@ -99,6 +101,7 @@ async def create_character(request: Request):
         meta_instructions=form.get("meta_instructions", ""),
         cleanup_config={"digest_delete_originals": bool(form.get("digest_delete_originals"))},
         enabled_providers=enabled_providers,
+        ghost_model=ghost_model,
         image_data=image_data,
     )
     return RedirectResponse(url="/ui/", status_code=303)
@@ -137,12 +140,15 @@ async def update_character(request: Request, character_id: str):
     existing_config = (char.cleanup_config or {}) if char else {}
     existing_config["digest_delete_originals"] = bool(form.get("digest_delete_originals"))
 
+    ghost_model = form.get("ghost_model") or None
+
     update_kwargs: dict = dict(
         name=(form.get("name") or "").strip(),
         system_prompt_block1=form.get("system_prompt_block1", ""),
         meta_instructions=form.get("meta_instructions", ""),
         cleanup_config=existing_config,
         enabled_providers=enabled_providers,
+        ghost_model=ghost_model,
     )
     new_image = await _read_image_data(form)
     if new_image:

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ..debug_logger import log_llm_request, log_llm_response
-from ..providers.claude_cli_provider import invoke_claude_cli
+from ..providers.registry import create_provider
 from .manager import MemoryManager
 from .sqlite_store import Memory, SQLiteStore
 
@@ -17,6 +17,7 @@ async def run_daily_digest(
     memory_manager: MemoryManager,
     sqlite: SQLiteStore,
     delete_originals: bool = False,
+    ghost_model: Optional[str] = None,
 ) -> dict:
     """Run a daily digest for one character on one date.
 
@@ -57,7 +58,7 @@ async def run_daily_digest(
     )
 
     try:
-        summary = await _call_claude_for_digest(system_prompt, memory_text)
+        summary = await _call_llm_for_digest(system_prompt, memory_text, ghost_model, sqlite)
     except Exception as e:
         sqlite.record_digest(
             character_id=character_id,
@@ -105,6 +106,7 @@ async def run_pending_digests(sqlite: SQLiteStore, memory_manager: MemoryManager
     for char in characters:
         cleanup_config = char.cleanup_config or {}
         delete_originals = cleanup_config.get("digest_delete_originals", False)
+        ghost_model = char.ghost_model
 
         # Find oldest non-digest memory for this character
         with sqlite.get_session() as session:
@@ -142,15 +144,33 @@ async def run_pending_digests(sqlite: SQLiteStore, memory_manager: MemoryManager
                         memory_manager=memory_manager,
                         sqlite=sqlite,
                         delete_originals=delete_originals,
+                        ghost_model=ghost_model,
                     )
                 except Exception:
                     pass
             current = current + timedelta(days=1)
 
 
-async def _call_claude_for_digest(system_prompt: str, memory_text: str) -> str:
-    log_llm_request(system_prompt, [{"role": "user", "content": memory_text}])
-    result = await invoke_claude_cli(system_prompt, memory_text)
+async def _call_llm_for_digest(
+    system_prompt: str,
+    memory_text: str,
+    ghost_model: Optional[str],
+    sqlite: SQLiteStore,
+) -> str:
+    if not ghost_model:
+        raise RuntimeError("ghost_model が設定されていません。キャラクター設定で内省モデルを選択してください。")
+
+    preset = sqlite.get_model_preset(ghost_model)
+    if preset is None:
+        raise RuntimeError(f"ghost_model に指定されたプリセット '{ghost_model}' が見つかりません。")
+
+    messages = [{"role": "user", "content": memory_text}]
+    log_llm_request(system_prompt, messages)
+
+    settings = sqlite.get_all_settings()
+    provider = create_provider(preset.provider, preset.model_id, settings)
+    result = await provider.generate(system_prompt, messages)
+
     text = result.strip() or "(No summary generated)"
     log_llm_response(text)
     return text
