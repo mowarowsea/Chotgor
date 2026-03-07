@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Models &mdash; Chotgor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>モデル設定</h1>
+</div>
+
+<!-- 追加フォーム -->
+<div class="form-card">
+    <h2 style="margin-top:0; font-size:1.1rem;">新規モデルを登録</h2>
+    <form method="post" action="/ui/model-presets/new">
+        <div class="preset-form-row">
+            <div class="form-group" style="flex:2; margin-bottom:0">
+                <label for="new-name">表示名</label>
+                <input type="text" id="new-name" name="name" class="form-control"
+                       placeholder="例: Google-Gemini3Flash" required>
+            </div>
+            <div class="form-group" style="flex:1.5; margin-bottom:0">
+                <label for="new-provider">プロバイダー</label>
+                <select id="new-provider" name="provider" class="form-control" required>
+                    <option value="">-- 選択 --</option>
+                    {% for p in provider_order %}
+                    <option value="{{ p }}">{{ provider_labels.get(p, p) }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="flex:2; margin-bottom:0">
+                <label for="new-model-id">モデルID
+                    <span class="label-hint">空欄 = プロバイダーデフォルト</span>
+                </label>
+                <input type="text" id="new-model-id" name="model_id" class="form-control"
+                       placeholder="例: gemini-2.0-flash">
+            </div>
+            <div style="padding-top:22px; flex-shrink:0">
+                <button type="submit" class="btn btn-primary">追加</button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- 登録済みモデル一覧 -->
+<div class="form-card">
+    <h2 style="margin-top:0; font-size:1.1rem;">登録済みモデル</h2>
+
+    {% if presets %}
+    <table class="preset-table">
+        <thead>
+            <tr>
+                <th>表示名</th>
+                <th>プロバイダー</th>
+                <th>モデルID</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for preset in presets %}
+            <tr id="row-{{ preset.id }}">
+                <td>
+                    <span class="preset-display" id="name-display-{{ preset.id }}">{{ preset.name }}</span>
+                    <input type="text" class="form-control preset-edit-field" id="name-edit-{{ preset.id }}"
+                           value="{{ preset.name }}" style="display:none">
+                </td>
+                <td>
+                    <span class="preset-display" id="provider-display-{{ preset.id }}">
+                        {{ provider_labels.get(preset.provider, preset.provider) }}
+                    </span>
+                    <select class="form-control preset-edit-field" id="provider-edit-{{ preset.id }}"
+                            style="display:none">
+                        {% for p in provider_order %}
+                        <option value="{{ p }}" {% if p == preset.provider %}selected{% endif %}>
+                            {{ provider_labels.get(p, p) }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td>
+                    <span class="preset-display" id="modelid-display-{{ preset.id }}">
+                        {% if preset.model_id %}{{ preset.model_id }}{% else %}<span class="text-muted">(デフォルト)</span>{% endif %}
+                    </span>
+                    <input type="text" class="form-control preset-edit-field" id="modelid-edit-{{ preset.id }}"
+                           value="{{ preset.model_id }}" placeholder="(デフォルト)" style="display:none">
+                </td>
+                <td class="preset-actions">
+                    <button type="button" class="btn btn-secondary btn-sm"
+                            onclick="startEdit('{{ preset.id }}')" id="edit-btn-{{ preset.id }}">
+                        編集
+                    </button>
+                    <form method="post" action="/ui/model-presets/{{ preset.id }}/edit"
+                          id="edit-form-{{ preset.id }}" style="display:none">
+                        <input type="hidden" name="name" id="edit-name-{{ preset.id }}">
+                        <input type="hidden" name="provider" id="edit-provider-{{ preset.id }}">
+                        <input type="hidden" name="model_id" id="edit-modelid-{{ preset.id }}">
+                        <button type="button" class="btn btn-primary btn-sm"
+                                onclick="submitEdit('{{ preset.id }}')">保存</button>
+                        <button type="button" class="btn btn-secondary btn-sm"
+                                onclick="cancelEdit('{{ preset.id }}')">キャンセル</button>
+                    </form>
+                    <form method="post" action="/ui/model-presets/{{ preset.id }}/delete"
+                          style="display:inline"
+                          onsubmit="return confirm('{{ preset.name }} を削除しますか？')">
+                        <button type="submit" class="btn btn-danger btn-sm">削除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">登録されているモデルがありません。上のフォームから追加してください。</p>
+    {% endif %}
+</div>
+
+<style>
+.preset-form-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+.preset-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+.preset-table th,
+.preset-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color, #eee);
+    text-align: left;
+    vertical-align: middle;
+}
+.preset-table th {
+    background: var(--surface-alt, #f8f8f8);
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-muted, #666);
+}
+.preset-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    white-space: nowrap;
+}
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 0.82rem;
+}
+.btn-danger {
+    background: #c0392b;
+    color: #fff;
+    border: none;
+}
+.btn-danger:hover {
+    background: #922b21;
+}
+.text-muted {
+    color: var(--text-muted, #aaa);
+    font-style: italic;
+}
+.preset-edit-field {
+    width: 100%;
+    min-width: 80px;
+}
+</style>
+
+<script>
+function startEdit(id) {
+    ['name', 'provider', 'modelid'].forEach(field => {
+        document.getElementById(`${field}-display-${id}`).style.display = 'none';
+        document.getElementById(`${field}-edit-${id}`).style.display = '';
+    });
+    document.getElementById(`edit-btn-${id}`).style.display = 'none';
+    document.getElementById(`edit-form-${id}`).style.display = 'inline-flex';
+    document.getElementById(`edit-form-${id}`).style.gap = '6px';
+}
+
+function cancelEdit(id) {
+    ['name', 'provider', 'modelid'].forEach(field => {
+        document.getElementById(`${field}-display-${id}`).style.display = '';
+        document.getElementById(`${field}-edit-${id}`).style.display = 'none';
+    });
+    document.getElementById(`edit-btn-${id}`).style.display = '';
+    document.getElementById(`edit-form-${id}`).style.display = 'none';
+}
+
+function submitEdit(id) {
+    document.getElementById(`edit-name-${id}`).value =
+        document.getElementById(`name-edit-${id}`).value;
+    document.getElementById(`edit-provider-${id}`).value =
+        document.getElementById(`provider-edit-${id}`).value;
+    document.getElementById(`edit-modelid-${id}`).value =
+        document.getElementById(`modelid-edit-${id}`).value;
+    document.getElementById(`edit-form-${id}`).submit();
+}
+</script>
+{% endblock %}

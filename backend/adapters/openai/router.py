@@ -1,6 +1,6 @@
 """OpenAI互換 API エンドポイント。
 
-GET  /v1/models          - 利用可能なモデル一覧 (character@provider)
+GET  /v1/models          - 利用可能なモデル一覧 (character@preset_id)
 POST /v1/chat/completions - チャット (streaming SSE / non-streaming)
 """
 
@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ...core.chat.models import ChatRequest, Message
+from ...core.debug_logger import log_front_input
 from ...core.providers.registry import PROVIDER_LABELS
 from .schemas import OAIChatRequest
 
@@ -57,7 +58,7 @@ def _format_completion(model: str, text: str) -> dict:
 
 @router.get("/v1/models")
 async def list_models(request: Request):
-    """利用可能な character@provider の組み合わせをモデル一覧として返す。"""
+    """利用可能な character@preset_id の組み合わせをモデル一覧として返す。"""
     state = request.app.state
     settings = state.sqlite.get_all_settings()
     available = _available_providers(settings)
@@ -65,16 +66,17 @@ async def list_models(request: Request):
 
     data = []
     for char in characters:
-        for provider, config in (char.enabled_providers or {}).items():
-            if provider not in available:
+        for preset_id in (char.enabled_providers or {}):
+            preset = state.sqlite.get_model_preset(preset_id)
+            if preset is None or preset.provider not in available:
                 continue
-            label = PROVIDER_LABELS.get(provider, provider)
+            label = PROVIDER_LABELS.get(preset.provider, preset.provider)
             data.append({
-                "id": f"{char.id}@{provider}",
+                "id": f"{char.id}@{preset_id}",
                 "object": "model",
                 "created": int(char.created_at.timestamp()) if char.created_at else 0,
                 "owned_by": "chotgor",
-                "name": f"{char.name} ({label})",
+                "name": f"{char.name} ({preset.name})",
             })
     return {"object": "list", "data": data}
 
@@ -84,35 +86,41 @@ async def chat_completions(request: Request, body: OAIChatRequest):
     """OpenAI互換チャット補完エンドポイント。"""
     state = request.app.state
 
+    log_front_input(body.model_dump())
+
     if "@" not in body.model:
         raise HTTPException(
             status_code=400,
-            detail="Model must be in format {character_id}@{provider}",
+            detail="Model must be in format {character_id}@{preset_id}",
         )
 
-    char_id, provider = body.model.rsplit("@", 1)
+    char_id, preset_id = body.model.rsplit("@", 1)
     character = state.sqlite.get_character(char_id)
     if not character:
         raise HTTPException(status_code=404, detail=f"Character '{char_id}' not found")
 
-    provider_config = (character.enabled_providers or {}).get(provider)
-    if provider_config is None:
+    model_config = (character.enabled_providers or {}).get(preset_id)
+    if model_config is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Provider '{provider}' is not enabled for this character",
+            detail=f"Model preset '{preset_id}' is not enabled for this character",
         )
+
+    preset = state.sqlite.get_model_preset(preset_id)
+    if preset is None:
+        raise HTTPException(status_code=404, detail=f"Model preset '{preset_id}' not found")
 
     settings = state.sqlite.get_all_settings()
 
     chat_request = ChatRequest(
         character_id=character.id,
         character_name=character.name,
-        provider=provider,
-        model=provider_config.get("model", ""),
+        provider=preset.provider,
+        model=preset.model_id,
         messages=[Message(role=m.role, content=m.content) for m in body.messages],
         character_system_prompt=character.system_prompt_block1,
         meta_instructions=character.meta_instructions,
-        provider_additional_instructions=provider_config.get("additional_instructions", ""),
+        provider_additional_instructions=model_config.get("additional_instructions", ""),
         settings=settings,
     )
 

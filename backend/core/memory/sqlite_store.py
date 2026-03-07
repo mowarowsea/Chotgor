@@ -82,6 +82,16 @@ class DigestLog(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
+class LLMModelPreset(Base):
+    __tablename__ = "llm_model_presets"
+
+    id = Column(String, primary_key=True)          # UUID
+    name = Column(String, nullable=False)           # "Google-Gemini3Flash"
+    provider = Column(String, nullable=False)       # "google"
+    model_id = Column(String, nullable=False, default="")  # "gemini-2.0-flash"
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+
 class SQLiteStore:
     def __init__(self, db_path: str):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -345,3 +355,42 @@ class SQLiteStore:
                 .limit(limit)
                 .all()
             )
+
+    # --- LLM Model Presets ---
+
+    def create_model_preset(self, preset_id: str, name: str, provider: str, model_id: str) -> LLMModelPreset:
+        with self.get_session() as session:
+            preset = LLMModelPreset(id=preset_id, name=name, provider=provider, model_id=model_id)
+            session.add(preset)
+            session.commit()
+            session.refresh(preset)
+            return preset
+
+    def list_model_presets(self) -> list[LLMModelPreset]:
+        with self.get_session() as session:
+            return session.query(LLMModelPreset).order_by(LLMModelPreset.created_at).all()
+
+    def get_model_preset(self, preset_id: str) -> Optional[LLMModelPreset]:
+        with self.get_session() as session:
+            return session.get(LLMModelPreset, preset_id)
+
+    def update_model_preset(self, preset_id: str, **kwargs) -> Optional[LLMModelPreset]:
+        with self.get_session() as session:
+            preset = session.get(LLMModelPreset, preset_id)
+            if not preset:
+                return None
+            for k, v in kwargs.items():
+                if hasattr(preset, k):
+                    setattr(preset, k, v)
+            session.commit()
+            session.refresh(preset)
+            return preset
+
+    def delete_model_preset(self, preset_id: str) -> bool:
+        with self.get_session() as session:
+            preset = session.get(LLMModelPreset, preset_id)
+            if not preset:
+                return False
+            session.delete(preset)
+            session.commit()
+            return True

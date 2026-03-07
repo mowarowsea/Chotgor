@@ -45,68 +45,63 @@
         <div class="form-group">
             <label for="meta_instructions">
                 Meta Instructions
-                <span class="label-hint">Optional: additional behavioral guidelines (all providers)</span>
+                <span class="label-hint">Optional: additional behavioral guidelines (all models)</span>
             </label>
             <textarea id="meta_instructions" name="meta_instructions"
                       class="form-control textarea-medium"
                       placeholder="Optional: memory usage preferences, response style guidelines, topics to avoid...">{% if character %}{{ character.meta_instructions }}{% endif %}</textarea>
         </div>
 
-        <!-- Provider accordion -->
+        <!-- Model accordion -->
         <div class="form-group">
-            <label>LLM Providers
-                <span class="label-hint">有効にしたプロバイダーが OpenWebUI のモデルリストに表示されます</span>
+            <label>利用モデル
+                <span class="label-hint">有効にしたモデルが OpenWebUI のモデルリストに表示されます</span>
             </label>
 
-            {% if available_providers %}
-            <div class="accordion">
-                {% for provider in available_providers %}
-                {% set cfg = (character.enabled_providers or {}).get(provider, none) if character else none %}
-                <div class="accordion-item">
+            <div class="accordion" id="model-accordion">
+                {% for preset in model_presets %}
+                {% set cfg = (character.enabled_providers or {}).get(preset.id) if character else none %}
+                {% if cfg is not none %}
+                <div class="accordion-item" data-preset-id="{{ preset.id }}">
+                    <input type="hidden" name="preset_ids" value="{{ preset.id }}">
                     <div class="accordion-header">
-                        <label class="accordion-label">
-                            <input type="checkbox"
-                                   name="provider_{{ provider }}_enabled"
-                                   value="1"
-                                   id="chk_{{ provider }}"
-                                   {% if cfg is not none %}checked{% endif %}
-                                   onchange="toggleProvider('{{ provider }}', this.checked)">
-                            <strong>{{ provider_labels[provider] }}</strong>
-                        </label>
-                        <button type="button" class="accordion-toggle"
-                                onclick="toggleProvider('{{ provider }}', document.getElementById('chk_{{ provider }}').checked, true)">
-                            ▾
-                        </button>
+                        <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
+                        <strong>{{ preset.name }}</strong>
+                        <span class="provider-badge">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
+                        <button type="button" class="btn-remove" onclick="removePreset(this, '{{ preset.id }}')">✕</button>
                     </div>
-                    <div class="accordion-body" id="body_{{ provider }}"
-                         {% if cfg is none %}style="display:none"{% endif %}>
-                        <div class="form-group">
-                            <label>Model Name
-                                <span class="label-hint">空欄 = {{ provider_default_models[provider] or 'デフォルト' }}</span>
-                            </label>
-                            <input type="text"
-                                   name="provider_{{ provider }}_model"
-                                   class="form-control"
-                                   value="{{ cfg.get('model', '') if cfg else '' }}"
-                                   placeholder="{{ provider_default_models[provider] }}">
-                        </div>
+                    <div class="accordion-body">
                         <div class="form-group">
                             <label>Additional Instructions
-                                <span class="label-hint">このプロバイダー向けの追記指示（Base に追記、省略可）</span>
+                                <span class="label-hint">このモデル向けの追記指示（省略可）</span>
                             </label>
-                            <textarea name="provider_{{ provider }}_additional_instructions"
-                                      class="form-control textarea-medium"
-                                      placeholder="例: 応答は必ず日本語で。絵文字は使わないで。">{{ cfg.get('additional_instructions', '') if cfg else '' }}</textarea>
+                            <textarea name="ai_{{ preset.id }}" class="form-control textarea-medium">{{ cfg.get('additional_instructions', '') }}</textarea>
                         </div>
                     </div>
                 </div>
+                {% endif %}
                 {% endfor %}
             </div>
-            {% else %}
+
+            <div class="add-model-row">
+                <select id="preset-select" class="form-control">
+                    <option value="">-- モデルを選択 --</option>
+                    {% for preset in model_presets %}
+                    <option value="{{ preset.id }}"
+                            data-name="{{ preset.name }}"
+                            data-provider-label="{{ provider_labels.get(preset.provider, preset.provider) }}"
+                            {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}disabled{% endif %}>
+                        {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                    </option>
+                    {% endfor %}
+                </select>
+                <button type="button" class="btn btn-secondary" onclick="addPreset()">+ 追加</button>
+            </div>
+
+            {% if not model_presets %}
             <p class="form-hint">
-                利用できるプロバイダーがありません。
-                <a href="/ui/settings">Settings</a> でAPIキーを設定してください。
-                （Claude Code CLI は常に利用可能です）
+                利用できるモデルがありません。
+                <a href="/ui/model-presets">Models</a> でモデルを登録してください。
             </p>
             {% endif %}
         </div>
@@ -133,7 +128,7 @@
     {% if character %}
     <div class="info-box">
         <strong>Character ID:</strong> <code>{{ character.id }}</code><br>
-        <strong>OpenWebUI のモデルID形式:</strong> <code>{{ character.id }}@{provider}</code>
+        <strong>OpenWebUI のモデルID形式:</strong> <code>{{ character.id }}@{preset_id}</code>
     </div>
     {% endif %}
 </div>
@@ -169,6 +164,10 @@
     border: 1px solid var(--border-color, #ddd);
     border-radius: 6px;
     overflow: hidden;
+    margin-bottom: 8px;
+}
+.accordion:empty {
+    display: none;
 }
 .accordion-item + .accordion-item {
     border-top: 1px solid var(--border-color, #ddd);
@@ -180,14 +179,6 @@
     background: var(--surface-alt, #f8f8f8);
     gap: 10px;
 }
-.accordion-label {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    margin: 0;
-}
 .accordion-toggle {
     background: none;
     border: none;
@@ -195,6 +186,24 @@
     font-size: 14px;
     color: var(--text-muted, #666);
     padding: 0 4px;
+    flex-shrink: 0;
+}
+.provider-badge {
+    font-size: 12px;
+    color: var(--text-muted, #888);
+    flex: 1;
+}
+.btn-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-muted, #999);
+    padding: 0 4px;
+    flex-shrink: 0;
+}
+.btn-remove:hover {
+    color: #c00;
 }
 .accordion-body {
     padding: 14px 16px;
@@ -203,16 +212,65 @@
 .accordion-body .form-group:last-child {
     margin-bottom: 0;
 }
+
+.add-model-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+.add-model-row .form-control {
+    flex: 1;
+}
 </style>
 
 <script>
-function toggleProvider(provider, checked, keepOpen) {
-    const body = document.getElementById('body_' + provider);
-    if (keepOpen) {
-        body.style.display = body.style.display === 'none' ? 'block' : 'none';
-    } else {
-        body.style.display = checked ? 'block' : 'none';
-    }
+function toggleAccordion(btn) {
+    const body = btn.closest('.accordion-item').querySelector('.accordion-body');
+    body.style.display = body.style.display === 'none' ? 'block' : 'none';
+}
+
+function removePreset(btn, presetId) {
+    btn.closest('.accordion-item').remove();
+    const opt = document.querySelector(`#preset-select option[value="${presetId}"]`);
+    if (opt) opt.disabled = false;
+}
+
+function addPreset() {
+    const sel = document.getElementById('preset-select');
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt || !opt.value) return;
+
+    const presetId = opt.value;
+    const name = opt.dataset.name;
+    const providerLabel = opt.dataset.providerLabel;
+
+    if (document.querySelector(`.accordion-item[data-preset-id="${presetId}"]`)) return;
+
+    const accordion = document.getElementById('model-accordion');
+    const item = document.createElement('div');
+    item.className = 'accordion-item';
+    item.dataset.presetId = presetId;
+    item.innerHTML = `
+        <input type="hidden" name="preset_ids" value="${presetId}">
+        <div class="accordion-header">
+            <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
+            <strong>${name}</strong>
+            <span class="provider-badge">${providerLabel}</span>
+            <button type="button" class="btn-remove" onclick="removePreset(this, '${presetId}')">✕</button>
+        </div>
+        <div class="accordion-body">
+            <div class="form-group" style="margin-bottom:0">
+                <label>Additional Instructions
+                    <span class="label-hint">このモデル向けの追記指示（省略可）</span>
+                </label>
+                <textarea name="ai_${presetId}" class="form-control textarea-medium"></textarea>
+            </div>
+        </div>
+    `;
+    accordion.appendChild(item);
+
+    opt.disabled = true;
+    sel.value = '';
 }
 </script>
 {% endblock %}

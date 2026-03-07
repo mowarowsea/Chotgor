@@ -11,7 +11,6 @@ from fastapi.templating import Jinja2Templates
 from ..core.providers.registry import (
     PROVIDER_LABELS,
     PROVIDER_ORDER,
-    get_default_model,
 )
 
 router = APIRouter(prefix="/ui", tags=["ui"])
@@ -33,15 +32,6 @@ async def _read_image_data(form) -> Optional[str]:
     content_type = image_file.content_type or "image/png"
     b64 = base64.b64encode(content).decode()
     return f"data:{content_type};base64,{b64}"
-
-
-def _available_providers(settings: dict) -> list[str]:
-    """Return providers usable in the UI (claude_cli always, others if API key set)."""
-    result = ["claude_cli"]
-    for p in ("anthropic", "openai", "xai", "google"):
-        if settings.get(f"{p}_api_key"):
-            result.append(p)
-    return result
 
 
 def setup_templates(templates_dir: str) -> Jinja2Templates:
@@ -72,16 +62,15 @@ async def dashboard(request: Request):
 
 @router.get("/characters/new", response_class=HTMLResponse)
 async def new_character_form(request: Request):
-    settings = request.app.state.sqlite.get_all_settings()
+    model_presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
         "character_edit.html",
         {
             "request": request,
             "character": None,
             "action": "/ui/characters/new",
-            "available_providers": _available_providers(settings),
+            "model_presets": model_presets,
             "provider_labels": PROVIDER_LABELS,
-            "provider_default_models": {p: get_default_model(p) for p in PROVIDER_ORDER},
         },
     )
 
@@ -93,16 +82,12 @@ async def create_character(request: Request):
     if not name:
         return RedirectResponse(url="/ui/characters/new", status_code=303)
 
-    settings = request.app.state.sqlite.get_all_settings()
-    available = _available_providers(settings)
-
+    preset_ids = form.getlist("preset_ids")
     enabled_providers = {}
-    for p in available:
-        if form.get(f"provider_{p}_enabled"):
-            enabled_providers[p] = {
-                "model": form.get(f"provider_{p}_model", ""),
-                "additional_instructions": form.get(f"provider_{p}_additional_instructions", ""),
-            }
+    for pid in preset_ids:
+        enabled_providers[pid] = {
+            "additional_instructions": form.get(f"ai_{pid}", ""),
+        }
 
     image_data = await _read_image_data(form)
 
@@ -124,16 +109,15 @@ async def edit_character_form(request: Request, character_id: str):
     char = request.app.state.sqlite.get_character(character_id)
     if not char:
         return RedirectResponse(url="/ui/", status_code=303)
-    settings = request.app.state.sqlite.get_all_settings()
+    model_presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
         "character_edit.html",
         {
             "request": request,
             "character": char,
             "action": f"/ui/characters/{character_id}",
-            "available_providers": _available_providers(settings),
+            "model_presets": model_presets,
             "provider_labels": PROVIDER_LABELS,
-            "provider_default_models": {p: get_default_model(p) for p in PROVIDER_ORDER},
         },
     )
 
@@ -141,16 +125,13 @@ async def edit_character_form(request: Request, character_id: str):
 @router.post("/characters/{character_id}")
 async def update_character(request: Request, character_id: str):
     form = await request.form()
-    settings = request.app.state.sqlite.get_all_settings()
-    available = _available_providers(settings)
 
+    preset_ids = form.getlist("preset_ids")
     enabled_providers = {}
-    for p in available:
-        if form.get(f"provider_{p}_enabled"):
-            enabled_providers[p] = {
-                "model": form.get(f"provider_{p}_model", ""),
-                "additional_instructions": form.get(f"provider_{p}_additional_instructions", ""),
-            }
+    for pid in preset_ids:
+        enabled_providers[pid] = {
+            "additional_instructions": form.get(f"ai_{pid}", ""),
+        }
 
     char = request.app.state.sqlite.get_character(character_id)
     existing_config = (char.cleanup_config or {}) if char else {}
@@ -214,6 +195,62 @@ async def memories_view(
 async def delete_memory(request: Request, character_id: str, memory_id: str):
     request.app.state.memory_manager.delete_memory(memory_id, character_id)
     return RedirectResponse(url=f"/ui/memories/{character_id}", status_code=303)
+
+
+# --- Model Presets ---
+
+@router.get("/model-presets", response_class=HTMLResponse)
+async def model_presets_list(request: Request):
+    presets = request.app.state.sqlite.list_model_presets()
+    return get_templates().TemplateResponse(
+        "model_presets.html",
+        {
+            "request": request,
+            "presets": presets,
+            "provider_labels": PROVIDER_LABELS,
+            "provider_order": PROVIDER_ORDER,
+        },
+    )
+
+
+@router.post("/model-presets/new")
+async def create_model_preset(request: Request):
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    provider = (form.get("provider") or "").strip()
+    model_id = (form.get("model_id") or "").strip()
+    if not name or not provider:
+        return RedirectResponse(url="/ui/model-presets", status_code=303)
+    preset_id = str(uuid.uuid4())
+    request.app.state.sqlite.create_model_preset(
+        preset_id=preset_id,
+        name=name,
+        provider=provider,
+        model_id=model_id,
+    )
+    return RedirectResponse(url="/ui/model-presets", status_code=303)
+
+
+@router.post("/model-presets/{preset_id}/edit")
+async def update_model_preset(request: Request, preset_id: str):
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    provider = (form.get("provider") or "").strip()
+    model_id = (form.get("model_id") or "").strip()
+    if name and provider:
+        request.app.state.sqlite.update_model_preset(
+            preset_id,
+            name=name,
+            provider=provider,
+            model_id=model_id,
+        )
+    return RedirectResponse(url="/ui/model-presets", status_code=303)
+
+
+@router.post("/model-presets/{preset_id}/delete")
+async def delete_model_preset(request: Request, preset_id: str):
+    request.app.state.sqlite.delete_model_preset(preset_id)
+    return RedirectResponse(url="/ui/model-presets", status_code=303)
 
 
 # --- Settings ---

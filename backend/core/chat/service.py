@@ -14,6 +14,7 @@ Flow:
 
 from typing import Union
 
+from ..debug_logger import log_front_output, log_llm_request, log_llm_response
 from ..memory.inscriber import carve
 from ..memory.manager import MemoryManager
 from ..providers.registry import create_provider
@@ -83,14 +84,17 @@ class ChatService:
 
         # --- 4. プロバイダーへディスパッチ ---
         provider_impl = create_provider(request.provider, request.model, request.settings)
+        log_llm_request(system_prompt, messages)
         try:
             response_text = await provider_impl.generate(system_prompt, messages)
         except Exception as e:
             import traceback
             return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+        log_llm_response(response_text)
 
         # --- 5. 記憶を刻み込む ---
         clean_text = carve(response_text, request.character_id, self.memory_manager)
+        log_front_output(clean_text)
 
         # --- 6. デバッグログ ---
         sep = "-" * 60
