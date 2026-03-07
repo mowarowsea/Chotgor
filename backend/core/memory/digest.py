@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+from ..debug_logger import log_llm_request, log_llm_response
 from ..providers.claude_cli_provider import invoke_claude_cli
 from .manager import MemoryManager
 from .sqlite_store import Memory, SQLiteStore
@@ -148,5 +149,8 @@ async def run_pending_digests(sqlite: SQLiteStore, memory_manager: MemoryManager
 
 
 async def _call_claude_for_digest(system_prompt: str, memory_text: str) -> str:
+    log_llm_request(system_prompt, [{"role": "user", "content": memory_text}])
     result = await invoke_claude_cli(system_prompt, memory_text)
-    return result.strip() or "(No summary generated)"
+    text = result.strip() or "(No summary generated)"
+    log_llm_response(text)
+    return text
