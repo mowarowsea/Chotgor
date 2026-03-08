@@ -32,21 +32,21 @@ def log_front_input(data: Any) -> None:
     _write_log("01_FrontInput", content)
 
 
-def log_llm_request(system_prompt: str, messages: list[dict]) -> None:
-    """LLMへの出力リクエスト(システムプロンプト+履歴)を記録"""
-    data = {
-        "system_prompt": system_prompt,
-        "messages": messages
-    }
-    content = json.dumps(data, ensure_ascii=False, indent=2)
-    _write_log("02_LLMRequest", content)
-
-
-def log_llm_response(text: str) -> None:
-    """LLMからの生の入力(レスポンス)を記録"""
-    _write_log("03_LLMResponse", text)
-
-
 def log_front_output(text: str) -> None:
     """フロントへ連携する最終的な出力(クリーンなテキスト)を記録"""
     _write_log("04_FrontOutput", text)
+
+
+def log_provider_request(provider: str, params: Any) -> None:
+    """プロバイダーAPIへ実際に送るリクエスト全パラメータを記録"""
+    content = json.dumps(params, ensure_ascii=False, indent=2, default=str)
+    _write_log(f"02_Request_{provider}", content)
+
+
+def log_provider_response(provider: str, data: Any) -> None:
+    """プロバイダーAPIからの生レスポンスを記録"""
+    if isinstance(data, str):
+        content = data
+    else:
+        content = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    _write_log(f"03_Response_{provider}", content)

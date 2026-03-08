@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 
+from ..debug_logger import log_provider_request, log_provider_response
 from .base import BaseLLMProvider
 
 
@@ -150,6 +151,12 @@ class ClaudeCliProvider(BaseLLMProvider):
         if self.thinking_level != "default":
             extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
 
+        log_provider_request("claude_cli", {
+            "system_prompt": system_prompt,
+            "conversation": conversation,
+            "extra_env": extra_env,
+        })
+
         try:
             result = await _run_claude(sys_file.name, msg_file.name, extra_env=extra_env or None)
 
@@ -161,7 +168,9 @@ class ClaudeCliProvider(BaseLLMProvider):
                     f"STDERR: {err_msg[:1000]}\nSTDOUT: {out_msg[:2000]}]"
                 )
 
-            return _parse_stream_json(result.stdout.decode("utf-8", errors="replace"))
+            raw_stdout = result.stdout.decode("utf-8", errors="replace")
+            log_provider_response("claude_cli", raw_stdout)
+            return _parse_stream_json(raw_stdout)
 
         except FileNotFoundError:
             return (

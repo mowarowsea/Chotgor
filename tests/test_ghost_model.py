@@ -124,10 +124,7 @@ async def test_call_llm_for_digest_uses_ghost_model_preset(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value="digest summary")
 
-    with patch("backend.core.memory.digest.create_provider", return_value=mock_provider) as mock_cp, \
-         patch("backend.core.memory.digest.log_llm_request") as mock_req, \
-         patch("backend.core.memory.digest.log_llm_response") as mock_res:
-
+    with patch("backend.core.memory.digest.create_provider", return_value=mock_provider) as mock_cp:
         result = await _call_llm_for_digest("sys_prompt", "memory content", preset_id, sqlite_store)
 
     assert result == "digest summary"
@@ -135,8 +132,6 @@ async def test_call_llm_for_digest_uses_ghost_model_preset(sqlite_store):
     mock_provider.generate.assert_called_once_with(
         "sys_prompt", [{"role": "user", "content": "memory content"}]
     )
-    mock_req.assert_called_once()
-    mock_res.assert_called_once_with("digest summary")
 
 
 @pytest.mark.asyncio
@@ -147,16 +142,11 @@ async def test_call_llm_for_forget_uses_ghost_model_preset(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value="[KEEP: NONE]")
 
-    with patch("backend.core.memory.forget.create_provider", return_value=mock_provider) as mock_cp, \
-         patch("backend.core.memory.forget.log_llm_request") as mock_req, \
-         patch("backend.core.memory.forget.log_llm_response") as mock_res:
-
+    with patch("backend.core.memory.forget.create_provider", return_value=mock_provider) as mock_cp:
         result = await _call_llm_for_forget("sys_prompt", "candidates text", preset_id, sqlite_store)
 
     assert result == "[KEEP: NONE]"
     mock_cp.assert_called_once_with("anthropic", "claude-3-5-haiku-latest", sqlite_store.get_all_settings(), thinking_level="default")
-    mock_req.assert_called_once()
-    mock_res.assert_called_once_with("[KEEP: NONE]")
 
 
 # ---------------------------------------------------------------------------

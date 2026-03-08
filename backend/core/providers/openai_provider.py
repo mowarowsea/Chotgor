@@ -8,6 +8,7 @@ a special-cased variant of OpenAI.
 import asyncio
 from typing import Optional
 
+from ..debug_logger import log_provider_request, log_provider_response
 from .base import BaseLLMProvider
 
 # thinking_level → reasoning_effort
@@ -76,7 +77,9 @@ class OpenAIProvider(BaseLLMProvider):
                 call_kwargs["max_completion_tokens"] = 16000
             else:
                 call_kwargs["max_tokens"] = 4096
+            log_provider_request(self.PROVIDER_ID, call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
+            log_provider_response(self.PROVIDER_ID, response.model_dump())
             return response.choices[0].message.content
 
         try:

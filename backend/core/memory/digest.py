@@ -3,7 +3,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from ..debug_logger import log_llm_request, log_llm_response
 from ..providers.registry import create_provider
 from .manager import MemoryManager
 from .sqlite_store import Memory, SQLiteStore
@@ -165,12 +164,9 @@ async def _call_llm_for_digest(
         raise RuntimeError(f"ghost_model に指定されたプリセット '{ghost_model}' が見つかりません。")
 
     messages = [{"role": "user", "content": memory_text}]
-    log_llm_request(system_prompt, messages)
-
     settings = sqlite.get_all_settings()
     provider = create_provider(preset.provider, preset.model_id, settings, thinking_level=preset.thinking_level or "default")
     result = await provider.generate(system_prompt, messages)
 
     text = result.strip() or "(No summary generated)"
-    log_llm_response(text)
     return text

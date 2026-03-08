@@ -2,6 +2,7 @@
 
 import asyncio
 
+from ..debug_logger import log_provider_request, log_provider_response
 from .base import BaseLLMProvider
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -70,7 +71,9 @@ class AnthropicProvider(BaseLLMProvider):
                     params["temperature"] = 1
                     params["max_tokens"] = budget + 4096
 
+            log_provider_request("anthropic", params)
             response = client.messages.create(**params)
+            log_provider_response("anthropic", response.model_dump())
             # Filter out thinking blocks; return only text blocks
             return "".join(b.text for b in response.content if b.type == "text")
 

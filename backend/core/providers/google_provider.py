@@ -4,6 +4,7 @@ import asyncio
 import base64
 import re
 
+from ..debug_logger import log_provider_request, log_provider_response
 from .base import BaseLLMProvider
 
 DEFAULT_MODEL = "gemini-2.0-flash"
@@ -107,11 +108,13 @@ class GoogleProvider(BaseLLMProvider):
             if self.thinking_level != "default":
                 budget = _THINKING_BUDGET[self.thinking_level]
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+            log_provider_request("google", {"model": self.model, "contents": contents, "config": config_kwargs})
             response = client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=types.GenerateContentConfig(**config_kwargs),
             )
+            log_provider_response("google", response.model_dump() if hasattr(response, "model_dump") else str(response))
             return response.text
 
         try:
