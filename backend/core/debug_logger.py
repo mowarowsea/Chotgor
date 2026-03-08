@@ -37,9 +37,17 @@ def log_front_output(text: str) -> None:
     _write_log("04_FrontOutput", text)
 
 
+def _json_default(obj: Any) -> Any:
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "__dict__"):
+        return obj.__dict__
+    return str(obj)
+
+
 def log_provider_request(provider: str, params: Any) -> None:
     """プロバイダーAPIへ実際に送るリクエスト全パラメータを記録"""
-    content = json.dumps(params, ensure_ascii=False, indent=2, default=str)
+    content = json.dumps(params, ensure_ascii=False, indent=2, default=_json_default)
     _write_log(f"02_Request_{provider}", content)
 
 
