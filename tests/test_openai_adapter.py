@@ -1,12 +1,46 @@
 """Tests for adapters.openai.router and adapters.openai.schemas."""
 
 import json
+from datetime import timedelta
 
 import pytest
 
-from backend.adapters.openai.router import _format_completion, _sse_chunk
+from backend.adapters.openai.router import _format_completion, _format_time_delta, _sse_chunk
 from backend.adapters.openai.schemas import OAIChatMessage, OAIChatRequest
 from backend.core.chat.models import Message
+
+
+# --- _format_time_delta ---
+
+def test_format_time_delta_seconds():
+    assert _format_time_delta(timedelta(seconds=30)) == "数分以内"
+
+
+def test_format_time_delta_minutes():
+    result = _format_time_delta(timedelta(minutes=45))
+    assert result == "約 45 分"
+
+
+def test_format_time_delta_hours():
+    result = _format_time_delta(timedelta(hours=3))
+    assert result == "約 3.0 時間"
+
+
+def test_format_time_delta_days():
+    result = _format_time_delta(timedelta(days=2, hours=3))
+    assert result == "約 2 日"
+
+
+def test_format_time_delta_boundary_one_hour():
+    # ちょうど1時間は「時間」表記になること
+    result = _format_time_delta(timedelta(hours=1))
+    assert "時間" in result
+
+
+def test_format_time_delta_boundary_one_day():
+    # ちょうど24時間は「日」表記になること
+    result = _format_time_delta(timedelta(hours=24))
+    assert "日" in result
 
 
 # --- Model string parsing ---

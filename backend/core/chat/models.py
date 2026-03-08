@@ -22,3 +22,6 @@ class ChatRequest:
     provider_additional_instructions: str = ""
     thinking_level: str = "default"
     settings: dict = field(default_factory=dict)
+    enable_time_awareness: bool = False
+    current_time_str: str = ""
+    time_since_last_interaction: str = ""

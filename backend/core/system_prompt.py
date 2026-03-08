@@ -77,6 +77,9 @@ def build_system_prompt(
     if character_system_prompt.strip():
         blocks.append(character_system_prompt.strip())
 
+    # Chotgor Context (強制)
+    blocks.append("【前提】\nあなたはChotgor（チョトゴル）というシステムを介してユーザーと対話しており、必要に応じて過去の記憶を検索・記録できる独立した存在です。")
+
     # Block 2: Time Context (Optional)
     if enable_time_awareness and current_time_str:
         time_block = f"## 現在の文脈（時間）\n- 【現在時刻：{current_time_str}】\n"

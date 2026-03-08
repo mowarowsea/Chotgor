@@ -80,6 +80,9 @@ class ChatService:
             fetched_contents=fetched_contents,
             meta_instructions=request.meta_instructions,
             provider_additional_instructions=request.provider_additional_instructions,
+            enable_time_awareness=request.enable_time_awareness,
+            current_time_str=request.current_time_str,
+            time_since_last_interaction=request.time_since_last_interaction,
         )
 
         # --- 4. プロバイダーへディスパッチ ---

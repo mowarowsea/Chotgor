@@ -6,6 +6,7 @@ POST /v1/chat/completions - チャット (streaming SSE / non-streaming)
 
 import json
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -16,6 +17,19 @@ from ...core.providers.registry import PROVIDER_LABELS
 from .schemas import OAIChatRequest
 
 router = APIRouter()
+
+
+def _format_time_delta(diff) -> str:
+    """timedelta を日本語の経過時間文字列に変換する。"""
+    hours = diff.total_seconds() / 3600
+    if hours < 1:
+        m = int(hours * 60)
+        return f"約 {m} 分" if m > 0 else "数分以内"
+    elif hours < 24:
+        return f"約 {hours:.1f} 時間"
+    else:
+        days = int(hours / 24)
+        return f"約 {days} 日"
 
 
 def _available_providers(settings: dict) -> set[str]:
@@ -112,6 +126,25 @@ async def chat_completions(request: Request, body: OAIChatRequest):
 
     settings = state.sqlite.get_all_settings()
 
+    # --- 時刻計算 ---
+    now = datetime.now()
+    enable_time_awareness = settings.get("enable_time_awareness", "true") == "true"
+    current_time_str = ""
+    time_since_last_interaction = ""
+
+    if enable_time_awareness:
+        current_time_str = now.isoformat(timespec="seconds")
+        last_str = settings.get(f"last_interaction_{character.id}")
+        if last_str:
+            try:
+                last_dt = datetime.fromisoformat(last_str)
+                time_since_last_interaction = _format_time_delta(now - last_dt)
+            except Exception:
+                pass
+
+    if body.messages and body.messages[-1].role == "user":
+        state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
+
     chat_request = ChatRequest(
         character_id=character.id,
         character_name=character.name,
@@ -123,6 +156,9 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",
         settings=settings,
+        enable_time_awareness=enable_time_awareness,
+        current_time_str=current_time_str,
+        time_since_last_interaction=time_since_last_interaction,
     )
 
     chat_service = state.chat_service

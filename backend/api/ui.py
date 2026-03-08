@@ -283,6 +283,7 @@ async def save_settings(
     google_api_key: str = Form(""),
     tavily_api_key: str = Form(""),
     digest_time: str = Form("03:00"),
+    enable_time_awareness: Optional[str] = Form(None),
 ):
     store = request.app.state.sqlite
     for key, value in [
@@ -300,4 +301,7 @@ async def save_settings(
         store.set_setting("digest_time", digest_time)
     except Exception:
         pass
+
+    store.set_setting("enable_time_awareness", "true" if enable_time_awareness == "true" else "false")
+
     return RedirectResponse(url="/ui/settings?saved=1", status_code=303)
