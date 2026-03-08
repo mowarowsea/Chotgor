@@ -137,7 +137,7 @@ async def _call_llm_for_forget(
     log_llm_request(system_prompt, messages)
 
     settings = sqlite.get_all_settings()
-    provider = create_provider(preset.provider, preset.model_id, settings)
+    provider = create_provider(preset.provider, preset.model_id, settings, thinking_level=preset.thinking_level or "default")
     result = await provider.generate(system_prompt, messages)
 
     text = result.strip() or "(No kept ids)"

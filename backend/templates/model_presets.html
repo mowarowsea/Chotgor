@@ -32,6 +32,15 @@
                 <input type="text" id="new-model-id" name="model_id" class="form-control"
                        placeholder="例: gemini-2.0-flash">
             </div>
+            <div class="form-group" style="flex:1.2; margin-bottom:0">
+                <label for="new-thinking-level">思考レベル</label>
+                <select id="new-thinking-level" name="thinking_level" class="form-control">
+                    <option value="default">Default</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                </select>
+            </div>
             <div style="padding-top:22px; flex-shrink:0">
                 <button type="submit" class="btn btn-primary">追加</button>
             </div>
@@ -50,6 +59,7 @@
                 <th>表示名</th>
                 <th>プロバイダー</th>
                 <th>モデルID</th>
+                <th>思考レベル</th>
                 <th>操作</th>
             </tr>
         </thead>
@@ -81,6 +91,16 @@
                     <input type="text" class="form-control preset-edit-field" id="modelid-edit-{{ preset.id }}"
                            value="{{ preset.model_id }}" placeholder="(デフォルト)" style="display:none">
                 </td>
+                <td>
+                    <span class="preset-display" id="thinking-display-{{ preset.id }}">
+                        {{ preset.thinking_level or 'default' }}
+                    </span>
+                    <select class="form-control preset-edit-field" id="thinking-edit-{{ preset.id }}" style="display:none">
+                        {% for lvl in ['default', 'low', 'medium', 'high'] %}
+                        <option value="{{ lvl }}" {% if (preset.thinking_level or 'default') == lvl %}selected{% endif %}>{{ lvl }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
                 <td class="preset-actions">
                     <button type="button" class="btn btn-secondary btn-sm"
                             onclick="startEdit('{{ preset.id }}')" id="edit-btn-{{ preset.id }}">
@@ -91,6 +111,7 @@
                         <input type="hidden" name="name" id="edit-name-{{ preset.id }}">
                         <input type="hidden" name="provider" id="edit-provider-{{ preset.id }}">
                         <input type="hidden" name="model_id" id="edit-modelid-{{ preset.id }}">
+                        <input type="hidden" name="thinking_level" id="edit-thinking-{{ preset.id }}">
                         <button type="button" class="btn btn-primary btn-sm"
                                 onclick="submitEdit('{{ preset.id }}')">保存</button>
                         <button type="button" class="btn btn-secondary btn-sm"
@@ -166,7 +187,7 @@
 
 <script>
 function startEdit(id) {
-    ['name', 'provider', 'modelid'].forEach(field => {
+    ['name', 'provider', 'modelid', 'thinking'].forEach(field => {
         document.getElementById(`${field}-display-${id}`).style.display = 'none';
         document.getElementById(`${field}-edit-${id}`).style.display = '';
     });
@@ -176,7 +197,7 @@ function startEdit(id) {
 }
 
 function cancelEdit(id) {
-    ['name', 'provider', 'modelid'].forEach(field => {
+    ['name', 'provider', 'modelid', 'thinking'].forEach(field => {
         document.getElementById(`${field}-display-${id}`).style.display = '';
         document.getElementById(`${field}-edit-${id}`).style.display = 'none';
     });
@@ -191,6 +212,8 @@ function submitEdit(id) {
         document.getElementById(`provider-edit-${id}`).value;
     document.getElementById(`edit-modelid-${id}`).value =
         document.getElementById(`modelid-edit-${id}`).value;
+    document.getElementById(`edit-thinking-${id}`).value =
+        document.getElementById(`thinking-edit-${id}`).value;
     document.getElementById(`edit-form-${id}`).submit();
 }
 </script>

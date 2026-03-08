@@ -228,11 +228,13 @@ async def create_model_preset(request: Request):
     if not name or not provider:
         return RedirectResponse(url="/ui/model-presets", status_code=303)
     preset_id = str(uuid.uuid4())
+    thinking_level = form.get("thinking_level") or "default"
     request.app.state.sqlite.create_model_preset(
         preset_id=preset_id,
         name=name,
         provider=provider,
         model_id=model_id,
+        thinking_level=thinking_level,
     )
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 
@@ -243,12 +245,14 @@ async def update_model_preset(request: Request, preset_id: str):
     name = (form.get("name") or "").strip()
     provider = (form.get("provider") or "").strip()
     model_id = (form.get("model_id") or "").strip()
+    thinking_level = form.get("thinking_level") or "default"
     if name and provider:
         request.app.state.sqlite.update_model_preset(
             preset_id,
             name=name,
             provider=provider,
             model_id=model_id,
+            thinking_level=thinking_level,
         )
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 

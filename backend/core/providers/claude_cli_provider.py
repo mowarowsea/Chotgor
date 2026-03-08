@@ -34,6 +34,12 @@ CLAUDE_BIN = _find_claude()
 # ANTHROPIC_API_KEY : forces OAuth fallback instead of using a possibly invalid key.
 _CLAUDE_ENV_EXCLUDES = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
 
+_THINKING_TOKENS = {
+    "low": 1024,
+    "medium": 5000,
+    "high": 16000,
+}
+
 
 def _clean_env() -> dict:
     return {k: v for k, v in os.environ.items() if k not in _CLAUDE_ENV_EXCLUDES}
@@ -102,13 +108,14 @@ class ClaudeCliProvider(BaseLLMProvider):
     DEFAULT_MODEL = ""
     REQUIRES_API_KEY = False
 
-    def __init__(self, model: str = "", character_name: str = ""):
+    def __init__(self, model: str = "", character_name: str = "", thinking_level: str = "default"):
         self.model = model  # CLI model is configured via Claude Code settings, not flags
         self.character_name = character_name
+        self.thinking_level = thinking_level
 
     @classmethod
-    def from_config(cls, model: str, settings: dict, character_name: str = "", **kwargs):
-        return cls(model=model, character_name=character_name)
+    def from_config(cls, model: str, settings: dict, character_name: str = "", thinking_level: str = "default", **kwargs):
+        return cls(model=model, character_name=character_name, thinking_level=thinking_level)
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         # Detect if any image exists in messages
@@ -139,8 +146,12 @@ class ClaudeCliProvider(BaseLLMProvider):
         msg_file.write(conversation)
         msg_file.close()
 
+        extra_env = {}
+        if self.thinking_level != "default":
+            extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
+
         try:
-            result = await _run_claude(sys_file.name, msg_file.name)
+            result = await _run_claude(sys_file.name, msg_file.name, extra_env=extra_env or None)
 
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
@@ -168,9 +179,11 @@ class ClaudeCliProvider(BaseLLMProvider):
                     pass
 
 
-async def _run_claude(sys_path: str, msg_path: str) -> subprocess.CompletedProcess:
+async def _run_claude(sys_path: str, msg_path: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround)."""
     env = _clean_env()
+    if extra_env:
+        env.update(extra_env)
 
     with open(sys_path, encoding="utf-8") as f:
         system_content = f.read()

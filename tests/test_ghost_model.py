@@ -131,7 +131,7 @@ async def test_call_llm_for_digest_uses_ghost_model_preset(sqlite_store):
         result = await _call_llm_for_digest("sys_prompt", "memory content", preset_id, sqlite_store)
 
     assert result == "digest summary"
-    mock_cp.assert_called_once_with("google", "gemini-2.0-flash", sqlite_store.get_all_settings())
+    mock_cp.assert_called_once_with("google", "gemini-2.0-flash", sqlite_store.get_all_settings(), thinking_level="default")
     mock_provider.generate.assert_called_once_with(
         "sys_prompt", [{"role": "user", "content": "memory content"}]
     )
@@ -154,7 +154,7 @@ async def test_call_llm_for_forget_uses_ghost_model_preset(sqlite_store):
         result = await _call_llm_for_forget("sys_prompt", "candidates text", preset_id, sqlite_store)
 
     assert result == "[KEEP: NONE]"
-    mock_cp.assert_called_once_with("anthropic", "claude-3-5-haiku-latest", sqlite_store.get_all_settings())
+    mock_cp.assert_called_once_with("anthropic", "claude-3-5-haiku-latest", sqlite_store.get_all_settings(), thinking_level="default")
     mock_req.assert_called_once()
     mock_res.assert_called_once_with("[KEEP: NONE]")
 

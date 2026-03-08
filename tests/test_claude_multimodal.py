@@ -22,7 +22,7 @@ async def test_claude_cli_provider_image_note():
         # However, generate() creates a temp file and passes the path to _run_claude.
         # So we mock _run_claude to capture the content of the file before it's deleted.
         
-        def side_effect(sys_path, msg_path):
+        def side_effect(sys_path, msg_path, extra_env=None):
             with open(sys_path, "r", encoding="utf-8") as f:
                 mock_run.captured_sys_prompt = f.read()
             return mock_run.return_value

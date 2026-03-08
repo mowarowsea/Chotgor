@@ -83,7 +83,7 @@ class ChatService:
         )
 
         # --- 4. プロバイダーへディスパッチ ---
-        provider_impl = create_provider(request.provider, request.model, request.settings)
+        provider_impl = create_provider(request.provider, request.model, request.settings, thinking_level=request.thinking_level)
         log_llm_request(system_prompt, messages)
         try:
             response_text = await provider_impl.generate(system_prompt, messages)

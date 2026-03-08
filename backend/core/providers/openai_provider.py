@@ -10,20 +10,40 @@ from typing import Optional
 
 from .base import BaseLLMProvider
 
+# thinking_level → reasoning_effort
+_OPENAI_REASONING = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
+
+# xAI has no "medium"; map it to "low"
+_XAI_REASONING = {
+    "low": "low",
+    "medium": "low",
+    "high": "high",
+}
+
 
 class OpenAIProvider(BaseLLMProvider):
     PROVIDER_ID = "openai"
     DEFAULT_MODEL = "gpt-4o"
     REQUIRES_API_KEY = True
 
-    def __init__(self, api_key: str, model: str = "", base_url: Optional[str] = None):
+    _REASONING_MAP = _OPENAI_REASONING
+
+    def __init__(self, api_key: str, model: str = "", base_url: Optional[str] = None, thinking_level: str = "default"):
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
         self.base_url = base_url
+        self.thinking_level = thinking_level
 
     @classmethod
-    def from_config(cls, model: str, settings: dict, **kwargs) -> "OpenAIProvider":
-        return cls(api_key=settings.get("openai_api_key", ""), model=model)
+    def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "OpenAIProvider":
+        return cls(api_key=settings.get("openai_api_key", ""), model=model, thinking_level=thinking_level)
+
+    def _reasoning_effort(self) -> Optional[str]:
+        return self._REASONING_MAP.get(self.thinking_level)
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         try:
@@ -38,20 +58,25 @@ class OpenAIProvider(BaseLLMProvider):
             provider = "xai_api_key" if self.base_url else "openai_api_key"
             return f"[Error: {provider} が設定されていません。Settings ページで設定してください]"
 
-        kwargs: dict = {"api_key": self.api_key}
+        init_kwargs: dict = {"api_key": self.api_key}
         if self.base_url:
-            kwargs["base_url"] = self.base_url
-        client = OpenAI(**kwargs)
+            init_kwargs["base_url"] = self.base_url
+        client = OpenAI(**init_kwargs)
 
         api_messages = [{"role": "system", "content": system_prompt}]
         api_messages += [m for m in messages if m.get("role") in ("user", "assistant")]
 
+        effort = self._reasoning_effort()
+
         def run():
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=api_messages,
-                max_tokens=4096,
-            )
+            call_kwargs: dict = {"model": self.model, "messages": api_messages}
+            if effort:
+                # o-series models use reasoning_effort + max_completion_tokens
+                call_kwargs["reasoning_effort"] = effort
+                call_kwargs["max_completion_tokens"] = 16000
+            else:
+                call_kwargs["max_tokens"] = 4096
+            response = client.chat.completions.create(**call_kwargs)
             return response.choices[0].message.content
 
         try:
@@ -67,9 +92,11 @@ class XAIProvider(OpenAIProvider):
     DEFAULT_MODEL = "grok-2-latest"
     BASE_URL = "https://api.x.ai/v1"
 
-    def __init__(self, api_key: str, model: str = ""):
-        super().__init__(api_key=api_key, model=model or self.DEFAULT_MODEL, base_url=self.BASE_URL)
+    _REASONING_MAP = _XAI_REASONING
+
+    def __init__(self, api_key: str, model: str = "", thinking_level: str = "default"):
+        super().__init__(api_key=api_key, model=model or self.DEFAULT_MODEL, base_url=self.BASE_URL, thinking_level=thinking_level)
 
     @classmethod
-    def from_config(cls, model: str, settings: dict, **kwargs) -> "XAIProvider":
-        return cls(api_key=settings.get("xai_api_key", ""), model=model)
+    def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "XAIProvider":
+        return cls(api_key=settings.get("xai_api_key", ""), model=model, thinking_level=thinking_level)

@@ -8,19 +8,26 @@ from .base import BaseLLMProvider
 
 DEFAULT_MODEL = "gemini-2.0-flash"
 
+_THINKING_BUDGET = {
+    "low": 1024,
+    "medium": 5000,
+    "high": 16000,
+}
+
 
 class GoogleProvider(BaseLLMProvider):
     PROVIDER_ID = "google"
     DEFAULT_MODEL = DEFAULT_MODEL
     REQUIRES_API_KEY = True
 
-    def __init__(self, api_key: str, model: str = ""):
+    def __init__(self, api_key: str, model: str = "", thinking_level: str = "default"):
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
+        self.thinking_level = thinking_level
 
     @classmethod
-    def from_config(cls, model: str, settings: dict, **kwargs) -> "GoogleProvider":
-        return cls(api_key=settings.get("google_api_key", ""), model=model)
+    def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "GoogleProvider":
+        return cls(api_key=settings.get("google_api_key", ""), model=model, thinking_level=thinking_level)
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         try:
@@ -89,6 +96,9 @@ class GoogleProvider(BaseLLMProvider):
             config_kwargs = {"max_output_tokens": 4096}
             if supports_system_instruction:
                 config_kwargs["system_instruction"] = system_prompt
+            if self.thinking_level != "default":
+                budget = _THINKING_BUDGET[self.thinking_level]
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
             response = client.models.generate_content(
                 model=self.model,
                 contents=contents,

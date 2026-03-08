@@ -90,6 +90,7 @@ class LLMModelPreset(Base):
     name = Column(String, nullable=False)           # "Google-Gemini3Flash"
     provider = Column(String, nullable=False)       # "google"
     model_id = Column(String, nullable=False, default="")  # "gemini-2.0-flash"
+    thinking_level = Column(String, nullable=False, default="default")  # default/low/medium/high
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -108,6 +109,7 @@ class SQLiteStore:
                 "ALTER TABLE characters ADD COLUMN enabled_providers TEXT NOT NULL DEFAULT '{}'",
                 "ALTER TABLE characters ADD COLUMN image_data TEXT",
                 "ALTER TABLE characters ADD COLUMN ghost_model TEXT",
+                "ALTER TABLE llm_model_presets ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'default'",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -362,9 +364,9 @@ class SQLiteStore:
 
     # --- LLM Model Presets ---
 
-    def create_model_preset(self, preset_id: str, name: str, provider: str, model_id: str) -> LLMModelPreset:
+    def create_model_preset(self, preset_id: str, name: str, provider: str, model_id: str, thinking_level: str = "default") -> LLMModelPreset:
         with self.get_session() as session:
-            preset = LLMModelPreset(id=preset_id, name=name, provider=provider, model_id=model_id)
+            preset = LLMModelPreset(id=preset_id, name=name, provider=provider, model_id=model_id, thinking_level=thinking_level)
             session.add(preset)
             session.commit()
             session.refresh(preset)
