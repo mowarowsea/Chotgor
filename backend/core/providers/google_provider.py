@@ -93,7 +93,15 @@ class GoogleProvider(BaseLLMProvider):
                 )
 
         def run():
-            config_kwargs = {"max_output_tokens": 4096}
+            config_kwargs = {
+                "max_output_tokens": 4096,
+                "safety_settings": [
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                ],
+            }
             if supports_system_instruction:
                 config_kwargs["system_instruction"] = system_prompt
             if self.thinking_level != "default":
