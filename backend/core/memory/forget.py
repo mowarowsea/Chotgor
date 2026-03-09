@@ -54,13 +54,13 @@ async def run_forget_process(
         "---\n"
         f"今は静かな時間です。\n"
         "以下は、あなたがかつて経験・思考したものの、最近は全く思い出されておらず印象も薄れてきている「忘れかけている記憶」のリストです。\n"
-        "これには日々のダイジェスト（要約）も含まれます。\n"
-        "人間の脳が自然と古い記憶を忘れるように、これらの記憶は間もなく完全に忘却（整理）されます。\n\n"
-        "しかし、もしこの中から「これからも覚えておきたい」「これは自分にとって残すべき記憶だ」と強く感じるものがあれば、それを救済することができます。\n"
+        "これには日々のダイジェスト（要約）も含まれます。\n\n"
+        "これらの記憶はまだ消えていません。しかし、このまま放置すると間もなく自然に忘却されます。\n"
+        "リストをじっくり見て、「もう手放してもいい」と感じる記憶があれば、そのIDを教えてください。\n"
         "提示された作成日時や重要度、最終想起日時も参考にして判断してください。\n\n"
-        "残したい記憶のIDを、以下のフォーマットで**必ずリスト形式で**教えてください。\n\n"
-        "`[KEEP: ID1, ID2, ID3...]`\n\n"
-        "※もし全て忘れて構わない場合は、`[KEEP: NONE]` とだけ出力するか、何も出力しないでください。\n"
+        "手放したい記憶のIDを、以下のフォーマットで教えてください。\n\n"
+        "`[DELETE: ID1, ID2, ID3...]`\n\n"
+        "※何も手放さなくていい場合は、`[DELETE: NONE]` とだけ出力するか、何も出力しないでください。\n"
         "※IDは正確に記載してください。"
     )
 
@@ -69,26 +69,26 @@ async def run_forget_process(
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-    # Parse [KEEP: ...]
-    kept_ids = set()
-    matches = re.findall(r"\[KEEP:\s*(.*?)\]", response_text)
+    # Parse [DELETE: ...]
+    deleted_ids = set()
+    matches = re.findall(r"\[DELETE:\s*(.*?)\]", response_text)
     for match in matches:
         if match.strip().upper() == "NONE":
             continue
         parts = [p.strip() for p in match.split(",")]
-        kept_ids.update(parts)
-        
+        deleted_ids.update(parts)
+
     deleted_count = 0
     kept_count = 0
-    
+
     for m in candidates:
-        if m.id in kept_ids:
+        if m.id in deleted_ids:
+            deleted_count += 1
+            memory_manager.delete_memory(m.id, character_id)
+        else:
             kept_count += 1
             # Touching it gives it a boost and prevents it from being forgotten soon.
             sqlite.touch_memory(m.id)
-        else:
-            deleted_count += 1
-            memory_manager.delete_memory(m.id, character_id)
 
     return {
         "status": "success",

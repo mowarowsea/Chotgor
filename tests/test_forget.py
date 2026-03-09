@@ -2,9 +2,11 @@ import pytest
 from datetime import datetime, timedelta
 import tempfile
 import os
+from unittest.mock import MagicMock, AsyncMock, patch
+
 from backend.core.memory.sqlite_store import SQLiteStore, Memory
 from backend.core.memory.manager import MemoryManager
-from unittest.mock import MagicMock
+from backend.core.memory.forget import run_forget_process
 
 @pytest.fixture
 def sqlite_store():
@@ -114,3 +116,130 @@ def test_get_forgotten_candidates(memory_manager):
     
     assert "mem1" in ids
     assert "mem2" not in ids
+
+
+# --- run_forget_process tests ---
+
+def _make_manager_with_candidates(sqlite_store, char_id, memory_ids):
+    """Helper: create a character + memories and return a MemoryManager whose
+    get_forgotten_candidates() returns those memories."""
+    chroma = MagicMock()
+    manager = MemoryManager(sqlite_store, chroma)
+    sqlite_store.create_character(char_id, "TestChar")
+
+    now = datetime.now()
+    old_time = now - timedelta(days=60)
+
+    for mid in memory_ids:
+        sqlite_store.create_memory(
+            memory_id=mid,
+            character_id=char_id,
+            content=f"content of {mid}",
+            contextual_importance=0.1,
+            user_importance=0.1,
+            semantic_importance=0.1,
+            identity_importance=0.1,
+        )
+        with sqlite_store.get_session() as session:
+            m = session.query(Memory).filter_by(id=mid).first()
+            m.created_at = old_time
+            m.last_accessed_at = old_time
+            session.commit()
+
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_forget_default_keeps_all_when_no_delete(sqlite_store):
+    """If LLM returns no [DELETE: ...], all candidates must be kept (not deleted)."""
+    char_id = "char-keep-all"
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2", "m3"])
+
+    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="何も手放しません。")):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            character_system_prompt="You are TestChar.",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            threshold=1.0,
+        )
+
+    assert result["status"] == "success"
+    assert result["deleted_count"] == 0
+    assert result["kept_count"] == 3
+
+    # Verify nothing was actually deleted in DB
+    active = sqlite_store.get_all_active_memories(char_id)
+    ids = [m.id for m in active]
+    assert "m1" in ids
+    assert "m2" in ids
+    assert "m3" in ids
+
+
+@pytest.mark.asyncio
+async def test_forget_deletes_only_explicitly_listed(sqlite_store):
+    """Only IDs in [DELETE: ...] are removed; others survive."""
+    char_id = "char-partial-delete"
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2", "m3"])
+
+    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: m2]")):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            character_system_prompt="You are TestChar.",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            threshold=1.0,
+        )
+
+    assert result["status"] == "success"
+    assert result["deleted_count"] == 1
+    assert result["kept_count"] == 2
+
+    active = sqlite_store.get_all_active_memories(char_id)
+    ids = [m.id for m in active]
+    assert "m1" in ids
+    assert "m2" not in ids
+    assert "m3" in ids
+
+
+@pytest.mark.asyncio
+async def test_forget_delete_none_keeps_all(sqlite_store):
+    """[DELETE: NONE] explicitly keeps everything."""
+    char_id = "char-delete-none"
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
+
+    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: NONE]")):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            character_system_prompt="You are TestChar.",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            threshold=1.0,
+        )
+
+    assert result["deleted_count"] == 0
+    assert result["kept_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_forget_parse_failure_keeps_all(sqlite_store):
+    """Garbled LLM output (no parseable [DELETE:]) must not delete anything."""
+    char_id = "char-garbled"
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
+
+    garbled = "うーん、どれも大切かな... KEEP m1 DELETE maybe m2??"
+    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value=garbled)):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            character_system_prompt="You are TestChar.",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            threshold=1.0,
+        )
+
+    assert result["deleted_count"] == 0
+    assert result["kept_count"] == 2
