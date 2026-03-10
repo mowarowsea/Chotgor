@@ -60,7 +60,7 @@ def _format_memories_for_sse(recalled: list) -> str:
         content = mem.get("content", "")
         score = mem.get("hybrid_score", 0.0)
         lines.append(f"[{category}] {content}  (score: {score:.2f})")
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
 
 
 def _session_to_dict(s) -> dict:

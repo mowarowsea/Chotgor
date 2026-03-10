@@ -68,7 +68,7 @@ def _format_memories_display(recalled: list) -> str:
         content = mem.get("content", "")
         score = mem.get("hybrid_score", 0.0)
         lines.append(f"[{category}] {content}  (score: {score:.2f})")
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
 
 
 def _format_completion(model: str, text: str) -> dict:

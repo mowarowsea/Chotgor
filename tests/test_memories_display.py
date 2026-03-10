@@ -110,6 +110,13 @@ def test_format_memories_display_header_icon():
     assert "📚" in result
 
 
+def test_format_memories_display_ends_with_newline():
+    """思考ブロックとの間に空行を入れるため、末尾に改行が付くこと。"""
+    mems = [_make_memory("何か")]
+    result = _format_memories_display(mems)
+    assert result.endswith("\n")
+
+
 # ---------------------------------------------------------------------------
 # ChatService.execute_stream() — memories チャンク
 # ---------------------------------------------------------------------------
