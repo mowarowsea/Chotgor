@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  /* bg/textカラーはApp.tsxのルートdivで指定。@applyに依存しない */
+  @apply h-screen overflow-hidden;
+  font-family: system-ui, sans-serif;
+}

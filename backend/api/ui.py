@@ -277,6 +277,7 @@ async def settings_form(request: Request):
 @router.post("/settings")
 async def save_settings(
     request: Request,
+    user_name: str = Form("ユーザ"),
     anthropic_api_key: str = Form(""),
     openai_api_key: str = Form(""),
     xai_api_key: str = Form(""),
@@ -286,6 +287,8 @@ async def save_settings(
     enable_time_awareness: Optional[str] = Form(None),
 ):
     store = request.app.state.sqlite
+    # ユーザ名は常に保存（マスク不要）
+    store.set_setting("user_name", user_name.strip() or "ユーザ")
     for key, value in [
         ("anthropic_api_key", anthropic_api_key),
         ("openai_api_key", openai_api_key),

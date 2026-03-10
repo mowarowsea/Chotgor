@@ -1,4 +1,4 @@
-"""SQLite store for settings, character metadata, and memory records."""
+"""SQLite store — 設定・キャラクターメタデータ・記憶レコードの永続化層。"""
 
 import json
 import os
@@ -20,19 +20,48 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
-
 class Base(DeclarativeBase):
+    """SQLAlchemy 宣言ベースクラス。"""
+
     pass
 
 
 class GlobalSetting(Base):
+    """グローバル設定 — キー/バリュー形式の設定テーブル。"""
+
     __tablename__ = "global_settings"
 
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=True)
 
 
+class ChatSession(Base):
+    """チャットセッション — 1セッション = 1キャラクターとの会話スレッド。"""
+
+    __tablename__ = "chat_sessions"
+
+    id = Column(String, primary_key=True)
+    model_id = Column(String, nullable=False)   # "{char_name}@{preset_name}"
+    title = Column(String, nullable=False, default="新しいチャット")
+    created_at = Column(DateTime, default=lambda: datetime.now())
+    updated_at = Column(DateTime, default=lambda: datetime.now(), onupdate=lambda: datetime.now())
+
+
+class ChatMessage(Base):
+    """チャットメッセージ — セッション内の1発言。"""
+
+    __tablename__ = "chat_messages"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
+    role = Column(String, nullable=False)       # "user" | "character"
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+
 class Character(Base):
+    """キャラクター — 人格・システムプロンプト・プロバイダー設定を保持するテーブル。"""
+
     __tablename__ = "characters"
 
     id = Column(String, primary_key=True)  # UUID
@@ -41,7 +70,7 @@ class Character(Base):
     meta_instructions = Column(Text, nullable=False, default="")
     cleanup_config = Column(JSON, nullable=False, default=dict)
     enabled_providers = Column(JSON, nullable=False, default=dict)
-    ghost_model = Column(String, nullable=True)  # preset_id used for digest/forget
+    ghost_model = Column(String, nullable=True)  # digest/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
@@ -52,38 +81,44 @@ class Character(Base):
 
 
 class Memory(Base):
+    """記憶レコード — キャラクターの記憶をカテゴリ・重要度スコアとともに保持する。"""
+
     __tablename__ = "memories"
 
     id = Column(String, primary_key=True)  # UUID
     character_id = Column(String, ForeignKey("characters.id"), nullable=False)
     content = Column(Text, nullable=False)
     memory_category = Column(String, nullable=False, default="general")
-    # Importance scores (0.0 - 1.0)
+    # 重要度スコア (0.0 - 1.0)
     contextual_importance = Column(Float, default=0.5)
     semantic_importance = Column(Float, default=0.5)
     identity_importance = Column(Float, default=0.5)
     user_importance = Column(Float, default=0.5)
-    # Access tracking
+    # アクセス追跡
     last_accessed_at = Column(DateTime, nullable=True)
     access_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now())
-    deleted_at = Column(DateTime, nullable=True)  # Soft delete
+    deleted_at = Column(DateTime, nullable=True)  # ソフト削除
 
 
 class DigestLog(Base):
+    """ダイジェストログ — 記憶整理処理の実行履歴を記録する。"""
+
     __tablename__ = "digest_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     character_id = Column(String, ForeignKey("characters.id"), nullable=False)
     digest_date = Column(String, nullable=False)   # "2026-03-01"
     status = Column(String, nullable=False)         # "success" | "error" | "skipped"
-    memory_id = Column(String, nullable=True)       # Created digest memory ID
-    memory_count = Column(Integer, default=0)       # Number of source memories
-    message = Column(Text, nullable=True)           # Error message or summary excerpt
+    memory_id = Column(String, nullable=True)       # 作成されたダイジスト記憶のID
+    memory_count = Column(Integer, default=0)       # 処理元記憶の件数
+    message = Column(Text, nullable=True)           # エラーメッセージまたはサマリー抜粋
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
 class LLMModelPreset(Base):
+    """LLMモデルプリセット — プロバイダー・モデルIDの設定を保持する。"""
+
     __tablename__ = "llm_model_presets"
 
     id = Column(String, primary_key=True)          # UUID
@@ -95,7 +130,10 @@ class LLMModelPreset(Base):
 
 
 class SQLiteStore:
+    """SQLite永続化ストア — 全テーブルへのCRUD操作を提供する。"""
+
     def __init__(self, db_path: str):
+        """データベースを初期化し、マイグレーションを実行する。"""
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         self.SessionLocal = sessionmaker(bind=self.engine)
@@ -103,8 +141,9 @@ class SQLiteStore:
         self._migrate()
 
     def _migrate(self):
-        """Add new columns to existing tables (idempotent)."""
+        """既存テーブルへの新カラム追加とテーブル新設を冪等に実行する。"""
         with self.engine.connect() as conn:
+            # 既存テーブルへのカラム追加（失敗は無視）
             for stmt in [
                 "ALTER TABLE characters ADD COLUMN enabled_providers TEXT NOT NULL DEFAULT '{}'",
                 "ALTER TABLE characters ADD COLUMN image_data TEXT",
@@ -117,12 +156,35 @@ class SQLiteStore:
                 except Exception:
                     pass
 
+            # チャット関連テーブルの新設（IF NOT EXISTS で冪等）
+            for stmt in [
+                (
+                    "CREATE TABLE IF NOT EXISTS chat_sessions "
+                    "(id TEXT PRIMARY KEY, model_id TEXT NOT NULL, "
+                    "title TEXT NOT NULL DEFAULT '新しいチャット', "
+                    "created_at TIMESTAMP, updated_at TIMESTAMP)"
+                ),
+                (
+                    "CREATE TABLE IF NOT EXISTS chat_messages "
+                    "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+                    "role TEXT NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP, "
+                    "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
+                ),
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception:
+                    pass
+
     def get_session(self) -> Session:
+        """新しいDBセッションを返す。"""
         return self.SessionLocal()
 
     # --- Global Settings ---
 
     def get_setting(self, key: str, default: Any = None) -> Any:
+        """キーで設定値を取得する。JSON文字列は自動的にパースする。"""
         with self.get_session() as session:
             row = session.get(GlobalSetting, key)
             if row is None:
@@ -133,6 +195,7 @@ class SQLiteStore:
                 return row.value
 
     def set_setting(self, key: str, value: Any) -> None:
+        """設定値をupsertする。文字列以外はJSONシリアライズする。"""
         with self.get_session() as session:
             serialized = json.dumps(value) if not isinstance(value, str) else value
             row = session.get(GlobalSetting, key)
@@ -143,6 +206,7 @@ class SQLiteStore:
             session.commit()
 
     def get_all_settings(self) -> dict[str, Any]:
+        """全設定をdict形式で返す。"""
         with self.get_session() as session:
             rows = session.query(GlobalSetting).all()
             result = {}
@@ -166,6 +230,7 @@ class SQLiteStore:
         ghost_model: Optional[str] = None,
         image_data: Optional[str] = None,
     ) -> Character:
+        """キャラクターを新規作成する。"""
         with self.get_session() as session:
             char = Character(
                 id=character_id,
@@ -183,18 +248,22 @@ class SQLiteStore:
             return char
 
     def get_character(self, character_id: str) -> Optional[Character]:
+        """IDでキャラクターを取得する。"""
         with self.get_session() as session:
             return session.get(Character, character_id)
 
     def get_character_by_name(self, name: str) -> Optional[Character]:
+        """名前でキャラクターを取得する。"""
         with self.get_session() as session:
             return session.query(Character).filter(Character.name == name).first()
 
     def list_characters(self) -> list[Character]:
+        """全キャラクターを返す。"""
         with self.get_session() as session:
             return session.query(Character).all()
 
     def update_character(self, character_id: str, **kwargs) -> Optional[Character]:
+        """キャラクターの指定フィールドを更新する。"""
         with self.get_session() as session:
             char = session.get(Character, character_id)
             if not char:
@@ -208,6 +277,7 @@ class SQLiteStore:
             return char
 
     def delete_character(self, character_id: str) -> bool:
+        """キャラクターを削除する。"""
         with self.get_session() as session:
             char = session.get(Character, character_id)
             if not char:
@@ -229,6 +299,7 @@ class SQLiteStore:
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
     ) -> Memory:
+        """記憶レコードを新規作成する。"""
         with self.get_session() as session:
             mem = Memory(
                 id=memory_id,
@@ -246,6 +317,7 @@ class SQLiteStore:
             return mem
 
     def get_memory(self, memory_id: str) -> Optional[Memory]:
+        """IDで記憶レコードを取得する。"""
         with self.get_session() as session:
             return session.get(Memory, memory_id)
 
@@ -255,6 +327,7 @@ class SQLiteStore:
         category: Optional[str] = None,
         include_deleted: bool = False,
     ) -> list[Memory]:
+        """キャラクターの記憶一覧を新しい順で返す。"""
         with self.get_session() as session:
             q = session.query(Memory).filter(Memory.character_id == character_id)
             if not include_deleted:
@@ -264,7 +337,7 @@ class SQLiteStore:
             return q.order_by(Memory.created_at.desc()).all()
 
     def touch_memory(self, memory_id: str) -> None:
-        """Update last_accessed_at and increment access_count."""
+        """last_accessed_at を更新し access_count をインクリメントする。"""
         with self.get_session() as session:
             mem = session.get(Memory, memory_id)
             if mem:
@@ -273,6 +346,7 @@ class SQLiteStore:
                 session.commit()
 
     def soft_delete_memory(self, memory_id: str) -> bool:
+        """記憶をソフト削除する（deleted_at をセット）。"""
         with self.get_session() as session:
             mem = session.get(Memory, memory_id)
             if not mem:
@@ -282,6 +356,7 @@ class SQLiteStore:
             return True
 
     def restore_memory(self, memory_id: str) -> bool:
+        """ソフト削除された記憶を復元する。"""
         with self.get_session() as session:
             mem = session.get(Memory, memory_id)
             if not mem:
@@ -293,7 +368,7 @@ class SQLiteStore:
     def get_memories_by_date_range(
         self, character_id: str, start: datetime, end: datetime
     ) -> list[Memory]:
-        """Return non-deleted, non-digest memories created in [start, end)."""
+        """指定期間内に作成された、削除済みでないダイジスト以外の記憶を返す。"""
         with self.get_session() as session:
             return (
                 session.query(Memory)
@@ -309,7 +384,7 @@ class SQLiteStore:
             )
 
     def get_all_active_memories(self, character_id: str) -> list[Memory]:
-        """Return all active (non-deleted) memories for a character."""
+        """キャラクターの全アクティブ記憶（削除済みを除く）を返す。"""
         with self.get_session() as session:
             return (
                 session.query(Memory)
@@ -321,7 +396,7 @@ class SQLiteStore:
             )
 
     def has_digest(self, character_id: str, date_str: str) -> bool:
-        """Return True if any DigestLog entry exists for this character + date."""
+        """指定キャラクター・日付のダイジストログが存在するか返す。"""
         with self.get_session() as session:
             count = (
                 session.query(DigestLog)
@@ -342,7 +417,7 @@ class SQLiteStore:
         memory_count: int = 0,
         message: Optional[str] = None,
     ) -> None:
-        """Append a DigestLog row."""
+        """ダイジストログを1行追記する。"""
         with self.get_session() as session:
             log = DigestLog(
                 character_id=character_id,
@@ -356,7 +431,7 @@ class SQLiteStore:
             session.commit()
 
     def get_digest_logs(self, character_id: str, limit: int = 50) -> list[DigestLog]:
-        """Return recent DigestLog rows for a character, newest first."""
+        """キャラクターのダイジストログを新しい順で返す。"""
         with self.get_session() as session:
             return (
                 session.query(DigestLog)
@@ -369,6 +444,7 @@ class SQLiteStore:
     # --- LLM Model Presets ---
 
     def create_model_preset(self, preset_id: str, name: str, provider: str, model_id: str, thinking_level: str = "default") -> LLMModelPreset:
+        """LLMモデルプリセットを新規作成する。"""
         with self.get_session() as session:
             preset = LLMModelPreset(id=preset_id, name=name, provider=provider, model_id=model_id, thinking_level=thinking_level)
             session.add(preset)
@@ -377,18 +453,22 @@ class SQLiteStore:
             return preset
 
     def list_model_presets(self) -> list[LLMModelPreset]:
+        """LLMモデルプリセット一覧を作成日順で返す。"""
         with self.get_session() as session:
             return session.query(LLMModelPreset).order_by(LLMModelPreset.created_at).all()
 
     def get_model_preset(self, preset_id: str) -> Optional[LLMModelPreset]:
+        """IDでLLMモデルプリセットを取得する。"""
         with self.get_session() as session:
             return session.get(LLMModelPreset, preset_id)
 
     def get_model_preset_by_name(self, name: str) -> Optional[LLMModelPreset]:
+        """名前でLLMモデルプリセットを取得する。"""
         with self.get_session() as session:
             return session.query(LLMModelPreset).filter(LLMModelPreset.name == name).first()
 
     def update_model_preset(self, preset_id: str, **kwargs) -> Optional[LLMModelPreset]:
+        """LLMモデルプリセットの指定フィールドを更新する。"""
         with self.get_session() as session:
             preset = session.get(LLMModelPreset, preset_id)
             if not preset:
@@ -401,6 +481,7 @@ class SQLiteStore:
             return preset
 
     def delete_model_preset(self, preset_id: str) -> bool:
+        """LLMモデルプリセットを削除する。"""
         with self.get_session() as session:
             preset = session.get(LLMModelPreset, preset_id)
             if not preset:
@@ -408,3 +489,77 @@ class SQLiteStore:
             session.delete(preset)
             session.commit()
             return True
+
+    # --- Chat Sessions ---
+
+    def create_chat_session(self, session_id: str, model_id: str, title: str = "新しいチャット") -> "ChatSession":
+        """チャットセッションを作成する。"""
+        with self.get_session() as session:
+            obj = ChatSession(id=session_id, model_id=model_id, title=title)
+            session.add(obj)
+            session.commit()
+            session.refresh(obj)
+            return obj
+
+    def get_chat_session(self, session_id: str) -> Optional["ChatSession"]:
+        """IDでチャットセッションを取得する。"""
+        with self.get_session() as session:
+            return session.get(ChatSession, session_id)
+
+    def list_chat_sessions(self, limit: int = 100) -> list:
+        """チャットセッション一覧を新しい順で返す。"""
+        with self.get_session() as session:
+            return (
+                session.query(ChatSession)
+                .order_by(ChatSession.updated_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+    def update_chat_session(self, session_id: str, **kwargs) -> Optional["ChatSession"]:
+        """チャットセッションを更新する。"""
+        with self.get_session() as session:
+            obj = session.get(ChatSession, session_id)
+            if not obj:
+                return None
+            for k, v in kwargs.items():
+                if hasattr(obj, k):
+                    setattr(obj, k, v)
+            obj.updated_at = datetime.now()
+            session.commit()
+            session.refresh(obj)
+            return obj
+
+    def delete_chat_session(self, session_id: str) -> bool:
+        """チャットセッションとそのメッセージを削除する。"""
+        with self.get_session() as session:
+            # メッセージを先に削除してから親セッションを削除する
+            session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
+            obj = session.get(ChatSession, session_id)
+            if not obj:
+                session.commit()
+                return False
+            session.delete(obj)
+            session.commit()
+            return True
+
+    # --- Chat Messages ---
+
+    def create_chat_message(self, message_id: str, session_id: str, role: str, content: str) -> "ChatMessage":
+        """チャットメッセージを作成する。"""
+        with self.get_session() as session:
+            msg = ChatMessage(id=message_id, session_id=session_id, role=role, content=content)
+            session.add(msg)
+            session.commit()
+            session.refresh(msg)
+            return msg
+
+    def list_chat_messages(self, session_id: str) -> list:
+        """セッション内のメッセージを時系列順で返す。"""
+        with self.get_session() as session:
+            return (
+                session.query(ChatMessage)
+                .filter(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at.asc())
+                .all()
+            )

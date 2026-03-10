@@ -14,22 +14,10 @@ from fastapi.responses import StreamingResponse
 from ...core.chat.models import ChatRequest, Message
 from ...core.debug_logger import log_front_input
 from ...core.providers.registry import PROVIDER_LABELS
+from ...core.utils import format_time_delta
 from .schemas import OAIChatRequest
 
 router = APIRouter()
-
-
-def _format_time_delta(diff) -> str:
-    """timedelta を日本語の経過時間文字列に変換する。"""
-    hours = diff.total_seconds() / 3600
-    if hours < 1:
-        m = int(hours * 60)
-        return f"約 {m} 分" if m > 0 else "数分以内"
-    elif hours < 24:
-        return f"約 {hours:.1f} 時間"
-    else:
-        days = int(hours / 24)
-        return f"約 {days} 日"
 
 
 def _available_providers(settings: dict) -> set[str]:
@@ -141,7 +129,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         if last_str:
             try:
                 last_dt = datetime.fromisoformat(last_str)
-                time_since_last_interaction = _format_time_delta(now - last_dt)
+                time_since_last_interaction = format_time_delta(now - last_dt)
             except Exception:
                 pass
 
