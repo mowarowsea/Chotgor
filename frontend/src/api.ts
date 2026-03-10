@@ -64,6 +64,52 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!res.ok) throw new Error("セッションの削除に失敗しました");
 }
 
+/** SSEストリームイベントの型定義。 */
+export type StreamEvent =
+  | { type: "chunk"; content: string }
+  | { type: "done"; user_message: ChatMessage; character_message: ChatMessage }
+  | { type: "error"; message: string };
+
+/** メッセージをSSEでストリーミング送信し、イベントをyieldする。 */
+export async function* streamMessage(
+  sessionId: string,
+  content: string
+): AsyncGenerator<StreamEvent> {
+  const res = await fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+
+  if (!res.ok) throw new Error("ストリーミング送信に失敗しました");
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          yield JSON.parse(line.slice(6)) as StreamEvent;
+        } catch {
+          // 不正なJSONはスキップ
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** メッセージを送信してキャラクターの応答を受け取る。 */
 export async function sendMessage(
   sessionId: string,

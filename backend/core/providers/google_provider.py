@@ -30,7 +30,59 @@ class GoogleProvider(BaseLLMProvider):
     def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "GoogleProvider":
         return cls(api_key=settings.get("google_api_key", ""), model=model, thinking_level=thinking_level)
 
+    def _build_contents(self, system_prompt: str, messages: list[dict]):
+        """Google Gemini 用の contents リストを構築する内部ヘルパー。
+
+        Gemmaモデルはsystem_instructionをサポートしないため、
+        最初のユーザーターンの先頭にシステムプロンプトを挿入する。
+        """
+        from google.genai import types
+
+        # Gemmaモデルはsystem_instructionを使えないのでフラグを立てる
+        supports_system_instruction = not self.model.lower().startswith("gemma")
+        contents = []
+        system_injected = False
+        for m in messages:
+            role = m.get("role")
+            content = m.get("content")
+            parts = []
+            # プレーンテキストの場合
+            if isinstance(content, str):
+                text_to_add = content
+                if role == "user" and not supports_system_instruction and not system_injected and system_prompt:
+                    text_to_add = f"{system_prompt}\n\n---\n\n{text_to_add}"
+                    system_injected = True
+                parts.append(types.Part(text=text_to_add))
+            # リスト形式（マルチモーダル）の場合
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, str):
+                        parts.append(types.Part(text=item))
+                    elif isinstance(item, dict):
+                        itype = item.get("type")
+                        if itype == "text":
+                            parts.append(types.Part(text=item.get("text", "")))
+                        elif itype == "image_url":
+                            url = item.get("image_url", {}).get("url", "")
+                            if url.startswith("data:image/"):
+                                match = re.match(r"data:image/(\w+);base64,(.+)", url)
+                                if match:
+                                    mime_type = f"image/{match.group(1)}"
+                                    b64_data = match.group(2)
+                                    parts.append(
+                                        types.Part.from_bytes(
+                                            data=base64.b64decode(b64_data),
+                                            mime_type=mime_type
+                                        )
+                                    )
+            if parts:
+                contents.append(
+                    types.Content(role="model" if role == "assistant" else "user", parts=parts)
+                )
+        return contents, supports_system_instruction
+
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
+        """Google Gemini APIから応答テキストを一括生成する。"""
         try:
             from google import genai
             from google.genai import types
@@ -44,56 +96,10 @@ class GoogleProvider(BaseLLMProvider):
             return "[Error: google_api_key が設定されていません。Settings ページで設定してください]"
 
         client = genai.Client(api_key=self.api_key)
-
-        # Gemma models don't support system_instruction — prepend to first user turn instead
-        supports_system_instruction = not self.model.lower().startswith("gemma")
-
-        contents = []
-        system_injected = False
-        for m in messages:
-            role = m.get("role")
-            content = m.get("content")
-
-            parts = []
-
-            # プレーンテキストの場合
-            if isinstance(content, str):
-                text_to_add = content
-                if role == "user" and not supports_system_instruction and not system_injected and system_prompt:
-                    text_to_add = f"{system_prompt}\n\n---\n\n{text_to_add}"
-                    system_injected = True
-                parts.append(types.Part(text=text_to_add))
-
-            # リスト形式（マルチモーダル）の場合
-            elif isinstance(content, list):
-                for item in content:
-                    if isinstance(item, str):
-                        parts.append(types.Part(text=item))
-                    elif isinstance(item, dict):
-                        itype = item.get("type")
-                        if itype == "text":
-                            parts.append(types.Part(text=item.get("text", "")))
-                        elif itype == "image_url":
-                            url = item.get("image_url", {}).get("url", "")
-                            if url.startswith("data:image/"):
-                                # data:image/jpeg;base64,xxxx
-                                match = re.match(r"data:image/(\w+);base64,(.+)", url)
-                                if match:
-                                    mime_type = f"image/{match.group(1)}"
-                                    b64_data = match.group(2)
-                                    parts.append(
-                                        types.Part.from_bytes(
-                                            data=base64.b64decode(b64_data),
-                                            mime_type=mime_type
-                                        )
-                                    )
-
-            if parts:
-                contents.append(
-                    types.Content(role="model" if role == "assistant" else "user", parts=parts)
-                )
+        contents, supports_system_instruction = self._build_contents(system_prompt, messages)
 
         def run():
+            """同期APIを実行して応答テキストを返す内部関数。"""
             config_kwargs = {
                 "max_output_tokens": 4096,
                 "safety_settings": [
@@ -122,3 +128,63 @@ class GoogleProvider(BaseLLMProvider):
             return await asyncio.to_thread(run)
         except Exception as e:
             return f"[Google API error: {e}]"
+
+    async def generate_stream(self, system_prompt: str, messages: list[dict]):
+        """Google Gemini APIからテキストチャンクをストリーミングで取得する。"""
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            yield "[Error: google-genai パッケージがインストールされていません]"
+            return
+
+        if not self.api_key:
+            yield "[Error: google_api_key が設定されていません。Settings ページで設定してください]"
+            return
+
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        client = genai.Client(api_key=self.api_key)
+        contents, supports_system_instruction = self._build_contents(system_prompt, messages)
+
+        def run():
+            """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
+            try:
+                config_kwargs = {
+                    "max_output_tokens": 4096,
+                    "safety_settings": [
+                        types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                        types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                        types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                        types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                    ],
+                }
+                if supports_system_instruction:
+                    config_kwargs["system_instruction"] = system_prompt
+                if self.thinking_level != "default":
+                    budget = _THINKING_BUDGET[self.thinking_level]
+                    config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+                config = types.GenerateContentConfig(**config_kwargs)
+                log_provider_request("google", {"model": self.model, "contents": contents, "config": config})
+                for chunk in client.models.generate_content_stream(
+                    model=self.model, contents=contents, config=config
+                ):
+                    if chunk.text:
+                        loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, RuntimeError):
+                yield f"[Google API error: {item}]"
+                break
+            yield item

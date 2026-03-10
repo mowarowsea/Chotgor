@@ -187,6 +187,106 @@ class ClaudeCliProvider(BaseLLMProvider):
                 except Exception:
                     pass
 
+    async def generate_stream(self, system_prompt: str, messages: list[dict]):
+        """Claude CLI からテキストチャンクをストリーミングで取得する。
+
+        subprocess.Popen で stdout を行単位で読み取り、逐次yieldする。
+        """
+        # 画像が含まれる場合はCLIでは見えない旨をシステムプロンプトに追記
+        has_images = any(
+            isinstance(item, dict) and item.get("type") == "image_url"
+            for m in messages
+            for item in (m.get("content") if isinstance(m.get("content"), list) else [])
+        )
+        if has_images:
+            system_prompt += (
+                "\n\n[SYSTEM NOTE: The user has provided one or more images, "
+                "but you currently cannot 'see' them because of the current connection mode (Claude CLI). "
+                "Please inform the user naturally that you cannot see the images right now.]"
+            )
+
+        conversation = _format_conversation(messages, self.character_name)
+        extra_env = {}
+        if self.thinking_level != "default":
+            extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
+
+        env = _clean_env()
+        if extra_env:
+            env.update(extra_env)
+
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        log_provider_request("claude_cli", {
+            "system_prompt": system_prompt,
+            "conversation": conversation,
+            "extra_env": extra_env,
+        })
+
+        def run():
+            """subprocess.Popenでストリーミング出力を行単位で読み、キューへ送信する。"""
+            try:
+                proc = subprocess.Popen(
+                    [
+                        CLAUDE_BIN,
+                        "--output-format", "stream-json",
+                        "--verbose",
+                        "--print",
+                        "--tools", "",
+                        "--no-session-persistence",
+                        "--system-prompt", system_prompt,
+                    ],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                )
+                proc.stdin.write(conversation.encode("utf-8"))
+                proc.stdin.close()
+
+                for line_bytes in iter(proc.stdout.readline, b""):
+                    line = line_bytes.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        if event.get("type") == "assistant":
+                            for block in event.get("message", {}).get("content", []):
+                                if block.get("type") == "text" and block["text"]:
+                                    loop.call_soon_threadsafe(queue.put_nowait, block["text"])
+                    except json.JSONDecodeError:
+                        pass
+
+                proc.wait()
+                if proc.returncode != 0:
+                    err = proc.stderr.read().decode("utf-8", errors="replace")
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        RuntimeError(f"Claude CLI exited with code {proc.returncode}: {err[:500]}")
+                    )
+            except FileNotFoundError:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    RuntimeError("claude CLI が見つかりません。Claude Code がインストール・認証済みか確認してください")
+                )
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, RuntimeError):
+                yield f"[Claude CLI error: {item}]"
+                break
+            yield item
+
 
 async def _run_claude(sys_path: str, msg_path: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround)."""

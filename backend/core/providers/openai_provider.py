@@ -87,6 +87,68 @@ class OpenAIProvider(BaseLLMProvider):
         except Exception as e:
             return f"[OpenAI API error: {e}]"
 
+    async def generate_stream(self, system_prompt: str, messages: list[dict]):
+        """OpenAI APIからテキストチャンクをストリーミングで取得する。
+
+        XAIProvider はこのメソッドを継承して使用する。
+        """
+        try:
+            from openai import OpenAI
+        except ImportError:
+            yield "[Error: openai パッケージがインストールされていません]"
+            return
+
+        if not self.api_key:
+            provider = "xai_api_key" if self.base_url else "openai_api_key"
+            yield f"[Error: {provider} が設定されていません。Settings ページで設定してください]"
+            return
+
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        init_kwargs: dict = {"api_key": self.api_key}
+        if self.base_url:
+            init_kwargs["base_url"] = self.base_url
+        client = OpenAI(**init_kwargs)
+
+        api_messages = [{"role": "system", "content": system_prompt}]
+        api_messages += [m for m in messages if m.get("role") in ("user", "assistant")]
+        effort = self._reasoning_effort()
+
+        def run():
+            """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
+            try:
+                call_kwargs: dict = {"model": self.model, "messages": api_messages, "stream": True}
+                if effort:
+                    # o-seriesモデルはreasoning_effort + max_completion_tokensを使用
+                    call_kwargs["reasoning_effort"] = effort
+                    call_kwargs["max_completion_tokens"] = 16000
+                else:
+                    call_kwargs["max_tokens"] = 4096
+                log_provider_request(self.PROVIDER_ID, call_kwargs)
+                response = client.chat.completions.create(**call_kwargs)
+                for chunk in response:
+                    content = chunk.choices[0].delta.content if chunk.choices else None
+                    if content:
+                        loop.call_soon_threadsafe(queue.put_nowait, content)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, RuntimeError):
+                yield f"[OpenAI API error: {item}]"
+                break
+            yield item
+
 
 class XAIProvider(OpenAIProvider):
     """xAI / Grok — OpenAI-compatible API at a different base URL."""

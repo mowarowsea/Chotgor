@@ -81,3 +81,69 @@ class AnthropicProvider(BaseLLMProvider):
             return await asyncio.to_thread(run)
         except Exception as e:
             return f"[Anthropic API error: {e}]"
+
+    async def generate_stream(self, system_prompt: str, messages: list[dict]):
+        """Anthropic APIからテキストチャンクをストリーミングで取得する。
+
+        同期SDKのストリーミングをthreading + asyncio.Queueで非同期ジェネレータに変換する。
+        """
+        try:
+            import anthropic
+        except ImportError:
+            yield "[Error: anthropic パッケージがインストールされていません]"
+            return
+
+        if not self.api_key:
+            yield "[Error: anthropic_api_key が設定されていません。Settings ページで設定してください]"
+            return
+
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        client = anthropic.Anthropic(api_key=self.api_key)
+        api_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
+
+        params: dict = {
+            "model": self.model,
+            "system": system_prompt,
+            "messages": api_messages,
+            "max_tokens": 4096,
+        }
+        if self.thinking_level != "default":
+            if _is_new_api(self.model):
+                # claude-4-6: effort-based adaptive thinking
+                params["thinking"] = {"type": "adaptive"}
+                params["output_config"] = {"effort": self.thinking_level}
+                params["temperature"] = 1
+                params["max_tokens"] = 20000
+            else:
+                # claude-4-5以前: budget_tokens方式
+                budget = _BUDGET_TOKENS[self.thinking_level]
+                params["thinking"] = {"type": "enabled", "budget_tokens": budget}
+                params["temperature"] = 1
+                params["max_tokens"] = budget + 4096
+
+        log_provider_request("anthropic", params)
+
+        def run():
+            """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
+            try:
+                with client.messages.stream(**params) as stream:
+                    for text in stream.text_stream:
+                        loop.call_soon_threadsafe(queue.put_nowait, text)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, RuntimeError):
+                yield f"[Anthropic API error: {item}]"
+                break
+            yield item

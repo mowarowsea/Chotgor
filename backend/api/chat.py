@@ -4,14 +4,18 @@
 セッション管理 + LLM呼び出しを担当する。
 """
 
+import json
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..core.chat.models import ChatRequest, Message
+from ..core.debug_logger import log_front_output
+from ..core.memory.inscriber import carve
 from ..core.utils import format_time_delta
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -62,8 +66,8 @@ def _message_to_dict(m) -> dict:
     }
 
 
-async def _call_llm(request: Request, session, history_messages: list, user_content: str) -> str:
-    """LLMを呼び出してキャラクターの応答テキストを返す。"""
+async def _build_chat_request(request: Request, session, history_messages: list, user_content: str) -> ChatRequest:
+    """セッション情報からChatRequestを構築する内部ヘルパー。"""
     state = request.app.state
 
     # model_id を {char_name}@{preset_name} にパース
@@ -113,7 +117,7 @@ async def _call_llm(request: Request, session, history_messages: list, user_cont
         messages.append(Message(role=role, content=msg.content))
     messages.append(Message(role="user", content=user_content))
 
-    chat_request = ChatRequest(
+    return ChatRequest(
         character_id=character.id,
         character_name=character.name,
         provider=preset.provider,
@@ -129,7 +133,11 @@ async def _call_llm(request: Request, session, history_messages: list, user_cont
         time_since_last_interaction=time_since_last_interaction,
     )
 
-    return await state.chat_service.execute(chat_request)
+
+async def _call_llm(request: Request, session, history_messages: list, user_content: str) -> str:
+    """LLMを呼び出してキャラクターの応答テキストを返す。"""
+    chat_request = await _build_chat_request(request, session, history_messages, user_content)
+    return await request.app.state.chat_service.execute(chat_request)
 
 
 # --- エンドポイント ---
@@ -253,3 +261,93 @@ async def send_message(request: Request, session_id: str, body: MessageCreate):
         "user_message": _message_to_dict(user_msg),
         "character_message": _message_to_dict(char_msg),
     }
+
+
+@router.post("/sessions/{session_id}/messages/stream")
+async def stream_message(request: Request, session_id: str, body: MessageCreate):
+    """
+    ユーザーメッセージを送信し、キャラクターの応答をSSEでストリーミング返却する。
+
+    SSEイベント形式:
+        data: {"type": "chunk", "content": "..."}   — テキストチャンク
+        data: {"type": "done", "user_message": {...}, "character_message": {...}}  — 完了
+        data: {"type": "error", "message": "..."}   — エラー
+    """
+    state = request.app.state
+
+    session = state.sqlite.get_chat_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # ユーザーメッセージを保存
+    user_msg_id = str(uuid.uuid4())
+    user_msg = state.sqlite.create_chat_message(
+        message_id=user_msg_id,
+        session_id=session_id,
+        role="user",
+        content=body.content,
+    )
+
+    # 現在のユーザーメッセージを除いた履歴を取得
+    history_before = state.sqlite.list_chat_messages(session_id)
+    history = [m for m in history_before if m.id != user_msg_id]
+
+    # セッションタイトル自動設定（最初のメッセージから先頭30文字）
+    if len(history) == 0 and session.title == "新しいチャット":
+        auto_title = body.content[:30].replace("\n", " ")
+        state.sqlite.update_chat_session(session_id, title=auto_title)
+
+    # ChatRequestの構築（HTTPExceptionが発生した場合はここで止まる）
+    try:
+        chat_request = await _build_chat_request(request, session, history, body.content)
+    except HTTPException:
+        raise
+
+    async def sse_generator():
+        """SSEストリームのジェネレータ。チャンクをyieldし、完了後にDBへ保存する。"""
+        full_text = ""
+        try:
+            async for chunk in state.chat_service.execute_stream(chat_request):
+                full_text += chunk
+                data = json.dumps({"type": "chunk", "content": chunk}, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+        except Exception as e:
+            err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+            yield f"data: {err_data}\n\n"
+            return
+
+        # 記憶の刻み込みとクリーンテキスト取得
+        clean_text = carve(full_text, chat_request.character_id, state.memory_manager)
+        log_front_output(clean_text)
+
+        # キャラクターの応答をDBに保存
+        char_msg_id = str(uuid.uuid4())
+        char_msg = state.sqlite.create_chat_message(
+            message_id=char_msg_id,
+            session_id=session_id,
+            role="character",
+            content=clean_text,
+        )
+
+        # セッションのupdated_atを最新化
+        current_session = state.sqlite.get_chat_session(session_id)
+        if current_session:
+            state.sqlite.update_chat_session(session_id, title=current_session.title)
+
+        # 完了イベントを送信
+        done_data = json.dumps({
+            "type": "done",
+            "user_message": _message_to_dict(user_msg),
+            "character_message": _message_to_dict(char_msg),
+        }, ensure_ascii=False)
+        yield f"data: {done_data}\n\n"
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

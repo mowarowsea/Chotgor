@@ -14,6 +14,8 @@ interface Props {
   userName: string;
   /** 送信処理中フラグ */
   sending: boolean;
+  /** ストリーミング中のキャラクター応答テキスト（null = ストリーミングなし） */
+  streamingContent: string | null;
   /** メッセージ送信コールバック */
   onSend: (content: string) => void;
 }
@@ -24,15 +26,16 @@ export default function ChatView({
   characterName,
   userName,
   sending,
+  streamingContent,
   onSend,
 }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  /** メッセージ追加時に最下部へスクロールする。 */
+  /** メッセージ追加・ストリーミング中は最下部へスクロールする。 */
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, sending]);
+  }, [messages, sending, streamingContent]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,8 +72,21 @@ export default function ChatView({
           />
         ))}
 
-        {/* 送信中インジケーター */}
-        {sending && (
+        {/* ストリーミング中のキャラクター応答バブル */}
+        {(streamingContent !== null && streamingContent.trim().length > 0) && (
+          <div className="flex gap-3 items-start">
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
+              {characterName.charAt(0)}
+            </div>
+            <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm max-w-[70%] whitespace-pre-wrap">
+              {streamingContent}
+              <span className="animate-pulse inline-block ml-0.5 text-indigo-400">▌</span>
+            </div>
+          </div>
+        )}
+
+        {/* 初回チャンク待機中スピナー（ストリーミング開始前のみ表示） */}
+        {sending && (streamingContent === null || streamingContent.trim().length === 0) && (
           <div className="flex gap-3 items-start">
             <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
               {characterName.charAt(0)}

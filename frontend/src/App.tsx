@@ -9,10 +9,10 @@ import {
   fetchSession,
   createSession,
   deleteSession,
-  sendMessage,
+  streamMessage,
   fetchUserName,
 } from "./api";
-import type { Model, Session, ChatMessage } from "./api";
+import type { Model, Session, ChatMessage, StreamEvent } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 
@@ -23,6 +23,7 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [userName, setUserName] = useState("ユーザ");
   const [error, setError] = useState<string | null>(null);
 
@@ -81,13 +82,14 @@ export default function App() {
     }
   }, [activeSessionId]);
 
-  /** メッセージ送信。ユーザー入力バルーンはAPI待機前に即時表示する。 */
+  /** メッセージ送信。ユーザーバルーン即時表示 + SSEストリーミングでキャラクター応答を表示する。 */
   const handleSend = useCallback(async (content: string) => {
     if (!activeSessionId) return;
     setSending(true);
     setError(null);
+    setStreamingContent("");
 
-    // ユーザーメッセージを楽観的に即時追加（LLM待機中も表示する）
+    // ユーザーメッセージを楽観的に即時追加
     const optimisticUserMsg: ChatMessage = {
       id: `optimistic-${Date.now()}`,
       session_id: activeSessionId,
@@ -98,18 +100,24 @@ export default function App() {
     setMessages((prev) => [...prev, optimisticUserMsg]);
 
     try {
-      const result = await sendMessage(activeSessionId, content);
-      // 楽観的メッセージをサーバー確定版で置き換え、キャラクター応答を追加
-      setMessages((prev) => [
-        ...prev.filter((m) => m.id !== optimisticUserMsg.id),
-        result.user_message,
-        result.character_message,
-      ]);
-      // セッションタイトルが自動更新された可能性があるのでリロード
-      const updated = await fetchSessions();
-      setSessions(updated);
+      for await (const event of streamMessage(activeSessionId, content)) {
+        if (event.type === "chunk") {
+          setStreamingContent((prev) => (prev ?? "") + event.content);
+        } else if (event.type === "done") {
+          setStreamingContent(null);
+          setMessages((prev) => [
+            ...prev.filter((m) => m.id !== optimisticUserMsg.id),
+            event.user_message,
+            event.character_message,
+          ]);
+          const updated = await fetchSessions();
+          setSessions(updated);
+        } else if (event.type === "error") {
+          throw new Error((event as StreamEvent & { type: "error" }).message);
+        }
+      }
     } catch (e) {
-      // 送信失敗時は楽観的メッセージを取り消す
+      setStreamingContent(null);
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
       setError(String(e));
     } finally {
@@ -143,6 +151,7 @@ export default function App() {
             characterName={characterName}
             userName={userName}
             sending={sending}
+            streamingContent={streamingContent}
             onSend={handleSend}
           />
         ) : (

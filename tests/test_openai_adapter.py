@@ -5,7 +5,8 @@ from datetime import timedelta
 
 import pytest
 
-from backend.adapters.openai.router import _format_completion, _format_time_delta, _sse_chunk
+from backend.adapters.openai.router import _format_completion, _sse_chunk
+from backend.core.utils import format_time_delta as _format_time_delta
 from backend.adapters.openai.schemas import OAIChatMessage, OAIChatRequest
 from backend.core.chat.models import Message
 

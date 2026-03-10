@@ -113,3 +113,61 @@ class ChatService:
         print(sep, flush=True)
 
         return clean_text
+
+    async def execute_stream(self, request: ChatRequest):
+        """ストリーミングでLLMにディスパッチし、テキストチャンクをyieldする。
+
+        記憶の刻み込み（carve）はyield完了後に呼び出し元で行う。
+
+        Yields:
+            str: テキストチャンク（[MEMORY:...]マーカーを含む場合あり）
+        """
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
+        # --- 1. 記憶の想起 ---
+        last_user_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_user_msg = extract_text_content(m.get("content"))
+                break
+
+        recalled = []
+        if last_user_msg:
+            try:
+                recalled = self.memory_manager.recall_memory(request.character_id, last_user_msg)
+            except Exception:
+                pass
+
+        # --- 2. URLの自動fetch ---
+        fetched_contents = []
+        if last_user_msg:
+            urls = find_urls(last_user_msg)
+            if urls:
+                try:
+                    fetched_contents = await fetch_urls(urls)
+                except Exception:
+                    pass
+
+        # --- 3. システムプロンプト構築 ---
+        system_prompt = build_system_prompt(
+            character_system_prompt=request.character_system_prompt,
+            recalled_memories=recalled,
+            fetched_contents=fetched_contents,
+            meta_instructions=request.meta_instructions,
+            provider_additional_instructions=request.provider_additional_instructions,
+            enable_time_awareness=request.enable_time_awareness,
+            current_time_str=request.current_time_str,
+            time_since_last_interaction=request.time_since_last_interaction,
+        )
+
+        # --- 4. プロバイダーへストリーミングディスパッチ ---
+        provider_impl = create_provider(
+            request.provider, request.model, request.settings,
+            thinking_level=request.thinking_level
+        )
+        try:
+            async for chunk in provider_impl.generate_stream(system_prompt, messages):
+                yield chunk
+        except Exception as e:
+            import traceback
+            yield f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
