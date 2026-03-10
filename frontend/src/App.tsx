@@ -26,6 +26,8 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  /** サイドバーの開閉状態。デスクトップはデフォルト開、モバイルはデフォルト閉。 */
+  const [sidebarOpen, setSidebarOpen] = useState(typeof window !== "undefined" ? window.innerWidth >= 640 : true);
   /** ストリーミング中の思考ブロック・想起記憶テキスト（null = なし） */
   const [streamingReasoning, setStreamingReasoning] = useState<string | null>(null);
   /** 完了済みメッセージIDに紐付いた reasoning テキスト。ページリロードまで保持する。 */
@@ -198,20 +200,49 @@ export default function App() {
   }, [activeSessionId, sending, _doStream]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-100">
+    /* h-[100dvh]: モバイルブラウザのアドレスバーを除いた実際の表示領域に合わせる */
+    <div className="flex h-[100dvh] overflow-hidden bg-zinc-950 text-zinc-100 relative">
+      {/* モバイル時: サイドバー背後のオーバーレイ。タップで閉じる。 */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/50 sm:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       <Sidebar
         models={models}
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onSelectSession={handleSelectSession}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen((o) => !o)}
+        onSelectSession={(id) => { handleSelectSession(id); setSidebarOpen(window.innerWidth >= 640); }}
         onNewChat={handleNewChat}
         onDeleteSession={handleDeleteSession}
       />
 
-      <main className="flex-1 flex flex-col h-full overflow-hidden">
+      <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        {/* トップバー: ハンバーガートグルボタン。サイドバーの開閉を制御する。 */}
+        <div className="flex items-center gap-3 px-3 py-2.5 bg-zinc-900 border-b border-zinc-700 shrink-0">
+          <button
+            onClick={() => setSidebarOpen((o) => !o)}
+            className="text-zinc-100 p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
+            aria-label="サイドバーを開閉"
+          >
+            {/* ハンバーガーアイコン */}
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width={20} height={20}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
+          {/* サイドバーが閉じているときはタイトルを表示 */}
+          {!sidebarOpen && (
+            <span className="text-zinc-100 text-sm font-semibold">Chotgor</span>
+          )}
+        </div>
+
         {/* エラーバナー */}
         {error && (
-          <div className="bg-red-900/60 text-red-200 text-sm px-4 py-2 flex justify-between items-center">
+          <div className="bg-red-900/60 text-red-200 text-sm px-4 py-2 flex justify-between items-center shrink-0">
             <span>{error}</span>
             <button onClick={() => setError(null)} className="text-red-300 hover:text-red-100">✕</button>
           </div>
@@ -230,7 +261,7 @@ export default function App() {
             onRetry={handleRetry}
           />
         ) : (
-          <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+          <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm px-4 text-center">
             <p>左のサイドバーからチャットを選択するか、新規チャットを作成してください</p>
           </div>
         )}

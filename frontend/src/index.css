@@ -4,6 +4,8 @@
 
 body {
   /* bg/textカラーはApp.tsxのルートdivで指定。@applyに依存しない */
-  @apply h-screen overflow-hidden;
+  /* h-dvh: モバイルブラウザのアドレスバーを除いた実際の表示領域を使用する */
+  height: 100dvh;
+  overflow: hidden;
   font-family: system-ui, sans-serif;
 }

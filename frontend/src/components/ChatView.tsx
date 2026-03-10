@@ -93,7 +93,7 @@ export default function ChatView({
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
       {/* メッセージ一覧 */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-4">
         {messages.length === 0 && !sending && (
           <p className="text-zinc-500 text-sm text-center mt-16">
             メッセージを送ってみてください
@@ -136,7 +136,7 @@ export default function ChatView({
             <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
               {characterName.charAt(0)}
             </div>
-            <div className="max-w-[70%] space-y-1">
+            <div className="max-w-[85%] sm:max-w-[85%] sm:max-w-[70%] space-y-1">
               {/* 思考ブロック（折りたたみ） */}
               {streamingReasoning && (
                 <ThinkingBlock content={streamingReasoning} streaming />
@@ -164,7 +164,7 @@ export default function ChatView({
       {/* 入力フォーム */}
       <form
         onSubmit={handleSubmit}
-        className="border-t border-zinc-800 px-6 py-4 flex flex-col gap-2"
+        className="border-t border-zinc-800 px-3 sm:px-6 py-3 sm:py-4 flex flex-col gap-2"
       >
         {/* 添付画像サムネイルプレビュー */}
         {pendingFiles.length > 0 && (
@@ -320,7 +320,7 @@ function MessageBubble({
         <div className="w-8 h-8 rounded-full bg-zinc-600 flex items-center justify-center text-xs font-bold shrink-0">
           {userName.charAt(0)}
         </div>
-        <div className="max-w-[70%] flex flex-col items-end gap-1">
+        <div className="max-w-[85%] sm:max-w-[70%] flex flex-col items-end gap-1">
           {/* 添付画像グリッド */}
           {msg.images && msg.images.length > 0 && (
             <ImageGrid imageIds={msg.images} />
@@ -362,7 +362,7 @@ function MessageBubble({
                 <button
                   onClick={() => setEditing(true)}
                   title="編集"
-                  className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 transition-all p-1 rounded shrink-0"
+                  className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 transition-all p-1 rounded shrink-0"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
@@ -381,18 +381,18 @@ function MessageBubble({
       <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
         {characterName.charAt(0)}
       </div>
-      <div className="max-w-[70%] space-y-1">
+      <div className="max-w-[85%] sm:max-w-[70%] space-y-1">
         {/* 思考ブロック・想起記憶（完了後は折りたたみ状態で表示） */}
         {reasoning && <ThinkingBlock content={reasoning} />}
         <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm">
           <MarkdownContent content={msg.content} />
         </div>
-        {/* 再生成ボタン（ホバー時に表示） */}
+        {/* 再生成ボタン（モバイルは常時表示、デスクトップはホバー時） */}
         {!sending && onRegenerate && (
           <button
             onClick={onRegenerate}
             title="再生成"
-            className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 text-xs transition-all px-2 py-1 rounded hover:bg-zinc-800"
+            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 text-xs transition-all px-2 py-1 rounded hover:bg-zinc-800"
           >
             ↺ 再生成
           </button>

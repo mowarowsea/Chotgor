@@ -12,6 +12,10 @@ interface Props {
   sessions: Session[];
   /** 現在選択中のセッションID */
   activeSessionId: string | null;
+  /** サイドバーの開閉状態 */
+  isOpen: boolean;
+  /** サイドバー開閉トグルコールバック */
+  onToggle: () => void;
   /** セッション選択時のコールバック */
   onSelectSession: (sessionId: string) => void;
   /** 新規チャット作成時のコールバック */
@@ -20,11 +24,13 @@ interface Props {
   onDeleteSession: (sessionId: string) => void;
 }
 
-/** セッション一覧とモデル選択UIを提供するサイドバー。 */
+/** セッション一覧とモデル選択UIを提供するサイドバー。モバイルはオーバーレイ表示、デスクトップはインライン表示。 */
 export default function Sidebar({
   models,
   sessions,
   activeSessionId,
+  isOpen,
+  onToggle,
   onSelectSession,
   onNewChat,
   onDeleteSession,
@@ -66,7 +72,19 @@ export default function Sidebar({
   };
 
   return (
-    <aside className="w-64 flex flex-col bg-zinc-900 border-r border-zinc-800 h-full">
+    /*
+     * モバイル: fixed でオーバーレイ表示。isOpen に応じて translateX でスライドイン/アウト。
+     * デスクトップ (sm+): relative でインライン表示。isOpen が false のときは hidden で非表示。
+     */
+    <aside
+      className={`
+        flex flex-col bg-zinc-900 border-r border-zinc-800 h-full w-64 shrink-0
+        fixed left-0 top-0 z-30
+        sm:relative sm:z-auto
+        transition-transform duration-200 ease-in-out
+        ${isOpen ? "translate-x-0" : "-translate-x-full sm:hidden"}
+      `}
+    >
       {/* ヘッダー */}
       <div className="p-4 border-b border-zinc-800">
         <h1 className="text-lg font-bold text-zinc-100 mb-3">Chotgor</h1>
@@ -134,7 +152,7 @@ export default function Sidebar({
             ) : (
               <button
                 onClick={(e) => handleDeleteClick(e, s.id)}
-                className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-xs transition-opacity"
+                className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-xs transition-opacity"
               >
                 🗑
               </button>
