@@ -128,6 +128,14 @@ export async function sendMessage(
   return res.json();
 }
 
+/** 指定メッセージ以降（自身を含む）をすべて削除する。編集・再生成の前処理に使う。 */
+export async function deleteMessagesFrom(sessionId: string, messageId: string): Promise<void> {
+  const res = await fetch(`/api/chat/sessions/${sessionId}/messages/from/${messageId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("メッセージの削除に失敗しました");
+}
+
 /** ユーザ名を取得する。 */
 export async function fetchUserName(): Promise<string> {
   const res = await fetch("/api/chat/settings/user-name");

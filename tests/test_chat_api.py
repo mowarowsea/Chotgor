@@ -355,3 +355,63 @@ class TestStreamMessage:
         done_event = next(e for e in events if e["type"] == "done")
         assert "user_message" in done_event
         assert "character_message" in done_event
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/chat/sessions/{session_id}/messages/from/{message_id}
+# ---------------------------------------------------------------------------
+
+class TestDeleteMessagesFrom:
+    """指定メッセージ以降削除エンドポイントのテスト。
+
+    ユーザメッセージ編集・キャラクター応答再生成の前処理として呼ばれる
+    DELETE エンドポイントの正常系・異常系を検証する。
+    """
+
+    def test_returns_204_on_success(self):
+        """削除成功時に HTTP 204 を返すこと。"""
+        session = _fake_session(sid="sess-1")
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = session
+        sqlite.delete_chat_messages_from.return_value = True
+        client = TestClient(_make_app(sqlite))
+
+        res = client.delete("/api/chat/sessions/sess-1/messages/from/msg-1")
+
+        assert res.status_code == 204
+
+    def test_calls_delete_with_correct_args(self):
+        """sqlite.delete_chat_messages_from が正しい引数で呼ばれること。"""
+        session = _fake_session(sid="sess-1")
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = session
+        sqlite.delete_chat_messages_from.return_value = True
+        client = TestClient(_make_app(sqlite))
+
+        client.delete("/api/chat/sessions/sess-1/messages/from/msg-abc")
+
+        sqlite.delete_chat_messages_from.assert_called_once_with("sess-1", "msg-abc")
+
+    def test_returns_404_when_session_not_found(self):
+        """セッションが存在しない場合は 404 を返すこと。"""
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = None
+        client = TestClient(_make_app(sqlite))
+
+        res = client.delete("/api/chat/sessions/no-such-sess/messages/from/msg-1")
+
+        assert res.status_code == 404
+        # セッションが存在しない場合は delete_chat_messages_from を呼ばないこと
+        sqlite.delete_chat_messages_from.assert_not_called()
+
+    def test_returns_404_when_message_not_found(self):
+        """メッセージが存在しない場合は 404 を返すこと。"""
+        session = _fake_session(sid="sess-1")
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = session
+        sqlite.delete_chat_messages_from.return_value = False
+        client = TestClient(_make_app(sqlite))
+
+        res = client.delete("/api/chat/sessions/sess-1/messages/from/no-such-msg")
+
+        assert res.status_code == 404

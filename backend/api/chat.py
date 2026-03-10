@@ -221,6 +221,21 @@ async def delete_session(request: Request, session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+@router.delete("/sessions/{session_id}/messages/from/{message_id}", status_code=204)
+async def delete_messages_from(request: Request, session_id: str, message_id: str):
+    """指定メッセージ以降（自身を含む）をすべて削除する。
+
+    ユーザメッセージ編集・キャラクター応答再生成の前処理として呼び出す。
+    削除後、フロントは同セッションに対して streamMessage を再送する。
+    """
+    session = request.app.state.sqlite.get_chat_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    ok = request.app.state.sqlite.delete_chat_messages_from(session_id, message_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+
 @router.post("/sessions/{session_id}/messages")
 async def send_message(request: Request, session_id: str, body: MessageCreate):
     """

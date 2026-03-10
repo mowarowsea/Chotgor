@@ -22,6 +22,11 @@ interface Props {
   reasoningMap: Record<string, string>;
   /** メッセージ送信コールバック */
   onSend: (content: string) => void;
+  /**
+   * ユーザメッセージ編集・キャラクター応答再生成コールバック。
+   * fromMessageId 以降を削除して content で再送する。
+   */
+  onRetry: (fromMessageId: string, content: string) => void;
 }
 
 /** メッセージを整形してバブル表示するチャットビュー。 */
@@ -34,6 +39,7 @@ export default function ChatView({
   streamingReasoning,
   reasoningMap,
   onSend,
+  onRetry,
 }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -69,13 +75,31 @@ export default function ChatView({
           </p>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg, idx) => (
           <MessageBubble
             key={msg.id}
             msg={msg}
             characterName={characterName}
             userName={userName}
             reasoning={reasoningMap[msg.id]}
+            sending={sending}
+            onEdit={
+              msg.role === "user"
+                ? (newContent) => onRetry(msg.id, newContent)
+                : undefined
+            }
+            onRegenerate={
+              msg.role === "character"
+                ? () => {
+                    // 直前のユーザメッセージを逆順で探す
+                    const precedingUser = [...messages]
+                      .slice(0, idx)
+                      .reverse()
+                      .find((m) => m.role === "user");
+                    if (precedingUser) onRetry(precedingUser.id, precedingUser.content);
+                  }
+                : undefined
+            }
           />
         ))}
 
@@ -169,36 +193,114 @@ function ThinkingBlock({
   );
 }
 
-/** 1件のメッセージをバブル表示するサブコンポーネント。 */
+/**
+ * 1件のメッセージをバブル表示するサブコンポーネント。
+ * ユーザメッセージはホバー時に編集ボタン、キャラクターメッセージは再生成ボタンを表示する。
+ */
 function MessageBubble({
   msg,
   characterName,
   userName,
   reasoning,
+  sending,
+  onEdit,
+  onRegenerate,
 }: {
   msg: ChatMessage;
   characterName: string;
   userName: string;
   /** キャラクターメッセージに紐付いた reasoning テキスト（思考ブロック・想起記憶） */
   reasoning?: string;
+  /** 送信処理中フラグ（処理中はボタンを非表示にする） */
+  sending: boolean;
+  /** ユーザメッセージ編集コールバック（ユーザメッセージのみ） */
+  onEdit?: (newContent: string) => void;
+  /** キャラクター応答再生成コールバック（キャラクターメッセージのみ） */
+  onRegenerate?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(msg.content);
   const isUser = msg.role === "user";
+
+  /** 編集を確定して送信する。 */
+  const handleEditSubmit = () => {
+    const text = editText.trim();
+    if (!text) return;
+    setEditing(false);
+    onEdit?.(text);
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && e.shiftKey) {
+      e.preventDefault();
+      handleEditSubmit();
+    }
+    if (e.key === "Escape") {
+      setEditing(false);
+      setEditText(msg.content);
+    }
+  };
 
   if (isUser) {
     return (
-      <div className="flex gap-3 items-start flex-row-reverse">
+      <div className="flex gap-3 items-start flex-row-reverse group">
         <div className="w-8 h-8 rounded-full bg-zinc-600 flex items-center justify-center text-xs font-bold shrink-0">
           {userName.charAt(0)}
         </div>
-        <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm max-w-[70%] whitespace-pre-wrap">
-          {msg.content}
+        <div className="max-w-[70%]">
+          {editing ? (
+            /* インライン編集フォーム */
+            <div className="flex flex-col gap-2">
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                rows={3}
+                autoFocus
+                className="bg-zinc-700 text-zinc-100 rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setEditing(false); setEditText(msg.content); }}
+                  className="text-zinc-400 hover:text-zinc-200 text-xs px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleEditSubmit}
+                  disabled={!editText.trim()}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  送信
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* 通常表示 + ホバー時に編集ボタン */
+            <div className="flex items-end gap-2 flex-row-reverse">
+              <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm whitespace-pre-wrap">
+                {msg.content}
+              </div>
+              {!sending && onEdit && (
+                <button
+                  onClick={() => setEditing(true)}
+                  title="編集"
+                  className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 transition-all p-1 rounded shrink-0"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex gap-3 items-start">
+    <div className="flex gap-3 items-start group">
       <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
         {characterName.charAt(0)}
       </div>
@@ -208,6 +310,16 @@ function MessageBubble({
         <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm whitespace-pre-wrap">
           {msg.content}
         </div>
+        {/* 再生成ボタン（ホバー時に表示） */}
+        {!sending && onRegenerate && (
+          <button
+            onClick={onRegenerate}
+            title="再生成"
+            className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 text-xs transition-all px-2 py-1 rounded hover:bg-zinc-800"
+          >
+            ↺ 再生成
+          </button>
+        )}
       </div>
     </div>
   );

@@ -596,3 +596,32 @@ class SQLiteStore:
                 .order_by(ChatMessage.created_at.asc())
                 .all()
             )
+
+    def delete_chat_messages_from(self, session_id: str, message_id: str) -> bool:
+        """指定メッセージ以降（自身を含む）をすべて削除する。
+
+        ユーザメッセージ編集・キャラクター応答再生成で使用する。
+        対象メッセージの created_at 以降の全メッセージを削除する。
+
+        Args:
+            session_id: セッションID。
+            message_id: 削除起点メッセージのID。
+
+        Returns:
+            削除対象メッセージが存在した場合 True、存在しなかった場合 False。
+        """
+        with self.get_session() as session:
+            target = (
+                session.query(ChatMessage)
+                .filter(ChatMessage.id == message_id, ChatMessage.session_id == session_id)
+                .first()
+            )
+            if not target:
+                return False
+            pivot_time = target.created_at
+            session.query(ChatMessage).filter(
+                ChatMessage.session_id == session_id,
+                ChatMessage.created_at >= pivot_time,
+            ).delete(synchronize_session=False)
+            session.commit()
+            return True

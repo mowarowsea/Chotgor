@@ -9,6 +9,7 @@ import {
   fetchSession,
   createSession,
   deleteSession,
+  deleteMessagesFrom,
   streamMessage,
   fetchUserName,
 } from "./api";
@@ -94,37 +95,33 @@ export default function App() {
     }
   }, [activeSessionId]);
 
-  /** メッセージ送信。ユーザーバルーン即時表示 + SSEストリーミングでキャラクター応答を表示する。 */
-  const handleSend = useCallback(async (content: string) => {
-    if (!activeSessionId) return;
-    setSending(true);
+  /**
+   * ストリーミング送信の共通実装。楽観的ユーザメッセージ表示 + SSE受信を行う。
+   * handleSend / handleRetry の両方から呼ばれる。
+   */
+  const _doStream = useCallback(async (sessionId: string, content: string) => {
     setError(null);
     setStreamingContent("");
     setStreamingReasoning(null);
 
-    // ユーザーメッセージを楽観的に即時追加
     const optimisticUserMsg: ChatMessage = {
       id: `optimistic-${Date.now()}`,
-      session_id: activeSessionId,
+      session_id: sessionId,
       role: "user",
       content,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUserMsg]);
 
+    let accumulatedReasoning = "";
     try {
-      // ローカル変数で reasoning を蓄積し、done 時にメッセージIDへ紐付ける
-      let accumulatedReasoning = "";
-
-      for await (const event of streamMessage(activeSessionId, content)) {
+      for await (const event of streamMessage(sessionId, content)) {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
         } else if (event.type === "reasoning") {
-          // 思考ブロック・想起した記憶をローカル変数と state 両方に蓄積する
           accumulatedReasoning += event.content;
           setStreamingReasoning(accumulatedReasoning);
         } else if (event.type === "done") {
-          // 完了時: reasoning をメッセージIDに紐付けて保存し、ストリーミング状態をクリアする
           if (accumulatedReasoning) {
             setReasoningMap((prev) => ({
               ...prev,
@@ -149,10 +146,43 @@ export default function App() {
       setStreamingReasoning(null);
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
       setError(String(e));
+    }
+  }, []);
+
+  /** メッセージ送信。ユーザーバルーン即時表示 + SSEストリーミングでキャラクター応答を表示する。 */
+  const handleSend = useCallback(async (content: string) => {
+    if (!activeSessionId) return;
+    setSending(true);
+    try {
+      await _doStream(activeSessionId, content);
     } finally {
       setSending(false);
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, _doStream]);
+
+  /**
+   * ユーザメッセージ編集 / キャラクター応答再生成の共通ハンドラ。
+   * fromMessageId 以降をDBから削除し、content でストリームを再送する。
+   * 再生成の場合は fromMessageId = 直前ユーザメッセージのID、content = そのメッセージ本文。
+   */
+  const handleRetry = useCallback(async (fromMessageId: string, content: string) => {
+    if (!activeSessionId || sending) return;
+    setSending(true);
+    setError(null);
+    // ローカル状態を即時切り詰めてUIを反映する
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === fromMessageId);
+      return idx >= 0 ? prev.slice(0, idx) : prev;
+    });
+    try {
+      await deleteMessagesFrom(activeSessionId, fromMessageId);
+      await _doStream(activeSessionId, content);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSending(false);
+    }
+  }, [activeSessionId, sending, _doStream]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-950 text-zinc-100">
@@ -184,6 +214,7 @@ export default function App() {
             streamingReasoning={streamingReasoning}
             reasoningMap={reasoningMap}
             onSend={handleSend}
+            onRetry={handleRetry}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
