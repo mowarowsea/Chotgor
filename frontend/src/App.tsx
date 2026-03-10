@@ -81,15 +81,27 @@ export default function App() {
     }
   }, [activeSessionId]);
 
-  /** メッセージ送信。 */
+  /** メッセージ送信。ユーザー入力バルーンはAPI待機前に即時表示する。 */
   const handleSend = useCallback(async (content: string) => {
     if (!activeSessionId) return;
     setSending(true);
     setError(null);
+
+    // ユーザーメッセージを楽観的に即時追加（LLM待機中も表示する）
+    const optimisticUserMsg: ChatMessage = {
+      id: `optimistic-${Date.now()}`,
+      session_id: activeSessionId,
+      role: "user",
+      content,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticUserMsg]);
+
     try {
       const result = await sendMessage(activeSessionId, content);
+      // 楽観的メッセージをサーバー確定版で置き換え、キャラクター応答を追加
       setMessages((prev) => [
-        ...prev,
+        ...prev.filter((m) => m.id !== optimisticUserMsg.id),
         result.user_message,
         result.character_message,
       ]);
@@ -97,6 +109,8 @@ export default function App() {
       const updated = await fetchSessions();
       setSessions(updated);
     } catch (e) {
+      // 送信失敗時は楽観的メッセージを取り消す
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
       setError(String(e));
     } finally {
       setSending(false);
