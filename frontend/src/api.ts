@@ -18,6 +18,8 @@ export interface ChatMessage {
   session_id: string;
   role: "user" | "character";
   content: string;
+  /** 思考ブロック・想起記憶テキスト。キャラクターメッセージのみ存在する場合がある。 */
+  reasoning?: string;
   created_at: string;
 }
 

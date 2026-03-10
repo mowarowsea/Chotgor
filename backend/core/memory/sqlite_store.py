@@ -56,6 +56,7 @@ class ChatMessage(Base):
     session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
     role = Column(String, nullable=False)       # "user" | "character"
     content = Column(Text, nullable=False)
+    reasoning = Column(Text, nullable=True)     # 思考ブロック・想起記憶テキスト
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -156,6 +157,16 @@ class SQLiteStore:
                 except Exception:
                     pass
 
+            # chat_messages テーブルへの新カラム追加（冪等）
+            for stmt in [
+                "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT",
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception:
+                    pass
+
             # チャット関連テーブルの新設（IF NOT EXISTS で冪等）
             for stmt in [
                 (
@@ -167,7 +178,8 @@ class SQLiteStore:
                 (
                     "CREATE TABLE IF NOT EXISTS chat_messages "
                     "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
-                    "role TEXT NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP, "
+                    "role TEXT NOT NULL, content TEXT NOT NULL, reasoning TEXT, "
+                    "created_at TIMESTAMP, "
                     "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
                 ),
             ]:
@@ -545,10 +557,31 @@ class SQLiteStore:
 
     # --- Chat Messages ---
 
-    def create_chat_message(self, message_id: str, session_id: str, role: str, content: str) -> "ChatMessage":
-        """チャットメッセージを作成する。"""
+    def create_chat_message(
+        self,
+        message_id: str,
+        session_id: str,
+        role: str,
+        content: str,
+        reasoning: Optional[str] = None,
+    ) -> "ChatMessage":
+        """チャットメッセージを作成する。
+
+        Args:
+            message_id: メッセージのUUID。
+            session_id: 所属セッションのID。
+            role: "user" または "character"。
+            content: クリーン済みの本文テキスト。
+            reasoning: 思考ブロック・想起記憶テキスト（キャラクターメッセージのみ）。
+        """
         with self.get_session() as session:
-            msg = ChatMessage(id=message_id, session_id=session_id, role=role, content=content)
+            msg = ChatMessage(
+                id=message_id,
+                session_id=session_id,
+                role=role,
+                content=content,
+                reasoning=reasoning,
+            )
             session.add(msg)
             session.commit()
             session.refresh(msg)

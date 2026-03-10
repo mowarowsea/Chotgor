@@ -76,13 +76,17 @@ def _session_to_dict(s) -> dict:
 
 def _message_to_dict(m) -> dict:
     """ChatMessage ORMオブジェクトを辞書に変換する。"""
-    return {
+    result = {
         "id": m.id,
         "session_id": m.session_id,
         "role": m.role,
         "content": m.content,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
+    # reasoning は None の場合は省略してレスポンスサイズを削減する
+    if getattr(m, "reasoning", None):
+        result["reasoning"] = m.reasoning
+    return result
 
 
 async def _build_chat_request(request: Request, session, history_messages: list, user_content: str) -> ChatRequest:
@@ -335,17 +339,20 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             {"type": "chunk",     "content": "..."} — 応答テキスト
         """
         full_text = ""
+        accumulated_reasoning = ""
         try:
             async for chunk_type, content in state.chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
-                    # 記憶リストを表示用テキストにフォーマットして送信する
+                    # 記憶リストを表示用テキストにフォーマットして送信・蓄積する
                     display = _format_memories_for_sse(content)
                     if display:
+                        accumulated_reasoning += display
                         data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "thinking":
-                    # 思考ブロックをリアルタイム送信する
+                    # 思考ブロックをリアルタイム送信・蓄積する
                     if content:
+                        accumulated_reasoning += content
                         data = json.dumps({"type": "reasoning", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "text":
@@ -363,13 +370,14 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         clean_text = full_text
         log_front_output(clean_text)
 
-        # キャラクターの応答をDBに保存
+        # キャラクターの応答をDBに保存（reasoning があれば一緒に保存する）
         char_msg_id = str(uuid.uuid4())
         char_msg = state.sqlite.create_chat_message(
             message_id=char_msg_id,
             session_id=session_id,
             role="character",
             content=clean_text,
+            reasoning=accumulated_reasoning if accumulated_reasoning else None,
         )
 
         # セッションのupdated_atを最新化

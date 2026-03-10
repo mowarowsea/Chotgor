@@ -46,13 +46,21 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  /** セッション選択時にメッセージ一覧を取得する。 */
+  /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
     setError(null);
     try {
       const detail = await fetchSession(sessionId);
       setMessages(detail.messages);
+      // DBに保存された reasoning をメッセージIDに紐付けて復元する
+      const restored: Record<string, string> = {};
+      for (const msg of detail.messages) {
+        if (msg.reasoning) {
+          restored[msg.id] = msg.reasoning;
+        }
+      }
+      setReasoningMap(restored);
     } catch (e) {
       setError(String(e));
     }
