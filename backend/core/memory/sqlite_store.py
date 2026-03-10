@@ -186,6 +186,10 @@ class SQLiteStore:
         with self.get_session() as session:
             return session.get(Character, character_id)
 
+    def get_character_by_name(self, name: str) -> Optional[Character]:
+        with self.get_session() as session:
+            return session.query(Character).filter(Character.name == name).first()
+
     def list_characters(self) -> list[Character]:
         with self.get_session() as session:
             return session.query(Character).all()
@@ -379,6 +383,10 @@ class SQLiteStore:
     def get_model_preset(self, preset_id: str) -> Optional[LLMModelPreset]:
         with self.get_session() as session:
             return session.get(LLMModelPreset, preset_id)
+
+    def get_model_preset_by_name(self, name: str) -> Optional[LLMModelPreset]:
+        with self.get_session() as session:
+            return session.query(LLMModelPreset).filter(LLMModelPreset.name == name).first()
 
     def update_model_preset(self, preset_id: str, **kwargs) -> Optional[LLMModelPreset]:
         with self.get_session() as session:

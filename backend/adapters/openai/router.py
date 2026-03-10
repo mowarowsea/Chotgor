@@ -86,7 +86,7 @@ async def list_models(request: Request):
                 continue
             label = PROVIDER_LABELS.get(preset.provider, preset.provider)
             data.append({
-                "id": f"{char.id}@{preset_id}",
+                "id": f"{char.name}@{preset.name}",
                 "object": "model",
                 "created": int(char.created_at.timestamp()) if char.created_at else 0,
                 "owned_by": "chotgor",
@@ -109,20 +109,23 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         )
 
     char_id, preset_id = body.model.rsplit("@", 1)
-    character = state.sqlite.get_character(char_id)
+
+    # UUID優先、なければ名前で検索
+    character = state.sqlite.get_character(char_id) or state.sqlite.get_character_by_name(char_id)
     if not character:
         raise HTTPException(status_code=404, detail=f"Character '{char_id}' not found")
 
-    model_config = (character.enabled_providers or {}).get(preset_id)
+    # preset_idはUUIDか名前かを判断してルックアップ
+    preset = state.sqlite.get_model_preset(preset_id) or state.sqlite.get_model_preset_by_name(preset_id)
+    if preset is None:
+        raise HTTPException(status_code=404, detail=f"Model preset '{preset_id}' not found")
+
+    model_config = (character.enabled_providers or {}).get(preset.id)
     if model_config is None:
         raise HTTPException(
             status_code=404,
             detail=f"Model preset '{preset_id}' is not enabled for this character",
         )
-
-    preset = state.sqlite.get_model_preset(preset_id)
-    if preset is None:
-        raise HTTPException(status_code=404, detail=f"Model preset '{preset_id}' not found")
 
     settings = state.sqlite.get_all_settings()
 
