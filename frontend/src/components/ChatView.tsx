@@ -3,6 +3,10 @@
  * メッセージ一覧の表示・メッセージ送信フォームを担当する。
  */
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { ChatMessage } from "../api";
 
 interface Props {
@@ -114,7 +118,7 @@ export default function ChatView({
               {streamingReasoning && (
                 <ThinkingBlock content={streamingReasoning} streaming />
               )}
-              {/* 応答テキストバブル */}
+              {/* 応答テキストバブル（ストリーミング中はプレーンテキスト表示） */}
               {streamingContent !== null && streamingContent.trim().length > 0 && (
                 <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm whitespace-pre-wrap">
                   {streamingContent}
@@ -278,8 +282,8 @@ function MessageBubble({
           ) : (
             /* 通常表示 + ホバー時に編集ボタン */
             <div className="flex items-end gap-2 flex-row-reverse">
-              <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm whitespace-pre-wrap">
-                {msg.content}
+              <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm">
+                <MarkdownContent content={msg.content} />
               </div>
               {!sending && onEdit && (
                 <button
@@ -307,8 +311,8 @@ function MessageBubble({
       <div className="max-w-[70%] space-y-1">
         {/* 思考ブロック・想起記憶（完了後は折りたたみ状態で表示） */}
         {reasoning && <ThinkingBlock content={reasoning} />}
-        <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm whitespace-pre-wrap">
-          {msg.content}
+        <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm">
+          <MarkdownContent content={msg.content} />
         </div>
         {/* 再生成ボタン（ホバー時に表示） */}
         {!sending && onRegenerate && (
@@ -322,5 +326,75 @@ function MessageBubble({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Markdownテキストをレンダリングするサブコンポーネント。
+ * remark-gfm で表・打ち消し線・チェックボックスなどのGFM拡張に対応する。
+ * コードブロックは react-syntax-highlighter (oneDark) でシンタックスハイライトする。
+ * インラインコードは等幅フォントで薄いグレー背景で表示する。
+ * 日本語文中の **太字** など、前後がアルファベット以外の場合も正しく太字になる。
+ */
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        // コードブロック: 言語付きはシンタックスハイライト、なしはシンプル表示
+        code({ className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || "");
+          const codeText = String(children).replace(/\n$/, "");
+          if (match) {
+            return (
+              <SyntaxHighlighter
+                style={oneDark}
+                language={match[1]}
+                PreTag="div"
+                customStyle={{ borderRadius: "0.5rem", fontSize: "0.8rem", margin: "0.5rem 0" }}
+              >
+                {codeText}
+              </SyntaxHighlighter>
+            );
+          }
+          return (
+            <code className="bg-zinc-700 text-zinc-200 rounded px-1 py-0.5 font-mono text-[0.85em]" {...props}>
+              {children}
+            </code>
+          );
+        },
+        // 段落: デフォルトの <p> マージンを調整
+        p({ children }) {
+          return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>;
+        },
+        // 太字
+        strong({ children }) {
+          return <strong className="font-bold text-zinc-50">{children}</strong>;
+        },
+        // 斜体
+        em({ children }) {
+          return <em className="italic">{children}</em>;
+        },
+        // 見出し
+        h1({ children }) { return <h1 className="text-lg font-bold mt-3 mb-1">{children}</h1>; },
+        h2({ children }) { return <h2 className="text-base font-bold mt-3 mb-1">{children}</h2>; },
+        h3({ children }) { return <h3 className="text-sm font-bold mt-2 mb-1">{children}</h3>; },
+        // 箇条書き・番号リスト
+        ul({ children }) { return <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>; },
+        ol({ children }) { return <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>; },
+        // 水平線
+        hr() { return <hr className="border-zinc-600 my-3" />; },
+        // 引用
+        blockquote({ children }) {
+          return (
+            <blockquote className="border-l-2 border-zinc-500 pl-3 text-zinc-400 my-2">
+              {children}
+            </blockquote>
+          );
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
   );
 }
