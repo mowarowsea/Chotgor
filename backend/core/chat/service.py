@@ -115,13 +115,20 @@ class ChatService:
         return clean_text
 
     async def execute_stream(self, request: ChatRequest):
-        """ストリーミングでLLMにディスパッチし、テキストチャンクをyieldする。
+        """ストリーミングでLLMにディスパッチし、型付きチャンクをyieldする。
 
-        記憶の刻み込み（carve）はyield完了後に呼び出し元で行う。
+        記憶想起・思考ブロック・応答テキストをそれぞれ別の型でyieldする。
+        テキストは全チャンクを内部バッファで受け取った後に carve() を実行し、
+        [MEMORY:...] マーカーを取り除いたクリーンなテキストをまとめてyieldする。
 
         Yields:
-            str: テキストチャンク（[MEMORY:...]マーカーを含む場合あり）
+            tuple[str, Any]:
+                ("memories", list[dict]) : 想起した記憶リスト（最初に1回だけyield）
+                ("thinking", str)        : 思考ブロック（リアルタイム）
+                ("text",     str)        : クリーンな応答テキスト（最後に1回）
         """
+        import traceback
+
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
         # --- 1. 記憶の想起 ---
@@ -137,6 +144,10 @@ class ChatService:
                 recalled = self.memory_manager.recall_memory(request.character_id, last_user_msg)
             except Exception:
                 pass
+
+        # 想起した記憶を最初にyield（フロントに表示するため）
+        if recalled:
+            yield ("memories", recalled)
 
         # --- 2. URLの自動fetch ---
         fetched_contents = []
@@ -165,9 +176,34 @@ class ChatService:
             request.provider, request.model, request.settings,
             thinking_level=request.thinking_level
         )
+
+        # テキストはバッファリングして [MEMORY:...] マーカーをcarveしてからyield
+        full_text = ""
         try:
-            async for chunk in provider_impl.generate_stream(system_prompt, messages):
-                yield chunk
+            async for chunk_type, content in provider_impl.generate_stream_typed(system_prompt, messages):
+                if chunk_type == "thinking":
+                    # 思考ブロックはリアルタイムでyield
+                    yield ("thinking", content)
+                elif chunk_type == "text":
+                    full_text += content
         except Exception as e:
-            import traceback
-            yield f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+            yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
+            return
+
+        # --- 5. 記憶を刻み込む ---
+        clean_text = carve(full_text, request.character_id, self.memory_manager)
+        log_front_output(clean_text)
+
+        # --- 6. デバッグログ ---
+        sep = "-" * 60
+        print(f"\n{sep}")
+        print(
+            f"[CHAT stream] character={request.character_id}"
+            f" provider={request.provider}"
+            f" model={request.model or '(default)'}"
+        )
+        print(f"  [RESPONSE] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
+        print(sep, flush=True)
+
+        if clean_text:
+            yield ("text", clean_text)

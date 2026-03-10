@@ -30,11 +30,45 @@ def _available_providers(settings: dict) -> set[str]:
 
 
 def _sse_chunk(text: str) -> str:
+    """通常テキストのSSEチャンクを生成する。delta.content に格納する。"""
     payload = {
         "object": "chat.completion.chunk",
         "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
     }
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _sse_chunk_reasoning(text: str) -> str:
+    """思考ブロック・想起記憶用のSSEチャンクを生成する。
+
+    delta.reasoning_content に格納することで、OpenWebUI が
+    「思考」として折りたたみ表示する（DeepSeek R1 と同仕様）。
+    """
+    payload = {
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {"reasoning_content": text}, "finish_reason": None}],
+    }
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _format_memories_display(recalled: list) -> str:
+    """想起した記憶リストを思考ブロック内表示用テキストにフォーマットする。
+
+    Args:
+        recalled: recall_memory() が返す記憶辞書のリスト。
+
+    Returns:
+        人間が読みやすい形式の文字列。記憶がなければ空文字列。
+    """
+    if not recalled:
+        return ""
+    lines = [f"📚 想起した記憶 ({len(recalled)}件)"]
+    for mem in recalled:
+        category = mem.get("metadata", {}).get("category") or "general"
+        content = mem.get("content", "")
+        score = mem.get("hybrid_score", 0.0)
+        lines.append(f"[{category}] {content}  (score: {score:.2f})")
+    return "\n".join(lines)
 
 
 def _format_completion(model: str, text: str) -> dict:
@@ -156,9 +190,23 @@ async def chat_completions(request: Request, body: OAIChatRequest):
 
     if body.stream:
         async def generate():
-            text = await chat_service.execute(chat_request)
-            if text:
-                yield _sse_chunk(text)
+            """型付きチャンクを OpenAI SSE 形式に変換して送信する。
+
+            - ("memories", list) → reasoning_content として記憶一覧を送信
+            - ("thinking", str)  → reasoning_content として思考ブロックを送信
+            - ("text", str)      → content として応答テキストを送信
+            """
+            async for chunk_type, content in chat_service.execute_stream(chat_request):
+                if chunk_type == "memories":
+                    display = _format_memories_display(content)
+                    if display:
+                        yield _sse_chunk_reasoning(display)
+                elif chunk_type == "thinking":
+                    if content:
+                        yield _sse_chunk_reasoning(content)
+                elif chunk_type == "text":
+                    if content:
+                        yield _sse_chunk(content)
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(

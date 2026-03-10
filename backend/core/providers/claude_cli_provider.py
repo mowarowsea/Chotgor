@@ -287,6 +287,123 @@ class ClaudeCliProvider(BaseLLMProvider):
                 break
             yield item
 
+    async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
+        """Claude CLIからthinkingブロックを含む型付きチャンクをストリーミングで取得する。
+
+        stream-json 形式の assistant イベントを解析し、
+        content ブロックの type ("thinking" / "text") に応じて
+        ("thinking", text) または ("text", text) タプルをyieldする。
+
+        Yields:
+            tuple[str, str]: (type, content) 形式。
+        """
+        # 画像が含まれる場合はCLIでは見えない旨をシステムプロンプトに追記
+        has_images = any(
+            isinstance(item, dict) and item.get("type") == "image_url"
+            for m in messages
+            for item in (m.get("content") if isinstance(m.get("content"), list) else [])
+        )
+        if has_images:
+            system_prompt += (
+                "\n\n[SYSTEM NOTE: The user has provided one or more images, "
+                "but you currently cannot 'see' them because of the current connection mode (Claude CLI). "
+                "Please inform the user naturally that you cannot see the images right now.]"
+            )
+
+        conversation = _format_conversation(messages, self.character_name)
+        extra_env: dict = {}
+        if self.thinking_level != "default":
+            extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
+
+        env = _clean_env()
+        if extra_env:
+            env.update(extra_env)
+
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        log_provider_request("claude_cli", {
+            "system_prompt": system_prompt,
+            "conversation": conversation,
+            "extra_env": extra_env,
+        })
+
+        def run():
+            """subprocess.Popenでstream-json出力を行単位で読み、型付きチャンクをキューへ送信する。
+
+            assistant イベントの content 配列を走査し、
+            type == "thinking" は ("thinking", ...) として、
+            type == "text" は ("text", ...) として送信する。
+            """
+            try:
+                proc = subprocess.Popen(
+                    [
+                        CLAUDE_BIN,
+                        "--output-format", "stream-json",
+                        "--verbose",
+                        "--print",
+                        "--tools", "",
+                        "--no-session-persistence",
+                        "--system-prompt", system_prompt,
+                    ],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                )
+                proc.stdin.write(conversation.encode("utf-8"))
+                proc.stdin.close()
+
+                for line_bytes in iter(proc.stdout.readline, b""):
+                    line = line_bytes.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        if event.get("type") == "assistant":
+                            for block in event.get("message", {}).get("content", []):
+                                btype = block.get("type")
+                                if btype == "thinking" and block.get("thinking"):
+                                    loop.call_soon_threadsafe(
+                                        queue.put_nowait, ("thinking", block["thinking"])
+                                    )
+                                elif btype == "text" and block.get("text"):
+                                    loop.call_soon_threadsafe(
+                                        queue.put_nowait, ("text", block["text"])
+                                    )
+                    except json.JSONDecodeError:
+                        pass
+
+                proc.wait()
+                if proc.returncode != 0:
+                    err = proc.stderr.read().decode("utf-8", errors="replace")
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        RuntimeError(f"Claude CLI exited with code {proc.returncode}: {err[:500]}")
+                    )
+            except FileNotFoundError:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    RuntimeError("claude CLI が見つかりません。Claude Code がインストール・認証済みか確認してください")
+                )
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, RuntimeError):
+                yield ("text", f"[Claude CLI error: {item}]")
+                break
+            yield item
+
 
 async def _run_claude(sys_path: str, msg_path: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround)."""

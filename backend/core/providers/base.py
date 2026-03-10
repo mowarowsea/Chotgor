@@ -31,3 +31,18 @@ class BaseLLMProvider:
         サブクラスでオーバーライドすることでトークン単位のストリーミングが可能になる。
         """
         yield await self.generate(system_prompt, messages)
+
+    async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
+        """型付きチャンクのストリーミング生成。
+
+        思考ブロック（ThinkingBlock）と通常テキストを区別してyieldする。
+        デフォルト実装はgenerate_stream()を ("text", chunk) 形式でラップする。
+        サブクラスでオーバーライドすることで思考ブロックも個別にyieldできる。
+
+        Yields:
+            tuple[str, str]: (type, content) 形式。
+                type == "text"    : 通常の応答テキスト。
+                type == "thinking": 思考ブロック（ThinkingBlock）のテキスト。
+        """
+        async for chunk in self.generate_stream(system_prompt, messages):
+            yield ("text", chunk)

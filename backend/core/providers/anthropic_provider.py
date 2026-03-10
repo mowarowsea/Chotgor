@@ -147,3 +147,89 @@ class AnthropicProvider(BaseLLMProvider):
                 yield f"[Anthropic API error: {item}]"
                 break
             yield item
+
+    async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
+        """Anthropic APIから思考ブロックを含む型付きチャンクをストリーミングで取得する。
+
+        thinking_level が "default" 以外の場合、ThinkingBlockを ("thinking", text) として
+        通常テキストを ("text", text) としてyieldする。
+        thinking_level == "default" のときは ("text", text) のみ。
+
+        Yields:
+            tuple[str, str]: (type, content) 形式。
+        """
+        try:
+            import anthropic
+        except ImportError:
+            yield ("text", "[Error: anthropic パッケージがインストールされていません]")
+            return
+
+        if not self.api_key:
+            yield ("text", "[Error: anthropic_api_key が設定されていません。Settings ページで設定してください]")
+            return
+
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        client = anthropic.Anthropic(api_key=self.api_key)
+        api_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
+
+        params: dict = {
+            "model": self.model,
+            "system": system_prompt,
+            "messages": api_messages,
+            "max_tokens": 4096,
+        }
+        if self.thinking_level != "default":
+            if _is_new_api(self.model):
+                params["thinking"] = {"type": "adaptive"}
+                params["output_config"] = {"effort": self.thinking_level}
+                params["temperature"] = 1
+                params["max_tokens"] = 20000
+            else:
+                budget = _BUDGET_TOKENS[self.thinking_level]
+                params["thinking"] = {"type": "enabled", "budget_tokens": budget}
+                params["temperature"] = 1
+                params["max_tokens"] = budget + 4096
+
+        log_provider_request("anthropic", params)
+
+        def run():
+            """同期SDKのイベントストリームを逐次読み取り、型付きチャンクをキューへ送信する。
+
+            content_block_delta イベントの delta.type を見て
+            thinking_delta と text_delta を区別する。
+            """
+            try:
+                with client.messages.stream(**params) as stream:
+                    for event in stream:
+                        etype = getattr(event, "type", None)
+                        if etype == "content_block_delta":
+                            delta = getattr(event, "delta", None)
+                            if delta is None:
+                                continue
+                            dtype = getattr(delta, "type", None)
+                            if dtype == "thinking_delta":
+                                text = getattr(delta, "thinking", "")
+                                if text:
+                                    loop.call_soon_threadsafe(queue.put_nowait, ("thinking", text))
+                            elif dtype == "text_delta":
+                                text = getattr(delta, "text", "")
+                                if text:
+                                    loop.call_soon_threadsafe(queue.put_nowait, ("text", text))
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, RuntimeError):
+                yield ("text", f"[Anthropic API error: {item}]")
+                break
+            yield item
