@@ -25,6 +25,7 @@ load_dotenv()
 
 SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "./data/chotgor.db")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/chroma")
+UPLOADS_DIR = os.getenv("UPLOADS_DIR", "./data/uploads")
 TEMPLATES_DIR = str(Path(__file__).parent / "templates")
 STATIC_DIR = str(Path(__file__).parent / "static")
 
@@ -33,6 +34,7 @@ STATIC_DIR = str(Path(__file__).parent / "static")
 async def lifespan(app: FastAPI):
     # Startup: initialize stores
     os.makedirs(os.path.dirname(os.path.abspath(SQLITE_DB_PATH)), exist_ok=True)
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
 
     sqlite = SQLiteStore(SQLITE_DB_PATH)
     chroma = ChromaStore(CHROMA_DB_PATH)
@@ -42,6 +44,7 @@ async def lifespan(app: FastAPI):
     app.state.chroma = chroma
     app.state.memory_manager = memory_manager
     app.state.chat_service = ChatService(memory_manager=memory_manager)
+    app.state.uploads_dir = UPLOADS_DIR
 
     # Seed optional Tavily key from environment if not already set
     if not sqlite.get_setting("tavily_api_key"):

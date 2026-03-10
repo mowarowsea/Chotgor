@@ -57,6 +57,23 @@ class ChatMessage(Base):
     role = Column(String, nullable=False)       # "user" | "character"
     content = Column(Text, nullable=False)
     reasoning = Column(Text, nullable=True)     # 思考ブロック・想起記憶テキスト
+    images = Column(JSON, nullable=True)        # [image_id, ...] 添付画像IDリスト
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+
+class ChatImage(Base):
+    """チャット添付画像 — セッションに紐づく画像ファイルのメタデータ。
+
+    実ファイルは uploads_dir/{id} に保存される。
+    セッション削除時にファイルとレコードをまとめて削除する。
+    """
+
+    __tablename__ = "chat_images"
+
+    id = Column(String, primary_key=True)       # UUID（ファイル名としても使用）
+    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
+    message_id = Column(String, nullable=True)  # メッセージ保存後に設定
+    mime_type = Column(String, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -160,6 +177,7 @@ class SQLiteStore:
             # chat_messages テーブルへの新カラム追加（冪等）
             for stmt in [
                 "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT",
+                "ALTER TABLE chat_messages ADD COLUMN images TEXT",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -178,7 +196,14 @@ class SQLiteStore:
                 (
                     "CREATE TABLE IF NOT EXISTS chat_messages "
                     "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
-                    "role TEXT NOT NULL, content TEXT NOT NULL, reasoning TEXT, "
+                    "role TEXT NOT NULL, content TEXT NOT NULL, reasoning TEXT, images TEXT, "
+                    "created_at TIMESTAMP, "
+                    "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
+                ),
+                (
+                    "CREATE TABLE IF NOT EXISTS chat_images "
+                    "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+                    "message_id TEXT, mime_type TEXT NOT NULL, "
                     "created_at TIMESTAMP, "
                     "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
                 ),
@@ -543,10 +568,14 @@ class SQLiteStore:
             return obj
 
     def delete_chat_session(self, session_id: str) -> bool:
-        """チャットセッションとそのメッセージを削除する。"""
+        """チャットセッションとそのメッセージ・画像レコードを削除する。
+
+        ディスク上の画像ファイルは呼び出し元（chat.py）で削除すること。
+        """
         with self.get_session() as session:
-            # メッセージを先に削除してから親セッションを削除する
+            # 関連レコードを先に削除してから親セッションを削除する
             session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
+            session.query(ChatImage).filter(ChatImage.session_id == session_id).delete()
             obj = session.get(ChatSession, session_id)
             if not obj:
                 session.commit()
@@ -564,6 +593,7 @@ class SQLiteStore:
         role: str,
         content: str,
         reasoning: Optional[str] = None,
+        images: Optional[list] = None,
     ) -> "ChatMessage":
         """チャットメッセージを作成する。
 
@@ -573,6 +603,7 @@ class SQLiteStore:
             role: "user" または "character"。
             content: クリーン済みの本文テキスト。
             reasoning: 思考ブロック・想起記憶テキスト（キャラクターメッセージのみ）。
+            images: 添付画像IDのリスト（ユーザメッセージのみ）。
         """
         with self.get_session() as session:
             msg = ChatMessage(
@@ -581,6 +612,7 @@ class SQLiteStore:
                 role=role,
                 content=content,
                 reasoning=reasoning,
+                images=images or None,
             )
             session.add(msg)
             session.commit()
@@ -625,3 +657,46 @@ class SQLiteStore:
             ).delete(synchronize_session=False)
             session.commit()
             return True
+
+    # --- Chat Images ---
+
+    def create_chat_image(
+        self,
+        image_id: str,
+        session_id: str,
+        mime_type: str,
+        message_id: Optional[str] = None,
+    ) -> "ChatImage":
+        """添付画像レコードを作成する。
+
+        Args:
+            image_id: 画像のUUID（ディスク上のファイル名としても使用）。
+            session_id: 所属セッションのID。
+            mime_type: 画像のMIMEタイプ（例: "image/jpeg"）。
+            message_id: 紐づくメッセージID（メッセージ保存前は None）。
+        """
+        with self.get_session() as session:
+            img = ChatImage(
+                id=image_id,
+                session_id=session_id,
+                message_id=message_id,
+                mime_type=mime_type,
+            )
+            session.add(img)
+            session.commit()
+            session.refresh(img)
+            return img
+
+    def get_chat_image(self, image_id: str) -> Optional["ChatImage"]:
+        """画像IDでレコードを取得する。存在しない場合は None を返す。"""
+        with self.get_session() as session:
+            return session.get(ChatImage, image_id)
+
+    def list_chat_images_by_session(self, session_id: str) -> list:
+        """セッションに紐づく全画像レコードを返す。セッション削除時のファイル掃除に使う。"""
+        with self.get_session() as session:
+            return (
+                session.query(ChatImage)
+                .filter(ChatImage.session_id == session_id)
+                .all()
+            )

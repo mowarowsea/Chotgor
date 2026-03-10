@@ -4,13 +4,15 @@
 セッション管理 + LLM呼び出しを担当する。
 """
 
+import base64
 import json
+import os
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Union
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..core.chat.models import ChatRequest, Message
@@ -39,6 +41,7 @@ class MessageCreate(BaseModel):
     """メッセージ送信リクエスト。"""
 
     content: str
+    image_ids: Optional[List[str]] = None
 
 
 # --- ヘルパー ---
@@ -83,13 +86,15 @@ def _message_to_dict(m) -> dict:
         "content": m.content,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
-    # reasoning は None の場合は省略してレスポンスサイズを削減する
+    # reasoning / images は None の場合は省略してレスポンスサイズを削減する
     if getattr(m, "reasoning", None):
         result["reasoning"] = m.reasoning
+    if getattr(m, "images", None):
+        result["images"] = m.images
     return result
 
 
-async def _build_chat_request(request: Request, session, history_messages: list, user_content: str) -> ChatRequest:
+async def _build_chat_request(request: Request, session, history_messages: list, user_content: Union[str, list]) -> ChatRequest:
     """セッション情報からChatRequestを構築する内部ヘルパー。"""
     state = request.app.state
 
@@ -215,10 +220,70 @@ async def update_session(request: Request, session_id: str, body: SessionUpdate)
 
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(request: Request, session_id: str):
-    """セッションとそのメッセージを削除する。"""
+    """セッションとそのメッセージ・添付画像ファイルを削除する。"""
+    # ディスク上の画像ファイルを先に削除する
+    images = request.app.state.sqlite.list_chat_images_by_session(session_id)
+    for img in images:
+        img_path = os.path.join(request.app.state.uploads_dir, img.id)
+        try:
+            os.remove(img_path)
+        except FileNotFoundError:
+            pass
     ok = request.app.state.sqlite.delete_chat_session(session_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.post("/sessions/{session_id}/images", status_code=201)
+async def upload_images(
+    request: Request,
+    session_id: str,
+    files: List[UploadFile] = File(...),
+):
+    """複数の画像ファイルをアップロードしてセッションに紐づける。
+
+    受け付けるMIMEタイプ: image/*
+    ファイルは uploads_dir/{image_id} として保存される。
+
+    Returns:
+        [{"id": image_id, "url": "/api/chat/images/{image_id}"}] の形式で返す。
+    """
+    state = request.app.state
+    session = state.sqlite.get_chat_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    results = []
+    for file in files:
+        if not (file.content_type or "").startswith("image/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{file.filename}' は画像ファイルではありません",
+            )
+        image_id = str(uuid.uuid4())
+        data = await file.read()
+        img_path = os.path.join(state.uploads_dir, image_id)
+        with open(img_path, "wb") as f:
+            f.write(data)
+        state.sqlite.create_chat_image(
+            image_id=image_id,
+            session_id=session_id,
+            mime_type=file.content_type or "image/jpeg",
+        )
+        results.append({"id": image_id, "url": f"/api/chat/images/{image_id}"})
+    return results
+
+
+@router.get("/images/{image_id}")
+async def get_image(request: Request, image_id: str):
+    """添付画像ファイルを配信する。"""
+    img = request.app.state.sqlite.get_chat_image(image_id)
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    img_path = os.path.join(request.app.state.uploads_dir, image_id)
+    if not os.path.exists(img_path):
+        raise HTTPException(status_code=404, detail="Image file not found")
+    return FileResponse(img_path, media_type=img.mime_type)
 
 
 @router.delete("/sessions/{session_id}/messages/from/{message_id}", status_code=204)
@@ -324,6 +389,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         session_id=session_id,
         role="user",
         content=body.content,
+        images=body.image_ids or None,
     )
 
     # 現在のユーザーメッセージを除いた履歴を取得
@@ -335,9 +401,27 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         auto_title = body.content[:30].replace("\n", " ")
         state.sqlite.update_chat_session(session_id, title=auto_title)
 
+    # 画像が添付されている場合は OpenAI vision 形式のコンテンツリストを構築する
+    user_content: Union[str, list] = body.content
+    if body.image_ids:
+        parts: list = [{"type": "text", "text": body.content}]
+        for img_id in body.image_ids:
+            img_meta = state.sqlite.get_chat_image(img_id)
+            if img_meta:
+                img_path = os.path.join(state.uploads_dir, img_id)
+                if os.path.exists(img_path):
+                    with open(img_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{img_meta.mime_type};base64,{b64}"},
+                    })
+        if len(parts) > 1:
+            user_content = parts
+
     # ChatRequestの構築（HTTPExceptionが発生した場合はここで止まる）
     try:
-        chat_request = await _build_chat_request(request, session, history, body.content)
+        chat_request = await _build_chat_request(request, session, history, user_content)
     except HTTPException:
         raise
 

@@ -20,6 +20,8 @@ export interface ChatMessage {
   content: string;
   /** 思考ブロック・想起記憶テキスト。キャラクターメッセージのみ存在する場合がある。 */
   reasoning?: string;
+  /** 添付画像IDのリスト。ユーザメッセージのみ存在する場合がある。 */
+  images?: string[];
   created_at: string;
 }
 
@@ -77,12 +79,16 @@ export type StreamEvent =
 /** メッセージをSSEでストリーミング送信し、イベントをyieldする。 */
 export async function* streamMessage(
   sessionId: string,
-  content: string
+  content: string,
+  imageIds?: string[]
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({
+      content,
+      ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
+    }),
   });
 
   if (!res.ok) throw new Error("ストリーミング送信に失敗しました");
@@ -125,6 +131,23 @@ export async function sendMessage(
     body: JSON.stringify({ content }),
   });
   if (!res.ok) throw new Error("メッセージの送信に失敗しました");
+  return res.json();
+}
+
+/** 複数の画像ファイルをアップロードしてセッションに紐づける。 */
+export async function uploadImages(
+  sessionId: string,
+  files: File[]
+): Promise<{ id: string; url: string }[]> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+  const res = await fetch(`/api/chat/sessions/${sessionId}/images`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) throw new Error("画像のアップロードに失敗しました");
   return res.json();
 }
 

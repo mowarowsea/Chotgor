@@ -10,6 +10,7 @@ import {
   createSession,
   deleteSession,
   deleteMessagesFrom,
+  uploadImages,
   streamMessage,
   fetchUserName,
 } from "./api";
@@ -99,7 +100,7 @@ export default function App() {
    * ストリーミング送信の共通実装。楽観的ユーザメッセージ表示 + SSE受信を行う。
    * handleSend / handleRetry の両方から呼ばれる。
    */
-  const _doStream = useCallback(async (sessionId: string, content: string) => {
+  const _doStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = []) => {
     setError(null);
     setStreamingContent("");
     setStreamingReasoning(null);
@@ -109,13 +110,14 @@ export default function App() {
       session_id: sessionId,
       role: "user",
       content,
+      images: imageIds.length > 0 ? imageIds : undefined,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUserMsg]);
 
     let accumulatedReasoning = "";
     try {
-      for await (const event of streamMessage(sessionId, content)) {
+      for await (const event of streamMessage(sessionId, content, imageIds)) {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
         } else if (event.type === "reasoning") {
@@ -149,12 +151,22 @@ export default function App() {
     }
   }, []);
 
-  /** メッセージ送信。ユーザーバルーン即時表示 + SSEストリーミングでキャラクター応答を表示する。 */
-  const handleSend = useCallback(async (content: string) => {
+  /**
+   * メッセージ送信。画像があれば先にアップロードしてからストリーミング送信する。
+   * ユーザーバルーン即時表示 + SSEストリーミングでキャラクター応答を表示する。
+   */
+  const handleSend = useCallback(async (content: string, files: File[]) => {
     if (!activeSessionId) return;
     setSending(true);
     try {
-      await _doStream(activeSessionId, content);
+      let imageIds: string[] = [];
+      if (files.length > 0) {
+        const uploaded = await uploadImages(activeSessionId, files);
+        imageIds = uploaded.map((u) => u.id);
+      }
+      await _doStream(activeSessionId, content, imageIds);
+    } catch (e) {
+      setError(String(e));
     } finally {
       setSending(false);
     }
@@ -164,8 +176,9 @@ export default function App() {
    * ユーザメッセージ編集 / キャラクター応答再生成の共通ハンドラ。
    * fromMessageId 以降をDBから削除し、content でストリームを再送する。
    * 再生成の場合は fromMessageId = 直前ユーザメッセージのID、content = そのメッセージ本文。
+   * imageIds = 再送する画像IDリスト（再生成時は元メッセージの画像を引き継ぐ）。
    */
-  const handleRetry = useCallback(async (fromMessageId: string, content: string) => {
+  const handleRetry = useCallback(async (fromMessageId: string, content: string, imageIds: string[] = []) => {
     if (!activeSessionId || sending) return;
     setSending(true);
     setError(null);
@@ -176,7 +189,7 @@ export default function App() {
     });
     try {
       await deleteMessagesFrom(activeSessionId, fromMessageId);
-      await _doStream(activeSessionId, content);
+      await _doStream(activeSessionId, content, imageIds);
     } catch (e) {
       setError(String(e));
     } finally {
