@@ -16,6 +16,8 @@ interface Props {
   sending: boolean;
   /** ストリーミング中のキャラクター応答テキスト（null = ストリーミングなし） */
   streamingContent: string | null;
+  /** ストリーミング中の思考ブロック・想起記憶テキスト（null = なし） */
+  streamingReasoning: string | null;
   /** メッセージ送信コールバック */
   onSend: (content: string) => void;
 }
@@ -27,6 +29,7 @@ export default function ChatView({
   userName,
   sending,
   streamingContent,
+  streamingReasoning,
   onSend,
 }: Props) {
   const [input, setInput] = useState("");
@@ -72,27 +75,30 @@ export default function ChatView({
           />
         ))}
 
-        {/* ストリーミング中のキャラクター応答バブル */}
-        {(streamingContent !== null && streamingContent.trim().length > 0) && (
+        {/* ストリーミング中: 思考ブロック・想起記憶 + 応答バブル */}
+        {sending && (streamingReasoning || streamingContent !== null) && (
           <div className="flex gap-3 items-start">
             <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
               {characterName.charAt(0)}
             </div>
-            <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm max-w-[70%] whitespace-pre-wrap">
-              {streamingContent}
-              <span className="animate-pulse inline-block ml-0.5 text-indigo-400">▌</span>
-            </div>
-          </div>
-        )}
-
-        {/* 初回チャンク待機中スピナー（ストリーミング開始前のみ表示） */}
-        {sending && (streamingContent === null || streamingContent.trim().length === 0) && (
-          <div className="flex gap-3 items-start">
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
-              {characterName.charAt(0)}
-            </div>
-            <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-400 text-sm">
-              <span className="animate-pulse">考え中...</span>
+            <div className="max-w-[70%] space-y-1">
+              {/* 思考ブロック（折りたたみ） */}
+              {streamingReasoning && (
+                <ThinkingBlock content={streamingReasoning} streaming />
+              )}
+              {/* 応答テキストバブル */}
+              {streamingContent !== null && streamingContent.trim().length > 0 && (
+                <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm whitespace-pre-wrap">
+                  {streamingContent}
+                  <span className="animate-pulse inline-block ml-0.5 text-indigo-400">▌</span>
+                </div>
+              )}
+              {/* 応答待機スピナー（reasoning もテキストもまだない場合） */}
+              {!streamingReasoning && (streamingContent === null || streamingContent.trim().length === 0) && (
+                <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-400 text-sm">
+                  <span className="animate-pulse">考え中...</span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -122,6 +128,38 @@ export default function ChatView({
           送信
         </button>
       </form>
+    </div>
+  );
+}
+
+/**
+ * 思考ブロック・想起記憶を折りたたみ表示するサブコンポーネント。
+ * ストリーミング中は自動展開し、完了後は折りたたみ可能にする。
+ */
+function ThinkingBlock({
+  content,
+  streaming = false,
+}: {
+  content: string;
+  streaming?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="border border-zinc-700 rounded-xl overflow-hidden text-xs">
+      <button
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-zinc-400 hover:bg-zinc-800/60 transition-colors text-left"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <span className="text-[10px]">{expanded ? "▼" : "▶"}</span>
+        <span>思考・想起した記憶</span>
+        {streaming && <span className="animate-pulse ml-1 text-indigo-400">●</span>}
+      </button>
+      {expanded && (
+        <div className="px-3 py-2 text-zinc-500 whitespace-pre-wrap font-mono border-t border-zinc-700/60 leading-relaxed">
+          {content}
+        </div>
+      )}
     </div>
   );
 }

@@ -24,6 +24,8 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  /** ストリーミング中の思考ブロック・想起記憶テキスト（null = なし） */
+  const [streamingReasoning, setStreamingReasoning] = useState<string | null>(null);
   const [userName, setUserName] = useState("ユーザ");
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +90,7 @@ export default function App() {
     setSending(true);
     setError(null);
     setStreamingContent("");
+    setStreamingReasoning(null);
 
     // ユーザーメッセージを楽観的に即時追加
     const optimisticUserMsg: ChatMessage = {
@@ -103,8 +106,12 @@ export default function App() {
       for await (const event of streamMessage(activeSessionId, content)) {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
+        } else if (event.type === "reasoning") {
+          // 思考ブロック・想起した記憶を追記する
+          setStreamingReasoning((prev) => (prev ?? "") + event.content);
         } else if (event.type === "done") {
           setStreamingContent(null);
+          setStreamingReasoning(null);
           setMessages((prev) => [
             ...prev.filter((m) => m.id !== optimisticUserMsg.id),
             event.user_message,
@@ -118,6 +125,7 @@ export default function App() {
       }
     } catch (e) {
       setStreamingContent(null);
+      setStreamingReasoning(null);
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
       setError(String(e));
     } finally {
@@ -152,6 +160,7 @@ export default function App() {
             userName={userName}
             sending={sending}
             streamingContent={streamingContent}
+            streamingReasoning={streamingReasoning}
             onSend={handleSend}
           />
         ) : (

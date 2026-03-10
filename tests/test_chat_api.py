@@ -286,9 +286,10 @@ class TestStreamMessage:
         sid = str(uuid.uuid4())
         sqlite, _, _ = self._make_sqlite_for_stream(sid)
 
+        # execute_stream() は型付きタプルをyieldする
         async def fake_stream(_request):
-            yield "chunk1"
-            yield "chunk2"
+            yield ("text", "chunk1")
+            yield ("text", "chunk2")
 
         chat_service = MagicMock()
         chat_service.execute_stream = fake_stream
@@ -297,7 +298,6 @@ class TestStreamMessage:
         memory_manager.recall_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("backend.api.chat.carve", lambda text, *_: text)
             mp.setattr("backend.api.chat.log_front_output", lambda *_: None)
             client = TestClient(_make_app(sqlite, chat_service, memory_manager))
             res = client.post(
@@ -324,8 +324,9 @@ class TestStreamMessage:
         sid = str(uuid.uuid4())
         sqlite, user_msg, char_msg = self._make_sqlite_for_stream(sid)
 
+        # execute_stream() は型付きタプルをyieldする
         async def fake_stream(_request):
-            yield "やあ！"
+            yield ("text", "やあ！")
 
         chat_service = MagicMock()
         chat_service.execute_stream = fake_stream
@@ -334,7 +335,6 @@ class TestStreamMessage:
         memory_manager.recall_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("backend.api.chat.carve", lambda text, *_: text)
             mp.setattr("backend.api.chat.log_front_output", lambda *_: None)
             client = TestClient(_make_app(sqlite, chat_service, memory_manager))
             res = client.post(

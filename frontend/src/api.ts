@@ -67,6 +67,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
 /** SSEストリームイベントの型定義。 */
 export type StreamEvent =
   | { type: "chunk"; content: string }
+  /** 思考ブロック・想起した記憶（フロントで折りたたみ表示する） */
+  | { type: "reasoning"; content: string }
   | { type: "done"; user_message: ChatMessage; character_message: ChatMessage }
   | { type: "error"; message: string };
 

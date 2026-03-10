@@ -15,7 +15,6 @@ from pydantic import BaseModel
 
 from ..core.chat.models import ChatRequest, Message
 from ..core.debug_logger import log_front_output
-from ..core.memory.inscriber import carve
 from ..core.utils import format_time_delta
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -43,6 +42,26 @@ class MessageCreate(BaseModel):
 
 
 # --- ヘルパー ---
+
+def _format_memories_for_sse(recalled: list) -> str:
+    """想起した記憶リストをSSE送信用のテキストにフォーマットする。
+
+    Args:
+        recalled: recall_memory() が返す記憶辞書のリスト。
+
+    Returns:
+        人間が読みやすい形式の文字列。記憶がなければ空文字列。
+    """
+    if not recalled:
+        return ""
+    lines = [f"📚 想起した記憶 ({len(recalled)}件)"]
+    for mem in recalled:
+        category = mem.get("metadata", {}).get("category") or "general"
+        content = mem.get("content", "")
+        score = mem.get("hybrid_score", 0.0)
+        lines.append(f"[{category}] {content}  (score: {score:.2f})")
+    return "\n".join(lines)
+
 
 def _session_to_dict(s) -> dict:
     """ChatSession ORMオブジェクトを辞書に変換する。"""
@@ -304,20 +323,44 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         raise
 
     async def sse_generator():
-        """SSEストリームのジェネレータ。チャンクをyieldし、完了後にDBへ保存する。"""
+        """SSEストリームのジェネレータ。型付きチャンクをyieldし、完了後にDBへ保存する。
+
+        execute_stream() は (type, content) タプルをyieldする:
+            ("memories", list[dict]) — 想起した記憶リスト
+            ("thinking", str)        — 思考ブロック（リアルタイム）
+            ("text", str)            — carve済みの応答テキスト（1回だけyield）
+
+        SSEイベント形式:
+            {"type": "reasoning", "content": "..."} — 思考・記憶（フロントで折りたたみ表示）
+            {"type": "chunk",     "content": "..."} — 応答テキスト
+        """
         full_text = ""
         try:
-            async for chunk in state.chat_service.execute_stream(chat_request):
-                full_text += chunk
-                data = json.dumps({"type": "chunk", "content": chunk}, ensure_ascii=False)
-                yield f"data: {data}\n\n"
+            async for chunk_type, content in state.chat_service.execute_stream(chat_request):
+                if chunk_type == "memories":
+                    # 記憶リストを表示用テキストにフォーマットして送信する
+                    display = _format_memories_for_sse(content)
+                    if display:
+                        data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
+                elif chunk_type == "thinking":
+                    # 思考ブロックをリアルタイム送信する
+                    if content:
+                        data = json.dumps({"type": "reasoning", "content": content}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
+                elif chunk_type == "text":
+                    # carve済みの全テキストを1チャンクとして送信する
+                    full_text = content
+                    if content:
+                        data = json.dumps({"type": "chunk", "content": content}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
         except Exception as e:
             err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
             yield f"data: {err_data}\n\n"
             return
 
-        # 記憶の刻み込みとクリーンテキスト取得
-        clean_text = carve(full_text, chat_request.character_id, state.memory_manager)
+        # execute_stream() 内で carve 済みのため再実行不要
+        clean_text = full_text
         log_front_output(clean_text)
 
         # キャラクターの応答をDBに保存
