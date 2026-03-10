@@ -18,6 +18,8 @@ interface Props {
   streamingContent: string | null;
   /** ストリーミング中の思考ブロック・想起記憶テキスト（null = なし） */
   streamingReasoning: string | null;
+  /** 完了済みメッセージIDと reasoning テキストの対応マップ */
+  reasoningMap: Record<string, string>;
   /** メッセージ送信コールバック */
   onSend: (content: string) => void;
 }
@@ -30,6 +32,7 @@ export default function ChatView({
   sending,
   streamingContent,
   streamingReasoning,
+  reasoningMap,
   onSend,
 }: Props) {
   const [input, setInput] = useState("");
@@ -72,6 +75,7 @@ export default function ChatView({
             msg={msg}
             characterName={characterName}
             userName={userName}
+            reasoning={reasoningMap[msg.id]}
           />
         ))}
 
@@ -141,9 +145,10 @@ function ThinkingBlock({
   streaming = false,
 }: {
   content: string;
+  /** true のときはストリーミング中（自動展開・アニメーション表示）。false のときは折りたたみ初期状態。 */
   streaming?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(streaming);
 
   return (
     <div className="border border-zinc-700 rounded-xl overflow-hidden text-xs">
@@ -169,10 +174,13 @@ function MessageBubble({
   msg,
   characterName,
   userName,
+  reasoning,
 }: {
   msg: ChatMessage;
   characterName: string;
   userName: string;
+  /** キャラクターメッセージに紐付いた reasoning テキスト（思考ブロック・想起記憶） */
+  reasoning?: string;
 }) {
   const isUser = msg.role === "user";
 
@@ -194,8 +202,12 @@ function MessageBubble({
       <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
         {characterName.charAt(0)}
       </div>
-      <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm max-w-[70%] whitespace-pre-wrap">
-        {msg.content}
+      <div className="max-w-[70%] space-y-1">
+        {/* 思考ブロック・想起記憶（完了後は折りたたみ状態で表示） */}
+        {reasoning && <ThinkingBlock content={reasoning} />}
+        <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm whitespace-pre-wrap">
+          {msg.content}
+        </div>
       </div>
     </div>
   );

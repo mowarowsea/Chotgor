@@ -26,6 +26,8 @@ export default function App() {
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   /** ストリーミング中の思考ブロック・想起記憶テキスト（null = なし） */
   const [streamingReasoning, setStreamingReasoning] = useState<string | null>(null);
+  /** 完了済みメッセージIDに紐付いた reasoning テキスト。ページリロードまで保持する。 */
+  const [reasoningMap, setReasoningMap] = useState<Record<string, string>>({});
   const [userName, setUserName] = useState("ユーザ");
   const [error, setError] = useState<string | null>(null);
 
@@ -103,13 +105,24 @@ export default function App() {
     setMessages((prev) => [...prev, optimisticUserMsg]);
 
     try {
+      // ローカル変数で reasoning を蓄積し、done 時にメッセージIDへ紐付ける
+      let accumulatedReasoning = "";
+
       for await (const event of streamMessage(activeSessionId, content)) {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
         } else if (event.type === "reasoning") {
-          // 思考ブロック・想起した記憶を追記する
-          setStreamingReasoning((prev) => (prev ?? "") + event.content);
+          // 思考ブロック・想起した記憶をローカル変数と state 両方に蓄積する
+          accumulatedReasoning += event.content;
+          setStreamingReasoning(accumulatedReasoning);
         } else if (event.type === "done") {
+          // 完了時: reasoning をメッセージIDに紐付けて保存し、ストリーミング状態をクリアする
+          if (accumulatedReasoning) {
+            setReasoningMap((prev) => ({
+              ...prev,
+              [event.character_message.id]: accumulatedReasoning,
+            }));
+          }
           setStreamingContent(null);
           setStreamingReasoning(null);
           setMessages((prev) => [
@@ -161,6 +174,7 @@ export default function App() {
             sending={sending}
             streamingContent={streamingContent}
             streamingReasoning={streamingReasoning}
+            reasoningMap={reasoningMap}
             onSend={handleSend}
           />
         ) : (
