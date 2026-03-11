@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { ChatMessage } from "../api";
@@ -470,7 +471,7 @@ function ImageModal({ src, onClose }: { src: string; onClose: () => void }) {
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkBreaks]}
       components={{
         // コードブロック: 言語付きはシンタックスハイライト、なしはシンプル表示
         code({ className, children, ...props }) {
