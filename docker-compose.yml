@@ -13,5 +13,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   openwebui-data:

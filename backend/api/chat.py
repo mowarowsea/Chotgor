@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from ..core.chat.models import ChatRequest, Message
 from ..core.debug_logger import log_front_output
+from ..core.memory.format import format_recalled_memories
 from ..core.utils import format_time_delta
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -47,34 +48,25 @@ class MessageCreate(BaseModel):
 # --- ヘルパー ---
 
 def _format_memories_for_sse(recalled: list) -> str:
-    """想起した記憶リストをSSE送信用のテキストにフォーマットする。
-
-    Args:
-        recalled: recall_memory() が返す記憶辞書のリスト。
-
-    Returns:
-        人間が読みやすい形式の文字列。記憶がなければ空文字列。
-    """
-    if not recalled:
-        return ""
-    lines = [f"📚 想起した記憶 ({len(recalled)}件)"]
-    for mem in recalled:
-        category = mem.get("metadata", {}).get("category") or "general"
-        content = mem.get("content", "")
-        score = mem.get("hybrid_score", 0.0)
-        lines.append(f"[{category}] {content}  (score: {score:.2f})")
-    return "\n".join(lines) + "\n"
+    """想起した記憶リストをSSE送信用のテキストにフォーマットする。共通実装は core/memory/format.py を使用する。"""
+    return format_recalled_memories(recalled)
 
 
 def _session_to_dict(s) -> dict:
     """ChatSession ORMオブジェクトを辞書に変換する。"""
-    return {
+    result = {
         "id": s.id,
         "model_id": s.model_id,
         "title": s.title,
+        "session_type": getattr(s, "session_type", "1on1") or "1on1",
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
+    # グループチャットのみ group_config を含める
+    group_config = getattr(s, "group_config", None)
+    if group_config:
+        result["group_config"] = group_config
+    return result
 
 
 def _message_to_dict(m) -> dict:
@@ -86,11 +78,13 @@ def _message_to_dict(m) -> dict:
         "content": m.content,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
-    # reasoning / images は None の場合は省略してレスポンスサイズを削減する
+    # reasoning / images / character_name は None の場合は省略してレスポンスサイズを削減する
     if getattr(m, "reasoning", None):
         result["reasoning"] = m.reasoning
     if getattr(m, "images", None):
         result["images"] = m.images
+    if getattr(m, "character_name", None):
+        result["character_name"] = m.character_name
     return result
 
 

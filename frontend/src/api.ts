@@ -9,6 +9,10 @@ export interface Session {
   id: string;
   model_id: string;
   title: string;
+  /** セッション種別。"1on1" または "group"。 */
+  session_type: "1on1" | "group";
+  /** グループチャット設定JSON文字列。session_type="group" のみ存在する。 */
+  group_config?: string;
   created_at: string;
   updated_at: string;
 }
@@ -22,8 +26,27 @@ export interface ChatMessage {
   reasoning?: string;
   /** 添付画像IDのリスト。ユーザメッセージのみ存在する場合がある。 */
   images?: string[];
+  /** グループチャット時の発言キャラクター名。 */
+  character_name?: string;
   created_at: string;
 }
+
+/** グループチャット設定オブジェクト（group_config のデシリアライズ後）。 */
+export interface GroupConfig {
+  participants: Array<{ char_name: string; preset_name: string }>;
+  director_model_id: string;  // "{char_name}@{preset_name}" 形式
+  max_auto_turns: number;
+  turn_timeout_sec: number;
+}
+
+/** グループチャットSSEイベントの型定義。 */
+export type GroupStreamEvent =
+  | { type: "user_saved"; message: ChatMessage }
+  | { type: "speaker_decided"; speakers: string[] }
+  | { type: "character_message"; character: string; message: ChatMessage }
+  | { type: "user_turn"; auto_turns_used: number }
+  | { type: "error"; message: string; character?: string }
+  | { type: "done" };
 
 export interface SessionDetail extends Session {
   messages: ChatMessage[];
@@ -165,4 +188,65 @@ export async function fetchUserName(): Promise<string> {
   if (!res.ok) return "ユーザ";
   const data = await res.json();
   return data.user_name ?? "ユーザ";
+}
+
+/** グループチャットセッションを作成する。 */
+export async function createGroupSession(
+  participants: string[],
+  directorModelId: string,
+  maxAutoTurns: number,
+  turnTimeoutSec: number,
+): Promise<Session & { warning?: string }> {
+  const res = await fetch("/api/group/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      participants: participants.map((id) => ({ model_id: id })),
+      director_model_id: directorModelId,
+      max_auto_turns: maxAutoTurns,
+      turn_timeout_sec: turnTimeoutSec,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "グループセッションの作成に失敗しました");
+  }
+  return res.json();
+}
+
+/** グループチャットメッセージをSSEでストリーミング送信し、イベントをyieldする。 */
+export async function* streamGroupMessage(
+  sessionId: string,
+  content: string,
+): AsyncGenerator<GroupStreamEvent> {
+  const res = await fetch(`/api/group/sessions/${sessionId}/messages/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error("グループメッセージの送信に失敗しました");
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          yield JSON.parse(line.slice(6)) as GroupStreamEvent;
+        } catch {
+          // 不正なJSONはスキップする
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

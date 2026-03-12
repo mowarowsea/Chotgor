@@ -19,6 +19,7 @@ from .anthropic_provider import AnthropicProvider
 from .base import BaseLLMProvider
 from .claude_cli_provider import ClaudeCliProvider
 from .google_provider import GoogleProvider
+from .ollama_provider import OllamaProvider
 from .openai_provider import OpenAIProvider, XAIProvider
 
 PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
@@ -27,6 +28,7 @@ PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
     OpenAIProvider.PROVIDER_ID: OpenAIProvider,
     XAIProvider.PROVIDER_ID: XAIProvider,
     GoogleProvider.PROVIDER_ID: GoogleProvider,
+    OllamaProvider.PROVIDER_ID: OllamaProvider,
 }
 
 # Human-readable labels (used by the UI)
@@ -36,10 +38,11 @@ PROVIDER_LABELS: dict[str, str] = {
     "openai": "OpenAI",
     "xai": "xAI / Grok",
     "google": "Google Gemini",
+    "ollama": "Ollama (ローカル)",
 }
 
 # Display order in the UI
-PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google"]
+PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "ollama"]
 
 
 def get_default_model(provider_id: str) -> str:

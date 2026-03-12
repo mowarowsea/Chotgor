@@ -13,10 +13,13 @@ import {
   uploadImages,
   streamMessage,
   fetchUserName,
+  createGroupSession,
+  streamGroupMessage,
 } from "./api";
-import type { Model, Session, ChatMessage, StreamEvent } from "./api";
+import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
+import GroupChatView from "./components/GroupChatView";
 
 /** アプリ全体のルートコンポーネント。 */
 export default function App() {
@@ -38,6 +41,22 @@ export default function App() {
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const characterName = activeSession?.model_id.split("@")[0] ?? "キャラクター";
+  /** アクティブセッションがグループチャットかどうか。 */
+  const isGroupSession = activeSession?.session_type === "group";
+  /** グループチャット参加者名リスト。 */
+  const groupParticipantNames = (() => {
+    if (!isGroupSession || !activeSession?.group_config) return [];
+    try {
+      const cfg = JSON.parse(activeSession.group_config);
+      return (cfg.participants as Array<{ char_name: string }>).map((p) => p.char_name);
+    } catch {
+      return [];
+    }
+  })();
+  /** グループチャット応答待機中のキャラクター名（null = 待機なし）。 */
+  const [groupWaitingCharacter, setGroupWaitingCharacter] = useState<string | null>(null);
+  /** グループチャットメッセージIDに紐付いた reasoning テキスト。 */
+  const [groupReasoningMap, setGroupReasoningMap] = useState<Record<string, string>>({});
 
   /** 初期データ取得。 */
   useEffect(() => {
@@ -65,6 +84,7 @@ export default function App() {
         }
       }
       setReasoningMap(restored);
+      setGroupReasoningMap(restored);
     } catch (e) {
       setError(String(e));
     }
@@ -75,6 +95,23 @@ export default function App() {
     setError(null);
     try {
       const session = await createSession(modelId);
+      setSessions((prev) => [session, ...prev]);
+      setActiveSessionId(session.id);
+      setMessages([]);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  /** 新規グループチャット作成。 */
+  const handleNewGroupChat = useCallback(async (
+    participants: string[],
+    directorModelId: string,
+    maxAutoTurns: number,
+  ) => {
+    setError(null);
+    try {
+      const session = await createGroupSession(participants, directorModelId, maxAutoTurns, 30);
       setSessions((prev) => [session, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
@@ -97,6 +134,87 @@ export default function App() {
       setError(String(e));
     }
   }, [activeSessionId]);
+
+  /**
+   * グループチャットのメッセージ送信実装。
+   * SSE受信中はキャラクター名を waitingCharacter で表示し、
+   * 受信完了後に全メッセージをサーバーから再取得して確定する。
+   */
+  const _doGroupStream = useCallback(async (sessionId: string, content: string) => {
+    setError(null);
+    setSending(true);
+    setGroupWaitingCharacter(null);
+
+    const optimisticId = `optimistic-${Date.now()}`;
+    const optimisticUserMsg: ChatMessage = {
+      id: optimisticId,
+      session_id: sessionId,
+      role: "user",
+      content,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticUserMsg]);
+
+    try {
+      for await (const event of streamGroupMessage(sessionId, content)) {
+        const ev = event as GroupStreamEvent;
+        if (ev.type === "user_saved") {
+          // optimisticメッセージを確定済みユーザーメッセージで差し替える
+          setMessages((prev) => prev.map((m) => m.id === optimisticId ? ev.message : m));
+        } else if (ev.type === "speaker_decided" && ev.speakers.length > 0) {
+          setGroupWaitingCharacter(ev.speakers[0]);
+        } else if (ev.type === "character_message") {
+          setGroupWaitingCharacter(null);
+          // reasoning を reasoningMap に保存する
+          if (ev.message.reasoning) {
+            setGroupReasoningMap((prev) => ({ ...prev, [ev.message.id]: ev.message.reasoning! }));
+          }
+          setMessages((prev) => [...prev, ev.message]);
+        } else if (ev.type === "user_turn" || ev.type === "done") {
+          setGroupWaitingCharacter(null);
+          break;
+        } else if (ev.type === "error") {
+          setGroupWaitingCharacter(null);
+          setError(ev.message);
+          break;
+        }
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      // サーバーから最新状態を取得して確定する
+      try {
+        const detail = await fetchSession(sessionId);
+        setMessages(detail.messages);
+        const updated = await fetchSessions();
+        setSessions(updated);
+      } catch {
+        // 取得失敗は無視する
+      }
+      setGroupWaitingCharacter(null);
+      setSending(false);
+    }
+  }, []);
+
+  /**
+   * グループチャットの編集・再生成共通ハンドラ。
+   * fromMessageId 以降をDBから削除し、content でグループストリームを再送する。
+   */
+  const handleGroupRetry = useCallback(async (fromMessageId: string, content: string) => {
+    if (!activeSessionId || sending) return;
+    setError(null);
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === fromMessageId);
+      return idx >= 0 ? prev.slice(0, idx) : prev;
+    });
+    try {
+      await deleteMessagesFrom(activeSessionId, fromMessageId);
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
+    _doGroupStream(activeSessionId, content);
+  }, [activeSessionId, sending, _doGroupStream]);
 
   /**
    * ストリーミング送信の共通実装。楽観的ユーザメッセージ表示 + SSE受信を行う。
@@ -154,11 +272,16 @@ export default function App() {
   }, []);
 
   /**
-   * メッセージ送信。画像があれば先にアップロードしてからストリーミング送信する。
-   * ユーザーバルーン即時表示 + SSEストリーミングでキャラクター応答を表示する。
+   * メッセージ送信。グループセッションと1on1セッションで処理を分岐する。
+   * 1on1: 画像があれば先にアップロードしてからストリーミング送信する。
+   * グループ: テキストのみ送信（画像非対応）。
    */
   const handleSend = useCallback(async (content: string, files: File[]) => {
     if (!activeSessionId) return;
+    if (isGroupSession) {
+      await _doGroupStream(activeSessionId, content);
+      return;
+    }
     setSending(true);
     try {
       let imageIds: string[] = [];
@@ -172,7 +295,7 @@ export default function App() {
     } finally {
       setSending(false);
     }
-  }, [activeSessionId, _doStream]);
+  }, [activeSessionId, isGroupSession, _doGroupStream, _doStream]);
 
   /**
    * ユーザメッセージ編集 / キャラクター応答再生成の共通ハンドラ。
@@ -218,6 +341,7 @@ export default function App() {
         onToggle={() => setSidebarOpen((o) => !o)}
         onSelectSession={(id) => { handleSelectSession(id); setSidebarOpen(window.innerWidth >= 640); }}
         onNewChat={handleNewChat}
+        onNewGroupChat={handleNewGroupChat}
         onDeleteSession={handleDeleteSession}
       />
 
@@ -248,7 +372,18 @@ export default function App() {
           </div>
         )}
 
-        {activeSessionId ? (
+        {activeSessionId && isGroupSession ? (
+          <GroupChatView
+            messages={messages}
+            participantNames={groupParticipantNames}
+            userName={userName}
+            sending={sending}
+            waitingCharacter={groupWaitingCharacter}
+            reasoningMap={groupReasoningMap}
+            onSend={(content) => handleSend(content, [])}
+            onRetry={handleGroupRetry}
+          />
+        ) : activeSessionId ? (
           <ChatView
             messages={messages}
             characterName={characterName}

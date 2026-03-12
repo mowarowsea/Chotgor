@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .adapters.openai import router as openai_router
-from .api import characters, memories, chat as chat_module
+from .api import characters, memories, chat as chat_module, group_chat as group_chat_module
 from .api import ui as ui_module
 from .core.chat.service import ChatService
 from .core.memory.chroma_store import ChromaStore
@@ -130,6 +130,7 @@ app.include_router(characters.router)
 app.include_router(memories.router)
 app.include_router(ui_module.router)
 app.include_router(chat_module.router)
+app.include_router(group_chat_module.router)
 
 
 @app.get("/health")

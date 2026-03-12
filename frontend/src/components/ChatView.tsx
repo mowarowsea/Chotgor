@@ -3,12 +3,8 @@
  * メッセージ一覧の表示・メッセージ送信フォームを担当する。
  */
 import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkBreaks from "remark-breaks";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { ChatMessage } from "../api";
+import { CharacterBubble, UserBubble, ThinkingBlock } from "./ChatBubbles";
 
 interface Props {
   /** 表示するメッセージ一覧 */
@@ -102,33 +98,34 @@ export default function ChatView({
         )}
 
         {messages.map((msg, idx) => (
-          <MessageBubble
-            key={msg.id}
-            msg={msg}
-            characterName={characterName}
-            userName={userName}
-            reasoning={reasoningMap[msg.id]}
-            sending={sending}
-            onEdit={
-              msg.role === "user"
-                ? (newContent) => onRetry(msg.id, newContent, [])
-                : undefined
-            }
-            onRegenerate={
-              msg.role === "character"
-                ? () => {
-                    // 直前のユーザメッセージを逆順で探して画像IDも引き継ぐ
-                    const precedingUser = [...messages]
-                      .slice(0, idx)
-                      .reverse()
-                      .find((m) => m.role === "user");
-                    if (precedingUser) {
-                      onRetry(precedingUser.id, precedingUser.content, precedingUser.images ?? []);
-                    }
-                  }
-                : undefined
-            }
-          />
+          msg.role === "user" ? (
+            <UserBubble
+              key={msg.id}
+              content={msg.content}
+              userName={userName}
+              images={msg.images}
+              sending={sending}
+              onEdit={(newContent) => onRetry(msg.id, newContent, [])}
+            />
+          ) : (
+            <CharacterBubble
+              key={msg.id}
+              characterName={characterName}
+              content={msg.content}
+              reasoning={reasoningMap[msg.id]}
+              sending={sending}
+              onRegenerate={() => {
+                // 直前のユーザメッセージを逆順で探して画像IDも引き継ぐ
+                const precedingUser = [...messages]
+                  .slice(0, idx)
+                  .reverse()
+                  .find((m) => m.role === "user");
+                if (precedingUser) {
+                  onRetry(precedingUser.id, precedingUser.content, precedingUser.images ?? []);
+                }
+              }}
+            />
+          )
         ))}
 
         {/* ストリーミング中: 思考ブロック・想起記憶 + 応答バブル */}
@@ -137,7 +134,8 @@ export default function ChatView({
             <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
               {characterName.charAt(0)}
             </div>
-            <div className="max-w-[85%] sm:max-w-[85%] sm:max-w-[70%] space-y-1">
+            <div className="max-w-[85%] sm:max-w-[70%] space-y-1">
+              <p className="text-xs font-medium text-indigo-400 px-1">{characterName}</p>
               {/* 思考ブロック（折りたたみ） */}
               {streamingReasoning && (
                 <ThinkingBlock content={streamingReasoning} streaming />
@@ -234,299 +232,3 @@ export default function ChatView({
   );
 }
 
-/**
- * 思考ブロック・想起記憶を折りたたみ表示するサブコンポーネント。
- * ストリーミング中は自動展開し、完了後は折りたたみ可能にする。
- */
-function ThinkingBlock({
-  content,
-  streaming = false,
-}: {
-  content: string;
-  /** true のときはストリーミング中（自動展開・アニメーション表示）。false のときは折りたたみ初期状態。 */
-  streaming?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(streaming);
-
-  return (
-    <div className="border border-zinc-700 rounded-xl overflow-hidden text-xs">
-      <button
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-zinc-400 hover:bg-zinc-800/60 transition-colors text-left"
-        onClick={() => setExpanded((e) => !e)}
-      >
-        <span className="text-[10px]">{expanded ? "▼" : "▶"}</span>
-        <span>思考・想起した記憶</span>
-        {streaming && <span className="animate-pulse ml-1 text-indigo-400">●</span>}
-      </button>
-      {expanded && (
-        <div className="px-3 py-2 text-zinc-500 whitespace-pre-wrap font-mono border-t border-zinc-700/60 leading-relaxed">
-          {content}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * 1件のメッセージをバブル表示するサブコンポーネント。
- * ユーザメッセージはホバー時に編集ボタン、キャラクターメッセージは再生成ボタンを表示する。
- */
-function MessageBubble({
-  msg,
-  characterName,
-  userName,
-  reasoning,
-  sending,
-  onEdit,
-  onRegenerate,
-}: {
-  msg: ChatMessage;
-  characterName: string;
-  userName: string;
-  /** キャラクターメッセージに紐付いた reasoning テキスト（思考ブロック・想起記憶） */
-  reasoning?: string;
-  /** 送信処理中フラグ（処理中はボタンを非表示にする） */
-  sending: boolean;
-  /** ユーザメッセージ編集コールバック（ユーザメッセージのみ） */
-  onEdit?: (newContent: string) => void;
-  /** キャラクター応答再生成コールバック（キャラクターメッセージのみ） */
-  onRegenerate?: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [editText, setEditText] = useState(msg.content);
-  const isUser = msg.role === "user";
-
-  /** 編集を確定して送信する。 */
-  const handleEditSubmit = () => {
-    const text = editText.trim();
-    if (!text) return;
-    setEditing(false);
-    onEdit?.(text);
-  };
-
-  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && e.shiftKey) {
-      e.preventDefault();
-      handleEditSubmit();
-    }
-    if (e.key === "Escape") {
-      setEditing(false);
-      setEditText(msg.content);
-    }
-  };
-
-  if (isUser) {
-    return (
-      <div className="flex gap-3 items-start flex-row-reverse group">
-        <div className="w-8 h-8 rounded-full bg-zinc-600 flex items-center justify-center text-xs font-bold shrink-0">
-          {userName.charAt(0)}
-        </div>
-        <div className="max-w-[85%] sm:max-w-[70%] flex flex-col items-end gap-1">
-          {/* 添付画像グリッド */}
-          {msg.images && msg.images.length > 0 && (
-            <ImageGrid imageIds={msg.images} />
-          )}
-          {editing ? (
-            /* インライン編集フォーム */
-            <div className="flex flex-col gap-2">
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onKeyDown={handleEditKeyDown}
-                rows={3}
-                autoFocus
-                className="bg-zinc-700 text-zinc-100 rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full"
-              />
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => { setEditing(false); setEditText(msg.content); }}
-                  className="text-zinc-400 hover:text-zinc-200 text-xs px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
-                >
-                  キャンセル
-                </button>
-                <button
-                  onClick={handleEditSubmit}
-                  disabled={!editText.trim()}
-                  className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
-                >
-                  送信
-                </button>
-              </div>
-            </div>
-          ) : (
-            /* 通常表示 + ホバー時に編集ボタン */
-            <div className="flex items-end gap-2 flex-row-reverse">
-              <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm">
-                <MarkdownContent content={msg.content} />
-              </div>
-              {!sending && onEdit && (
-                <button
-                  onClick={() => setEditing(true)}
-                  title="編集"
-                  className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 transition-all p-1 rounded shrink-0"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex gap-3 items-start group" data-testid="character-bubble">
-      <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
-        {characterName.charAt(0)}
-      </div>
-      <div className="max-w-[85%] sm:max-w-[70%] space-y-1">
-        {/* 思考ブロック・想起記憶（完了後は折りたたみ状態で表示） */}
-        {reasoning && <ThinkingBlock content={reasoning} />}
-        <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm">
-          <MarkdownContent content={msg.content} />
-        </div>
-        {/* 再生成ボタン（モバイルは常時表示、デスクトップはホバー時） */}
-        {!sending && onRegenerate && (
-          <button
-            onClick={onRegenerate}
-            title="再生成"
-            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 text-xs transition-all px-2 py-1 rounded hover:bg-zinc-800"
-          >
-            ↺ 再生成
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * 添付画像IDリストをサムネイルグリッドで表示するサブコンポーネント。
- * クリックするとフルサイズモーダルを開く。
- */
-function ImageGrid({ imageIds }: { imageIds: string[] }) {
-  const [modalSrc, setModalSrc] = useState<string | null>(null);
-
-  return (
-    <>
-      <div className="flex flex-wrap gap-1.5 justify-end">
-        {imageIds.map((id) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setModalSrc(`/api/chat/images/${id}`)}
-            className="block rounded-lg overflow-hidden border border-zinc-700 hover:border-zinc-500 transition-colors"
-          >
-            <img
-              src={`/api/chat/images/${id}`}
-              alt="添付画像"
-              className="w-24 h-24 object-cover"
-            />
-          </button>
-        ))}
-      </div>
-      {modalSrc && (
-        <ImageModal src={modalSrc} onClose={() => setModalSrc(null)} />
-      )}
-    </>
-  );
-}
-
-/**
- * 画像フルサイズ表示モーダル。
- * 背景クリックまたは✕ボタンで閉じる。
- */
-function ImageModal({ src, onClose }: { src: string; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center"
-      onClick={onClose}
-    >
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 text-white text-2xl leading-none hover:text-zinc-300"
-      >
-        ✕
-      </button>
-      <img
-        src={src}
-        alt="フルサイズ画像"
-        className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      />
-    </div>
-  );
-}
-
-/**
- * Markdownテキストをレンダリングするサブコンポーネント。
- * remark-gfm で表・打ち消し線・チェックボックスなどのGFM拡張に対応する。
- * コードブロックは react-syntax-highlighter (oneDark) でシンタックスハイライトする。
- * インラインコードは等幅フォントで薄いグレー背景で表示する。
- * 日本語文中の **太字** など、前後がアルファベット以外の場合も正しく太字になる。
- */
-function MarkdownContent({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkBreaks]}
-      components={{
-        // コードブロック: 言語付きはシンタックスハイライト、なしはシンプル表示
-        code({ className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || "");
-          const codeText = String(children).replace(/\n$/, "");
-          if (match) {
-            return (
-              <SyntaxHighlighter
-                style={oneDark}
-                language={match[1]}
-                PreTag="div"
-                customStyle={{ borderRadius: "0.5rem", fontSize: "0.8rem", margin: "0.5rem 0" }}
-              >
-                {codeText}
-              </SyntaxHighlighter>
-            );
-          }
-          return (
-            <code className="bg-zinc-700 text-zinc-200 rounded px-1 py-0.5 font-mono text-[0.85em]" {...props}>
-              {children}
-            </code>
-          );
-        },
-        // 段落: デフォルトの <p> マージンを調整
-        p({ children }) {
-          return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>;
-        },
-        // 太字
-        strong({ children }) {
-          return <strong className="font-bold text-zinc-50">{children}</strong>;
-        },
-        // 斜体
-        em({ children }) {
-          return <em className="italic">{children}</em>;
-        },
-        // 見出し
-        h1({ children }) { return <h1 className="text-lg font-bold mt-3 mb-1">{children}</h1>; },
-        h2({ children }) { return <h2 className="text-base font-bold mt-3 mb-1">{children}</h2>; },
-        h3({ children }) { return <h3 className="text-sm font-bold mt-2 mb-1">{children}</h3>; },
-        // 箇条書き・番号リスト
-        ul({ children }) { return <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>; },
-        ol({ children }) { return <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>; },
-        // 水平線
-        hr() { return <hr className="border-zinc-600 my-3" />; },
-        // 引用
-        blockquote({ children }) {
-          return (
-            <blockquote className="border-l-2 border-zinc-500 pl-3 text-zinc-400 my-2">
-              {children}
-            </blockquote>
-          );
-        },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-}

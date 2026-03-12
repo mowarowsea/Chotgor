@@ -38,6 +38,8 @@ def _fake_session(sid=None, model_id="alice@gemini", title="新しいチャッ�
     s.id = sid or str(uuid.uuid4())
     s.model_id = model_id
     s.title = title
+    s.session_type = "1on1"
+    s.group_config = None
     s.created_at = datetime(2026, 3, 10, 12, 0, 0)
     s.updated_at = datetime(2026, 3, 10, 12, 0, 0)
     return s
@@ -50,6 +52,9 @@ def _fake_message(mid=None, session_id="sid", role="user", content="hello"):
     m.session_id = session_id
     m.role = role
     m.content = content
+    m.reasoning = None
+    m.images = None
+    m.character_name = None
     m.created_at = datetime(2026, 3, 10, 12, 0, 0)
     return m
 

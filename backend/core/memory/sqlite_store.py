@@ -36,13 +36,15 @@ class GlobalSetting(Base):
 
 
 class ChatSession(Base):
-    """チャットセッション — 1セッション = 1キャラクターとの会話スレッド。"""
+    """チャットセッション — 1on1またはグループチャットの会話スレッド。"""
 
     __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True)
-    model_id = Column(String, nullable=False)   # "{char_name}@{preset_name}"
+    model_id = Column(String, nullable=False)   # 1on1: "{char_name}@{preset_name}", グループ: "group"
     title = Column(String, nullable=False, default="新しいチャット")
+    session_type = Column(String, nullable=False, default="1on1")   # "1on1" | "group"
+    group_config = Column(Text, nullable=True)  # グループチャット設定JSON（session_type="group"時のみ）
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(DateTime, default=lambda: datetime.now(), onupdate=lambda: datetime.now())
 
@@ -54,10 +56,11 @@ class ChatMessage(Base):
 
     id = Column(String, primary_key=True)
     session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
-    role = Column(String, nullable=False)       # "user" | "character"
+    role = Column(String, nullable=False)           # "user" | "character"
     content = Column(Text, nullable=False)
-    reasoning = Column(Text, nullable=True)     # 思考ブロック・想起記憶テキスト
-    images = Column(JSON, nullable=True)        # [image_id, ...] 添付画像IDリスト
+    reasoning = Column(Text, nullable=True)         # 思考ブロック・想起記憶テキスト
+    images = Column(JSON, nullable=True)            # [image_id, ...] 添付画像IDリスト
+    character_name = Column(String, nullable=True)  # グループチャット時の発言キャラクター名
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -178,6 +181,9 @@ class SQLiteStore:
             for stmt in [
                 "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT",
                 "ALTER TABLE chat_messages ADD COLUMN images TEXT",
+                "ALTER TABLE chat_messages ADD COLUMN character_name TEXT",
+                "ALTER TABLE chat_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT '1on1'",
+                "ALTER TABLE chat_sessions ADD COLUMN group_config TEXT",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -529,10 +535,31 @@ class SQLiteStore:
 
     # --- Chat Sessions ---
 
-    def create_chat_session(self, session_id: str, model_id: str, title: str = "新しいチャット") -> "ChatSession":
-        """チャットセッションを作成する。"""
+    def create_chat_session(
+        self,
+        session_id: str,
+        model_id: str,
+        title: str = "新しいチャット",
+        session_type: str = "1on1",
+        group_config: Optional[str] = None,
+    ) -> "ChatSession":
+        """チャットセッションを作成する。
+
+        Args:
+            session_id: セッションのUUID。
+            model_id: 1on1は "{char_name}@{preset_name}"、グループは "group"。
+            title: セッションタイトル。
+            session_type: "1on1" または "group"。
+            group_config: グループチャット設定のJSONテキスト（session_type="group"時のみ）。
+        """
         with self.get_session() as session:
-            obj = ChatSession(id=session_id, model_id=model_id, title=title)
+            obj = ChatSession(
+                id=session_id,
+                model_id=model_id,
+                title=title,
+                session_type=session_type,
+                group_config=group_config,
+            )
             session.add(obj)
             session.commit()
             session.refresh(obj)
@@ -594,6 +621,7 @@ class SQLiteStore:
         content: str,
         reasoning: Optional[str] = None,
         images: Optional[list] = None,
+        character_name: Optional[str] = None,
     ) -> "ChatMessage":
         """チャットメッセージを作成する。
 
@@ -604,6 +632,7 @@ class SQLiteStore:
             content: クリーン済みの本文テキスト。
             reasoning: 思考ブロック・想起記憶テキスト（キャラクターメッセージのみ）。
             images: 添付画像IDのリスト（ユーザメッセージのみ）。
+            character_name: グループチャット時の発言キャラクター名（1on1では None）。
         """
         with self.get_session() as session:
             msg = ChatMessage(
@@ -613,6 +642,7 @@ class SQLiteStore:
                 content=content,
                 reasoning=reasoning,
                 images=images or None,
+                character_name=character_name,
             )
             session.add(msg)
             session.commit()

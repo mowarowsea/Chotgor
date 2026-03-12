@@ -10,6 +10,7 @@ from backend.core.providers.claude_cli_provider import (
     _clean_env,
 )
 from backend.core.providers.google_provider import GoogleProvider
+from backend.core.providers.ollama_provider import OllamaProvider
 from backend.core.providers.openai_provider import OpenAIProvider, XAIProvider
 from backend.core.providers.registry import (
     PROVIDER_LABELS,
@@ -27,7 +28,7 @@ from backend.core.providers.registry import (
 class TestProviderRegistry:
     def test_all_expected_providers_registered(self):
         assert set(PROVIDER_REGISTRY.keys()) == {
-            "claude_cli", "anthropic", "openai", "xai", "google"
+            "claude_cli", "anthropic", "openai", "xai", "google", "ollama"
         }
 
     def test_provider_classes_are_correct(self):
@@ -36,6 +37,7 @@ class TestProviderRegistry:
         assert PROVIDER_REGISTRY["openai"] is OpenAIProvider
         assert PROVIDER_REGISTRY["xai"] is XAIProvider
         assert PROVIDER_REGISTRY["google"] is GoogleProvider
+        assert PROVIDER_REGISTRY["ollama"] is OllamaProvider
 
     def test_provider_order_matches_registry(self):
         for pid in PROVIDER_ORDER:
