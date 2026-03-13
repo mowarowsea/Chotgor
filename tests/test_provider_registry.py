@@ -11,7 +11,8 @@ from backend.core.providers.claude_cli_provider import (
 )
 from backend.core.providers.google_provider import GoogleProvider
 from backend.core.providers.ollama_provider import OllamaProvider
-from backend.core.providers.openai_provider import OpenAIProvider, XAIProvider
+from backend.core.providers.openai_provider import OpenAIProvider
+from backend.core.providers.xai_provider import XAIProvider
 from backend.core.providers.registry import (
     PROVIDER_LABELS,
     PROVIDER_ORDER,

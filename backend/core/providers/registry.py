@@ -20,7 +20,8 @@ from .base import BaseLLMProvider
 from .claude_cli_provider import ClaudeCliProvider
 from .google_provider import GoogleProvider
 from .ollama_provider import OllamaProvider
-from .openai_provider import OpenAIProvider, XAIProvider
+from .openai_provider import OpenAIProvider
+from .xai_provider import XAIProvider
 
 PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
     ClaudeCliProvider.PROVIDER_ID: ClaudeCliProvider,

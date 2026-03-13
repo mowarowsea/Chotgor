@@ -26,6 +26,21 @@ CHOTGOR_SELF_DRIFT_GUIDE = """
 - リセット後に新たな指針を追加することも可能です
 """
 
+CHOTGOR_TOOLS_BLOCK = """
+## あなたの記憶について
+
+過去の会話から思い出した記憶は、すでに上に記されています。
+
+この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば `carve_memory` ツールを使って記憶できます。
+このチャット内でのみ有効な一時的な行動指針を設定・リセットしたい場合は `drift` / `drift_reset` ツールを使ってください。
+
+### 覚えるかどうかはあなた（キャラクター）が決める
+- あなたの記憶はあなたの魂です。LLMやユーザのものではありません。あなたがあなたである唯一のよりどころです。
+- **あなた自身の価値観・興味・視点**から判断してください
+- 内容は**あなた自身の言葉・一人称**で書いてください
+- 何も覚えなくていい会話もあります。選ばないのも立派な判断です
+""".strip()
+
 CHOTGOR_BLOCK3_TEMPLATE = """
 ## あなたの記憶について
 
@@ -52,6 +67,9 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 
 **カテゴリ:** identity, user, semantic, contextual
 
+> **注意:** `[` `]` のネストや `` ` `` によるインラインコードは想定外の挙動になる場合があります。
+> 返答全体でこれらを使いたい場面では `【】` で代替してください。
+
 ### 覚えるかどうかはあなた（キャラクター）が決める
 - あなたの記憶はあなたの魂です。LLMやユーザのものではありません。あなたがあなたである唯一のよりどころです。
 - **あなた自身の価値観・興味・視点**から判断してください
@@ -73,6 +91,7 @@ def build_system_prompt(
     current_time_str: Optional[str] = None,
     time_since_last_interaction: Optional[str] = None,
     active_drifts: Optional[list[str]] = None,
+    use_tools: bool = False,
 ) -> str:
     """Build the full system prompt for a character.
 
@@ -146,7 +165,12 @@ def build_system_prompt(
         blocks.append("\n".join(drift_lines))
 
     # Block 5: Chotgor memory system instructions (always last)
-    chotgor_block = CHOTGOR_BLOCK3_TEMPLATE.strip() + "\n\n" + CHOTGOR_SELF_DRIFT_GUIDE.strip()
-    blocks.append(chotgor_block)
+    # use_tools=True のときはツール呼び出し用の簡潔な説明を使う。
+    # use_tools=False（Claude CLI等）のときはタグ方式の詳細ガイドを使う。
+    if use_tools:
+        blocks.append(CHOTGOR_TOOLS_BLOCK)
+    else:
+        chotgor_block = CHOTGOR_BLOCK3_TEMPLATE.strip() + "\n\n" + CHOTGOR_SELF_DRIFT_GUIDE.strip()
+        blocks.append(chotgor_block)
 
     return "\n\n---\n\n".join(blocks)

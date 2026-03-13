@@ -149,6 +149,7 @@ def _fake_provider_with_text(text: str):
         yield ("text", text)
 
     provider = MagicMock()
+    provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed_stream
     return provider
 
@@ -213,6 +214,7 @@ async def test_execute_stream_yields_text_last():
         yield ("text", "最終応答")
 
     provider = MagicMock()
+    provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed_with_thinking
 
     with (
@@ -244,6 +246,7 @@ async def test_execute_stream_thinking_chunks_yielded():
         yield ("text", "応答")
 
     provider = MagicMock()
+    provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed
 
     with (
@@ -275,6 +278,7 @@ async def test_execute_stream_text_is_carved():
         yield ("text", raw)
 
     provider = MagicMock()
+    provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed
 
     def _fake_carve(text, char_id, manager):
@@ -310,10 +314,71 @@ async def test_execute_stream_provider_error_yields_error_text():
         yield  # noqa: unreachable — AsyncGenerator の型を満たすために必要
 
     provider = MagicMock()
+    provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _failing_stream
 
     with (
         patch("backend.core.chat.service.create_provider", return_value=provider),
+        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.core.chat.service.find_urls", return_value=[]),
+    ):
+        chunks = await _collect_stream(service, request)
+
+    text_chunks = [c for t, c in chunks if t == "text"]
+    assert any("Error" in c for c in text_chunks)
+
+
+# ---------------------------------------------------------------------------
+# execute_stream — SUPPORTS_TOOLS=True パス
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_with_tools_yields_text():
+    """SUPPORTS_TOOLS=True のプロバイダーは generate_with_tools を呼び、
+    その戻り値を ("text", text) としてyieldすること。
+    generate_stream_typed は呼ばれない。
+    """
+    memory_manager = MagicMock()
+    memory_manager.recall_memory.return_value = []
+
+    request = _make_request()
+    service = ChatService(memory_manager=memory_manager)
+
+    fake_provider = MagicMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value="ツール経由の返答")
+
+    with (
+        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.core.chat.service.find_urls", return_value=[]),
+    ):
+        chunks = await _collect_stream(service, request)
+
+    text_chunks = [c for t, c in chunks if t == "text"]
+    assert len(text_chunks) == 1
+    assert text_chunks[0] == "ツール経由の返答"
+    fake_provider.generate_with_tools.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_with_tools_error_yields_error_text():
+    """SUPPORTS_TOOLS=True でプロバイダーが例外を送出した場合、
+    ("text", エラーメッセージ) でストリームが終了すること。
+    """
+    memory_manager = MagicMock()
+    memory_manager.recall_memory.return_value = []
+
+    request = _make_request()
+    service = ChatService(memory_manager=memory_manager)
+
+    fake_provider = MagicMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("tools boom"))
+
+    with (
+        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
     ):

@@ -22,6 +22,7 @@ from ..memory.inscriber import carve
 from ..memory.manager import MemoryManager
 from ..providers.registry import create_provider
 from ..system_prompt import build_system_prompt
+from ..tools import ToolExecutor
 from ..web_fetch import fetch_urls, find_urls
 from .drifter import extract as drift_extract
 from .models import ChatRequest
@@ -120,6 +121,11 @@ class ChatService:
                 except Exception:
                     pass
 
+        # --- 4. プロバイダーを決定（use_tools フラグに使用） ---
+        provider_impl = create_provider(
+            request.provider, request.model, request.settings, thinking_level=request.thinking_level
+        )
+
         # --- 3. システムプロンプト構築 ---
         system_prompt = build_system_prompt(
             character_system_prompt=request.character_system_prompt,
@@ -131,21 +137,36 @@ class ChatService:
             current_time_str=request.current_time_str,
             time_since_last_interaction=request.time_since_last_interaction,
             active_drifts=active_drifts or None,
+            use_tools=provider_impl.SUPPORTS_TOOLS,
         )
 
         # --- 4. プロバイダーへディスパッチ ---
-        provider_impl = create_provider(request.provider, request.model, request.settings, thinking_level=request.thinking_level)
-        try:
-            response_text = await provider_impl.generate(system_prompt, messages)
-        except Exception as e:
-            import traceback
-            return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+        # SUPPORTS_TOOLS=True のプロバイダーはtool-useで記憶・DRIFTを操作する。
+        # それ以外（Claude CLI等）は従来のマーカー方式にフォールバックする。
+        if provider_impl.SUPPORTS_TOOLS:
+            tool_executor = ToolExecutor(
+                character_id=request.character_id,
+                session_id=request.session_id,
+                memory_manager=self.memory_manager,
+                drift_manager=self.drift_manager,
+            )
+            try:
+                clean_text = await provider_impl.generate_with_tools(system_prompt, messages, tool_executor)
+            except Exception as e:
+                import traceback
+                return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+        else:
+            try:
+                response_text = await provider_impl.generate(system_prompt, messages)
+            except Exception as e:
+                import traceback
+                return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
 
-        # --- 5. 記憶を刻み込む ---
-        clean_text = carve(response_text, request.character_id, self.memory_manager)
+            # --- 5. 記憶を刻み込む（マーカー方式フォールバック） ---
+            clean_text = carve(response_text, request.character_id, self.memory_manager)
 
-        # --- 5b. SELF_DRIFT マーカーを処理する ---
-        clean_text = self._apply_drifts(clean_text, request)
+            # --- 5b. SELF_DRIFT マーカーを処理する ---
+            clean_text = self._apply_drifts(clean_text, request)
 
         log_front_output(clean_text)
 
@@ -223,6 +244,12 @@ class ChatService:
                 except Exception:
                     pass
 
+        # --- 4. プロバイダーを決定（use_tools フラグに使用） ---
+        provider_impl = create_provider(
+            request.provider, request.model, request.settings,
+            thinking_level=request.thinking_level
+        )
+
         # --- 3. システムプロンプト構築 ---
         system_prompt = build_system_prompt(
             character_system_prompt=request.character_system_prompt,
@@ -234,32 +261,44 @@ class ChatService:
             current_time_str=request.current_time_str,
             time_since_last_interaction=request.time_since_last_interaction,
             active_drifts=active_drifts or None,
+            use_tools=provider_impl.SUPPORTS_TOOLS,
         )
 
         # --- 4. プロバイダーへストリーミングディスパッチ ---
-        provider_impl = create_provider(
-            request.provider, request.model, request.settings,
-            thinking_level=request.thinking_level
-        )
+        # SUPPORTS_TOOLS=True のプロバイダーはtool-useで記憶・DRIFTを操作する。
+        # ストリーミングモードでもtool-useはバッファリング（思考ブロックのリアルタイム送信は非対応）。
+        # それ以外（Claude CLI等）は従来のストリーミング＋マーカー方式を維持する。
+        if provider_impl.SUPPORTS_TOOLS:
+            tool_executor = ToolExecutor(
+                character_id=request.character_id,
+                session_id=request.session_id,
+                memory_manager=self.memory_manager,
+                drift_manager=self.drift_manager,
+            )
+            try:
+                clean_text = await provider_impl.generate_with_tools(system_prompt, messages, tool_executor)
+            except Exception as e:
+                yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
+                return
+        else:
+            # テキストはバッファリングして [MEMORY:...] マーカーをcarveしてからyield
+            full_text = ""
+            try:
+                async for chunk_type, content in provider_impl.generate_stream_typed(system_prompt, messages):
+                    if chunk_type == "thinking":
+                        # 思考ブロックはリアルタイムでyield
+                        yield ("thinking", content)
+                    elif chunk_type == "text":
+                        full_text += content
+            except Exception as e:
+                yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
+                return
 
-        # テキストはバッファリングして [MEMORY:...] マーカーをcarveしてからyield
-        full_text = ""
-        try:
-            async for chunk_type, content in provider_impl.generate_stream_typed(system_prompt, messages):
-                if chunk_type == "thinking":
-                    # 思考ブロックはリアルタイムでyield
-                    yield ("thinking", content)
-                elif chunk_type == "text":
-                    full_text += content
-        except Exception as e:
-            yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
-            return
+            # --- 5. 記憶を刻み込む（マーカー方式フォールバック） ---
+            clean_text = carve(full_text, request.character_id, self.memory_manager)
 
-        # --- 5. 記憶を刻み込む ---
-        clean_text = carve(full_text, request.character_id, self.memory_manager)
-
-        # --- 5b. SELF_DRIFT マーカーを処理する ---
-        clean_text = self._apply_drifts(clean_text, request)
+            # --- 5b. SELF_DRIFT マーカーを処理する ---
+            clean_text = self._apply_drifts(clean_text, request)
 
         log_front_output(clean_text)
 

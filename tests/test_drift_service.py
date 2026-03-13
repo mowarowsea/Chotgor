@@ -165,6 +165,7 @@ async def test_execute_removes_drift_marker_and_calls_drift_manager():
 
     # LLM応答に [DRIFT:...] マーカーを含める
     fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="了解です。[DRIFT:もっとクールに話す]")
 
     with (
@@ -206,6 +207,7 @@ async def test_execute_drift_marker_stripped_when_no_session_id():
     )
 
     fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="応答テキスト[DRIFT:指針A]")
 
     with (
@@ -246,6 +248,7 @@ async def test_execute_loads_active_drifts_from_db():
     )
 
     fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="了解です。")
 
     with (
@@ -288,6 +291,7 @@ async def test_execute_does_not_overwrite_active_drifts_if_provided():
     )
 
     fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="了解です。")
 
     with (
@@ -326,6 +330,7 @@ async def test_execute_stream_loads_active_drifts_from_db():
     )
 
     fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = False
 
     async def fake_stream(*_):
         yield ("text", "了解です。")
