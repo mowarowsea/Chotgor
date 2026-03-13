@@ -227,6 +227,7 @@ class ClaudeCliProvider(BaseLLMProvider):
 
         def run():
             """subprocess.Popenでストリーミング出力を行単位で読み、キューへ送信する。"""
+            accumulated = []
             try:
                 proc = subprocess.Popen(
                     [
@@ -255,6 +256,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                         if event.get("type") == "assistant":
                             for block in event.get("message", {}).get("content", []):
                                 if block.get("type") == "text" and block["text"]:
+                                    accumulated.append(block["text"])
                                     loop.call_soon_threadsafe(queue.put_nowait, block["text"])
                     except json.JSONDecodeError:
                         pass
@@ -274,6 +276,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
+                log_provider_response("claude_cli", "".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -337,6 +340,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             type == "thinking" は ("thinking", ...) として、
             type == "text" は ("text", ...) として送信する。
             """
+            accumulated = []
             try:
                 proc = subprocess.Popen(
                     [
@@ -366,10 +370,12 @@ class ClaudeCliProvider(BaseLLMProvider):
                             for block in event.get("message", {}).get("content", []):
                                 btype = block.get("type")
                                 if btype == "thinking" and block.get("thinking"):
+                                    accumulated.append(block["thinking"])
                                     loop.call_soon_threadsafe(
                                         queue.put_nowait, ("thinking", block["thinking"])
                                     )
                                 elif btype == "text" and block.get("text"):
+                                    accumulated.append(block["text"])
                                     loop.call_soon_threadsafe(
                                         queue.put_nowait, ("text", block["text"])
                                     )
@@ -391,6 +397,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
+                log_provider_response("claude_cli", "".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()

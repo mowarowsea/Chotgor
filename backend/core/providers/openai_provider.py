@@ -119,6 +119,7 @@ class OpenAIProvider(BaseLLMProvider):
 
         def run():
             """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
+            accumulated = []
             try:
                 call_kwargs: dict = {"model": self.model, "messages": api_messages, "stream": True}
                 if effort:
@@ -132,10 +133,12 @@ class OpenAIProvider(BaseLLMProvider):
                 for chunk in response:
                     content = chunk.choices[0].delta.content if chunk.choices else None
                     if content:
+                        accumulated.append(content)
                         loop.call_soon_threadsafe(queue.put_nowait, content)
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
+                log_provider_response(self.PROVIDER_ID, "".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()

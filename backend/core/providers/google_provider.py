@@ -154,6 +154,7 @@ class GoogleProvider(BaseLLMProvider):
 
         def run():
             """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
+            accumulated = []
             try:
                 config_kwargs = {
                     "max_output_tokens": 4096,
@@ -177,10 +178,12 @@ class GoogleProvider(BaseLLMProvider):
                     model=self.model, contents=contents, config=config
                 ):
                     if chunk.text:
+                        accumulated.append(chunk.text)
                         loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
+                log_provider_response("google", "".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -228,6 +231,7 @@ class GoogleProvider(BaseLLMProvider):
             chunk.candidates[0].content.parts を直接走査して part.thought を確認する。
             parts が取得できない場合は chunk.text にフォールバックして ("text", ...) として送信する。
             """
+            accumulated = []
             try:
                 config_kwargs: dict = {
                     "max_output_tokens": 4096,
@@ -257,12 +261,14 @@ class GoogleProvider(BaseLLMProvider):
                     except (AttributeError, IndexError):
                         # parts が取得できない場合は chunk.text にフォールバックする
                         if chunk.text:
+                            accumulated.append(chunk.text)
                             loop.call_soon_threadsafe(queue.put_nowait, ("text", chunk.text))
                         continue
 
                     for part in parts:
                         if not part.text:
                             continue
+                        accumulated.append(part.text)
                         if getattr(part, "thought", False):
                             loop.call_soon_threadsafe(queue.put_nowait, ("thinking", part.text))
                         else:
@@ -271,6 +277,7 @@ class GoogleProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
+                log_provider_response("google", "".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()

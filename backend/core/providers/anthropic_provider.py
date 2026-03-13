@@ -128,13 +128,16 @@ class AnthropicProvider(BaseLLMProvider):
 
         def run():
             """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
+            accumulated = []
             try:
                 with client.messages.stream(**params) as stream:
                     for text in stream.text_stream:
+                        accumulated.append(text)
                         loop.call_soon_threadsafe(queue.put_nowait, text)
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
+                log_provider_response("anthropic", "".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -201,6 +204,7 @@ class AnthropicProvider(BaseLLMProvider):
             content_block_delta イベントの delta.type を見て
             thinking_delta と text_delta を区別する。
             """
+            accumulated = []
             try:
                 with client.messages.stream(**params) as stream:
                     for event in stream:
@@ -213,14 +217,17 @@ class AnthropicProvider(BaseLLMProvider):
                             if dtype == "thinking_delta":
                                 text = getattr(delta, "thinking", "")
                                 if text:
+                                    accumulated.append(text)
                                     loop.call_soon_threadsafe(queue.put_nowait, ("thinking", text))
                             elif dtype == "text_delta":
                                 text = getattr(delta, "text", "")
                                 if text:
+                                    accumulated.append(text)
                                     loop.call_soon_threadsafe(queue.put_nowait, ("text", text))
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
+                log_provider_response("anthropic", "".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
