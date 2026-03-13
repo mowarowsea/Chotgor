@@ -15,11 +15,13 @@ import {
   fetchUserName,
   createGroupSession,
   streamGroupMessage,
+  fetchDrifts,
 } from "./api";
-import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent } from "./api";
+import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent, Drift } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import GroupChatView from "./components/GroupChatView";
+import DriftBadge from "./components/DriftBadge";
 
 /** アプリ全体のルートコンポーネント。 */
 export default function App() {
@@ -37,10 +39,14 @@ export default function App() {
   const [reasoningMap, setReasoningMap] = useState<Record<string, string>>({});
   const [userName, setUserName] = useState("ユーザ");
   const [error, setError] = useState<string | null>(null);
+  /** アクティブセッションのSELF_DRIFT一覧。 */
+  const [drifts, setDrifts] = useState<Drift[]>([]);
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const characterName = activeSession?.model_id.split("@")[0] ?? "キャラクター";
+  /** アクティブセッションに紐づくキャラクターID（1on1チャット時のDriftBadge用）。 */
+  const activeCharacterId = drifts.length > 0 ? drifts[0].character_id : "";
   /** アクティブセッションがグループチャットかどうか。 */
   const isGroupSession = activeSession?.session_type === "group";
   /** グループチャット参加者名リスト。 */
@@ -73,12 +79,26 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, []);
 
+  /** アクティブセッションのSELF_DRIFT一覧を再取得する。 */
+  const refreshDrifts = useCallback(async (sessionId: string) => {
+    try {
+      const d = await fetchDrifts(sessionId);
+      setDrifts(d);
+    } catch {
+      // drift取得失敗は無視する
+    }
+  }, []);
+
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
+    setDrifts([]);
     setError(null);
     try {
-      const detail = await fetchSession(sessionId);
+      const [detail] = await Promise.all([
+        fetchSession(sessionId),
+        fetchDrifts(sessionId).then(setDrifts).catch(() => {}),
+      ]);
       setMessages(detail.messages);
       // DBに保存された reasoning をメッセージIDに紐付けて復元する
       const restored: Record<string, string> = {};
@@ -282,6 +302,8 @@ export default function App() {
           ]);
           const updated = await fetchSessions();
           setSessions(updated);
+          // SELF_DRIFT が更新されている可能性があるため再取得する
+          if (sessionId) refreshDrifts(sessionId);
         } else if (event.type === "error") {
           throw new Error((event as StreamEvent & { type: "error" }).message);
         }
@@ -388,10 +410,22 @@ export default function App() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
             </svg>
           </button>
-          {/* サイドバーが閉じているときはタイトルを表示 */}
-          {!sidebarOpen && (
+          {/* 1on1チャット時はキャラクター名とDriftBadgeを表示 */}
+          {activeSessionId && !isGroupSession ? (
+            <div className="flex items-center gap-2">
+              <span className="text-zinc-100 text-sm font-semibold">{characterName}</span>
+              {activeSessionId && activeCharacterId && (
+                <DriftBadge
+                  drifts={drifts}
+                  sessionId={activeSessionId}
+                  characterId={activeCharacterId}
+                  onDriftsChange={() => refreshDrifts(activeSessionId)}
+                />
+              )}
+            </div>
+          ) : !sidebarOpen ? (
             <span className="text-zinc-100 text-sm font-semibold">Chotgor</span>
-          )}
+          ) : null}
         </div>
 
         {/* エラーバナー */}

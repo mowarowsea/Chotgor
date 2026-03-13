@@ -17,6 +17,7 @@ from .api import ui as ui_module
 from .core.chat.service import ChatService
 from .core.memory.chroma_store import ChromaStore
 from .core.memory.digest import run_pending_digests
+from .core.memory.drift_manager import DriftManager
 from .core.memory.forget import run_pending_forget
 from .core.memory.manager import MemoryManager
 from .core.memory.sqlite_store import SQLiteStore
@@ -39,11 +40,13 @@ async def lifespan(app: FastAPI):
     sqlite = SQLiteStore(SQLITE_DB_PATH)
     chroma = ChromaStore(CHROMA_DB_PATH)
     memory_manager = MemoryManager(sqlite=sqlite, chroma=chroma)
+    drift_manager = DriftManager(sqlite=sqlite)
 
     app.state.sqlite = sqlite
     app.state.chroma = chroma
     app.state.memory_manager = memory_manager
-    app.state.chat_service = ChatService(memory_manager=memory_manager)
+    app.state.drift_manager = drift_manager
+    app.state.chat_service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
     app.state.uploads_dir = UPLOADS_DIR
 
     # Seed optional Tavily key from environment if not already set

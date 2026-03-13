@@ -223,6 +223,41 @@ export async function createGroupSession(
   return res.json();
 }
 
+/** SELF_DRIFT指針の型定義。 */
+export interface Drift {
+  id: string;
+  session_id: string;
+  character_id: string;
+  content: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+/** セッションの全SELF_DRIFT一覧を取得する。 */
+export async function fetchDrifts(sessionId: string): Promise<Drift[]> {
+  const res = await fetch(`/api/chat/sessions/${sessionId}/drifts`);
+  if (!res.ok) throw new Error("SELF_DRIFT一覧の取得に失敗しました");
+  return res.json();
+}
+
+/** SELF_DRIFT の enabled フラグを反転する。 */
+export async function toggleDrift(sessionId: string, driftId: string): Promise<Drift> {
+  const res = await fetch(`/api/chat/sessions/${sessionId}/drifts/${driftId}/toggle`, {
+    method: "PATCH",
+  });
+  if (!res.ok) throw new Error("SELF_DRIFT のトグルに失敗しました");
+  return res.json();
+}
+
+/** 指定キャラの全SELF_DRIFTを削除する。 */
+export async function resetDrifts(sessionId: string, characterId: string): Promise<void> {
+  const res = await fetch(
+    `/api/chat/sessions/${sessionId}/drifts?character_id=${encodeURIComponent(characterId)}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) throw new Error("SELF_DRIFT のリセットに失敗しました");
+}
+
 /** グループチャットメッセージをSSEでストリーミング送信し、イベントをyieldする。 */
 export async function* streamGroupMessage(
   sessionId: string,

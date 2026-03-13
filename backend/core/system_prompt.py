@@ -9,6 +9,23 @@ Constructs a 3-block system prompt:
 from typing import Optional
 
 
+CHOTGOR_SELF_DRIFT_GUIDE = """
+### SELF_DRIFT（一時的な自己指針）
+
+この会話の中でのみ有効な、自分自身への行動指針を設定・リセットすることができます。
+指針はユーザには見えません。返答の**一番最後に**記載してください。
+
+**指針を追加する:**
+    [DRIFT:内容テキスト]
+
+**指針を全リセットする:**
+    [DRIFT_RESET]
+
+- 指針はこのチャット内のみ有効です（永続しません）
+- 最大3件まで保持します（超えた場合は最古が自動削除されます）
+- リセット後に新たな指針を追加することも可能です
+"""
+
 CHOTGOR_BLOCK3_TEMPLATE = """
 ## あなたの記憶について
 
@@ -55,6 +72,7 @@ def build_system_prompt(
     enable_time_awareness: bool = False,
     current_time_str: Optional[str] = None,
     time_since_last_interaction: Optional[str] = None,
+    active_drifts: Optional[list[str]] = None,
 ) -> str:
     """Build the full system prompt for a character.
 
@@ -120,7 +138,15 @@ def build_system_prompt(
             f"## Provider-specific Instructions\n\n{provider_additional_instructions.strip()}"
         )
 
+    # Block 4.5: 現在有効な SELF_DRIFT 指針（Instructionブロック末尾）
+    if active_drifts:
+        drift_lines = ["## 現在有効なSELF_DRIFT（あなた自身が設定した行動指針）\n"]
+        for i, content in enumerate(active_drifts, 1):
+            drift_lines.append(f"{i}. {content}")
+        blocks.append("\n".join(drift_lines))
+
     # Block 5: Chotgor memory system instructions (always last)
-    blocks.append(CHOTGOR_BLOCK3_TEMPLATE.strip())
+    chotgor_block = CHOTGOR_BLOCK3_TEMPLATE.strip() + "\n\n" + CHOTGOR_SELF_DRIFT_GUIDE.strip()
+    blocks.append(chotgor_block)
 
     return "\n\n---\n\n".join(blocks)

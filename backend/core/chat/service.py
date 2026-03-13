@@ -15,11 +15,13 @@ Flow:
 from typing import Union
 
 from ..debug_logger import log_front_output
+from ..memory.drift_manager import DriftManager
 from ..memory.inscriber import carve
 from ..memory.manager import MemoryManager
 from ..providers.registry import create_provider
 from ..system_prompt import build_system_prompt
 from ..web_fetch import fetch_urls, find_urls
+from .drifter import extract as drift_extract
 from .models import ChatRequest
 
 
@@ -42,8 +44,38 @@ def extract_text_content(content: Union[str, list, None]) -> str:
 
 
 class ChatService:
-    def __init__(self, memory_manager: MemoryManager) -> None:
+    def __init__(self, memory_manager: MemoryManager, drift_manager: DriftManager | None = None) -> None:
+        """ChatService を初期化する。
+
+        Args:
+            memory_manager: 記憶の読み書きを担うマネージャー。
+            drift_manager: SELF_DRIFT指針の読み書きを担うマネージャー。
+                           None の場合は SELF_DRIFT 処理をスキップする。
+        """
         self.memory_manager = memory_manager
+        self.drift_manager = drift_manager
+
+    def _apply_drifts(self, text: str, request: ChatRequest) -> str:
+        """テキストから [DRIFT:...] / [DRIFT_RESET] マーカーを抽出しDBに反映する。
+
+        Args:
+            text: [MEMORY:...] 除去済みの応答テキスト。
+            request: セッションID・キャラクターIDを含むリクエスト。
+
+        Returns:
+            マーカーを除去したクリーンなテキスト。
+        """
+        if not self.drift_manager or not request.session_id:
+            return text
+        clean, drifts, reset = drift_extract(text)
+        if reset:
+            self.drift_manager.reset_drifts(request.session_id, request.character_id)
+        for content in drifts:
+            try:
+                self.drift_manager.add_drift(request.session_id, request.character_id, content)
+            except Exception:
+                pass
+        return clean
 
     async def execute(self, request: ChatRequest) -> str:
         """LLMにディスパッチして応答テキストを返す。SSEを知らない。"""
@@ -87,6 +119,7 @@ class ChatService:
             enable_time_awareness=request.enable_time_awareness,
             current_time_str=request.current_time_str,
             time_since_last_interaction=request.time_since_last_interaction,
+            active_drifts=request.active_drifts or None,
         )
 
         # --- 4. プロバイダーへディスパッチ ---
@@ -99,6 +132,10 @@ class ChatService:
 
         # --- 5. 記憶を刻み込む ---
         clean_text = carve(response_text, request.character_id, self.memory_manager)
+
+        # --- 5b. SELF_DRIFT マーカーを処理する ---
+        clean_text = self._apply_drifts(clean_text, request)
+
         log_front_output(clean_text)
 
         # --- 6. デバッグログ ---
@@ -177,6 +214,7 @@ class ChatService:
             enable_time_awareness=request.enable_time_awareness,
             current_time_str=request.current_time_str,
             time_since_last_interaction=request.time_since_last_interaction,
+            active_drifts=request.active_drifts or None,
         )
 
         # --- 4. プロバイダーへストリーミングディスパッチ ---
@@ -200,6 +238,10 @@ class ChatService:
 
         # --- 5. 記憶を刻み込む ---
         clean_text = carve(full_text, request.character_id, self.memory_manager)
+
+        # --- 5b. SELF_DRIFT マーカーを処理する ---
+        clean_text = self._apply_drifts(clean_text, request)
+
         log_front_output(clean_text)
 
         # --- 6. デバッグログ ---

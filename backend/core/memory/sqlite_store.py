@@ -137,6 +137,19 @@ class DigestLog(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
+class SessionDrift(Base):
+    """SELF_DRIFT — キャラクターがチャット内で自分自身に課した一時的な行動指針。"""
+
+    __tablename__ = "session_drifts"
+
+    id = Column(String, primary_key=True)           # UUID
+    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
+    character_id = Column(String, nullable=False)   # キャラクターID（参照のみ）
+    content = Column(Text, nullable=False)           # drift内容テキスト
+    enabled = Column(Integer, nullable=False, default=1)  # 1=ON, 0=OFF
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+
 class LLMModelPreset(Base):
     """LLMモデルプリセット — プロバイダー・モデルIDの設定を保持する。"""
 
@@ -210,6 +223,14 @@ class SQLiteStore:
                     "CREATE TABLE IF NOT EXISTS chat_images "
                     "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
                     "message_id TEXT, mime_type TEXT NOT NULL, "
+                    "created_at TIMESTAMP, "
+                    "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
+                ),
+                (
+                    "CREATE TABLE IF NOT EXISTS session_drifts "
+                    "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+                    "character_id TEXT NOT NULL, content TEXT NOT NULL, "
+                    "enabled INTEGER NOT NULL DEFAULT 1, "
                     "created_at TIMESTAMP, "
                     "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
                 ),
@@ -603,6 +624,7 @@ class SQLiteStore:
             # 関連レコードを先に削除してから親セッションを削除する
             session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
             session.query(ChatImage).filter(ChatImage.session_id == session_id).delete()
+            session.query(SessionDrift).filter(SessionDrift.session_id == session_id).delete()
             obj = session.get(ChatSession, session_id)
             if not obj:
                 session.commit()
@@ -730,3 +752,106 @@ class SQLiteStore:
                 .filter(ChatImage.session_id == session_id)
                 .all()
             )
+
+    # --- Session Drifts (SELF_DRIFT) ---
+
+    def add_session_drift(
+        self, session_id: str, character_id: str, content: str
+    ) -> "SessionDrift":
+        """SELF_DRIFT指針を追加する。同キャラの上限3件を超えた場合は最古を削除してから追加する。
+
+        キャラクターごとに独立管理するため、session_id と character_id の両方でフィルタする。
+
+        Args:
+            session_id: 所属セッションのID。
+            character_id: キャラクターID。
+            content: drift内容テキスト。
+
+        Returns:
+            作成された SessionDrift レコード。
+        """
+        import uuid as _uuid
+        with self.get_session() as session:
+            # 同キャラの既存driftを作成日時順で取得し、上限3件を超えていれば古いものを削除する
+            existing = (
+                session.query(SessionDrift)
+                .filter(
+                    SessionDrift.session_id == session_id,
+                    SessionDrift.character_id == character_id,
+                )
+                .order_by(SessionDrift.created_at.asc())
+                .all()
+            )
+            while len(existing) >= 3:
+                oldest = existing.pop(0)
+                session.delete(oldest)
+            drift = SessionDrift(
+                id=str(_uuid.uuid4()),
+                session_id=session_id,
+                character_id=character_id,
+                content=content,
+            )
+            session.add(drift)
+            session.commit()
+            session.refresh(drift)
+            return drift
+
+    def list_session_drifts(self, session_id: str) -> list:
+        """セッションの全キャラのdrift一覧を作成日時順で返す（UI表示用）。"""
+        with self.get_session() as session:
+            return (
+                session.query(SessionDrift)
+                .filter(SessionDrift.session_id == session_id)
+                .order_by(SessionDrift.created_at.asc())
+                .all()
+            )
+
+    def list_active_session_drifts(self, session_id: str, character_id: str) -> list[str]:
+        """指定キャラの有効（enabled=1）なdrift内容テキスト一覧を返す（システムプロンプト注入用）。"""
+        with self.get_session() as session:
+            rows = (
+                session.query(SessionDrift)
+                .filter(
+                    SessionDrift.session_id == session_id,
+                    SessionDrift.character_id == character_id,
+                    SessionDrift.enabled == 1,
+                )
+                .order_by(SessionDrift.created_at.asc())
+                .all()
+            )
+            return [r.content for r in rows]
+
+    def toggle_session_drift(self, drift_id: str) -> Optional["SessionDrift"]:
+        """drift の enabled フラグを反転する。"""
+        with self.get_session() as session:
+            drift = session.get(SessionDrift, drift_id)
+            if not drift:
+                return None
+            drift.enabled = 0 if drift.enabled else 1
+            session.commit()
+            session.refresh(drift)
+            return drift
+
+    def reset_session_drifts(self, session_id: str, character_id: str) -> int:
+        """指定キャラのdriftを全件物理削除する。[DRIFT_RESET] マーカー処理用。
+
+        他キャラのdriftには影響しない。
+
+        Args:
+            session_id: セッションID。
+            character_id: リセット対象のキャラクターID。
+
+        Returns:
+            削除件数。
+        """
+        with self.get_session() as session:
+            deleted = (
+                session.query(SessionDrift)
+                .filter(
+                    SessionDrift.session_id == session_id,
+                    SessionDrift.character_id == character_id,
+                )
+                .delete()
+            )
+            session.commit()
+            return deleted
