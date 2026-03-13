@@ -122,6 +122,7 @@ async def _stream_character_response(
         enable_time_awareness=enable_time_awareness,
         current_time_str=current_time_str,
         time_since_last_interaction=time_since_last_interaction,
+        session_id=session_id,
     )
 
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする

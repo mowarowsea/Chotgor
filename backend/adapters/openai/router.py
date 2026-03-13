@@ -4,6 +4,7 @@ GET  /v1/models          - 利用可能なモデル一覧 (character@preset_id)
 POST /v1/chat/completions - チャット (streaming SSE / non-streaming)
 """
 
+import hashlib
 import json
 import uuid
 from datetime import datetime
@@ -12,12 +13,26 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ...core.chat.models import ChatRequest, Message
+from ...core.chat.service import extract_text_content
 from ...core.debug_logger import log_front_input
 from ...core.providers.registry import PROVIDER_LABELS
 from ...core.utils import format_time_delta
 from .schemas import OAIChatRequest
 
 router = APIRouter()
+
+
+def _derive_session_id(character_id: str, messages: list) -> str:
+    """会話の最初のuserメッセージ + character_idからsession_idを導出する。
+
+    OpenWebUIはsession_idを送ってこないため、同じ会話スレッドを識別するための
+    擬似session_idを生成する。会話の先頭userメッセージが同じ場合は同じIDになる。
+    """
+    first_user = next((m for m in messages if m.role == "user"), None)
+    if not first_user:
+        return ""
+    seed = f"{character_id}:{extract_text_content(first_user.content)}"
+    return hashlib.md5(seed.encode()).hexdigest()
 
 
 def _available_providers(settings: dict) -> set[str]:
@@ -170,12 +185,15 @@ async def chat_completions(request: Request, body: OAIChatRequest):
     if body.messages and body.messages[-1].role == "user":
         state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
 
+    messages = [Message(role=m.role, content=m.content) for m in body.messages]
+    session_id = _derive_session_id(character.id, messages)
+
     chat_request = ChatRequest(
         character_id=character.id,
         character_name=character.name,
         provider=preset.provider,
         model=preset.model_id,
-        messages=[Message(role=m.role, content=m.content) for m in body.messages],
+        messages=messages,
         character_system_prompt=character.system_prompt_block1,
         meta_instructions=character.meta_instructions,
         provider_additional_instructions=model_config.get("additional_instructions", ""),
@@ -184,6 +202,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         enable_time_awareness=enable_time_awareness,
         current_time_str=current_time_str,
         time_since_last_interaction=time_since_last_interaction,
+        session_id=session_id,
     )
 
     chat_service = state.chat_service

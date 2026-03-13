@@ -73,31 +73,39 @@ class TestApplyDrifts:
 
         drift_manager.reset_drifts.assert_called_once_with("session-1", "char-1")
 
-    def test_skip_when_session_id_is_empty(self):
-        """session_id が空の場合は drift 処理をスキップし、テキストをそのまま返すこと。"""
+    def test_skip_db_write_when_session_id_is_empty(self):
+        """session_id が空の場合はDB書き込みをスキップするが、マーカーは除去されること。
+
+        session_id がなくても [DRIFT:...] がユーザーに見えてはいけないため、
+        マーカーのストリップ自体は常に実行される。
+        """
         drift_manager = MagicMock()
         service = self._make_service(drift_manager=drift_manager)
         request = self._make_request(session_id="")
 
-        text = "テキスト[DRIFT:指針A]"
-        result = service._apply_drifts(text, request)
+        result = service._apply_drifts("テキスト[DRIFT:指針A]", request)
 
-        # テキストがそのまま返ること（マーカー除去なし）
-        assert result == text
-        # drift_manager は呼ばれないこと
+        # マーカーが除去されること
+        assert "[DRIFT:" not in result
+        assert "テキスト" in result
+        # DB書き込みは呼ばれないこと
         drift_manager.add_drift.assert_not_called()
         drift_manager.reset_drifts.assert_not_called()
 
-    def test_skip_when_drift_manager_is_none(self):
-        """drift_manager が None の場合は drift 処理をスキップし、テキストをそのまま返すこと。"""
+    def test_skip_db_write_when_drift_manager_is_none(self):
+        """drift_manager が None の場合もマーカーは除去されること。
+
+        drift_manager がなくてもマーカーをユーザーに見せてはいけないため、
+        ストリップ処理は実行される。
+        """
         service = self._make_service(drift_manager=None)
         request = self._make_request()
 
-        text = "テキスト[DRIFT:指針A]"
-        result = service._apply_drifts(text, request)
+        result = service._apply_drifts("テキスト[DRIFT:指針A]", request)
 
-        # テキストがそのまま返ること（マーカー除去なし）
-        assert result == text
+        # マーカーが除去されること
+        assert "[DRIFT:" not in result
+        assert "テキスト" in result
 
     def test_drift_and_reset_coexist_reset_before_add(self):
         """DRIFT と DRIFT_RESET が共存する場合、reset 後に add が呼ばれること。
@@ -177,11 +185,11 @@ async def test_execute_removes_drift_marker_and_calls_drift_manager():
 
 
 @pytest.mark.asyncio
-async def test_execute_drift_skipped_when_no_session_id():
-    """session_id が空の場合に drift 処理がスキップされること。
+async def test_execute_drift_marker_stripped_when_no_session_id():
+    """session_id が空の場合、[DRIFT:...] マーカーは除去されるがDB書き込みはスキップされること。
 
-    session_id なしのリクエストでは [DRIFT:...] マーカーがあっても
-    drift_manager.add_drift が呼ばれないことを検証する。
+    session_id なしでも [DRIFT:...] マーカーをユーザーに返してはいけないため、
+    マーカー除去は実行される。ただし drift_manager.add_drift は呼ばれない。
     """
     memory_manager = MagicMock()
     memory_manager.recall_memory.return_value = []
@@ -209,7 +217,137 @@ async def test_execute_drift_skipped_when_no_session_id():
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         result = await service.execute(request)
 
-    # drift_manager.add_drift が呼ばれないこと
+    # マーカーが除去されていること
+    assert "[DRIFT:" not in result
+    assert "応答テキスト" in result
+    # DB書き込みは呼ばれないこと
     drift_manager.add_drift.assert_not_called()
-    # テキストはそのまま返ること（_apply_drifts がスキップされるのでマーカーが残る）
-    assert "[DRIFT:指針A]" in result
+
+
+# --- execute での active_drifts 自動ロードテスト ---
+
+@pytest.mark.asyncio
+async def test_execute_loads_active_drifts_from_db():
+    """session_id があり active_drifts が未指定の場合、DBから自動ロードして build_system_prompt に渡すこと。"""
+    memory_manager = MagicMock()
+    memory_manager.recall_memory.return_value = []
+
+    drift_manager = MagicMock()
+    drift_manager.list_active_drifts.return_value = ["もっとクールに話す", "短く答える"]
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="こんにちは")],
+        session_id="session-abc",
+        # active_drifts は未指定（デフォルト空リスト）
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.generate = AsyncMock(return_value="了解です。")
+
+    with (
+        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.core.chat.service.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+    ):
+        service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
+        await service.execute(request)
+
+    # drift_manager.list_active_drifts が呼ばれること
+    drift_manager.list_active_drifts.assert_called_once_with("session-abc", "char-1")
+
+    # build_system_prompt に active_drifts が渡されること
+    _, kwargs = mock_build.call_args
+    assert kwargs["active_drifts"] == ["もっとクールに話す", "短く答える"]
+
+
+@pytest.mark.asyncio
+async def test_execute_does_not_overwrite_active_drifts_if_provided():
+    """リクエストに active_drifts が既に含まれている場合、DBロードをスキップすること。
+
+    Chotgorフロントは将来的には active_drifts を渡さず session_id だけ渡すが、
+    万が一両方渡された場合は既存値を優先する（DBロードは不要）。
+    """
+    memory_manager = MagicMock()
+    memory_manager.recall_memory.return_value = []
+
+    drift_manager = MagicMock()
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="こんにちは")],
+        session_id="session-abc",
+        active_drifts=["既存の指針"],  # 既に指定済み
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.generate = AsyncMock(return_value="了解です。")
+
+    with (
+        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.core.chat.service.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+    ):
+        service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
+        await service.execute(request)
+
+    # DBロードは呼ばれないこと
+    drift_manager.list_active_drifts.assert_not_called()
+
+    # 既存の active_drifts がそのまま渡されること
+    _, kwargs = mock_build.call_args
+    assert kwargs["active_drifts"] == ["既存の指針"]
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_loads_active_drifts_from_db():
+    """execute_stream でも session_id があれば DBから active_drifts を自動ロードすること。"""
+    memory_manager = MagicMock()
+    memory_manager.recall_memory.return_value = []
+
+    drift_manager = MagicMock()
+    drift_manager.list_active_drifts.return_value = ["統計的に答える"]
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="こんにちは")],
+        session_id="session-xyz",
+    )
+
+    fake_provider = AsyncMock()
+
+    async def fake_stream(*_):
+        yield ("text", "了解です。")
+
+    fake_provider.generate_stream_typed = fake_stream
+
+    with (
+        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.core.chat.service.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+    ):
+        service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
+        chunks = [c async for c in service.execute_stream(request)]
+
+    # drift_manager.list_active_drifts が呼ばれること
+    drift_manager.list_active_drifts.assert_called_once_with("session-xyz", "char-1")
+
+    # build_system_prompt に active_drifts が渡されること
+    _, kwargs = mock_build.call_args
+    assert kwargs["active_drifts"] == ["統計的に答える"]
+
+    # テキストが返ること
+    text_chunks = [c for t, c in chunks if t == "text"]
+    assert text_chunks == ["了解です。"]

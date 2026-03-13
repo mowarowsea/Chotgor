@@ -92,14 +92,6 @@ async def _build_chat_request(request: Request, session, history_messages: list,
     messages = build_1on1_history(history_messages, state.sqlite, state.uploads_dir)
     messages.append(Message(role="user", content=user_content))
 
-    # 現在有効なSELF_DRIFT指針を取得してシステムプロンプトに注入する
-    active_drifts: list[str] = []
-    if state.drift_manager:
-        try:
-            active_drifts = state.drift_manager.list_active_drifts(session.id, character.id)
-        except Exception:
-            pass
-
     return ChatRequest(
         character_id=character.id,
         character_name=character.name,
@@ -115,7 +107,6 @@ async def _build_chat_request(request: Request, session, history_messages: list,
         current_time_str=current_time_str,
         time_since_last_interaction=time_since_last_interaction,
         session_id=session.id,
-        active_drifts=active_drifts,
     )
 
 

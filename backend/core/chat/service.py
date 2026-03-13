@@ -5,10 +5,12 @@ Architecture:
 
 Flow:
   1. 記憶を想起 (ChromaDB RAG)
+  1b. SELF_DRIFT指針をDBからロード
   2. URL自動fetch
   3. システムプロンプト構築
   4. プロバイダーへディスパッチ
   5. 応答から記憶を刻み込み (Inscriber.carve)
+  5b. SELF_DRIFTマーカーを処理してDBに保存
   6. デバッグログ
 """
 
@@ -65,9 +67,10 @@ class ChatService:
         Returns:
             マーカーを除去したクリーンなテキスト。
         """
-        if not self.drift_manager or not request.session_id:
-            return text
+        # session_id がない場合はDB書き込みをスキップするが、マーカーのストリップは必ず行う
         clean, drifts, reset = drift_extract(text)
+        if not self.drift_manager or not request.session_id:
+            return clean
         if reset:
             self.drift_manager.reset_drifts(request.session_id, request.character_id)
         for content in drifts:
@@ -99,6 +102,14 @@ class ChatService:
             except Exception:
                 pass
 
+        # --- 1b. SELF_DRIFT指針をDBからロード ---
+        active_drifts = request.active_drifts or []
+        if self.drift_manager and request.session_id and not active_drifts:
+            try:
+                active_drifts = self.drift_manager.list_active_drifts(request.session_id, request.character_id)
+            except Exception:
+                pass
+
         # --- 2. URLの自動fetch ---
         fetched_contents = []
         if last_user_msg:
@@ -119,7 +130,7 @@ class ChatService:
             enable_time_awareness=request.enable_time_awareness,
             current_time_str=request.current_time_str,
             time_since_last_interaction=request.time_since_last_interaction,
-            active_drifts=request.active_drifts or None,
+            active_drifts=active_drifts or None,
         )
 
         # --- 4. プロバイダーへディスパッチ ---
@@ -194,6 +205,14 @@ class ChatService:
         if recalled:
             yield ("memories", recalled)
 
+        # --- 1b. SELF_DRIFT指針をDBからロード ---
+        active_drifts = request.active_drifts or []
+        if self.drift_manager and request.session_id and not active_drifts:
+            try:
+                active_drifts = self.drift_manager.list_active_drifts(request.session_id, request.character_id)
+            except Exception:
+                pass
+
         # --- 2. URLの自動fetch ---
         fetched_contents = []
         if last_user_msg:
@@ -214,7 +233,7 @@ class ChatService:
             enable_time_awareness=request.enable_time_awareness,
             current_time_str=request.current_time_str,
             time_since_last_interaction=request.time_since_last_interaction,
-            active_drifts=request.active_drifts or None,
+            active_drifts=active_drifts or None,
         )
 
         # --- 4. プロバイダーへストリーミングディスパッチ ---
