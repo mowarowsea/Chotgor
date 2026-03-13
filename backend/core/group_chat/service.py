@@ -2,21 +2,23 @@
 
 処理フロー（ユーザー発言ごとに1回実行）:
   1. 司会AIに次の発言者を問い合わせる
-  2. 指名されたキャラクターの応答を（並列で）生成する
-  3. 応答をDBに保存し、SSEイベントをyieldする
+  2. 指名されたキャラクターの応答を順番にストリーミング生成する（1on1を複数回やるのと同じ形）
+  3. 各キャラクター応答をDBに保存し、SSEイベントをyieldする
   4. auto_turns_used >= max_auto_turns または司会が [] を返したらユーザーターンへ戻す
   司会がNone（エラー）を返した場合もユーザーターンへ戻す。
+
+グループチャット固有のLLM呼び出しは ChatService.execute_stream() に委譲する。
+1on1チャットと同じ記憶想起・URL取得・時刻認識・プロンプト構築・プロバイダーディスパッチ・記憶刻み込みを共用する。
 """
 
-import asyncio
 import uuid
+from datetime import datetime
 from typing import Any, AsyncGenerator
 
+from ..chat.models import ChatRequest, Message
+from ..chat.service import ChatService
 from ..memory.format import format_recalled_memories
-from ..memory.inscriber import carve
-from ..memory.manager import MemoryManager
-from ..providers.registry import create_provider
-from ..system_prompt import build_system_prompt
+from ..utils import format_time_delta
 from . import context as ctx
 from .director import decide_next_speakers
 
@@ -31,19 +33,25 @@ def _extract_last_user_text(history: list) -> str:
     return ""
 
 
-async def _generate_character_response(
+async def _stream_character_response(
     char_name: str,
     session_id: str,
     participants: list[dict],
     history: list,
     sqlite,
-    memory_manager: MemoryManager,
     settings: dict,
-) -> Any:
-    """指定キャラクターの応答を生成してDBに保存し、ChatMessageオブジェクトを返す。
+    chat_service: ChatService,
+    uploads_dir: str = "",
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """指定キャラクターの応答をストリーミングしてDBに保存する非同期ジェネレーター。
 
-    generate_stream_typed を使って思考ブロック・想起記憶（reasoning）も収集し、
-    DBへ保存する。
+    1on1チャットと同じフローを踏む：
+    記憶想起 → URL取得 → 時刻認識 → システムプロンプト → プロバイダーストリーム → 記憶刻み込み → DB保存。
+
+    Yields:
+        ("character_reasoning", {"character": str, "content": str})  — 思考・想起記憶（リアルタイム）
+        ("character_chunk",    {"character": str, "content": str})   — 応答テキスト（1チャンク）
+        ("character_done",     {"character": str, "message": ORM})   — DB保存完了（ORM は呼び出し元で変換）
 
     Args:
         char_name: 応答するキャラクターの名前。
@@ -51,15 +59,9 @@ async def _generate_character_response(
         participants: 参加者情報リスト（preset_name取得に使用）。
         history: 現在の会話履歴（ChatMessageオブジェクトのリスト）。
         sqlite: SQLiteStoreインスタンス。
-        memory_manager: MemoryManagerインスタンス。
         settings: グローバル設定辞書。
-
-    Returns:
-        保存済みのChatMessageオブジェクト。
-
-    Raises:
-        ValueError: キャラクターまたはプリセットが見つからない場合。
-        Exception: LLM呼び出しエラー。
+        chat_service: コアLLMロジックを委譲するChatServiceインスタンス。
+        uploads_dir: 画像ファイルの保存ディレクトリパス（画像付きメッセージのエンコードに使用）。
     """
     # キャラクター情報を取得する
     char = sqlite.get_character_by_name(char_name) or sqlite.get_character(char_name)
@@ -78,90 +80,114 @@ async def _generate_character_response(
 
     model_config = (char.enabled_providers or {}).get(preset.id, {})
 
-    # グループ履歴を指定キャラクター視点の messages 形式に変換する
-    messages = ctx.format_group_history_for_character(history, char_name)
+    # グループ履歴を指定キャラクター視点の Message リストに変換する（画像も含む）
+    messages = [
+        Message(role=m["role"], content=m["content"])
+        for m in ctx.format_group_history_for_character(history, char_name, sqlite=sqlite, uploads_dir=uploads_dir)
+    ]
 
-    # 最後のユーザーメッセージで記憶を想起する
+    # タグなしの生テキストを記憶想起クエリに使う
     last_user_text = _extract_last_user_text(history)
-    recalled = []
-    if last_user_text:
-        try:
-            recalled = memory_manager.recall_memory(char.id, last_user_text)
-        except Exception:
-            pass
 
-    # システムプロンプトを構築する
-    system_prompt = build_system_prompt(
+    # 時刻認識パラメータを計算する（1on1チャットと同様）
+    enable_time_awareness = settings.get("enable_time_awareness", "true") == "true"
+    now = datetime.now()
+    current_time_str = ""
+    time_since_last_interaction = ""
+    if enable_time_awareness:
+        current_time_str = now.isoformat(timespec="seconds")
+        last_str = sqlite.get_setting(f"last_interaction_{char.id}")
+        if last_str:
+            try:
+                last_dt = datetime.fromisoformat(last_str)
+                time_since_last_interaction = format_time_delta(now - last_dt)
+            except Exception:
+                pass
+    # インタラクション時刻を更新する（1on1と同様）
+    sqlite.set_setting(f"last_interaction_{char.id}", now.isoformat())
+
+    # ChatRequest を構築して ChatService に委譲する
+    request = ChatRequest(
+        character_id=char.id,
+        character_name=char_name,
+        provider=preset.provider,
+        model=preset.model_id,
+        messages=messages,
         character_system_prompt=char.system_prompt_block1,
-        recalled_memories=recalled,
-        fetched_contents=[],
         meta_instructions=char.meta_instructions,
         provider_additional_instructions=model_config.get("additional_instructions", ""),
-        enable_time_awareness=False,
-        current_time_str="",
-        time_since_last_interaction="",
-    )
-
-    # LLM を呼び出して応答テキストと reasoning を収集する
-    provider_impl = create_provider(
-        preset.provider,
-        preset.model_id,
-        settings,
         thinking_level=preset.thinking_level or "default",
+        settings=settings,
+        recall_query_override=last_user_text,
+        enable_time_awareness=enable_time_awareness,
+        current_time_str=current_time_str,
+        time_since_last_interaction=time_since_last_interaction,
     )
-    response_parts: list[str] = []
-    reasoning_parts: list[str] = []
-    async for chunk_type, chunk_text in provider_impl.generate_stream_typed(system_prompt, messages):
-        if chunk_type == "text":
-            response_parts.append(chunk_text)
-        elif chunk_type in ("reasoning", "thinking"):
-            reasoning_parts.append(chunk_text)
 
-    response_text = "".join(response_parts)
+    # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする
+    full_text = ""
+    memory_text = ""
+    thinking_parts: list[str] = []
 
-    # 想起記憶テキストを reasoning の先頭に付加する（1on1 チャットと同様の表示にする）
-    memory_text = format_recalled_memories(recalled)
-    thinking_text = "".join(reasoning_parts)
-    combined = (memory_text + thinking_text).strip()
+    async for chunk_type, content in chat_service.execute_stream(request):
+        if chunk_type == "memories":
+            memory_text = format_recalled_memories(content)
+            if memory_text:
+                yield ("character_reasoning", {"character": char_name, "content": memory_text})
+        elif chunk_type == "thinking":
+            thinking_parts.append(content)
+            yield ("character_reasoning", {"character": char_name, "content": content})
+        elif chunk_type == "text":
+            full_text = content
+            if content:
+                yield ("character_chunk", {"character": char_name, "content": content})
+
+    # 1on1チャットと同様に想起記憶と思考ブロックをreasoningにまとめてDBに保存する
+    combined = (memory_text + "".join(thinking_parts)).strip()
     reasoning_text = combined if combined else None
 
-    # [MEMORY:...] マーカーを抽出して記憶を刻み込む
-    clean_text = carve(response_text, char.id, memory_manager)
-
-    # DBに保存する（reasoning も含む）
     msg_id = str(uuid.uuid4())
     msg = sqlite.create_chat_message(
         message_id=msg_id,
         session_id=session_id,
         role="character",
-        content=clean_text,
+        content=full_text,
         character_name=char_name,
         reasoning=reasoning_text,
     )
-    return msg
+    yield ("character_done", {"character": char_name, "message": msg})
 
 
 async def run_group_turn(
     session_id: str,
     group_config: dict,
     sqlite,
-    memory_manager: MemoryManager,
     settings: dict,
+    chat_service: ChatService,
+    message_to_dict,
+    uploads_dir: str = "",
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザー発言後の自動ターンを実行し、SSEイベントをyieldする非同期ジェネレーター。
 
+    各キャラクターを順番にストリーミング処理する（1on1を複数回行う形）。
+
     Yields:
-        ("speaker_decided", {"speakers": [str]})       — 次の発言者が決定した
-        ("character_message", {"character": str, "message": dict}) — キャラクターの応答が完了した
-        ("user_turn", {"auto_turns_used": int})         — ユーザーターンへ戻す
-        ("error", {"message": str, "character": str})  — キャラクター応答エラー
+        ("speaker_decided",     {"speakers": [str]})                  — 司会AIが発言者を一括決定
+        ("character_start",     {"character": str})                   — キャラクター応答開始
+        ("character_reasoning", {"character": str, "content": str})   — 思考・想起記憶（リアルタイム）
+        ("character_chunk",     {"character": str, "content": str})   — 応答テキスト
+        ("character_done",      {"character": str, "message": dict})  — 応答完了・DB保存済み
+        ("user_turn",           {"auto_turns_used": int})             — ユーザーターンへ戻す
+        ("error",               {"message": str, "character": str})   — エラー
 
     Args:
         session_id: 対象セッションID。
         group_config: グループチャット設定辞書。
         sqlite: SQLiteStoreインスタンス。
-        memory_manager: MemoryManagerインスタンス。
         settings: グローバル設定辞書。
+        chat_service: 各キャラクターのLLM呼び出しに使用するChatServiceインスタンス。
+        message_to_dict: ChatMessage ORM を dict に変換する関数（循環インポート回避のため外部から注入）。
+        uploads_dir: 画像ファイルの保存ディレクトリパス。
     """
     participants = group_config.get("participants", [])
     director_model_id = group_config.get("director_model_id", "")
@@ -171,7 +197,6 @@ async def run_group_turn(
     else:
         director_char_name, director_preset_name = "", ""
     max_auto_turns = int(group_config.get("max_auto_turns", 3))
-    # グローバル設定からユーザー名を取得する
     user_name = settings.get("user_name", "ユーザ")
 
     auto_turn_count = 0
@@ -201,43 +226,37 @@ async def run_group_turn(
             yield ("user_turn", {"auto_turns_used": auto_turn_count})
             return
 
+        # 司会AIの決定を一括通知する
         yield ("speaker_decided", {"speakers": next_speakers})
 
-        # 指名されたキャラクターの応答を並列で生成する
-        results = await asyncio.gather(
-            *[
-                _generate_character_response(
+        # 各キャラクターを順番にストリーミング処理する
+        error_occurred = False
+        for char_name in next_speakers:
+            # キャラクター応答開始を通知する（フロントでスピナー表示に使う）
+            yield ("character_start", {"character": char_name})
+            try:
+                async for chunk_type, payload in _stream_character_response(
                     char_name=char_name,
                     session_id=session_id,
                     participants=participants,
                     history=history,
                     sqlite=sqlite,
-                    memory_manager=memory_manager,
                     settings=settings,
-                )
-                for char_name in next_speakers
-            ],
-            return_exceptions=True,
-        )
-
-        for char_name, result in zip(next_speakers, results):
-            if isinstance(result, Exception):
-                # エラーはユーザーターンへ戻すがループは継続しない
-                yield ("error", {"message": str(result), "character": char_name})
+                    chat_service=chat_service,
+                    uploads_dir=uploads_dir,
+                ):
+                    if chunk_type == "character_done":
+                        # message ORM を dict に変換してからyieldする
+                        yield (chunk_type, {**payload, "message": message_to_dict(payload["message"])})
+                    else:
+                        yield (chunk_type, payload)
+            except Exception as e:
+                yield ("error", {"message": str(e), "character": char_name})
                 yield ("user_turn", {"auto_turns_used": auto_turn_count})
-                return
+                error_occurred = True
+                break
 
-            # ChatMessage ORM を dict に変換してyieldする
-            msg = result
-            msg_dict = {
-                "id": msg.id,
-                "session_id": msg.session_id,
-                "role": msg.role,
-                "content": msg.content,
-                "character_name": getattr(msg, "character_name", None),
-                "reasoning": getattr(msg, "reasoning", None),
-                "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            }
-            yield ("character_message", {"character": char_name, "message": msg_dict})
+        if error_occurred:
+            return
 
         auto_turn_count += 1

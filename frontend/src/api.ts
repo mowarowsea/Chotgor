@@ -43,7 +43,14 @@ export interface GroupConfig {
 export type GroupStreamEvent =
   | { type: "user_saved"; message: ChatMessage }
   | { type: "speaker_decided"; speakers: string[] }
-  | { type: "character_message"; character: string; message: ChatMessage }
+  /** キャラクター応答開始（スピナー表示用） */
+  | { type: "character_start"; character: string }
+  /** 思考ブロック・想起記憶（リアルタイムストリーミング） */
+  | { type: "character_reasoning"; character: string; content: string }
+  /** 応答テキスト（1チャンク） */
+  | { type: "character_chunk"; character: string; content: string }
+  /** DB保存完了（確定済みメッセージ） */
+  | { type: "character_done"; character: string; message: ChatMessage }
   | { type: "user_turn"; auto_turns_used: number }
   | { type: "error"; message: string; character?: string }
   | { type: "done" };
@@ -99,6 +106,33 @@ export type StreamEvent =
   | { type: "done"; user_message: ChatMessage; character_message: ChatMessage }
   | { type: "error"; message: string };
 
+/** SSEレスポンスボディを解析してイベントオブジェクトをyieldする共通ジェネレーター。 */
+async function* parseSSEStream<T>(res: Response): AsyncGenerator<T> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          yield JSON.parse(line.slice(6)) as T;
+        } catch {
+          // 不正なJSONはスキップ
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** メッセージをSSEでストリーミング送信し、イベントをyieldする。 */
 export async function* streamMessage(
   sessionId: string,
@@ -115,32 +149,7 @@ export async function* streamMessage(
   });
 
   if (!res.ok) throw new Error("ストリーミング送信に失敗しました");
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          yield JSON.parse(line.slice(6)) as StreamEvent;
-        } catch {
-          // 不正なJSONはスキップ
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
+  yield* parseSSEStream<StreamEvent>(res);
 }
 
 /** メッセージを送信してキャラクターの応答を受け取る。 */
@@ -218,35 +227,16 @@ export async function createGroupSession(
 export async function* streamGroupMessage(
   sessionId: string,
   content: string,
+  imageIds?: string[],
 ): AsyncGenerator<GroupStreamEvent> {
   const res = await fetch(`/api/group/sessions/${sessionId}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({
+      content,
+      ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
+    }),
   });
   if (!res.ok) throw new Error("グループメッセージの送信に失敗しました");
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          yield JSON.parse(line.slice(6)) as GroupStreamEvent;
-        } catch {
-          // 不正なJSONはスキップする
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
+  yield* parseSSEStream<GroupStreamEvent>(res);
 }

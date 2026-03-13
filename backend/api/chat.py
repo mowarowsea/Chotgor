@@ -4,7 +4,6 @@
 セッション管理 + LLM呼び出しを担当する。
 """
 
-import base64
 import json
 import os
 import uuid
@@ -17,8 +16,8 @@ from pydantic import BaseModel
 
 from ..core.chat.models import ChatRequest, Message
 from ..core.debug_logger import log_front_output
-from ..core.memory.format import format_recalled_memories
 from ..core.utils import format_time_delta
+from .utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -43,49 +42,6 @@ class MessageCreate(BaseModel):
 
     content: str
     image_ids: Optional[List[str]] = None
-
-
-# --- ヘルパー ---
-
-def _format_memories_for_sse(recalled: list) -> str:
-    """想起した記憶リストをSSE送信用のテキストにフォーマットする。共通実装は core/memory/format.py を使用する。"""
-    return format_recalled_memories(recalled)
-
-
-def _session_to_dict(s) -> dict:
-    """ChatSession ORMオブジェクトを辞書に変換する。"""
-    result = {
-        "id": s.id,
-        "model_id": s.model_id,
-        "title": s.title,
-        "session_type": getattr(s, "session_type", "1on1") or "1on1",
-        "created_at": s.created_at.isoformat() if s.created_at else None,
-        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-    }
-    # グループチャットのみ group_config を含める
-    group_config = getattr(s, "group_config", None)
-    if group_config:
-        result["group_config"] = group_config
-    return result
-
-
-def _message_to_dict(m) -> dict:
-    """ChatMessage ORMオブジェクトを辞書に変換する。"""
-    result = {
-        "id": m.id,
-        "session_id": m.session_id,
-        "role": m.role,
-        "content": m.content,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
-    }
-    # reasoning / images / character_name は None の場合は省略してレスポンスサイズを削減する
-    if getattr(m, "reasoning", None):
-        result["reasoning"] = m.reasoning
-    if getattr(m, "images", None):
-        result["images"] = m.images
-    if getattr(m, "character_name", None):
-        result["character_name"] = m.character_name
-    return result
 
 
 async def _build_chat_request(request: Request, session, history_messages: list, user_content: Union[str, list]) -> ChatRequest:
@@ -132,11 +88,8 @@ async def _build_chat_request(request: Request, session, history_messages: list,
                 pass
     state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
 
-    # OpenAI role形式に変換（character → assistant）
-    messages = []
-    for msg in history_messages:
-        role = "assistant" if msg.role == "character" else "user"
-        messages.append(Message(role=role, content=msg.content))
+    # OpenAI role形式に変換（character → assistant、画像付きメッセージは vision 形式に変換）
+    messages = build_1on1_history(history_messages, state.sqlite, state.uploads_dir)
     messages.append(Message(role="user", content=user_content))
 
     return ChatRequest(
@@ -175,7 +128,7 @@ async def get_user_name(request: Request):
 async def list_sessions(request: Request):
     """チャットセッション一覧を新しい順で返す。"""
     sessions = request.app.state.sqlite.list_chat_sessions()
-    return [_session_to_dict(s) for s in sessions]
+    return [session_to_dict(s) for s in sessions]
 
 
 @router.post("/sessions", status_code=201)
@@ -188,7 +141,7 @@ async def create_session(request: Request, body: SessionCreate):
         model_id=body.model_id,
         title=title,
     )
-    return _session_to_dict(session)
+    return session_to_dict(session)
 
 
 @router.get("/sessions/{session_id}")
@@ -198,8 +151,8 @@ async def get_session(request: Request, session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     messages = request.app.state.sqlite.list_chat_messages(session_id)
-    result = _session_to_dict(session)
-    result["messages"] = [_message_to_dict(m) for m in messages]
+    result = session_to_dict(session)
+    result["messages"] = [message_to_dict(m) for m in messages]
     return result
 
 
@@ -209,7 +162,7 @@ async def update_session(request: Request, session_id: str, body: SessionUpdate)
     session = request.app.state.sqlite.update_chat_session(session_id, title=body.title)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return _session_to_dict(session)
+    return session_to_dict(session)
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -355,8 +308,8 @@ async def send_message(request: Request, session_id: str, body: MessageCreate):
     )
 
     return {
-        "user_message": _message_to_dict(user_msg),
-        "character_message": _message_to_dict(char_msg),
+        "user_message": message_to_dict(user_msg),
+        "character_message": message_to_dict(char_msg),
     }
 
 
@@ -396,22 +349,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         state.sqlite.update_chat_session(session_id, title=auto_title)
 
     # 画像が添付されている場合は OpenAI vision 形式のコンテンツリストを構築する
-    user_content: Union[str, list] = body.content
-    if body.image_ids:
-        parts: list = [{"type": "text", "text": body.content}]
-        for img_id in body.image_ids:
-            img_meta = state.sqlite.get_chat_image(img_id)
-            if img_meta:
-                img_path = os.path.join(state.uploads_dir, img_id)
-                if os.path.exists(img_path):
-                    with open(img_path, "rb") as f:
-                        b64 = base64.b64encode(f.read()).decode()
-                    parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{img_meta.mime_type};base64,{b64}"},
-                    })
-        if len(parts) > 1:
-            user_content = parts
+    user_content: Union[str, list] = build_message_content(
+        body.content, body.image_ids or [], state.sqlite, state.uploads_dir
+    )
 
     # ChatRequestの構築（HTTPExceptionが発生した場合はここで止まる）
     try:
@@ -437,7 +377,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             async for chunk_type, content in state.chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
                     # 記憶リストを表示用テキストにフォーマットして送信・蓄積する
-                    display = _format_memories_for_sse(content)
+                    display = format_memories_for_sse(content)
                     if display:
                         accumulated_reasoning += display
                         data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
@@ -481,8 +421,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         # 完了イベントを送信
         done_data = json.dumps({
             "type": "done",
-            "user_message": _message_to_dict(user_msg),
-            "character_message": _message_to_dict(char_msg),
+            "user_message": message_to_dict(user_msg),
+            "character_message": message_to_dict(char_msg),
         }, ensure_ascii=False)
         yield f"data: {done_data}\n\n"
 

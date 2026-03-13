@@ -25,3 +25,6 @@ class ChatRequest:
     enable_time_awareness: bool = False
     current_time_str: str = ""
     time_since_last_interaction: str = ""
+    # グループチャット用: 記憶想起クエリの上書き。
+    # 空文字列の場合は messages の最後のユーザーメッセージを使う。
+    recall_query_override: str = ""

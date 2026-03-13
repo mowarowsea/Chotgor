@@ -32,6 +32,8 @@ def _make_app(sqlite_mock, memory_manager_mock=None) -> FastAPI:
     app.include_router(group_chat_module.router)
     app.state.sqlite = sqlite_mock
     app.state.memory_manager = memory_manager_mock or MagicMock()
+    app.state.chat_service = MagicMock()
+    app.state.uploads_dir = "/tmp"
     return app
 
 
@@ -70,6 +72,7 @@ def _fake_message(mid=None, session_id="sid", role="user", content="hello", char
     m.content = content
     m.character_name = character_name
     m.reasoning = None
+    m.images = None
     m.created_at = datetime(2026, 3, 11, 12, 0, 0)
     return m
 

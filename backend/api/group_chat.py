@@ -6,13 +6,14 @@
 
 import json
 import uuid
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..core.group_chat.service import run_group_turn
+from .utils import message_to_dict, session_to_dict
 
 router = APIRouter(prefix="/api/group", tags=["group_chat"])
 
@@ -51,9 +52,8 @@ class GroupMessageCreate(BaseModel):
     """グループチャットメッセージ送信リクエスト。"""
 
     content: str
+    image_ids: Optional[List[str]] = None
 
-
-# --- ヘルパー ---
 
 def _parse_participant(model_id: str) -> dict:
     """"{char_name}@{preset_name}" 形式の文字列を参加者辞書に変換する。
@@ -71,38 +71,6 @@ def _parse_participant(model_id: str) -> dict:
         raise ValueError(f"Invalid participant model_id format: '{model_id}' (expected 'CharName@PresetName')")
     char_name, preset_name = model_id.rsplit("@", 1)
     return {"char_name": char_name, "preset_name": preset_name}
-
-
-def _session_to_dict(s) -> dict:
-    """グループセッション ORMオブジェクトを辞書に変換する。"""
-    result = {
-        "id": s.id,
-        "model_id": s.model_id,
-        "title": s.title,
-        "session_type": getattr(s, "session_type", "group"),
-        "created_at": s.created_at.isoformat() if s.created_at else None,
-        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-    }
-    group_config = getattr(s, "group_config", None)
-    if group_config:
-        result["group_config"] = group_config
-    return result
-
-
-def _message_to_dict(m) -> dict:
-    """ChatMessage ORMオブジェクトを辞書に変換する。"""
-    result = {
-        "id": m.id,
-        "session_id": m.session_id,
-        "role": m.role,
-        "content": m.content,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
-    }
-    if getattr(m, "character_name", None):
-        result["character_name"] = m.character_name
-    if getattr(m, "reasoning", None):
-        result["reasoning"] = m.reasoning
-    return result
 
 
 # --- エンドポイント ---
@@ -171,7 +139,7 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
         group_config=json.dumps(group_config, ensure_ascii=False),
     )
 
-    result = _session_to_dict(session)
+    result = session_to_dict(session)
     if body.max_auto_turns >= 5:
         result["warning"] = f"max_auto_turns={body.max_auto_turns} はAPI消費量が増加します"
     return result
@@ -185,8 +153,8 @@ async def get_group_session(request: Request, session_id: str):
     if not session or getattr(session, "session_type", "1on1") != "group":
         raise HTTPException(status_code=404, detail="グループセッションが見つかりません")
     messages = state.sqlite.list_chat_messages(session_id)
-    result = _session_to_dict(session)
-    result["messages"] = [_message_to_dict(m) for m in messages]
+    result = session_to_dict(session)
+    result["messages"] = [message_to_dict(m) for m in messages]
     return result
 
 
@@ -217,13 +185,14 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
     except Exception:
         raise HTTPException(status_code=400, detail="グループ設定が不正です")
 
-    # ユーザーメッセージをDBに保存する
+    # ユーザーメッセージをDBに保存する（画像IDも含む）
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
         message_id=user_msg_id,
         session_id=session_id,
         role="user",
         content=body.content,
+        images=body.image_ids or None,
     )
 
     # セッションタイトルを自動設定する（最初のメッセージから）
@@ -237,7 +206,7 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
     async def sse_generator():
         """グループターンのSSEジェネレーター。"""
         # ユーザーメッセージ保存完了を通知する
-        user_msg_dict = _message_to_dict(user_msg)
+        user_msg_dict = message_to_dict(user_msg)
         yield f"data: {json.dumps({'type': 'user_saved', 'message': user_msg_dict}, ensure_ascii=False)}\n\n"
 
         try:
@@ -245,8 +214,10 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
                 session_id=session_id,
                 group_config=group_config,
                 sqlite=state.sqlite,
-                memory_manager=state.memory_manager,
                 settings=settings,
+                chat_service=state.chat_service,
+                message_to_dict=message_to_dict,
+                uploads_dir=state.uploads_dir,
             ):
                 data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
                 yield f"data: {data}\n\n"

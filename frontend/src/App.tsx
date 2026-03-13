@@ -53,8 +53,12 @@ export default function App() {
       return [];
     }
   })();
-  /** グループチャット応答待機中のキャラクター名（null = 待機なし）。 */
+  /** グループチャット応答待機中・ストリーミング中のキャラクター名（null = なし）。 */
   const [groupWaitingCharacter, setGroupWaitingCharacter] = useState<string | null>(null);
+  /** グループチャットストリーミング中の応答テキスト。 */
+  const [groupStreamingContent, setGroupStreamingContent] = useState<string | null>(null);
+  /** グループチャットストリーミング中の思考ブロック・想起記憶テキスト。 */
+  const [groupStreamingReasoning, setGroupStreamingReasoning] = useState<string | null>(null);
   /** グループチャットメッセージIDに紐付いた reasoning テキスト。 */
   const [groupReasoningMap, setGroupReasoningMap] = useState<Record<string, string>>({});
 
@@ -140,7 +144,7 @@ export default function App() {
    * SSE受信中はキャラクター名を waitingCharacter で表示し、
    * 受信完了後に全メッセージをサーバーから再取得して確定する。
    */
-  const _doGroupStream = useCallback(async (sessionId: string, content: string) => {
+  const _doGroupStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = []) => {
     setError(null);
     setSending(true);
     setGroupWaitingCharacter(null);
@@ -151,30 +155,46 @@ export default function App() {
       session_id: sessionId,
       role: "user",
       content,
+      images: imageIds.length > 0 ? imageIds : undefined,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUserMsg]);
 
     try {
-      for await (const event of streamGroupMessage(sessionId, content)) {
+      for await (const event of streamGroupMessage(sessionId, content, imageIds)) {
         const ev = event as GroupStreamEvent;
         if (ev.type === "user_saved") {
           // optimisticメッセージを確定済みユーザーメッセージで差し替える
           setMessages((prev) => prev.map((m) => m.id === optimisticId ? ev.message : m));
-        } else if (ev.type === "speaker_decided" && ev.speakers.length > 0) {
-          setGroupWaitingCharacter(ev.speakers[0]);
-        } else if (ev.type === "character_message") {
-          setGroupWaitingCharacter(null);
-          // reasoning を reasoningMap に保存する
+        } else if (ev.type === "character_start") {
+          // キャラクター応答開始：スピナーを表示し、前のストリーミング内容をクリアする
+          setGroupWaitingCharacter(ev.character);
+          setGroupStreamingContent(null);
+          setGroupStreamingReasoning(null);
+        } else if (ev.type === "character_reasoning") {
+          // 思考ブロック・想起記憶をリアルタイム表示する
+          setGroupStreamingReasoning((prev) => (prev ?? "") + ev.content);
+        } else if (ev.type === "character_chunk") {
+          // 応答テキストを表示する
+          setGroupStreamingContent(ev.content);
+        } else if (ev.type === "character_done") {
+          // キャラクター応答確定：メッセージリストに追加してストリーミング状態をクリアする
           if (ev.message.reasoning) {
             setGroupReasoningMap((prev) => ({ ...prev, [ev.message.id]: ev.message.reasoning! }));
           }
           setMessages((prev) => [...prev, ev.message]);
+          setGroupStreamingContent(null);
+          setGroupStreamingReasoning(null);
+          // waitingCharacter は次の character_start か user_turn まで維持する
         } else if (ev.type === "user_turn" || ev.type === "done") {
           setGroupWaitingCharacter(null);
+          setGroupStreamingContent(null);
+          setGroupStreamingReasoning(null);
           break;
         } else if (ev.type === "error") {
           setGroupWaitingCharacter(null);
+          setGroupStreamingContent(null);
+          setGroupStreamingReasoning(null);
           setError(ev.message);
           break;
         }
@@ -192,6 +212,8 @@ export default function App() {
         // 取得失敗は無視する
       }
       setGroupWaitingCharacter(null);
+      setGroupStreamingContent(null);
+      setGroupStreamingReasoning(null);
       setSending(false);
     }
   }, []);
@@ -199,8 +221,9 @@ export default function App() {
   /**
    * グループチャットの編集・再生成共通ハンドラ。
    * fromMessageId 以降をDBから削除し、content でグループストリームを再送する。
+   * imageIds には再送する画像IDリストを渡す（再生成時は元メッセージの画像を引き継ぐ）。
    */
-  const handleGroupRetry = useCallback(async (fromMessageId: string, content: string) => {
+  const handleGroupRetry = useCallback(async (fromMessageId: string, content: string, imageIds: string[] = []) => {
     if (!activeSessionId || sending) return;
     setError(null);
     setMessages((prev) => {
@@ -213,7 +236,7 @@ export default function App() {
       setError(String(e));
       return;
     }
-    _doGroupStream(activeSessionId, content);
+    _doGroupStream(activeSessionId, content, imageIds);
   }, [activeSessionId, sending, _doGroupStream]);
 
   /**
@@ -272,23 +295,30 @@ export default function App() {
   }, []);
 
   /**
-   * メッセージ送信。グループセッションと1on1セッションで処理を分岐する。
-   * 1on1: 画像があれば先にアップロードしてからストリーミング送信する。
-   * グループ: テキストのみ送信（画像非対応）。
+   * メッセージ送信。画像がある場合は先にアップロードしてから送信する。
+   * グループ・1on1どちらも画像対応済み。
    */
   const handleSend = useCallback(async (content: string, files: File[]) => {
     if (!activeSessionId) return;
+
+    // 画像アップロードはグループ・1on1共通（グループセッションも同じ画像APIを使う）
+    let imageIds: string[] = [];
+    if (files.length > 0) {
+      try {
+        const uploaded = await uploadImages(activeSessionId, files);
+        imageIds = uploaded.map((u) => u.id);
+      } catch (e) {
+        setError(String(e));
+        return;
+      }
+    }
+
     if (isGroupSession) {
-      await _doGroupStream(activeSessionId, content);
+      await _doGroupStream(activeSessionId, content, imageIds);
       return;
     }
     setSending(true);
     try {
-      let imageIds: string[] = [];
-      if (files.length > 0) {
-        const uploaded = await uploadImages(activeSessionId, files);
-        imageIds = uploaded.map((u) => u.id);
-      }
       await _doStream(activeSessionId, content, imageIds);
     } catch (e) {
       setError(String(e));
@@ -379,8 +409,10 @@ export default function App() {
             userName={userName}
             sending={sending}
             waitingCharacter={groupWaitingCharacter}
+            streamingContent={groupStreamingContent}
+            streamingReasoning={groupStreamingReasoning}
             reasoningMap={groupReasoningMap}
-            onSend={(content) => handleSend(content, [])}
+            onSend={handleSend}
             onRetry={handleGroupRetry}
           />
         ) : activeSessionId ? (

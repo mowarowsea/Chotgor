@@ -50,11 +50,15 @@ class ChatService:
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
         # --- 1. 記憶の想起 ---
-        last_user_msg = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                last_user_msg = extract_text_content(m.get("content"))
-                break
+        # recall_query_override が指定されている場合はそれを使う（グループチャット用）
+        if request.recall_query_override:
+            last_user_msg = request.recall_query_override
+        else:
+            last_user_msg = ""
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    last_user_msg = extract_text_content(m.get("content"))
+                    break
 
         recalled = []
         if last_user_msg:
@@ -132,11 +136,15 @@ class ChatService:
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
         # --- 1. 記憶の想起 ---
-        last_user_msg = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                last_user_msg = extract_text_content(m.get("content"))
-                break
+        # recall_query_override が指定されている場合はそれを使う（グループチャット用）
+        if request.recall_query_override:
+            last_user_msg = request.recall_query_override
+        else:
+            last_user_msg = ""
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    last_user_msg = extract_text_content(m.get("content"))
+                    break
 
         recalled = []
         if last_user_msg:
