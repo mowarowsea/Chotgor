@@ -1,5 +1,6 @@
 """Settings UI routes using Jinja2 templates."""
 
+import asyncio
 import base64
 import uuid
 from typing import Optional
@@ -8,6 +9,8 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ..core.memory.chroma_store import ChromaStore
+from ..core.memory.manager import MemoryManager
 from ..core.providers.registry import (
     PROVIDER_LABELS,
     PROVIDER_ORDER,
@@ -45,6 +48,70 @@ def get_templates() -> Jinja2Templates:
     if templates is None:
         raise RuntimeError("Templates not initialized")
     return templates
+
+
+async def _migrate_embeddings(
+    app,
+    new_provider: str,
+    new_model: str,
+    new_api_key: str,
+) -> None:
+    """embeddingモデル変更時に全キャラクターの記憶を新モデルで再インデックスする。
+
+    SQLiteから全アクティブ記憶のテキストを読み出し、新しいembedding functionで
+    ChromaDBに再登録する。旧コレクションはdrop後に新モデルで再作成される。
+    app.state.chroma / memory_manager / chat_service も新しいインスタンスに差し替える。
+
+    Args:
+        app: FastAPIアプリケーション（app.stateへのアクセスに使用）。
+        new_provider: 新しいembeddingプロバイダー（"default" / "google"）。
+        new_model: 新しいembeddingモデルID（空の場合はプロバイダーのデフォルト）。
+        new_api_key: 新しいAPIキー。
+    """
+    from ..core.chat.service import ChatService
+
+    sqlite = app.state.sqlite
+    old_chroma = app.state.chroma
+    chroma_db_path = app.state.chroma_db_path
+
+    def _do_migrate():
+        """同期的に全記憶を再インデックスする。スレッドプール上で実行する。"""
+        new_chroma = ChromaStore(
+            db_path=chroma_db_path,
+            embedding_provider=new_provider,
+            embedding_model=new_model,
+            api_key=new_api_key,
+        )
+        characters = sqlite.list_characters()
+        for char in characters:
+            # 旧コレクションを削除してから新モデルで再作成する
+            old_chroma.delete_all_memories(char.id)
+            memories = sqlite.get_all_active_memories(char.id)
+            for mem in memories:
+                new_chroma.add_memory(
+                    memory_id=mem.id,
+                    content=mem.content,
+                    character_id=char.id,
+                    metadata={
+                        "category": mem.memory_category,
+                        "contextual_importance": mem.contextual_importance,
+                        "semantic_importance": mem.semantic_importance,
+                        "identity_importance": mem.identity_importance,
+                        "user_importance": mem.user_importance,
+                    },
+                )
+        return new_chroma
+
+    new_chroma = await asyncio.to_thread(_do_migrate)
+
+    # app.stateを新しいインスタンスに差し替える
+    app.state.chroma = new_chroma
+    new_memory_manager = MemoryManager(sqlite=sqlite, chroma=new_chroma)
+    app.state.memory_manager = new_memory_manager
+    app.state.chat_service = ChatService(
+        memory_manager=new_memory_manager,
+        drift_manager=app.state.drift_manager,
+    )
 
 
 # --- Dashboard ---
@@ -267,10 +334,15 @@ async def delete_model_preset(request: Request, preset_id: str):
 
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_form(request: Request):
+    """設定ページを表示する。Google APIキー設定状況をテンプレートに渡す。"""
     settings = request.app.state.sqlite.get_all_settings()
     return get_templates().TemplateResponse(
         "settings.html",
-        {"request": request, "settings": settings},
+        {
+            "request": request,
+            "settings": settings,
+            "has_google_key": bool(settings.get("google_api_key")),
+        },
     )
 
 
@@ -285,10 +357,20 @@ async def save_settings(
     tavily_api_key: str = Form(""),
     digest_time: str = Form("03:00"),
     enable_time_awareness: Optional[str] = Form(None),
+    embedding_provider: str = Form("default"),
+    embedding_model: str = Form(""),
 ):
+    """設定を保存し、embeddingモデルが変更された場合は記憶を再インデックスする。"""
     store = request.app.state.sqlite
+
+    # embedding設定の変更を検出（APIキー更新前に現在値を取得）
+    old_embedding_provider = store.get_setting("embedding_provider", "default")
+    old_embedding_model = store.get_setting("embedding_model", "")
+
     # ユーザ名は常に保存（マスク不要）
     store.set_setting("user_name", user_name.strip() or "ユーザ")
+
+    # APIキーはマスク値（●のみ）でなければ更新する
     for key, value in [
         ("anthropic_api_key", anthropic_api_key),
         ("openai_api_key", openai_api_key),
@@ -298,6 +380,7 @@ async def save_settings(
     ]:
         if value and set(value) != {"●"}:
             store.set_setting(key, value)
+
     try:
         h, m = map(int, digest_time.split(":"))
         assert 0 <= h <= 23 and 0 <= m <= 59
@@ -306,5 +389,27 @@ async def save_settings(
         pass
 
     store.set_setting("enable_time_awareness", "true" if enable_time_awareness == "true" else "false")
+
+    # embedding設定の保存
+    store.set_setting("embedding_provider", embedding_provider)
+    store.set_setting("embedding_model", embedding_model)
+
+    # embeddingモデルが変更された場合は全記憶を再インデックスする
+    embedding_changed = (
+        embedding_provider != old_embedding_provider
+        or embedding_model != old_embedding_model
+    )
+    if embedding_changed:
+        # APIキー保存後の最新値を使用する
+        current_google_key = store.get_setting("google_api_key", "")
+        try:
+            await _migrate_embeddings(
+                request.app,
+                new_provider=embedding_provider,
+                new_model=embedding_model,
+                new_api_key=current_google_key,
+            )
+        except Exception:
+            return RedirectResponse(url="/ui/settings?saved=1&migration_error=1", status_code=303)
 
     return RedirectResponse(url="/ui/settings?saved=1", status_code=303)

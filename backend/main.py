@@ -38,12 +38,22 @@ async def lifespan(app: FastAPI):
     os.makedirs(UPLOADS_DIR, exist_ok=True)
 
     sqlite = SQLiteStore(SQLITE_DB_PATH)
-    chroma = ChromaStore(CHROMA_DB_PATH)
+
+    # embeddingモデル設定をSQLiteから一括取得してChromaStoreに渡す
+    all_settings = sqlite.get_all_settings()
+    chroma = ChromaStore(
+        CHROMA_DB_PATH,
+        embedding_provider=all_settings.get("embedding_provider", "default"),
+        embedding_model=all_settings.get("embedding_model", ""),
+        api_key=all_settings.get("google_api_key", ""),
+    )
+
     memory_manager = MemoryManager(sqlite=sqlite, chroma=chroma)
     drift_manager = DriftManager(sqlite=sqlite)
 
     app.state.sqlite = sqlite
     app.state.chroma = chroma
+    app.state.chroma_db_path = CHROMA_DB_PATH
     app.state.memory_manager = memory_manager
     app.state.drift_manager = drift_manager
     app.state.chat_service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)

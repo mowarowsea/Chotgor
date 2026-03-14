@@ -9,6 +9,9 @@
 {% if request.query_params.get("saved") %}
 <div class="alert alert-success">Settings saved successfully.</div>
 {% endif %}
+{% if request.query_params.get("migration_error") %}
+<div class="alert alert-danger">Embeddingの再インデックスに失敗しました。APIキーとモデルIDを確認して再保存してください。記憶はSQLiteに保全されています。</div>
+{% endif %}
 
 <div class="form-card">
     <form method="post" action="/ui/settings">
@@ -126,6 +129,52 @@
             </label>
             <p class="form-hint" style="margin-top: 5px;">現在時刻や、前回の会話からの経過時間をキャラクターに伝えます。</p>
         </div>
+
+        <hr style="margin: 24px 0; border-color: var(--border-color, #ddd);">
+
+        <div class="form-group">
+            <label for="embedding_provider">
+                Embedding Model
+                <span class="label-hint">記憶のベクトル化に使用するモデル</span>
+            </label>
+            <select id="embedding_provider" name="embedding_provider" class="form-control"
+                    onchange="updateEmbeddingUI(this.value)">
+                <option value="default" {% if settings.get('embedding_provider', 'default') == 'default' %}selected{% endif %}>
+                    Default (ChromaDB組み込み / all-MiniLM-L6-v2)
+                </option>
+                <option value="google"
+                        {% if settings.get('embedding_provider') == 'google' %}selected{% endif %}
+                        {% if not has_google_key %}disabled title="Google APIキーが未設定です"{% endif %}>
+                    Google Gemini Embedding{% if not has_google_key %} (Google APIキー未設定){% endif %}
+                </option>
+            </select>
+        </div>
+
+        <div class="form-group" id="embedding_model_group"
+             style="{% if settings.get('embedding_provider', 'default') == 'default' %}display:none{% endif %}">
+            <label for="embedding_model">
+                Embedding Model ID
+                <span class="label-hint">空欄の場合は gemini-embedding-2-preview を使用</span>
+            </label>
+            <input type="text" id="embedding_model" name="embedding_model"
+                   class="form-control"
+                   value="{{ settings.get('embedding_model', '') }}"
+                   placeholder="gemini-embedding-2-preview">
+            <p class="form-hint">推奨: <code>gemini-embedding-2-preview</code>（高精度）/ <code>text-embedding-004</code>（安定版）</p>
+        </div>
+
+        {% if settings.get('embedding_provider', 'default') != 'default' %}
+        <div class="alert alert-warning" style="margin-bottom: 16px;">
+            現在 Google Gemini Embedding を使用中です。モデルを変更すると全キャラクターの記憶が再インデックスされます（時間がかかる場合があります）。
+        </div>
+        {% endif %}
+
+        <script>
+        function updateEmbeddingUI(provider) {
+            document.getElementById('embedding_model_group').style.display =
+                provider === 'default' ? 'none' : '';
+        }
+        </script>
 
         <div class="form-actions">
             <button type="submit" class="btn btn-primary">Save Settings</button>
