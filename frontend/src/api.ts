@@ -59,6 +59,19 @@ export interface SessionDetail extends Session {
   messages: ChatMessage[];
 }
 
+/** キャラクターの型定義（ID・名前のみ）。 */
+export interface Character {
+  id: string;
+  name: string;
+}
+
+/** キャラクター一覧を取得する。 */
+export async function fetchCharacters(): Promise<Character[]> {
+  const res = await fetch("/api/characters/");
+  if (!res.ok) throw new Error("キャラクター一覧の取得に失敗しました");
+  return res.json();
+}
+
 /** 利用可能なモデル（character@preset）一覧を取得する。 */
 export async function fetchModels(): Promise<Model[]> {
   const res = await fetch("/v1/models");

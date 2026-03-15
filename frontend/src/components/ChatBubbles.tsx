@@ -192,7 +192,7 @@ export function UserBubble({
       <div className="w-8 h-8 rounded-full bg-zinc-600 flex items-center justify-center text-xs font-bold shrink-0">
         {userName.charAt(0)}
       </div>
-      <div className="max-w-[85%] sm:max-w-[70%] flex flex-col items-end gap-1">
+      <div className={`flex flex-col items-end gap-1 ${editing ? "w-full" : "max-w-[85%] sm:max-w-[70%]"}`}>
         {images && images.length > 0 && <ImageGrid imageIds={images} />}
         {editing ? (
           /* インライン編集フォーム */

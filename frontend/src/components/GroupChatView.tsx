@@ -8,6 +8,8 @@ import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
 
 interface Props {
+  /** セッションID（入力下書きのキャッシュキーに使用） */
+  sessionId: string;
   /** 表示するメッセージ一覧 */
   messages: ChatMessage[];
   /** グループ参加者のキャラクター名リスト（色割り当て順序に使用） */
@@ -39,6 +41,7 @@ interface Props {
 
 /** グループチャットのレイアウトコンポーネント。 */
 export default function GroupChatView({
+  sessionId,
   messages,
   participantNames,
   userName,
@@ -65,6 +68,7 @@ export default function GroupChatView({
         onRetry={onRetry}
       />
       <MessageInput
+        sessionId={sessionId}
         sending={sending}
         onSend={onSend}
         allowImages={true}

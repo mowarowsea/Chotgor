@@ -8,6 +8,8 @@ import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
 
 interface Props {
+  /** セッションID（入力下書きのキャッシュキーに使用） */
+  sessionId: string;
   /** 表示するメッセージ一覧 */
   messages: ChatMessage[];
   /** キャラクター名（表示用） */
@@ -37,6 +39,7 @@ interface Props {
 
 /** 1on1チャットのレイアウトコンポーネント。 */
 export default function ChatView({
+  sessionId,
   messages,
   characterName,
   userName,
@@ -60,6 +63,7 @@ export default function ChatView({
         onRetry={onRetry}
       />
       <MessageInput
+        sessionId={sessionId}
         sending={sending}
         onSend={onSend}
         allowImages={true}
