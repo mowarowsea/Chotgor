@@ -2,7 +2,7 @@
  * チャットバブル共通コンポーネント。
  * 1on1チャット・グループチャット両方で使用する表示・インタラクション部品を集約する。
  */
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -43,6 +43,39 @@ export function ThinkingBlock({
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CopyButton（内部共通）
+// ---------------------------------------------------------------------------
+
+/** テキストをクリップボードにコピーし、完了時に一時的にチェックマークを表示するボタン。 */
+function CopyButton({ text, className = "" }: { text: string; className?: string }) {
+  const [done, setDone] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    await navigator.clipboard.writeText(text);
+    setDone(true);
+    setTimeout(() => setDone(false), 1500);
+  }, [text]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      title="コピー"
+      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 transition-all p-1 rounded shrink-0 ${className}`}
+    >
+      {done ? (
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" width={14} height={14}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+        </svg>
+      ) : (
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={14} height={14}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+        </svg>
+      )}
+    </button>
   );
 }
 
@@ -90,16 +123,19 @@ export function CharacterBubble({
           </div>
         </div>
       </div>
-      {/* 再生成ボタン（アバター幅分インデント、モバイルは常時・デスクトップはホバー時） */}
-      {!sending && onRegenerate && (
-        <div className="pl-11">
-          <button
-            onClick={onRegenerate}
-            title="再生成"
-            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 text-xs transition-all px-2 py-1 rounded hover:bg-zinc-800"
-          >
-            ↺ 再生成
-          </button>
+      {/* アクションエリア（アバター幅分インデント、モバイルは常時・デスクトップはホバー時） */}
+      {!sending && (
+        <div className="pl-11 flex items-center gap-1">
+          <CopyButton text={content} />
+          {onRegenerate && (
+            <button
+              onClick={onRegenerate}
+              title="再生成"
+              className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 text-xs transition-all px-2 py-1 rounded hover:bg-zinc-800"
+            >
+              ↺ 再生成
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -186,21 +222,26 @@ export function UserBubble({
             </div>
           </div>
         ) : (
-          /* 通常表示 + ホバー時に編集ボタン */
-          <div className="flex items-end gap-2 flex-row-reverse">
+          /* 通常表示 + ホバー時にコピー・編集ボタン */
+          <div className="flex items-end gap-1 flex-row-reverse">
             <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm">
               <MarkdownContent content={content} />
             </div>
-            {!sending && onEdit && (
-              <button
-                onClick={() => setEditing(true)}
-                title="編集"
-                className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 transition-all p-1 rounded shrink-0"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-                </svg>
-              </button>
+            {!sending && (
+              <div className="flex items-center gap-0.5">
+                <CopyButton text={content} />
+                {onEdit && (
+                  <button
+                    onClick={() => setEditing(true)}
+                    title="編集"
+                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 transition-all p-1 rounded shrink-0"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={14} height={14}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}

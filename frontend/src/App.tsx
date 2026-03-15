@@ -22,6 +22,7 @@ import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import GroupChatView from "./components/GroupChatView";
 import DriftBadge from "./components/DriftBadge";
+import ExportDialog from "./components/ExportDialog";
 
 /** アプリ全体のルートコンポーネント。 */
 export default function App() {
@@ -41,6 +42,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   /** アクティブセッションのSELF_DRIFT一覧。 */
   const [drifts, setDrifts] = useState<Drift[]>([]);
+  /** エクスポートダイアログの開閉状態。 */
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -426,6 +429,19 @@ export default function App() {
           ) : !sidebarOpen ? (
             <span className="text-zinc-100 text-sm font-semibold">Chotgor</span>
           ) : null}
+          {/* エクスポートボタン（セッション選択中のみ表示） */}
+          {activeSessionId && messages.length > 0 && (
+            <button
+              onClick={() => setExportDialogOpen(true)}
+              title="会話をエクスポート"
+              className="ml-auto text-zinc-400 hover:text-zinc-200 p-2 rounded-lg hover:bg-zinc-800 transition-colors"
+              aria-label="会話をエクスポート"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={18} height={18}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+            </button>
+          )}
         </div>
 
         {/* エラーバナー */}
@@ -467,6 +483,17 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* エクスポートダイアログ */}
+      {exportDialogOpen && (
+        <ExportDialog
+          messages={messages}
+          userName={userName}
+          reasoningMap={isGroupSession ? groupReasoningMap : reasoningMap}
+          sessionTitle={activeSession?.title}
+          onClose={() => setExportDialogOpen(false)}
+        />
+      )}
     </div>
   );
 }
