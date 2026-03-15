@@ -2,7 +2,7 @@
  * アプリルートコンポーネント。
  * セッション管理・モデル取得・メッセージ送受信のロジックを担当する。
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   fetchModels,
   fetchSessions,
@@ -16,8 +16,9 @@ import {
   createGroupSession,
   streamGroupMessage,
   fetchDrifts,
+  fetchCharacters,
 } from "./api";
-import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent, Drift } from "./api";
+import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent, Drift, Character } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import GroupChatView from "./components/GroupChatView";
@@ -27,6 +28,7 @@ import DriftBadge from "./components/DriftBadge";
 export default function App() {
   const [models, setModels] = useState<Model[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [characters, setCharacters] = useState<Character[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
@@ -59,6 +61,18 @@ export default function App() {
       return [];
     }
   })();
+  /** グループチャット参加者のキャラクター名+IDリスト（ヘッダのDriftBadge用）。 */
+  const groupParticipants = groupParticipantNames.map((charName) => ({
+    charName,
+    characterId: characters.find((c) => c.name === charName)?.id ?? "",
+  }));
+  /**
+   * セッション切り替え競合防止用 ref。
+   * _doStream / _doGroupStream の非同期処理がセッション切り替え後に state を汚染しないよう、
+   * 完了時点でのアクティブセッション ID と比較するために使用する。
+   */
+  const activeSessionIdRef = useRef<string | null>(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
   /** グループチャット応答待機中・ストリーミング中のキャラクター名（null = なし）。 */
   const [groupWaitingCharacter, setGroupWaitingCharacter] = useState<string | null>(null);
   /** グループチャットストリーミング中の応答テキスト。 */
@@ -68,15 +82,22 @@ export default function App() {
   /** グループチャットメッセージIDに紐付いた reasoning テキスト。 */
   const [groupReasoningMap, setGroupReasoningMap] = useState<Record<string, string>>({});
 
-  /** 初期データ取得。 */
+  /** 初期データ取得。URL ハッシュに対応するセッションがあれば自動選択する。 */
   useEffect(() => {
-    Promise.all([fetchModels(), fetchSessions(), fetchUserName()])
-      .then(([m, s, u]) => {
+    Promise.all([fetchModels(), fetchSessions(), fetchUserName(), fetchCharacters()])
+      .then(([m, s, u, c]) => {
         setModels(m);
         setSessions(s);
         setUserName(u);
+        setCharacters(c);
+        // URL ハッシュからセッションを復元する
+        const hashSessionId = window.location.hash.slice(1);
+        if (hashSessionId && s.find((sess) => sess.id === hashSessionId)) {
+          handleSelectSession(hashSessionId);
+        }
       })
       .catch((e) => setError(String(e)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** アクティブセッションのSELF_DRIFT一覧を再取得する。 */
@@ -94,6 +115,15 @@ export default function App() {
     setActiveSessionId(sessionId);
     setDrifts([]);
     setError(null);
+    // ストリーミング中だった場合の状態をリセットする
+    setSending(false);
+    setStreamingContent(null);
+    setStreamingReasoning(null);
+    setGroupWaitingCharacter(null);
+    setGroupStreamingContent(null);
+    setGroupStreamingReasoning(null);
+    // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
+    window.location.hash = sessionId;
     try {
       const [detail] = await Promise.all([
         fetchSession(sessionId),
@@ -151,6 +181,7 @@ export default function App() {
       await deleteSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       if (activeSessionId === sessionId) {
+        window.location.hash = "";
         setActiveSessionId(null);
         setMessages([]);
       }
@@ -222,12 +253,15 @@ export default function App() {
     } catch (e) {
       setError(String(e));
     } finally {
-      // サーバーから最新状態を取得して確定する
+      // サーバーから最新状態を取得して確定する（セッションが切り替わっていなければ）
       try {
-        const detail = await fetchSession(sessionId);
-        setMessages(detail.messages);
-        const updated = await fetchSessions();
-        setSessions(updated);
+        if (sessionId === activeSessionIdRef.current) {
+          const detail = await fetchSession(sessionId);
+          setMessages(detail.messages);
+          const updated = await fetchSessions();
+          setSessions(updated);
+          refreshDrifts(sessionId);
+        }
       } catch {
         // 取得失敗は無視する
       }
@@ -236,7 +270,7 @@ export default function App() {
       setGroupStreamingReasoning(null);
       setSending(false);
     }
-  }, []);
+  }, [refreshDrifts]);
 
   /**
    * グループチャットの編集・再生成共通ハンドラ。
@@ -287,6 +321,8 @@ export default function App() {
           accumulatedReasoning += event.content;
           setStreamingReasoning(accumulatedReasoning);
         } else if (event.type === "done") {
+          // セッションが切り替わっていたら state を汚染しない
+          if (sessionId !== activeSessionIdRef.current) return;
           if (accumulatedReasoning) {
             setReasoningMap((prev) => ({
               ...prev,
@@ -303,7 +339,7 @@ export default function App() {
           const updated = await fetchSessions();
           setSessions(updated);
           // SELF_DRIFT が更新されている可能性があるため再取得する
-          if (sessionId) refreshDrifts(sessionId);
+          refreshDrifts(sessionId);
         } else if (event.type === "error") {
           throw new Error((event as StreamEvent & { type: "error" }).message);
         }
@@ -410,11 +446,33 @@ export default function App() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
             </svg>
           </button>
-          {/* 1on1チャット時はキャラクター名とDriftBadgeを表示 */}
-          {activeSessionId && !isGroupSession ? (
+          {/* セッション種別に応じてヘッダ内容を切り替える */}
+          {activeSessionId && isGroupSession ? (
+            /* グループチャット: 参加者名とキャラクターごとのDriftBadgeを表示 */
+            <div className="flex items-center gap-3 flex-wrap min-w-0">
+              <span className="text-zinc-400 text-sm shrink-0">👥</span>
+              {groupParticipants.map(({ charName, characterId }) => {
+                const charDrifts = drifts.filter((d) => d.character_id === characterId);
+                return (
+                  <div key={charName} className="flex items-center gap-1 shrink-0">
+                    <span className="text-zinc-100 text-sm font-semibold">{charName}</span>
+                    {charDrifts.length > 0 && characterId && (
+                      <DriftBadge
+                        drifts={charDrifts}
+                        sessionId={activeSessionId}
+                        characterId={characterId}
+                        onDriftsChange={() => refreshDrifts(activeSessionId)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : activeSessionId && !isGroupSession ? (
+            /* 1on1チャット: キャラクター名とDriftBadgeを表示 */
             <div className="flex items-center gap-2">
               <span className="text-zinc-100 text-sm font-semibold">{characterName}</span>
-              {activeSessionId && activeCharacterId && (
+              {activeCharacterId && (
                 <DriftBadge
                   drifts={drifts}
                   sessionId={activeSessionId}
@@ -438,6 +496,7 @@ export default function App() {
 
         {activeSessionId && isGroupSession ? (
           <GroupChatView
+            sessionId={activeSessionId}
             messages={messages}
             participantNames={groupParticipantNames}
             userName={userName}
@@ -451,6 +510,7 @@ export default function App() {
           />
         ) : activeSessionId ? (
           <ChatView
+            sessionId={activeSessionId}
             messages={messages}
             characterName={characterName}
             userName={userName}
