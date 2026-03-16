@@ -88,11 +88,16 @@ class MemoryManager:
         Returns:
             書き込んだ記憶のmemory_id（更新の場合は既存ID、新規の場合は新規UUID）。
         """
+        # カテゴリ別の更新判定閾値
+        # identity は自己定義に関わる記憶のため、ほぼ同文（距離 < 0.05）のみ上書きする
+        similarity_threshold = 0.05 if category == "identity" else 0.15
+
         # 同一カテゴリ内で類似記憶を検索する
         existing_id = self.chroma.find_similar_in_category(
             content=content,
             character_id=character_id,
             category=category,
+            threshold=similarity_threshold,
         )
 
         if existing_id:
