@@ -146,6 +146,7 @@ class ChromaStore:
         query: str,
         character_id: str,
         top_k: int = 5,
+        where: Optional[dict] = None,
     ) -> list[dict]:
         """類似度検索で記憶を取得する。
 
@@ -153,6 +154,8 @@ class ChromaStore:
             query: 検索クエリテキスト。
             character_id: キャラクターID。
             top_k: 取得する最大件数。
+            where: ChromaDB の where フィルタ（カテゴリ絞り込みなどに使用）。
+                   例: {"category": "identity"} / {"category": {"$ne": "identity"}}
 
         Returns:
             id / content / distance / metadata キーを持つdictのリスト。
@@ -163,11 +166,14 @@ class ChromaStore:
             return []
 
         n = min(top_k, count)
-        results = collection.query(
-            query_texts=[query],
-            n_results=n,
-            include=["documents", "metadatas", "distances"],
-        )
+        query_kwargs: dict = {
+            "query_texts": [query],
+            "n_results": n,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            query_kwargs["where"] = where
+        results = collection.query(**query_kwargs)
 
         memories = []
         if results["ids"] and results["ids"][0]:

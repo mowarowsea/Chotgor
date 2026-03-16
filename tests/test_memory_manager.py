@@ -126,6 +126,51 @@ def test_recall_memory_hybrid(manager, sqlite_store, mock_chroma):
     assert "decayed_score" in results[0]
 
 
+def test_recall_with_identity_calls_recall_memory_twice(manager, mock_chroma):
+    """recall_with_identity が identity / 非identity それぞれで chroma.recall_memory を呼ぶことを確認する。
+
+    chroma.recall_memory はカテゴリ別にフィルタされた2回の呼び出しが行われ、
+    返り値が (identity_list, other_list) のタプルであることを検証する。
+    """
+    char_id = "char-001"
+    identity_mem = {"id": "id-mem", "content": "私はプログラマーだ", "distance": 0.02, "metadata": {"category": "identity"}}
+    other_mem = {"id": "other-mem", "content": "昨日カフェに行った", "distance": 0.1, "metadata": {"category": "contextual"}}
+
+    # 1回目（identity）と2回目（others）で異なる結果を返す
+    mock_chroma.recall_memory.side_effect = [[identity_mem], [other_mem]]
+
+    identity_results, other_results = manager.recall_with_identity(char_id, "テスト", identity_top_k=5, other_top_k=5)
+
+    # chroma.recall_memory が2回呼ばれていること
+    assert mock_chroma.recall_memory.call_count == 2
+
+    # 1回目は identity フィルタ付き
+    first_call = mock_chroma.recall_memory.call_args_list[0]
+    assert first_call.kwargs.get("where") == {"category": "identity"}
+
+    # 2回目は identity 除外フィルタ付き
+    second_call = mock_chroma.recall_memory.call_args_list[1]
+    assert second_call.kwargs.get("where") == {"category": {"$ne": "identity"}}
+
+
+def test_recall_with_identity_returns_tuple_of_two_lists(manager, sqlite_store, mock_chroma):
+    """recall_with_identity の戻り値が (list, list) のタプルであることを確認する。
+
+    identity が空、others に1件ある場合でも正しくアンパックできることを検証する。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory("m1", char_id, "test content")
+    other_mem = {"id": "m1", "content": "test content", "distance": 0.1, "metadata": {"category": "contextual"}}
+    mock_chroma.recall_memory.side_effect = [[], [other_mem]]
+
+    identity_results, other_results = manager.recall_with_identity(char_id, "query")
+
+    assert isinstance(identity_results, list)
+    assert isinstance(other_results, list)
+    assert identity_results == []
+    assert len(other_results) == 1
+
+
 def test_delete_memory(manager, sqlite_store, mock_chroma):
     """delete_memoryがSQLiteをソフト削除し、ChromaDBを物理削除することを確認する。"""
     char_id = "char-001"

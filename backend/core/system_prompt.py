@@ -83,6 +83,7 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 def build_system_prompt(
     character_system_prompt: str,
     recalled_memories: Optional[list[dict]] = None,
+    recalled_identity_memories: Optional[list[dict]] = None,
     fetched_contents: Optional[list[dict]] = None,
     meta_instructions: str = "",
     provider_additional_instructions: str = "",
@@ -123,12 +124,20 @@ def build_system_prompt(
             time_block += f"- 【前回の交流から：{time_since_last_interaction}】\n"
         blocks.append(time_block.strip())
 
-    # Block 3: Recalled memories
-    if recalled_memories:
+    # Block 3: Recalled memories（identity 枠 → その他枠の順で注入）
+    has_identity = bool(recalled_identity_memories)
+    has_others = bool(recalled_memories)
+    if has_identity or has_others:
         memory_lines = ["## Relevant Memories from Past Conversations\n"]
-        for i, mem in enumerate(recalled_memories, 1):
-            category = mem.get("metadata", {}).get("category", "general")
-            memory_lines.append(f"{i}. [{category}] {mem['content']}")
+        if has_identity:
+            memory_lines.append("### Identity")
+            for i, mem in enumerate(recalled_identity_memories, 1):  # type: ignore[union-attr]
+                memory_lines.append(f"{i}. {mem['content']}")
+        if has_others:
+            memory_lines.append("\n### Other Memories")
+            for i, mem in enumerate(recalled_memories, 1):
+                category = mem.get("metadata", {}).get("category", "general")
+                memory_lines.append(f"{i}. [{category}] {mem['content']}")
         blocks.append("\n".join(memory_lines))
 
     # Block 3: Fetched web content

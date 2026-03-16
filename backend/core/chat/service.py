@@ -96,10 +96,13 @@ class ChatService:
                     last_user_msg = extract_text_content(m.get("content"))
                     break
 
-        recalled = []
+        recalled_identity: list[dict] = []
+        recalled: list[dict] = []
         if last_user_msg:
             try:
-                recalled = self.memory_manager.recall_memory(request.character_id, last_user_msg)
+                recalled_identity, recalled = self.memory_manager.recall_with_identity(
+                    request.character_id, last_user_msg
+                )
             except Exception:
                 pass
 
@@ -129,7 +132,8 @@ class ChatService:
         # --- 3. システムプロンプト構築 ---
         system_prompt = build_system_prompt(
             character_system_prompt=request.character_system_prompt,
-            recalled_memories=recalled,
+            recalled_identity_memories=recalled_identity or None,
+            recalled_memories=recalled or None,
             fetched_contents=fetched_contents,
             meta_instructions=request.meta_instructions,
             provider_additional_instructions=request.provider_additional_instructions,
@@ -215,16 +219,20 @@ class ChatService:
                     last_user_msg = extract_text_content(m.get("content"))
                     break
 
-        recalled = []
+        recalled_identity: list[dict] = []
+        recalled: list[dict] = []
         if last_user_msg:
             try:
-                recalled = self.memory_manager.recall_memory(request.character_id, last_user_msg)
+                recalled_identity, recalled = self.memory_manager.recall_with_identity(
+                    request.character_id, last_user_msg
+                )
             except Exception:
                 pass
 
-        # 想起した記憶を最初にyield（フロントに表示するため）
-        if recalled:
-            yield ("memories", recalled)
+        # 想起した記憶を最初にyield（フロントに表示するため）identity + others を合わせて渡す
+        all_recalled = recalled_identity + recalled
+        if all_recalled:
+            yield ("memories", all_recalled)
 
         # --- 1b. SELF_DRIFT指針をDBからロード ---
         active_drifts = request.active_drifts or []
@@ -253,7 +261,8 @@ class ChatService:
         # --- 3. システムプロンプト構築 ---
         system_prompt = build_system_prompt(
             character_system_prompt=request.character_system_prompt,
-            recalled_memories=recalled,
+            recalled_identity_memories=recalled_identity or None,
+            recalled_memories=recalled or None,
             fetched_contents=fetched_contents,
             meta_instructions=request.meta_instructions,
             provider_additional_instructions=request.provider_additional_instructions,

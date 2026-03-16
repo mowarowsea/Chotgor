@@ -156,10 +156,13 @@ def _fake_provider_with_text(text: str):
 
 @pytest.mark.asyncio
 async def test_execute_stream_yields_memories_first():
-    """記憶がある場合、最初のチャンクが ("memories", list) であること。"""
+    """記憶がある場合、最初のチャンクが ("memories", list) であること。
+    recall_with_identity が (identity_list, other_list) を返し、
+    identity + others を結合したリストが先頭チャンクとしてyieldされることを確認する。
+    """
     recalled = [_make_memory("記憶あり")]
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = recalled
+    memory_manager.recall_with_identity.return_value = (recalled, [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
@@ -180,9 +183,11 @@ async def test_execute_stream_yields_memories_first():
 
 @pytest.mark.asyncio
 async def test_execute_stream_no_memories_chunk_when_empty():
-    """記憶が0件の場合、("memories", ...) チャンクはyieldされないこと。"""
+    """記憶が0件の場合、("memories", ...) チャンクはyieldされないこと。
+    identity・others の両方が空リストのとき memories チャンクが発生しないことを確認する。
+    """
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
@@ -201,10 +206,12 @@ async def test_execute_stream_no_memories_chunk_when_empty():
 
 @pytest.mark.asyncio
 async def test_execute_stream_yields_text_last():
-    """テキストチャンクは memories / thinking の後にyieldされること。"""
+    """テキストチャンクは memories / thinking の後にyieldされること。
+    recall_with_identity が非空リストを返したとき memories チャンクが thinking より先にくることを確認する。
+    """
     recalled = [_make_memory("記憶")]
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = recalled
+    memory_manager.recall_with_identity.return_value = (recalled, [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
@@ -235,7 +242,7 @@ async def test_execute_stream_yields_text_last():
 async def test_execute_stream_thinking_chunks_yielded():
     """thinking チャンクがリアルタイムでyieldされること。"""
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
@@ -267,7 +274,7 @@ async def test_execute_stream_thinking_chunks_yielded():
 async def test_execute_stream_text_is_carved():
     """carve() によって [MEMORY:...] マーカーが取り除かれたテキストがyieldされること。"""
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
@@ -304,7 +311,7 @@ async def test_execute_stream_text_is_carved():
 async def test_execute_stream_provider_error_yields_error_text():
     """プロバイダーがエラーを送出した場合、("text", エラーメッセージ) でストリームが終了する。"""
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
@@ -340,7 +347,7 @@ async def test_execute_stream_with_tools_yields_text():
     generate_stream_typed は呼ばれない。
     """
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
@@ -368,7 +375,7 @@ async def test_execute_stream_with_tools_error_yields_error_text():
     ("text", エラーメッセージ) でストリームが終了すること。
     """
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)

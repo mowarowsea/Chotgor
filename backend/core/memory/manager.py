@@ -158,17 +158,24 @@ class MemoryManager:
         character_id: str,
         query: str,
         top_k: int = 5,
+        where: Optional[dict] = None,
     ) -> list[dict]:
-        """Recall memories by semantic similarity, updating access metadata.
-        
-        Uses Time Decay reranking:
-        1. Fetch top_k * 2 from ChromaDB (Semantic Search)
-        2. Calculate Decayed Score for each using SQLite (Time-decayed Importance)
-        3. Rerank by hybrid score and return top_k
+        """類似度検索＋時間減衰リランクで記憶を想起する。
+
+        処理フロー:
+        1. ChromaDB から top_k * 2 件取得（セマンティック検索）
+        2. SQLite で各記憶の時間減衰スコアを計算
+        3. ハイブリッドスコアでリランクして top_k 件を返す
+
+        Args:
+            character_id: キャラクターID。
+            query: 検索クエリテキスト。
+            top_k: 返す最大件数。
+            where: ChromaDB の where フィルタ。recall_with_identity から使用。
         """
         # Fetch more candidates for reranking
         fetch_k = top_k * 2
-        results = self.chroma.recall_memory(query, character_id, fetch_k)
+        results = self.chroma.recall_memory(query, character_id, fetch_k, where=where)
 
         now = datetime.now()
         
@@ -216,6 +223,41 @@ class MemoryManager:
                 self.sqlite.touch_memory(mem_id)
 
         return final_results
+
+    def recall_with_identity(
+        self,
+        character_id: str,
+        query: str,
+        identity_top_k: int = 5,
+        other_top_k: int = 5,
+    ) -> tuple[list[dict], list[dict]]:
+        """identity カテゴリとそれ以外を別枠で想起して返す。
+
+        identity 記憶はキャラクターの自己定義に関わるため、スコアに関係なく常時注入する。
+        各枠は独立して recall_memory を呼び出し、リランク済みの結果をそのまま返す。
+
+        Args:
+            character_id: キャラクターID。
+            query: 検索クエリテキスト。
+            identity_top_k: identity カテゴリから返す最大件数。
+            other_top_k: identity 以外のカテゴリから返す最大件数。
+
+        Returns:
+            (identity_memories, other_memories) のタプル。
+        """
+        identity_memories = self.recall_memory(
+            character_id=character_id,
+            query=query,
+            top_k=identity_top_k,
+            where={"category": "identity"},
+        )
+        other_memories = self.recall_memory(
+            character_id=character_id,
+            query=query,
+            top_k=other_top_k,
+            where={"category": {"$ne": "identity"}},
+        )
+        return identity_memories, other_memories
 
     def delete_memory(self, memory_id: str, character_id: str) -> bool:
         """Soft delete from SQLite, hard delete from ChromaDB."""
