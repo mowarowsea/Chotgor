@@ -13,7 +13,7 @@ interface Props {
     sending: boolean;
     /** メッセージ送信コールバック。添付された File 配列を含む。 */
     onSend: (content: string, files: File[]) => void;
-    /** プレースホルダー文字列（デフォルト: "メッセージを入力… (Shift+Enter で送信)"） */
+    /** プレースホルダー文字列（デフォルト: "メッセージを入力… (Ctrl+Enter で送信)"） */
     placeholder?: string;
     /** 画像添付を許可するかどうか（デフォルト: true） */
     allowImages?: boolean;
@@ -26,7 +26,7 @@ export default function MessageInput({
     sessionId,
     sending,
     onSend,
-    placeholder = "メッセージを入力… (Shift+Enter で送信)",
+    placeholder = "メッセージを入力… (Ctrl+Enter で送信)",
     allowImages = true,
 }: Props) {
     const [input, setInput] = useState("");
@@ -99,8 +99,8 @@ export default function MessageInput({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        // Shift+Enter で送信、Enter のみは改行
-        if (e.key === "Enter" && e.shiftKey) {
+        // Ctrl+Enter で送信、Enter のみは改行
+        if (e.key === "Enter" && e.ctrlKey) {
             e.preventDefault();
             handleSubmit(e as unknown as React.FormEvent);
         }

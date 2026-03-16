@@ -70,24 +70,26 @@ def test_format_memories_display_empty():
 
 
 def test_format_memories_display_single():
-    """1件の記憶が正しくフォーマットされること。"""
+    """1件の記憶が正しくフォーマットされること。
+    ヘッダー行は含まず、[category] content  (score: X.XX) 形式で出力される。
+    """
     mems = [_make_memory("田中さんと会った", category="general", score=0.75)]
     result = _format_memories_display(mems)
-    assert "想起した記憶" in result
     assert "田中さんと会った" in result
     assert "general" in result
     assert "0.75" in result
 
 
 def test_format_memories_display_multiple():
-    """複数件の場合、件数ヘッダーと全件の内容が含まれること。"""
+    """複数件の場合、全件の内容とカテゴリが含まれること。
+    ヘッダー行（件数表示）は出力に含まれない。
+    """
     mems = [
         _make_memory("記憶A", "identity", 0.9),
         _make_memory("記憶B", "semantic_knowledge", 0.6),
         _make_memory("記憶C", "user_info", 0.4),
     ]
     result = _format_memories_display(mems)
-    assert "3件" in result
     assert "記憶A" in result
     assert "記憶B" in result
     assert "記憶C" in result
@@ -103,11 +105,14 @@ def test_format_memories_display_missing_metadata():
     assert "general" in result
 
 
-def test_format_memories_display_header_icon():
-    """ヘッダーに絵文字アイコン📚が含まれること。"""
+def test_format_memories_display_no_header():
+    """📚 ヘッダー行は出力に含まれないこと。
+    フロントエンド側が「📚 想起した記憶」セクションタイトルを描画するため、
+    バックエンドはヘッダーなしで [category] 行のみを返す。
+    """
     mems = [_make_memory("何か")]
     result = _format_memories_display(mems)
-    assert "📚" in result
+    assert "📚" not in result
 
 
 def test_format_memories_display_ends_with_newline():

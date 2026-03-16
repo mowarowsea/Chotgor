@@ -67,23 +67,9 @@ def _sse_chunk_reasoning(text: str) -> str:
 
 
 def _format_memories_display(recalled: list) -> str:
-    """想起した記憶リストを思考ブロック内表示用テキストにフォーマットする。
-
-    Args:
-        recalled: recall_memory() が返す記憶辞書のリスト。
-
-    Returns:
-        人間が読みやすい形式の文字列。記憶がなければ空文字列。
-    """
-    if not recalled:
-        return ""
-    lines = [f"📚 想起した記憶 ({len(recalled)}件)"]
-    for mem in recalled:
-        category = mem.get("metadata", {}).get("category") or "general"
-        content = mem.get("content", "")
-        score = mem.get("hybrid_score", 0.0)
-        lines.append(f"[{category}] {content}  (score: {score:.2f})")
-    return "\n".join(lines) + "\n"
+    """想起した記憶リストを思考ブロック内表示用テキストにフォーマットする。"""
+    from ...core.memory.format import format_recalled_memories
+    return format_recalled_memories(recalled)
 
 
 def _format_completion(model: str, text: str) -> dict:

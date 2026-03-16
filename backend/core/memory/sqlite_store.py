@@ -741,17 +741,23 @@ class SQLiteStore:
             削除対象メッセージが存在した場合 True、存在しなかった場合 False。
         """
         with self.get_session() as session:
-            target = (
-                session.query(ChatMessage)
-                .filter(ChatMessage.id == message_id, ChatMessage.session_id == session_id)
-                .first()
-            )
-            if not target:
+            # セッション内の全メッセージIDを時系列順で取得し、削除起点の位置を特定する。
+            # created_at の等値衝突を避けるため、タイムスタンプではなくIDリストで削除範囲を確定する。
+            all_ids: list[str] = [
+                row[0]
+                for row in (
+                    session.query(ChatMessage.id)
+                    .filter(ChatMessage.session_id == session_id)
+                    .order_by(ChatMessage.created_at.asc())
+                    .all()
+                )
+            ]
+            if message_id not in all_ids:
                 return False
-            pivot_time = target.created_at
+            pivot_idx = all_ids.index(message_id)
+            ids_to_delete = all_ids[pivot_idx:]
             session.query(ChatMessage).filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.created_at >= pivot_time,
+                ChatMessage.id.in_(ids_to_delete)
             ).delete(synchronize_session=False)
             session.commit()
             return True

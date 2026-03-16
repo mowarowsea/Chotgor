@@ -17,10 +17,11 @@ def format_recalled_memories(recalled: list) -> str:
     """
     if not recalled:
         return ""
-    lines = [f"📚 想起した記憶 ({len(recalled)}件)"]
+    lines = []
     for mem in recalled:
         category = mem.get("metadata", {}).get("category") or "general"
-        content = mem.get("content", "")
+        # content に改行が含まれると行単位パースが壊れるため、スペースに置換して1行に収める
+        content = mem.get("content", "").replace("\n", " ")
         score = mem.get("hybrid_score", 0.0)
         lines.append(f"[{category}] {content}  (score: {score:.2f})")
     return "\n".join(lines) + "\n"
