@@ -1,18 +1,11 @@
 """Memory Inscriber — [MEMORY:...] マーカーの抽出と刻み込み。
 
 LLMの応答テキストから記憶マーカーを読み取り、ChromaDB + SQLite に永続化する。
+タグ抽出は tag_parser.parse_tags() に委譲し、ネストした角括弧・バッククォートを正しく処理する。
 """
 
-import re
-
+from ..tag_parser import parse_tags
 from .manager import MemoryManager
-
-# [MEMORY:category|impact|content] 正規形式  impact は float (例: 1.5)
-MEMORY_PATTERN = re.compile(r"\[MEMORY:(\w+)\|([\d.]+)\|([^\]]+)\]", re.DOTALL)
-# フォールバック: [MEMORY:category] content (パイプ/impact なし)
-MEMORY_PATTERN_FALLBACK = re.compile(
-    r"\[MEMORY:(\w+)\]\s*(.+?)(?=\[MEMORY:|\Z)", re.DOTALL
-)
 
 # カテゴリごとの重要度ベースマトリクス
 _BASE_IMPORTANCE = {
@@ -24,16 +17,33 @@ _BASE_IMPORTANCE = {
 
 
 def _extract(text: str) -> tuple[str, list[tuple[str, str, str]]]:
-    """テキストからマーカーを取り出し (clean_text, [(category, impact_str, content)]) を返す。"""
-    memories = MEMORY_PATTERN.findall(text)
-    clean = MEMORY_PATTERN.sub("", text).strip()
+    """テキストから [MEMORY:category|impact|content] マーカーを取り出す。
 
-    if not memories and "[MEMORY:" in clean:
-        fb = MEMORY_PATTERN_FALLBACK.findall(clean)
-        if fb:
-            memories = [(cat, "1.0", content.strip()) for cat, content in fb]
-            clean = MEMORY_PATTERN_FALLBACK.sub("", clean).strip()
+    tag_parser.parse_tags() を使用して文字単位でスキャンし、
+    ネストした角括弧・バッククォートを正しく処理する。
 
+    Args:
+        text: LLMの生応答テキスト。
+
+    Returns:
+        tuple:
+            clean_text (str): マーカーを除去したテキスト。
+            memories (list[tuple[str, str, str]]): [(category, impact_str, content)] のリスト。
+    """
+    clean, matches = parse_tags(text, ["MEMORY"])
+    memories: list[tuple[str, str, str]] = []
+    for m in matches["MEMORY"]:
+        parts = m.body.split("|", 2)
+        if len(parts) == 3:
+            category, impact_str, content = parts
+            memories.append((category.strip(), impact_str.strip(), content.strip()))
+        elif len(parts) == 2:
+            # impact なし形式: "category|content"
+            category, content = parts
+            memories.append((category.strip(), "1.0", content.strip()))
+        elif len(parts) == 1 and parts[0]:
+            # カテゴリのみ: フォールバック
+            memories.append((parts[0].strip(), "1.0", ""))
     return clean, memories
 
 
