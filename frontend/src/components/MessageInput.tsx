@@ -34,6 +34,12 @@ export default function MessageInput({
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    /**
+     * restoreエフェクト実行直後のsaveエフェクトをスキップするフラグ。
+     * restoreがinputを上書きする前にsaveが空文字でdraftを削除するのを防ぐ。
+     * React StrictModeの二重実行にも対応するためrefで管理する。
+     */
+    const skipNextSaveRef = useRef(false);
 
     /** テキストエリアの高さをコンテンツに合わせて調整する。 */
     const adjustHeight = (el: HTMLTextAreaElement) => {
@@ -45,6 +51,8 @@ export default function MessageInput({
     useEffect(() => {
         if (!sessionId) return;
         const saved = localStorage.getItem(`draft:${sessionId}`) ?? "";
+        // 直後のsaveエフェクトが空inputでdraftを削除しないようスキップフラグを立てる
+        skipNextSaveRef.current = true;
         setInput(saved);
         // 高さの復元は DOM 更新後に行う
         requestAnimationFrame(() => {
@@ -57,6 +65,11 @@ export default function MessageInput({
     /** input が変化したとき、下書きを localStorage に保存する。 */
     useEffect(() => {
         if (!sessionId) return;
+        // restoreエフェクトの直後はスキップ（古いinputでdraftを上書きするのを防ぐ）
+        if (skipNextSaveRef.current) {
+            skipNextSaveRef.current = false;
+            return;
+        }
         if (input) {
             localStorage.setItem(`draft:${sessionId}`, input);
         } else {

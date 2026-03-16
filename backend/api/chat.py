@@ -42,16 +42,22 @@ class MessageCreate(BaseModel):
 
     content: str
     image_ids: Optional[List[str]] = None
+    model_id: Optional[str] = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
 
 
-async def _build_chat_request(request: Request, session, history_messages: list, user_content: Union[str, list]) -> ChatRequest:
-    """セッション情報からChatRequestを構築する内部ヘルパー。"""
+async def _build_chat_request(request: Request, session, history_messages: list, user_content: Union[str, list], model_id: Optional[str] = None) -> ChatRequest:
+    """セッション情報からChatRequestを構築する内部ヘルパー。
+
+    Args:
+        model_id: 使用するモデルIDを明示的に指定する場合に渡す。省略時はセッションの model_id を使う。
+    """
     state = request.app.state
 
-    # model_id を {char_name}@{preset_name} にパース
-    if "@" not in session.model_id:
+    # model_id を {char_name}@{preset_name} にパース（引数指定があればそちらを優先）
+    effective_id = model_id or session.model_id
+    if "@" not in effective_id:
         raise HTTPException(status_code=400, detail="Invalid model_id format")
-    char_name, preset_name = session.model_id.rsplit("@", 1)
+    char_name, preset_name = effective_id.rsplit("@", 1)
 
     # キャラクターをDBから取得（名前優先）
     character = state.sqlite.get_character_by_name(char_name) or state.sqlite.get_character(char_name)
@@ -330,6 +336,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # フロントから model_id が指定された場合はセッションの model_id を上書きする（DBへの永続化は送信完了後）
+    effective_model_id = body.model_id or session.model_id
+
     # ユーザーメッセージを保存
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
@@ -356,7 +365,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
     # ChatRequestの構築（HTTPExceptionが発生した場合はここで止まる）
     try:
-        chat_request = await _build_chat_request(request, session, history, user_content)
+        chat_request = await _build_chat_request(request, session, history, user_content, model_id=effective_model_id)
     except HTTPException:
         raise
 
@@ -404,7 +413,10 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         clean_text = full_text
         log_front_output(clean_text)
 
-        # キャラクターの応答をDBに保存（reasoning があれば一緒に保存する）
+        # effective_model_id からキャラクター名・プリセット名を抽出する
+        used_char_name, used_preset_name = effective_model_id.rsplit("@", 1) if "@" in effective_model_id else (effective_model_id, None)
+
+        # キャラクターの応答をDBに保存（character_name・preset_name も保存して表示が変わらないようにする）
         char_msg_id = str(uuid.uuid4())
         char_msg = state.sqlite.create_chat_message(
             message_id=char_msg_id,
@@ -412,12 +424,13 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             role="character",
             content=clean_text,
             reasoning=accumulated_reasoning if accumulated_reasoning else None,
+            character_name=used_char_name,
+            preset_name=used_preset_name,
         )
 
-        # セッションのupdated_atを最新化
-        current_session = state.sqlite.get_chat_session(session_id)
-        if current_session:
-            state.sqlite.update_chat_session(session_id, title=current_session.title)
+        # セッションのupdated_atを最新化し、使用したモデルIDを永続化する
+        # session.title はクロージャ外で取得済みのため再フェッチ不要
+        state.sqlite.update_chat_session(session_id, title=session.title, model_id=effective_model_id)
 
         # 完了イベントを送信
         done_data = json.dumps({

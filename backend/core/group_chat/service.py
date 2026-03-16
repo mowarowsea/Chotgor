@@ -155,6 +155,7 @@ async def _stream_character_response(
         content=full_text,
         character_name=char_name,
         reasoning=reasoning_text,
+        preset_name=preset_name,
     )
     yield ("character_done", {"character": char_name, "message": msg})
 

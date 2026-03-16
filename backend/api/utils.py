@@ -53,6 +53,8 @@ def message_to_dict(m) -> dict:
         result["images"] = m.images
     if getattr(m, "character_name", None):
         result["character_name"] = m.character_name
+    if getattr(m, "preset_name", None):
+        result["preset_name"] = m.preset_name
     return result
 
 

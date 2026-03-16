@@ -37,6 +37,8 @@ interface Props {
    * 1on1チャットと同じシグネチャ（imageIds には再送する画像IDリスト）。
    */
   onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
+  /** スクロール方向変化コールバック。MessageList から App へ伝播する。 */
+  onHeaderVisibilityChange?: (visible: boolean) => void;
 }
 
 /** グループチャットのレイアウトコンポーネント。 */
@@ -52,6 +54,7 @@ export default function GroupChatView({
   reasoningMap,
   onSend,
   onRetry,
+  onHeaderVisibilityChange,
 }: Props) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -66,6 +69,7 @@ export default function GroupChatView({
         streamingReasoning={streamingReasoning}
         emptyMessage="グループチャットを始めましょう"
         onRetry={onRetry}
+        onHeaderVisibilityChange={onHeaderVisibilityChange}
       />
       <MessageInput
         sessionId={sessionId}

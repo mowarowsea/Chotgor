@@ -3,6 +3,9 @@
  *
  * キャラクター名の横に配置するアイコンバッジ。
  * クリック/タップでフロートパネルを開き、drift一覧のON/OFFトグルとリセットを提供する。
+ *
+ * フロートパネルは position:fixed で描画することで、ヘッダーの overflow:hidden による
+ * クリッピングを回避し、画面上に確実に表示する。
  */
 import { useEffect, useRef, useState } from "react";
 import type { Drift } from "../api";
@@ -22,13 +25,21 @@ interface Props {
 /** SELF_DRIFTバッジとフロートパネルコンポーネント。 */
 export default function DriftBadge({ drifts, sessionId, characterId, onDriftsChange }: Props) {
   const [open, setOpen] = useState(false);
+  /** バッジボタンの参照（パネル表示位置の計算に使用） */
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  /** フロートパネルの参照（パネル外クリック検知に使用） */
   const panelRef = useRef<HTMLDivElement>(null);
+  /** フロートパネルの表示位置（fixed座標） */
+  const [panelPos, setPanelPos] = useState({ top: 0, left: 0 });
 
-  /** パネル外クリックで閉じる。 */
+  /** パネル外クリックで閉じる。バッジボタンとパネルの両方を除外する。 */
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const clickedButton = buttonRef.current?.contains(target);
+      const clickedPanel = panelRef.current?.contains(target);
+      if (!clickedButton && !clickedPanel) {
         setOpen(false);
       }
     };
@@ -38,6 +49,18 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
 
   /** enabledなdriftの件数 */
   const activeCount = drifts.filter((d) => d.enabled).length;
+
+  /**
+   * バッジクリック時にパネルを開閉する。
+   * 開く際はバッジの位置を取得してfixedパネルの座標を計算する。
+   */
+  const handleToggleOpen = () => {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setPanelPos({ top: rect.bottom + 4, left: rect.left });
+    }
+    setOpen((o) => !o);
+  };
 
   const handleToggle = async (drift: Drift) => {
     try {
@@ -61,10 +84,11 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
   if (drifts.length === 0) return null;
 
   return (
-    <div className="relative" ref={panelRef}>
+    <>
       {/* バッジアイコン */}
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={buttonRef}
+        onClick={handleToggleOpen}
         title="SELF_DRIFT"
         className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-800/60 hover:bg-violet-700/80 text-violet-300 text-xs transition-colors"
       >
@@ -75,9 +99,13 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
         <span>{activeCount}/{drifts.length}</span>
       </button>
 
-      {/* フロートパネル */}
+      {/* フロートパネル: fixed配置でヘッダーのoverflow:hiddenをすり抜けて表示する */}
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 w-72 bg-zinc-800 border border-zinc-600 rounded-xl shadow-xl p-3 flex flex-col gap-2">
+        <div
+          ref={panelRef}
+          className="fixed z-[200] w-72 bg-zinc-800 border border-zinc-600 rounded-xl shadow-xl p-3 flex flex-col gap-2"
+          style={{ top: panelPos.top, left: panelPos.left }}
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-violet-300 uppercase tracking-wide">SELF DRIFT</span>
             {drifts.length > 0 && (
@@ -119,6 +147,6 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
           </ul>
         </div>
       )}
-    </div>
+    </>
   );
 }

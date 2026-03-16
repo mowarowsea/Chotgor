@@ -2,7 +2,7 @@
  * サイドバーコンポーネント。
  * セッション一覧の表示・新規チャット開始・グループチャット作成・セッション削除を担当する。
  */
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import type { Model, Session } from "../api";
 
 interface Props {
@@ -12,6 +12,10 @@ interface Props {
   sessions: Session[];
   /** 現在選択中のセッションID */
   activeSessionId: string | null;
+  /** 現在選択中のモデルID（Appから制御） */
+  selectedModel: string;
+  /** モデル選択変更コールバック */
+  onModelChange: (modelId: string) => void;
   /** サイドバーの開閉状態 */
   isOpen: boolean;
   /** サイドバー開閉トグルコールバック */
@@ -31,6 +35,8 @@ export default function Sidebar({
   models,
   sessions,
   activeSessionId,
+  selectedModel,
+  onModelChange,
   isOpen,
   onToggle,
   onSelectSession,
@@ -38,17 +44,8 @@ export default function Sidebar({
   onNewGroupChat,
   onDeleteSession,
 }: Props) {
-  /** 新規チャットに使うモデルID */
-  const [selectedModel, setSelectedModel] = useState(models[0]?.id ?? "");
-
-  /** モデル一覧が初めてロードされたとき、選択モデルを先頭に設定する */
-  const hasSetInitialModel = useRef(false);
-  useEffect(() => {
-    if (models.length > 0 && !hasSetInitialModel.current) {
-      hasSetInitialModel.current = true;
-      setSelectedModel(models[0].id);
-    }
-  }, [models]);
+  /** アクティブセッションがグループチャットかどうか（モデルセレクタの無効化判定用） */
+  const isGroupSession = sessions.find((s) => s.id === activeSessionId)?.session_type === "group";
 
   /** 削除確認中のセッションID */
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -129,8 +126,9 @@ export default function Sidebar({
         {/* モデル選択 */}
         <select
           value={selectedModel}
-          onChange={(e) => setSelectedModel(e.target.value)}
-          className="w-full bg-zinc-800 text-zinc-100 text-sm rounded px-2 py-1.5 mb-2 border border-zinc-700 focus:outline-none focus:border-zinc-500"
+          onChange={(e) => onModelChange(e.target.value)}
+          disabled={isGroupSession}
+          className="w-full bg-zinc-800 text-zinc-100 text-sm rounded px-2 py-1.5 mb-2 border border-zinc-700 focus:outline-none focus:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {models.length === 0 && (
             <option value="">モデルなし</option>

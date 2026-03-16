@@ -21,6 +21,8 @@ interface Props {
     messages: ChatMessage[];
     /** ユーザ名（表示用） */
     userName: string;
+    /** スクロール方向変化コールバック。下スクロールで false、上スクロールで true を渡す。 */
+    onHeaderVisibilityChange?: (visible: boolean) => void;
     /** 送信処理中フラグ */
     sending: boolean;
     /** 完了済みメッセージIDと reasoning テキストの対応マップ */
@@ -55,9 +57,12 @@ export default function MessageList({
     waitingCharacter = null,
     characterName = "キャラクター",
     emptyMessage = "メッセージを送ってみてください",
+    onHeaderVisibilityChange,
     onRetry,
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
+    /** スクロール方向検知用: 直前のスクロール位置を記録する。 */
+    const lastScrollYRef = useRef(0);
 
     /** キャラクター名からカラーパレットのインデックスを返す。 */
     const getCharColor = (charName: string) => {
@@ -73,8 +78,31 @@ export default function MessageList({
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, sending, streamingContent, waitingCharacter]);
 
+    /** スクロール方向を検知してヘッダー表示状態をコールバックに通知する。 */
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        if (!onHeaderVisibilityChange) return;
+        const currentY = e.currentTarget.scrollTop;
+        // スクロール最上部付近は常にヘッダーを表示する（再読み込み時の振動防止）
+        if (currentY < 30) {
+            onHeaderVisibilityChange(true);
+            lastScrollYRef.current = currentY;
+            return;
+        }
+        if (currentY < lastScrollYRef.current) {
+            // 上スクロール: ヘッダーを表示する
+            onHeaderVisibilityChange(true);
+        } else if (currentY > lastScrollYRef.current + 30) {
+            // 下スクロール: 30px のデッドバンドで誤検知・振動を防ぐ
+            onHeaderVisibilityChange(false);
+        } else {
+            // デッドバンド内: 基準値を更新せず判定もしない（振動防止）
+            return;
+        }
+        lastScrollYRef.current = currentY;
+    };
+
     return (
-        <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-4" onScroll={handleScroll}>
             {messages.length === 0 && !sending && !waitingCharacter && (
                 <p className="text-zinc-500 text-sm text-center mt-16">
                     {emptyMessage}
@@ -96,12 +124,14 @@ export default function MessageList({
                 }
 
                 const charName = msg.character_name ?? characterName;
+                // preset_name が存在する場合は "キャラ@プリセット" 形式で表示する
+                const displayName = msg.preset_name ? `${charName}@${msg.preset_name}` : charName;
                 const color = getCharColor(charName);
 
                 return (
                     <CharacterBubble
                         key={msg.id}
-                        characterName={charName}
+                        characterName={displayName}
                         content={msg.content}
                         reasoning={reasoningMap[msg.id]}
                         avatarBg={color.bg}

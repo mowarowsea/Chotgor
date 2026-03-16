@@ -61,6 +61,7 @@ class ChatMessage(Base):
     reasoning = Column(Text, nullable=True)         # 思考ブロック・想起記憶テキスト
     images = Column(JSON, nullable=True)            # [image_id, ...] 添付画像IDリスト
     character_name = Column(String, nullable=True)  # グループチャット時の発言キャラクター名
+    preset_name = Column(String, nullable=True)     # メッセージ送信時に使用したプリセット名
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -195,6 +196,7 @@ class SQLiteStore:
                 "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT",
                 "ALTER TABLE chat_messages ADD COLUMN images TEXT",
                 "ALTER TABLE chat_messages ADD COLUMN character_name TEXT",
+                "ALTER TABLE chat_messages ADD COLUMN preset_name TEXT",
                 "ALTER TABLE chat_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT '1on1'",
                 "ALTER TABLE chat_sessions ADD COLUMN group_config TEXT",
             ]:
@@ -644,6 +646,7 @@ class SQLiteStore:
         reasoning: Optional[str] = None,
         images: Optional[list] = None,
         character_name: Optional[str] = None,
+        preset_name: Optional[str] = None,
     ) -> "ChatMessage":
         """チャットメッセージを作成する。
 
@@ -655,6 +658,7 @@ class SQLiteStore:
             reasoning: 思考ブロック・想起記憶テキスト（キャラクターメッセージのみ）。
             images: 添付画像IDのリスト（ユーザメッセージのみ）。
             character_name: グループチャット時の発言キャラクター名（1on1では None）。
+            preset_name: メッセージ送信時に使用したプリセット名（バブル表示用）。
         """
         with self.get_session() as session:
             msg = ChatMessage(
@@ -665,6 +669,7 @@ class SQLiteStore:
                 reasoning=reasoning,
                 images=images or None,
                 character_name=character_name,
+                preset_name=preset_name,
             )
             session.add(msg)
             session.commit()

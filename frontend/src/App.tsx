@@ -28,6 +28,7 @@ import ExportDialog from "./components/ExportDialog";
 /** アプリ全体のルートコンポーネント。 */
 export default function App() {
   const [models, setModels] = useState<Model[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -46,28 +47,38 @@ export default function App() {
   const [drifts, setDrifts] = useState<Drift[]>([]);
   /** エクスポートダイアログの開閉状態。 */
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  /** スクロール下方向でヘッダーを隠す。上スクロールまたはセッション未選択時は表示する。 */
+  const [headerVisible, setHeaderVisible] = useState(true);
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const characterName = activeSession?.model_id.split("@")[0] ?? "キャラクター";
+  /**
+   * バブル表示のフォールバック名。character_name未保存の旧メッセージ用。キャラ@プリセット形式で表示する。
+   * selectedModel を優先することで、チャット途中でモデル切り替えした直後でも
+   * ストリーミング中から正しいモデル名を表示できる。
+   */
+  const characterName = (selectedModel || activeSession?.model_id) ?? "キャラクター";
   /** アクティブセッションに紐づくキャラクターID（1on1チャット時のDriftBadge用）。 */
   const activeCharacterId = drifts.length > 0 ? drifts[0].character_id : "";
   /** アクティブセッションがグループチャットかどうか。 */
   const isGroupSession = activeSession?.session_type === "group";
-  /** グループチャット参加者名リスト。 */
-  const groupParticipantNames = (() => {
+  /** グループチャット参加者情報（char_name・preset_name）。 */
+  const groupParticipantEntries = (() => {
     if (!isGroupSession || !activeSession?.group_config) return [];
     try {
       const cfg = JSON.parse(activeSession.group_config);
-      return (cfg.participants as Array<{ char_name: string }>).map((p) => p.char_name);
+      return cfg.participants as Array<{ char_name: string; preset_name: string }>;
     } catch {
       return [];
     }
   })();
-  /** グループチャット参加者のキャラクター名+IDリスト（ヘッダのDriftBadge用）。 */
-  const groupParticipants = groupParticipantNames.map((charName) => ({
-    charName,
-    characterId: characters.find((c) => c.name === charName)?.id ?? "",
+  /** グループチャット参加者名リスト（色割り当て用）。 */
+  const groupParticipantNames = groupParticipantEntries.map((p) => p.char_name);
+  /** グループチャット参加者のキャラクター名+ID+プリセット名リスト（ヘッダのDriftBadge用）。 */
+  const groupParticipants = groupParticipantEntries.map(({ char_name, preset_name }) => ({
+    charName: char_name,
+    presetName: preset_name,
+    characterId: characters.find((c) => c.name === char_name)?.id ?? "",
   }));
   /**
    * セッション切り替え競合防止用 ref。
@@ -90,6 +101,7 @@ export default function App() {
     Promise.all([fetchModels(), fetchSessions(), fetchUserName(), fetchCharacters()])
       .then(([m, s, u, c]) => {
         setModels(m);
+        if (m.length > 0) setSelectedModel(m[0].id);
         setSessions(s);
         setUserName(u);
         setCharacters(c);
@@ -116,6 +128,7 @@ export default function App() {
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
+    setHeaderVisible(true);
     setDrifts([]);
     setError(null);
     // ストリーミング中だった場合の状態をリセットする
@@ -132,6 +145,10 @@ export default function App() {
         fetchSession(sessionId),
         fetchDrifts(sessionId).then(setDrifts).catch(() => {}),
       ]);
+      // 1on1チャットの場合、そのセッションで最後に使ったモデルをセレクタに反映する
+      if (detail.session_type !== "group" && detail.model_id) {
+        setSelectedModel(detail.model_id);
+      }
       setMessages(detail.messages);
       // DBに保存された reasoning をメッセージIDに紐付けて復元する
       const restored: Record<string, string> = {};
@@ -155,6 +172,8 @@ export default function App() {
       setSessions((prev) => [session, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
+      // リロード後に同じセッションを復元できるようにハッシュを更新する
+      window.location.hash = session.id;
     } catch (e) {
       setError(String(e));
     }
@@ -172,6 +191,8 @@ export default function App() {
       setSessions((prev) => [session, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
+      // リロード後に同じセッションを復元できるようにハッシュを更新する
+      window.location.hash = session.id;
     } catch (e) {
       setError(String(e));
     }
@@ -300,7 +321,7 @@ export default function App() {
    * ストリーミング送信の共通実装。楽観的ユーザメッセージ表示 + SSE受信を行う。
    * handleSend / handleRetry の両方から呼ばれる。
    */
-  const _doStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = []) => {
+  const _doStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = [], modelId?: string) => {
     setError(null);
     setStreamingContent("");
     setStreamingReasoning(null);
@@ -317,7 +338,7 @@ export default function App() {
 
     let accumulatedReasoning = "";
     try {
-      for await (const event of streamMessage(sessionId, content, imageIds)) {
+      for await (const event of streamMessage(sessionId, content, imageIds, modelId)) {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
         } else if (event.type === "reasoning") {
@@ -380,13 +401,13 @@ export default function App() {
     }
     setSending(true);
     try {
-      await _doStream(activeSessionId, content, imageIds);
+      await _doStream(activeSessionId, content, imageIds, selectedModel || undefined);
     } catch (e) {
       setError(String(e));
     } finally {
       setSending(false);
     }
-  }, [activeSessionId, isGroupSession, _doGroupStream, _doStream]);
+  }, [activeSessionId, isGroupSession, selectedModel, _doGroupStream, _doStream]);
 
   /**
    * ユーザメッセージ編集 / キャラクター応答再生成の共通ハンドラ。
@@ -405,13 +426,13 @@ export default function App() {
     });
     try {
       await deleteMessagesFrom(activeSessionId, fromMessageId);
-      await _doStream(activeSessionId, content, imageIds);
+      await _doStream(activeSessionId, content, imageIds, selectedModel || undefined);
     } catch (e) {
       setError(String(e));
     } finally {
       setSending(false);
     }
-  }, [activeSessionId, sending, _doStream]);
+  }, [activeSessionId, sending, selectedModel, _doStream]);
 
   return (
     /* h-[100dvh]: モバイルブラウザのアドレスバーを除いた実際の表示領域に合わせる */
@@ -428,6 +449,8 @@ export default function App() {
         models={models}
         sessions={sessions}
         activeSessionId={activeSessionId}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen((o) => !o)}
         onSelectSession={(id) => { handleSelectSession(id); setSidebarOpen(window.innerWidth >= 640); }}
@@ -437,8 +460,9 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
-        {/* トップバー: ハンバーガートグルボタン。サイドバーの開閉を制御する。 */}
-        <div className="flex items-center gap-3 px-3 py-2.5 bg-zinc-900 border-b border-zinc-700 shrink-0">
+        {/* トップバー: ハンバーガートグルボタン。スクロール方向に応じて表示/非表示を切り替える。 */}
+        <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${headerVisible ? "max-h-20" : "max-h-0"}`}>
+        <div className="flex items-center gap-3 px-3 py-2.5 bg-zinc-900 border-b border-zinc-700">
           <button
             onClick={() => setSidebarOpen((o) => !o)}
             className="text-zinc-100 p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
@@ -454,11 +478,11 @@ export default function App() {
             /* グループチャット: 参加者名とキャラクターごとのDriftBadgeを表示 */
             <div className="flex items-center gap-3 flex-wrap min-w-0">
               <span className="text-zinc-400 text-sm shrink-0">👥</span>
-              {groupParticipants.map(({ charName, characterId }) => {
+              {groupParticipants.map(({ charName, presetName, characterId }) => {
                 const charDrifts = drifts.filter((d) => d.character_id === characterId);
                 return (
                   <div key={charName} className="flex items-center gap-1 shrink-0">
-                    <span className="text-zinc-100 text-sm font-semibold">{charName}</span>
+                    <span className="text-zinc-100 text-sm font-semibold">{charName}@{presetName}</span>
                     {charDrifts.length > 0 && characterId && (
                       <DriftBadge
                         drifts={charDrifts}
@@ -472,9 +496,9 @@ export default function App() {
               })}
             </div>
           ) : activeSessionId && !isGroupSession ? (
-            /* 1on1チャット: キャラクター名とDriftBadgeを表示 */
+            /* 1on1チャット: キャラクター名（キャラ@プリセット形式）とDriftBadgeを表示 */
             <div className="flex items-center gap-2">
-              <span className="text-zinc-100 text-sm font-semibold">{characterName}</span>
+              <span className="text-zinc-100 text-sm font-semibold">{activeSession?.model_id ?? characterName}</span>
               {activeCharacterId && (
                 <DriftBadge
                   drifts={drifts}
@@ -501,6 +525,7 @@ export default function App() {
             </button>
           )}
         </div>
+        </div>
 
         {/* エラーバナー */}
         {error && (
@@ -523,6 +548,7 @@ export default function App() {
             reasoningMap={groupReasoningMap}
             onSend={handleSend}
             onRetry={handleGroupRetry}
+            onHeaderVisibilityChange={setHeaderVisible}
           />
         ) : activeSessionId ? (
           <ChatView
@@ -536,6 +562,7 @@ export default function App() {
             reasoningMap={reasoningMap}
             onSend={handleSend}
             onRetry={handleRetry}
+            onHeaderVisibilityChange={setHeaderVisible}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm px-4 text-center">

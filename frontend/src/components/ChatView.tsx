@@ -35,6 +35,8 @@ interface Props {
    * imageIds には再送する画像IDリストを渡す（再生成時は元メッセージの画像を引き継ぐ）。
    */
   onRetry: (fromMessageId: string, content: string, imageIds: string[]) => void;
+  /** スクロール方向変化コールバック。MessageList から App へ伝播する。 */
+  onHeaderVisibilityChange?: (visible: boolean) => void;
 }
 
 /** 1on1チャットのレイアウトコンポーネント。 */
@@ -49,6 +51,7 @@ export default function ChatView({
   reasoningMap,
   onSend,
   onRetry,
+  onHeaderVisibilityChange,
 }: Props) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -61,6 +64,7 @@ export default function ChatView({
         streamingReasoning={streamingReasoning}
         characterName={characterName}
         onRetry={onRetry}
+        onHeaderVisibilityChange={onHeaderVisibilityChange}
       />
       <MessageInput
         sessionId={sessionId}

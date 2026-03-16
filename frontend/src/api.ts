@@ -28,6 +28,8 @@ export interface ChatMessage {
   images?: string[];
   /** グループチャット時の発言キャラクター名。 */
   character_name?: string;
+  /** メッセージ送信時に使用したプリセット名（バブル表示用）。 */
+  preset_name?: string;
   created_at: string;
 }
 
@@ -150,7 +152,8 @@ async function* parseSSEStream<T>(res: Response): AsyncGenerator<T> {
 export async function* streamMessage(
   sessionId: string,
   content: string,
-  imageIds?: string[]
+  imageIds?: string[],
+  modelId?: string
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
     method: "POST",
@@ -158,6 +161,7 @@ export async function* streamMessage(
     body: JSON.stringify({
       content,
       ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
+      ...(modelId ? { model_id: modelId } : {}),
     }),
   });
 
