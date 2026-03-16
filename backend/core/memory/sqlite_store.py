@@ -402,6 +402,47 @@ class SQLiteStore:
                 q = q.filter(Memory.memory_category == category)
             return q.order_by(Memory.created_at.desc()).all()
 
+    def update_memory_content(
+        self,
+        memory_id: str,
+        content: str,
+        contextual_importance: float,
+        semantic_importance: float,
+        identity_importance: float,
+        user_importance: float,
+    ) -> bool:
+        """記憶のcontentと各importanceを上書き更新する。
+
+        引き継ぐフィールド: access_count, created_at
+        更新するフィールド: content, 各importance, last_accessed_at（現在時刻）
+
+        類似記憶が見つかった際の更新専用メソッド（Issue #50）。
+
+        Args:
+            memory_id: 更新対象の記憶ID。
+            content: 新しい記憶テキスト。
+            contextual_importance: 新しいコンテクスト重要度 (0.0-1.0)。
+            semantic_importance: 新しい意味的重要度 (0.0-1.0)。
+            identity_importance: 新しいアイデンティティ重要度 (0.0-1.0)。
+            user_importance: 新しいユーザー重要度 (0.0-1.0)。
+
+        Returns:
+            更新成功した場合True、レコードが存在しない場合False。
+        """
+        with self.get_session() as session:
+            mem = session.get(Memory, memory_id)
+            if not mem:
+                return False
+            mem.content = content
+            mem.contextual_importance = contextual_importance
+            mem.semantic_importance = semantic_importance
+            mem.identity_importance = identity_importance
+            mem.user_importance = user_importance
+            mem.last_accessed_at = datetime.now()
+            # access_count と created_at は引き継ぐ（変更しない）
+            session.commit()
+            return True
+
     def touch_memory(self, memory_id: str) -> None:
         """last_accessed_at を更新し access_count をインクリメントする。"""
         with self.get_session() as session:

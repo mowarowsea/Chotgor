@@ -182,6 +182,51 @@ class ChromaStore:
                 )
         return memories
 
+    def find_similar_in_category(
+        self,
+        content: str,
+        character_id: str,
+        category: str,
+        threshold: float = 0.2,
+    ) -> Optional[str]:
+        """同一キャラクター・カテゴリ内で類似する記憶IDを返す。
+
+        コサイン距離の目安:
+          ~0.05 : ほぼ同じ文（「コーヒーが好き」vs「コーヒーが大好き」）
+          ~0.15 : 同系統の内容（「コーヒーが好き」vs「カフェラテが好き」） ← threshold=0.2で更新対象
+          ~0.2  : 近いが別内容のボーダーライン（「昨日映画を見た」vs「先週映画を観た」）
+          ~0.6+ : 別トピック（「コーヒーが好き」vs「犬を飼っている」）
+
+        Args:
+            content: 検索クエリとなる新しい記憶テキスト。
+            character_id: キャラクターID。
+            category: 検索対象のカテゴリ（このカテゴリ内のみ検索する）。
+            threshold: 更新判定のコサイン距離しきい値。この値未満の場合に類似とみなす。
+
+        Returns:
+            類似記憶が見つかった場合はそのmemory_id、見つからない場合はNone。
+        """
+        collection = self._get_collection(character_id)
+        count = collection.count()
+        if count == 0:
+            return None
+
+        results = collection.query(
+            query_texts=[content],
+            n_results=1,
+            include=["distances"],
+            where={"category": category},
+        )
+
+        if not results["ids"] or not results["ids"][0]:
+            return None
+
+        distance = results["distances"][0][0]
+        if distance < threshold:
+            return results["ids"][0][0]
+
+        return None
+
     def delete_memory(self, memory_id: str, character_id: str) -> None:
         """指定IDの記憶をChromaDBから物理削除する。
 

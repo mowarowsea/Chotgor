@@ -79,7 +79,47 @@ class MemoryManager:
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
     ) -> str:
-        """Write a memory to both SQLite and ChromaDB. Returns memory_id."""
+        """記憶をSQLiteとChromaDBに書き込む。類似記憶があれば更新、なければ新規作成する。
+
+        同一キャラクター・カテゴリ内でコサイン距離 < 0.2 の記憶が既存する場合は
+        新規作成せずに上書き更新する（重複排除）。
+        更新時は access_count と created_at を引き継ぎ、content・各importance を上書きする。
+
+        Returns:
+            書き込んだ記憶のmemory_id（更新の場合は既存ID、新規の場合は新規UUID）。
+        """
+        # 同一カテゴリ内で類似記憶を検索する
+        existing_id = self.chroma.find_similar_in_category(
+            content=content,
+            character_id=character_id,
+            category=category,
+        )
+
+        if existing_id:
+            # 類似記憶が見つかった → 上書き更新
+            self.sqlite.update_memory_content(
+                memory_id=existing_id,
+                content=content,
+                contextual_importance=contextual_importance,
+                semantic_importance=semantic_importance,
+                identity_importance=identity_importance,
+                user_importance=user_importance,
+            )
+            self.chroma.add_memory(
+                memory_id=existing_id,
+                content=content,
+                character_id=character_id,
+                metadata={
+                    "category": category,
+                    "contextual_importance": contextual_importance,
+                    "semantic_importance": semantic_importance,
+                    "identity_importance": identity_importance,
+                    "user_importance": user_importance,
+                },
+            )
+            return existing_id
+
+        # 類似記憶なし → 新規作成
         memory_id = str(uuid.uuid4())
 
         self.sqlite.create_memory(
