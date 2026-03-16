@@ -63,6 +63,19 @@ export default function MessageList({
     const bottomRef = useRef<HTMLDivElement>(null);
     /** スクロール方向検知用: 直前のスクロール位置を記録する。 */
     const lastScrollYRef = useRef(0);
+    /** 自動スクロール中フラグ。プログラム起因のスクロールイベントでヘッダーが暴れないよう抑制する。 */
+    const autoScrollingRef = useRef(false);
+    /** 自動スクロール終了タイマーID。 */
+    const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    /**
+     * ヘッダーアニメーション中フラグ。
+     * ヘッダー表示切り替え後 400ms はスクロール判定をロックし、
+     * アニメーションによるレイアウトリフロー → スクロールイベント → ヘッダー再切り替えの
+     * フィードバックループを断ち切る。
+     */
+    const headerTransitioningRef = useRef(false);
+    /** ヘッダーアニメーションロック解除タイマーID。 */
+    const headerTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     /** キャラクター名からカラーパレットのインデックスを返す。 */
     const getCharColor = (charName: string) => {
@@ -73,29 +86,58 @@ export default function MessageList({
         return CHAR_COLORS[idx >= 0 ? idx % CHAR_COLORS.length : 0];
     };
 
-    /** メッセージ追加・ストリーミング・待機中は最下部へスクロールする。 */
+    /** メッセージ追加・ストリーミング・待機中は最下部へスクロールする。
+     * スクロール中はヘッダー表示判定を抑制し、プログラム起因のスクロールイベントで暴れないようにする。
+     */
     useEffect(() => {
+        autoScrollingRef.current = true;
+        if (autoScrollTimerRef.current) clearTimeout(autoScrollTimerRef.current);
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        // smooth scroll のアニメーション完了後にフラグを解除する（~500ms）
+        autoScrollTimerRef.current = setTimeout(() => {
+            autoScrollingRef.current = false;
+        }, 600);
     }, [messages, sending, streamingContent, waitingCharacter]);
 
-    /** スクロール方向を検知してヘッダー表示状態をコールバックに通知する。 */
+    /**
+     * ヘッダー表示切り替えをトリガーし、アニメーション完了まで再トリガーをロックする。
+     * ヘッダーの max-h アニメーション（300ms）がレイアウトリフローを起こしてスクロールイベントを
+     * 再発火させるため、400ms のロック期間でフィードバックループを断ち切る。
+     */
+    const triggerHeaderChange = (visible: boolean) => {
+        headerTransitioningRef.current = true;
+        if (headerTransitionTimerRef.current) clearTimeout(headerTransitionTimerRef.current);
+        // ヘッダー CSS transition は duration-300。その完了を待ってロック解除する。
+        headerTransitionTimerRef.current = setTimeout(() => {
+            headerTransitioningRef.current = false;
+        }, 400);
+        onHeaderVisibilityChange!(visible);
+    };
+
+    /** スクロール方向を検知してヘッダー表示状態をコールバックに通知する。
+     * 自動スクロール中・ヘッダーアニメーション中はスキップしてフィードバックループを防ぐ。
+     */
     const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
         if (!onHeaderVisibilityChange) return;
+        // 自動スクロール中はヘッダー判定をスキップして振動を防ぐ
+        if (autoScrollingRef.current) return;
+        // ヘッダーアニメーション中はレイアウトリフロー起因のイベントをすべて無視する
+        if (headerTransitioningRef.current) return;
         const currentY = e.currentTarget.scrollTop;
-        // スクロール最上部付近は常にヘッダーを表示する（再読み込み時の振動防止）
+        // スクロール最上部付近は常にヘッダーを表示する
         if (currentY < 30) {
-            onHeaderVisibilityChange(true);
+            triggerHeaderChange(true);
             lastScrollYRef.current = currentY;
             return;
         }
         if (currentY < lastScrollYRef.current) {
             // 上スクロール: ヘッダーを表示する
-            onHeaderVisibilityChange(true);
+            triggerHeaderChange(true);
         } else if (currentY > lastScrollYRef.current + 30) {
-            // 下スクロール: 30px のデッドバンドで誤検知・振動を防ぐ
-            onHeaderVisibilityChange(false);
+            // 下スクロール: 30px のデッドバンドで誤検知を防ぐ
+            triggerHeaderChange(false);
         } else {
-            // デッドバンド内: 基準値を更新せず判定もしない（振動防止）
+            // デッドバンド内: 基準値を更新せず判定もしない
             return;
         }
         lastScrollYRef.current = currentY;

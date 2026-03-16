@@ -57,7 +57,11 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
   const handleToggleOpen = () => {
     if (!open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
-      setPanelPos({ top: rect.bottom + 4, left: rect.left });
+      // パネル幅288px + 余白8px がビューポートに収まるよう left を右端でクランプする
+      const panelWidth = 288;
+      const margin = 8;
+      const clampedLeft = Math.min(rect.left, window.innerWidth - panelWidth - margin);
+      setPanelPos({ top: rect.bottom + 4, left: Math.max(margin, clampedLeft) });
     }
     setOpen((o) => !o);
   };
