@@ -211,12 +211,18 @@ class ChromaStore:
         if count == 0:
             return None
 
-        results = collection.query(
-            query_texts=[content],
-            n_results=1,
-            include=["distances"],
-            where={"category": category},
-        )
+        try:
+            results = collection.query(
+                query_texts=[content],
+                n_results=1,
+                include=["distances"],
+                where={"category": category},
+            )
+        except Exception:
+            # 同カテゴリの記憶が0件の場合、ChromaDBが
+            # "Number of requested results > elements in index" 例外を投げることがある。
+            # その場合は類似なし（新規作成）として扱う。
+            return None
 
         if not results["ids"] or not results["ids"][0]:
             return None
