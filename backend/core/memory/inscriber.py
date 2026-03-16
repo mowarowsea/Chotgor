@@ -4,8 +4,12 @@ LLMの応答テキストから記憶マーカーを読み取り、ChromaDB + SQL
 タグ抽出は tag_parser.parse_tags() に委譲し、ネストした角括弧・バッククォートを正しく処理する。
 """
 
+import logging
+
 from ..tag_parser import parse_tags
 from .manager import MemoryManager
+
+logger = logging.getLogger(__name__)
 
 # カテゴリごとの重要度ベースマトリクス
 _BASE_IMPORTANCE = {
@@ -74,6 +78,6 @@ def carve(text: str, character_id: str, memory_manager: MemoryManager) -> str:
                 **scores,
             )
         except Exception:
-            pass
+            logger.exception("記憶の書き込みに失敗: category=%s content=%.50s...", category, content)
 
     return clean
