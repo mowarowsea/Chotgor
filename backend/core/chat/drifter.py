@@ -24,8 +24,9 @@ def extract(text: str) -> tuple[str, list[str], bool]:
             drifts (list[str]): 追加された drift 内容テキストのリスト。
             reset (bool): [DRIFT_RESET] が含まれていたか。
     """
+    # multiline=True: DRIFT内容は複数行にわたる場合がある
     # 内部で長さ降順ソートされるため、列挙順は不問
-    clean, matches = parse_tags(text, ["DRIFT", "DRIFT_RESET"])
+    clean, matches = parse_tags(text, ["DRIFT", "DRIFT_RESET"], multiline=True)
     drifts = [m.body.strip() for m in matches["DRIFT"]]
     reset = len(matches["DRIFT_RESET"]) > 0
     return clean, drifts, reset
