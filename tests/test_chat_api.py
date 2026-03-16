@@ -56,6 +56,7 @@ def _fake_message(mid=None, session_id="sid", role="user", content="hello"):
     m.reasoning = None
     m.images = None
     m.character_name = None
+    m.preset_name = None
     m.created_at = datetime(2026, 3, 10, 12, 0, 0)
     return m
 
