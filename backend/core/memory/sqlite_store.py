@@ -120,6 +120,7 @@ class Memory(Base):
     last_accessed_at = Column(DateTime, nullable=True)
     access_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now())
+    updated_at = Column(DateTime, nullable=True)  # content/importance変更時のみ更新
     deleted_at = Column(DateTime, nullable=True)  # ソフト削除
 
 
@@ -180,6 +181,7 @@ class SQLiteStore:
         with self.engine.connect() as conn:
             # 既存テーブルへのカラム追加（失敗は無視）
             for stmt in [
+                "ALTER TABLE memories ADD COLUMN updated_at TIMESTAMP",
                 "ALTER TABLE characters ADD COLUMN enabled_providers TEXT NOT NULL DEFAULT '{}'",
                 "ALTER TABLE characters ADD COLUMN image_data TEXT",
                 "ALTER TABLE characters ADD COLUMN ghost_model TEXT",
@@ -392,15 +394,29 @@ class SQLiteStore:
         character_id: str,
         category: Optional[str] = None,
         include_deleted: bool = False,
+        sort_by: str = "created_at",
     ) -> list[Memory]:
-        """キャラクターの記憶一覧を新しい順で返す。"""
+        """キャラクターの記憶一覧を指定順で返す。
+
+        Args:
+            sort_by: ソートキー。"created_at"（デフォルト）/ "updated_at"。
+                     updated_at は NULL のものを created_at で代替してソートする。
+        """
         with self.get_session() as session:
             q = session.query(Memory).filter(Memory.character_id == character_id)
             if not include_deleted:
                 q = q.filter(Memory.deleted_at.is_(None))
             if category:
                 q = q.filter(Memory.memory_category == category)
-            return q.order_by(Memory.created_at.desc()).all()
+            if sort_by == "updated_at":
+                # updated_at が NULL（一度も上書きされていない記憶）は created_at で代替
+                from sqlalchemy import func
+                q = q.order_by(
+                    func.coalesce(Memory.updated_at, Memory.created_at).desc()
+                )
+            else:
+                q = q.order_by(Memory.created_at.desc())
+            return q.all()
 
     def update_memory_content(
         self,
@@ -439,6 +455,7 @@ class SQLiteStore:
             mem.identity_importance = identity_importance
             mem.user_importance = user_importance
             mem.last_accessed_at = datetime.now()
+            mem.updated_at = datetime.now()
             # access_count と created_at は引き継ぐ（変更しない）
             session.commit()
             return True

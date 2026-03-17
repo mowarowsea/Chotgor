@@ -16,10 +16,10 @@
             {% endfor %}
         </select>
         <label class="checkbox-label">
-            <input type="checkbox" name="include_deleted" value="true"
-                   {% if include_deleted %}checked{% endif %}
+            <input type="checkbox" name="deleted_only" value="true"
+                   {% if deleted_only %}checked{% endif %}
                    onchange="this.form.submit()">
-            Show deleted
+            Show deleted only
         </label>
     </form>
     <span class="memory-count">{{ memories|length }} memories</span>

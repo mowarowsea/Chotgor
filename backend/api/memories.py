@@ -16,8 +16,9 @@ async def list_memories(
     character_id: str,
     category: Optional[str] = Query(None),
     include_deleted: bool = Query(False),
+    sort_by: str = Query("created_at", description="ソートキー: created_at / updated_at"),
 ):
-    """List all memories for a character."""
+    """キャラクターの記憶一覧を返す。"""
     # Verify character exists
     char = request.app.state.sqlite.get_character(character_id)
     if not char:
@@ -27,6 +28,7 @@ async def list_memories(
         character_id=character_id,
         category=category,
         include_deleted=include_deleted,
+        sort_by=sort_by,
     )
     return memories
 

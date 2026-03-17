@@ -101,28 +101,10 @@ class MemoryManager:
         )
 
         if existing_id:
-            # 類似記憶が見つかった → 上書き更新
-            self.sqlite.update_memory_content(
-                memory_id=existing_id,
-                content=content,
-                contextual_importance=contextual_importance,
-                semantic_importance=semantic_importance,
-                identity_importance=identity_importance,
-                user_importance=user_importance,
-            )
-            self.chroma.add_memory(
-                memory_id=existing_id,
-                content=content,
-                character_id=character_id,
-                metadata={
-                    "category": category,
-                    "contextual_importance": contextual_importance,
-                    "semantic_importance": semantic_importance,
-                    "identity_importance": identity_importance,
-                    "user_importance": user_importance,
-                },
-            )
-            return existing_id
+            # 類似記憶が見つかった → 旧記憶をsoft-delete＋ChromaDB削除し、新規レコードとして挿入
+            self.sqlite.soft_delete_memory(existing_id)
+            self.chroma.delete_memory(existing_id, character_id)
+            # 以降は新規作成フローに合流する
 
         # 類似記憶なし → 新規作成
         memory_id = str(uuid.uuid4())
@@ -271,9 +253,10 @@ class MemoryManager:
         character_id: str,
         category: Optional[str] = None,
         include_deleted: bool = False,
+        sort_by: str = "created_at",
     ) -> list[dict]:
-        """List memories from SQLite with full metadata."""
-        mems = self.sqlite.list_memories(character_id, category, include_deleted)
+        """キャラクターの記憶一覧をdictリストで返す。"""
+        mems = self.sqlite.list_memories(character_id, category, include_deleted, sort_by)
         return [
             {
                 "id": m.id,
@@ -289,6 +272,7 @@ class MemoryManager:
                     m.last_accessed_at.isoformat() if m.last_accessed_at else None
                 ),
                 "created_at": m.created_at.isoformat() if m.created_at else None,
+                "updated_at": m.updated_at.isoformat() if m.updated_at else None,
                 "deleted_at": m.deleted_at.isoformat() if m.deleted_at else None,
             }
             for m in mems

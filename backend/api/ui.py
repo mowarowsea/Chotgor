@@ -239,8 +239,9 @@ async def memories_view(
     request: Request,
     character_id: str,
     category: Optional[str] = None,
-    include_deleted: bool = False,
+    deleted_only: bool = False,
 ):
+    """記憶一覧ページ。deleted_only=True のときは論理削除済み記憶のみ表示する。"""
     char = request.app.state.sqlite.get_character(character_id)
     if not char:
         return RedirectResponse(url="/ui/", status_code=303)
@@ -248,8 +249,12 @@ async def memories_view(
     memories = request.app.state.memory_manager.list_memories(
         character_id=character_id,
         category=category,
-        include_deleted=include_deleted,
+        include_deleted=deleted_only,
     )
+    # deleted_only モードでは削除済みレコードのみに絞る
+    if deleted_only:
+        memories = [m for m in memories if m["deleted_at"]]
+
     categories = ["identity", "user", "semantic", "contextual"]
     return get_templates().TemplateResponse(
         "memories.html",
@@ -259,7 +264,7 @@ async def memories_view(
             "memories": memories,
             "categories": categories,
             "selected_category": category,
-            "include_deleted": include_deleted,
+            "deleted_only": deleted_only,
         },
     )
 

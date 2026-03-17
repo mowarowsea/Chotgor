@@ -44,17 +44,21 @@ def test_write_memory_new(manager, sqlite_store, mock_chroma):
     mock_chroma.add_memory.assert_called_once()
 
 
-def test_write_memory_update_when_similar_found(manager, sqlite_store, mock_chroma):
-    """類似記憶がある場合、既存レコードを上書き更新することを確認する。
+def test_write_memory_delete_insert_when_similar_found(manager, sqlite_store, mock_chroma):
+    """類似記憶がある場合、旧レコードをsoft-deleteして新規レコードを作成することを確認する。
 
-    ChromaDBが既存のmemory_idを返したとき、SQLiteに新規レコードは作成されず、
-    既存レコードのcontentと各importanceが更新され、
-    access_countとcreated_atは変化しないこと。
+    delete-insert方式（Issue #38対応）の動作を検証する。
+
+    ChromaDBが既存のmemory_idを返したとき:
+    - 旧レコード（"existing-mem"）がSQLiteでsoft-deleteされること
+    - ChromaDBの旧レコードが物理削除されること
+    - 新しいUUIDでSQLiteに新規レコードが作成されること
+    - 新しいIDでChromaDBにembeddingが追加されること
+    - アクティブな記憶は1件のみであること（旧レコードは削除済み）
 
     コサイン距離の目安:
       ~0.05 : ほぼ同じ文（「コーヒーが好き」vs「コーヒーが大好き」）
-      ~0.15 : 同系統の内容（「コーヒーが好き」vs「カフェラテが好き」）← 更新対象
-      ~0.2  : ボーダーライン（「昨日映画を見た」vs「先週映画を観た」）← 更新しない
+      ~0.15 : 同系統の内容（「コーヒーが好き」vs「カフェラテが好き」）← delete-insert対象
       ~0.6+ : 別トピック（「コーヒーが好き」vs「犬を飼っている」）← 新規作成
     """
     char_id = "char-001"
@@ -70,9 +74,6 @@ def test_write_memory_update_when_similar_found(manager, sqlite_store, mock_chro
         identity_importance=0.3,
         user_importance=0.3,
     )
-    existing = sqlite_store.get_memory("existing-mem")
-    original_created_at = existing.created_at
-    original_access_count = existing.access_count
 
     # ChromaDBが「コーヒーが好き」→「カフェラテが好き」で類似ありと判定した想定
     mock_chroma.find_similar_in_category.return_value = "existing-mem"
@@ -87,32 +88,28 @@ def test_write_memory_update_when_similar_found(manager, sqlite_store, mock_chro
         user_importance=0.9,
     )
 
-    # 返却IDは既存IDであること
-    assert returned_id == "existing-mem"
+    # 返却IDは新しいUUIDであること（旧IDではない）
+    assert returned_id != "existing-mem"
 
-    # SQLiteに新規レコードは増えていないこと
-    mems = sqlite_store.list_memories(char_id)
-    assert len(mems) == 1
+    # アクティブな記憶は新規レコード1件のみであること
+    active_mems = sqlite_store.list_memories(char_id)
+    assert len(active_mems) == 1
+    assert active_mems[0].id == returned_id
+    assert active_mems[0].content == "カフェラテが好き"
+    assert active_mems[0].contextual_importance == 0.8
+    assert active_mems[0].semantic_importance == 0.7
+    assert active_mems[0].identity_importance == 0.6
+    assert active_mems[0].user_importance == 0.9
 
-    # contentと各importanceが更新されていること
-    updated = sqlite_store.get_memory("existing-mem")
-    assert updated.content == "カフェラテが好き"
-    assert updated.contextual_importance == 0.8
-    assert updated.semantic_importance == 0.7
-    assert updated.identity_importance == 0.6
-    assert updated.user_importance == 0.9
+    # 旧レコードはsoft-deleteされていること
+    old_mem = sqlite_store.get_memory("existing-mem")
+    assert old_mem.deleted_at is not None
 
-    # access_countとcreated_atは引き継がれていること
-    assert updated.access_count == original_access_count
-    assert updated.created_at == original_created_at
-
-    # last_accessed_atが設定されていること
-    assert updated.last_accessed_at is not None
-
-    # ChromaDBのupsertが既存IDで呼ばれていること
+    # ChromaDBで旧レコードが削除され、新IDで追加されていること
+    mock_chroma.delete_memory.assert_called_once_with("existing-mem", char_id)
     mock_chroma.add_memory.assert_called_once()
     call_kwargs = mock_chroma.add_memory.call_args
-    assert call_kwargs.kwargs["memory_id"] == "existing-mem"
+    assert call_kwargs.kwargs["memory_id"] == returned_id
 
 
 def test_recall_memory_hybrid(manager, sqlite_store, mock_chroma):
