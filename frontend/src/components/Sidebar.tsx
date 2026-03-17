@@ -1,8 +1,8 @@
 /**
  * サイドバーコンポーネント。
- * セッション一覧の表示・新規チャット開始・グループチャット作成・セッション削除を担当する。
+ * セッション一覧の表示・新規チャット開始・グループチャット作成・セッション削除・タイトル編集を担当する。
  */
-import { useState } from "react";
+import { useState, useRef } from "react";
 import type { Model, Session } from "../api";
 
 interface Props {
@@ -28,6 +28,8 @@ interface Props {
   onNewGroupChat: (participants: string[], directorModelId: string, maxAutoTurns: number) => void;
   /** セッション削除時のコールバック */
   onDeleteSession: (sessionId: string) => void;
+  /** セッションタイトル変更時のコールバック */
+  onRenameSession: (sessionId: string, newTitle: string) => void;
 }
 
 /** セッション一覧とモデル選択UIを提供するサイドバー。モバイルはオーバーレイ表示、デスクトップはインライン表示。 */
@@ -43,12 +45,48 @@ export default function Sidebar({
   onNewChat,
   onNewGroupChat,
   onDeleteSession,
+  onRenameSession,
 }: Props) {
   /** アクティブセッションがグループチャットかどうか（モデルセレクタの無効化判定用） */
   const isGroupSession = sessions.find((s) => s.id === activeSessionId)?.session_type === "group";
 
   /** 削除確認中のセッションID */
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  /** インライン編集中のセッションID */
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  /** 編集中のタイトル文字列 */
+  const [editingTitle, setEditingTitle] = useState("");
+  /** タイトル編集インプットのref（フォーカス制御用） */
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  /** タイトルのダブルクリック時にインライン編集モードを開始する。 */
+  const handleTitleDoubleClick = (e: React.MouseEvent, sessionId: string, currentTitle: string) => {
+    e.stopPropagation();
+    setEditingSessionId(sessionId);
+    setEditingTitle(currentTitle);
+    // DOMが更新された後にフォーカスを当てる
+    setTimeout(() => editInputRef.current?.select(), 0);
+  };
+
+  /** タイトル編集を確定してコールバックを呼ぶ。 */
+  const handleTitleEditCommit = (sessionId: string) => {
+    const trimmed = editingTitle.trim();
+    if (trimmed) {
+      onRenameSession(sessionId, trimmed);
+    }
+    setEditingSessionId(null);
+  };
+
+  /** Enterで確定・Escapeでキャンセル。 */
+  const handleTitleEditKeyDown = (e: React.KeyboardEvent, sessionId: string) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleTitleEditCommit(sessionId);
+    } else if (e.key === "Escape") {
+      setEditingSessionId(null);
+    }
+  };
 
   /** グループチャット作成パネルの開閉状態 */
   const [groupPanelOpen, setGroupPanelOpen] = useState(false);
@@ -253,8 +291,25 @@ export default function Sidebar({
             {s.session_type === "group" && (
               <span className="text-xs shrink-0">👥</span>
             )}
-            {/* セッションタイトル */}
-            <span className="flex-1 truncate text-sm">{s.title}</span>
+            {/* セッションタイトル（ダブルクリックでインライン編集） */}
+            {editingSessionId === s.id ? (
+              <input
+                ref={editInputRef}
+                className="flex-1 bg-zinc-600 text-zinc-100 text-sm rounded px-1 outline-none min-w-0"
+                value={editingTitle}
+                onChange={(e) => setEditingTitle(e.target.value)}
+                onBlur={() => handleTitleEditCommit(s.id)}
+                onKeyDown={(e) => handleTitleEditKeyDown(e, s.id)}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span
+                className="flex-1 truncate text-sm"
+                onDoubleClick={(e) => handleTitleDoubleClick(e, s.id, s.title)}
+              >
+                {s.title}
+              </span>
+            )}
 
             {/* 削除ボタン（hover時表示） */}
             {confirmDeleteId === s.id ? (

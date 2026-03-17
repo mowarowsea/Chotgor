@@ -354,9 +354,12 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     history = [m for m in history_before if m.id != user_msg_id]
 
     # セッションタイトル自動設定（最初のメッセージから先頭30文字）
+    # effective_title は後段の updated_at 更新時にも使うため変数に保持する
     if len(history) == 0 and session.title == "新しいチャット":
-        auto_title = body.content[:30].replace("\n", " ")
-        state.sqlite.update_chat_session(session_id, title=auto_title)
+        effective_title = body.content[:30].replace("\n", " ")
+        state.sqlite.update_chat_session(session_id, title=effective_title)
+    else:
+        effective_title = session.title
 
     # 画像が添付されている場合は OpenAI vision 形式のコンテンツリストを構築する
     user_content: Union[str, list] = build_message_content(
@@ -429,8 +432,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         )
 
         # セッションのupdated_atを最新化し、使用したモデルIDを永続化する
-        # session.title はクロージャ外で取得済みのため再フェッチ不要
-        state.sqlite.update_chat_session(session_id, title=session.title, model_id=effective_model_id)
+        # effective_title はクロージャ外で解決済み（自動タイトル適用後）
+        state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)
 
         # 完了イベントを送信
         done_data = json.dumps({

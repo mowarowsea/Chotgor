@@ -17,6 +17,7 @@ import {
   streamGroupMessage,
   fetchDrifts,
   fetchCharacters,
+  updateSessionTitle,
 } from "./api";
 import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent, Drift, Character } from "./api";
 import Sidebar from "./components/Sidebar";
@@ -193,6 +194,16 @@ export default function App() {
       setMessages([]);
       // リロード後に同じセッションを復元できるようにハッシュを更新する
       window.location.hash = session.id;
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  /** セッションタイトル変更。 */
+  const handleRenameSession = useCallback(async (sessionId: string, newTitle: string) => {
+    try {
+      const updated = await updateSessionTitle(sessionId, newTitle);
+      setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, title: updated.title } : s));
     } catch (e) {
       setError(String(e));
     }
@@ -457,6 +468,7 @@ export default function App() {
         onNewChat={handleNewChat}
         onNewGroupChat={handleNewGroupChat}
         onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">

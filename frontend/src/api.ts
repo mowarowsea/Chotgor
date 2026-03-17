@@ -113,6 +113,17 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!res.ok) throw new Error("セッションの削除に失敗しました");
 }
 
+/** セッションのタイトルを更新する。 */
+export async function updateSessionTitle(sessionId: string, title: string): Promise<Session> {
+  const res = await fetch(`/api/chat/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error("タイトルの更新に失敗しました");
+  return res.json();
+}
+
 /** SSEストリームイベントの型定義。 */
 export type StreamEvent =
   | { type: "chunk"; content: string }
