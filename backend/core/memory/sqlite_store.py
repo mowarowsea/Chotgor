@@ -94,6 +94,7 @@ class Character(Base):
     enabled_providers = Column(JSON, nullable=False, default=dict)
     ghost_model = Column(String, nullable=True)  # digest/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
+    switch_angle_enabled = Column(Integer, nullable=False, default=0)  # 1=ON, 0=OFF
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -186,6 +187,7 @@ class SQLiteStore:
                 "ALTER TABLE characters ADD COLUMN image_data TEXT",
                 "ALTER TABLE characters ADD COLUMN ghost_model TEXT",
                 "ALTER TABLE llm_model_presets ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'default'",
+                "ALTER TABLE characters ADD COLUMN switch_angle_enabled INTEGER NOT NULL DEFAULT 0",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -297,6 +299,7 @@ class SQLiteStore:
         enabled_providers: Optional[dict] = None,
         ghost_model: Optional[str] = None,
         image_data: Optional[str] = None,
+        switch_angle_enabled: bool = False,
     ) -> Character:
         """キャラクターを新規作成する。"""
         with self.get_session() as session:
@@ -309,6 +312,7 @@ class SQLiteStore:
                 enabled_providers=enabled_providers or {},
                 ghost_model=ghost_model,
                 image_data=image_data,
+                switch_angle_enabled=1 if switch_angle_enabled else 0,
             )
             session.add(char)
             session.commit()

@@ -14,7 +14,13 @@ Flow:
   6. デバッグログ
 """
 
-from typing import Union
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import TYPE_CHECKING, Union
+
+if TYPE_CHECKING:
+    from ..tools import ToolExecutor
 
 from ..debug_logger import log_front_output
 from ..memory.drift_manager import DriftManager
@@ -26,6 +32,7 @@ from ..tools import ToolExecutor
 from ..web_fetch import fetch_urls, find_urls
 from .drifter import extract as drift_extract
 from .models import ChatRequest
+from .switcher import extract as switch_extract
 
 
 def extract_text_content(content: Union[str, list, None]) -> str:
@@ -80,6 +87,80 @@ class ChatService:
             except Exception:
                 pass
         return clean
+
+    def _extract_switch_info(
+        self, tool_executor: "ToolExecutor | None", clean_text: str, has_angle_presets: bool
+    ) -> tuple[str, tuple[str, str] | None]:
+        """switch_angle リクエストを tool_executor またはタグから抽出する。
+
+        tool-use 方式（SUPPORTS_TOOLS=True）は ToolExecutor.switch_request を確認する。
+        タグ方式（SUPPORTS_TOOLS=False）は [SWITCH_ANGLE:...] マーカーをスキャンする。
+        available_presets が空の場合はスキャンをスキップする。
+
+        Args:
+            tool_executor: tool-use 方式の場合は ToolExecutor インスタンス、タグ方式は None。
+            clean_text: carve/drift 処理済みの応答テキスト。
+            has_angle_presets: available_presets が非空かどうか。
+
+        Returns:
+            tuple:
+                clean_text (str): タグを除去したテキスト（タグ方式のみ変化する）。
+                switch_info (tuple[str, str] | None): (preset_name, self_instruction) または None。
+        """
+        if tool_executor is not None:
+            return clean_text, tool_executor.switch_request
+        # タグ方式: available_presets が空なら parse をスキップする
+        if not has_angle_presets:
+            return clean_text, None
+        return switch_extract(clean_text)
+
+    def _build_switched_request(
+        self, original: ChatRequest, preset_name: str, self_instruction: str
+    ) -> ChatRequest | None:
+        """switch_angle 後の再ディスパッチ用 ChatRequest を構築する。
+
+        available_presets からプリセット名で一致するエントリを検索し、
+        プロバイダー・モデル・指針を差し替えた新しい ChatRequest を返す。
+        再ディスパッチでは無限ループ防止のため available_presets を空にする。
+
+        Args:
+            original: 元のリクエスト。
+            preset_name: 切り替え先プリセット名。
+            self_instruction: 切り替え後モデルへの自己指針。
+
+        Returns:
+            新しい ChatRequest。preset_name が見つからない場合は None。
+        """
+        preset = next(
+            (p for p in original.available_presets if p.get("preset_name") == preset_name),
+            None,
+        )
+        if preset is None:
+            return None
+
+        # セッションの SELF_DRIFT をリセットし、新たな self_instruction を設定する
+        if self.drift_manager and original.session_id:
+            try:
+                self.drift_manager.reset_drifts(original.session_id, original.character_id)
+                if self_instruction:
+                    self.drift_manager.add_drift(
+                        original.session_id, original.character_id, self_instruction
+                    )
+            except Exception:
+                pass
+
+        return replace(
+            original,
+            provider=preset["provider"],
+            model=preset.get("model_id", ""),
+            provider_additional_instructions=preset.get("additional_instructions", ""),
+            thinking_level=preset.get("thinking_level", "default"),
+            current_preset_name=preset_name,
+            # 切り替え後の自己指針を active_drifts に直接セットする
+            active_drifts=[self_instruction] if self_instruction else [],
+            # 再ディスパッチでは switch_angle を禁止する（無限ループ防止）
+            available_presets=[],
+        )
 
     async def execute(self, request: ChatRequest) -> str:
         """LLMにディスパッチして応答テキストを返す。SSEを知らない。"""
@@ -142,11 +223,14 @@ class ChatService:
             time_since_last_interaction=request.time_since_last_interaction,
             active_drifts=active_drifts or None,
             use_tools=provider_impl.SUPPORTS_TOOLS,
+            available_presets=request.available_presets or None,
+            current_preset_name=request.current_preset_name,
         )
 
         # --- 4. プロバイダーへディスパッチ ---
         # SUPPORTS_TOOLS=True のプロバイダーはtool-useで記憶・DRIFTを操作する。
         # それ以外（Claude CLI等）は従来のマーカー方式にフォールバックする。
+        tool_executor = None
         if provider_impl.SUPPORTS_TOOLS:
             tool_executor = ToolExecutor(
                 character_id=request.character_id,
@@ -171,6 +255,15 @@ class ChatService:
 
             # --- 5b. SELF_DRIFT マーカーを処理する ---
             clean_text = self._apply_drifts(clean_text, request)
+
+        # --- 5c. switch_angle の処理 ---
+        clean_text, switch_info = self._extract_switch_info(
+            tool_executor, clean_text, bool(request.available_presets)
+        )
+        if switch_info:
+            switched = self._build_switched_request(request, *switch_info)
+            if switched is not None:
+                return await self.execute(switched)
 
         log_front_output(clean_text)
 
@@ -271,12 +364,15 @@ class ChatService:
             time_since_last_interaction=request.time_since_last_interaction,
             active_drifts=active_drifts or None,
             use_tools=provider_impl.SUPPORTS_TOOLS,
+            available_presets=request.available_presets or None,
+            current_preset_name=request.current_preset_name,
         )
 
         # --- 4. プロバイダーへストリーミングディスパッチ ---
         # SUPPORTS_TOOLS=True のプロバイダーはtool-useで記憶・DRIFTを操作する。
         # ストリーミングモードでもtool-useはバッファリング（思考ブロックのリアルタイム送信は非対応）。
         # それ以外（Claude CLI等）は従来のストリーミング＋マーカー方式を維持する。
+        tool_executor = None
         if provider_impl.SUPPORTS_TOOLS:
             tool_executor = ToolExecutor(
                 character_id=request.character_id,
@@ -308,6 +404,20 @@ class ChatService:
 
             # --- 5b. SELF_DRIFT マーカーを処理する ---
             clean_text = self._apply_drifts(clean_text, request)
+
+        # --- 5c. switch_angle の処理 ---
+        clean_text, switch_info = self._extract_switch_info(
+            tool_executor, clean_text, bool(request.available_presets)
+        )
+        if switch_info:
+            switched = self._build_switched_request(request, *switch_info)
+            if switched is not None:
+                # 切り替え後のプロバイダーで再ディスパッチし、そのイベントをすべて転送する
+                async for event in self.execute_stream(switched):
+                    yield event
+                # API 層がセッションの model_id を更新できるよう切り替え情報を通知する
+                yield ("angle_switched", f"{request.character_name}@{switch_info[0]}")
+                return
 
         log_front_output(clean_text)
 

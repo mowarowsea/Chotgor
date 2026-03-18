@@ -154,12 +154,14 @@ async def create_character(request: Request):
     for pid in preset_ids:
         enabled_providers[pid] = {
             "additional_instructions": form.get(f"ai_{pid}", ""),
+            "when_to_switch": form.get(f"wts_{pid}", ""),
         }
 
     image_data = await _read_image_data(form)
 
     char_id = str(uuid.uuid4())
     ghost_model = form.get("ghost_model") or None
+    switch_angle_enabled = bool(form.get("switch_angle_enabled"))
 
     request.app.state.sqlite.create_character(
         character_id=char_id,
@@ -170,6 +172,7 @@ async def create_character(request: Request):
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         image_data=image_data,
+        switch_angle_enabled=switch_angle_enabled,
     )
     return RedirectResponse(url="/ui/", status_code=303)
 
@@ -201,6 +204,7 @@ async def update_character(request: Request, character_id: str):
     for pid in preset_ids:
         enabled_providers[pid] = {
             "additional_instructions": form.get(f"ai_{pid}", ""),
+            "when_to_switch": form.get(f"wts_{pid}", ""),
         }
 
     char = request.app.state.sqlite.get_character(character_id)
@@ -208,6 +212,7 @@ async def update_character(request: Request, character_id: str):
     existing_config["digest_delete_originals"] = bool(form.get("digest_delete_originals"))
 
     ghost_model = form.get("ghost_model") or None
+    switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
 
     update_kwargs: dict = dict(
         name=(form.get("name") or "").strip(),
@@ -216,6 +221,7 @@ async def update_character(request: Request, character_id: str):
         cleanup_config=existing_config,
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
+        switch_angle_enabled=switch_angle_enabled,
     )
     new_image = await _read_image_data(form)
     if new_image:

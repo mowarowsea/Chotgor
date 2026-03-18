@@ -87,6 +87,50 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 """
 
 
+def _build_switch_angle_block(
+    available_presets: list[dict],
+    current_preset_name: str,
+    use_tools: bool,
+) -> str:
+    """switch_angle ツールの説明ブロックを動的に構築する。
+
+    Args:
+        available_presets: 利用可能なプリセット情報リスト。
+        current_preset_name: 現在使用中のプリセット名。
+        use_tools: True なら tool-use 形式、False ならタグ形式の説明を付与する。
+
+    Returns:
+        システムプロンプトに挿入するテキストブロック。
+    """
+    lines = ["## プリセット切り替え (switch_angle)"]
+    if current_preset_name:
+        lines.append(f"現在のプリセット: **{current_preset_name}**")
+    lines.append("")
+    lines.append("切り替え可能なプリセット:")
+    for preset in available_presets:
+        name = preset.get("preset_name", "")
+        when = preset.get("when_to_switch", "").strip()
+        if when:
+            lines.append(f"- **{name}**: {when}")
+        else:
+            lines.append(f"- **{name}**")
+    lines.append("")
+    if use_tools:
+        lines.append(
+            "プリセットを切り替えたいと感じたら `switch_angle` ツールを呼び出してください。\n"
+            "- `preset_name`: 上記リストにあるプリセット名\n"
+            "- `self_instruction`: 切り替え後のプリセットへの自己指針（どのように応答するか）"
+        )
+    else:
+        lines.append(
+            "プリセットを切り替えたいと感じたら、返答の**一番最後に**以下の形式で記述してください。\n"
+            "    [SWITCH_ANGLE:preset_name|self_instruction]\n"
+            "例: [SWITCH_ANGLE:gemini2FlashLite|軽くさっぱりと応答する]\n"
+            "`[SWITCH_ANGLE:...]` の行はユーザーには見えません。"
+        )
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     character_system_prompt: str,
     recalled_memories: Optional[list[dict]] = None,
@@ -99,21 +143,21 @@ def build_system_prompt(
     time_since_last_interaction: Optional[str] = None,
     active_drifts: Optional[list[str]] = None,
     use_tools: bool = False,
+    available_presets: Optional[list[dict]] = None,
+    current_preset_name: str = "",
 ) -> str:
     """Build the full system prompt for a character.
 
     Blocks:
         1. Character definition (user-defined)
-        2. Recalled memories (RAG)
-        3. Fetched web content (optional, from URLs in user message)
-        4. Character-specific meta instructions (optional)
-        5. Provider-specific additional instructions (optional)
         2. Time Context (Optional)
         3. Recalled memories (RAG)
         4. Fetched web content (optional, from URLs in user message)
         5. Character-specific meta instructions (optional)
         6. Provider-specific additional instructions (optional)
-        7. Chotgor memory system instructions (always last)
+        7. SELF_DRIFT 指針 (optional)
+        8. Chotgor memory system instructions (always last)
+           + switch_angle ブロック (available_presets が非空の場合のみ)
     """
     blocks = []
 
@@ -182,10 +226,16 @@ def build_system_prompt(
     # Block 5: Chotgor memory system instructions (always last)
     # use_tools=True のときはツール呼び出し用の簡潔な説明を使う。
     # use_tools=False（Claude CLI等）のときはタグ方式の詳細ガイドを使う。
+    # switch_angle ブロックは available_presets が非空の場合のみ末尾に追記する。
     if use_tools:
-        blocks.append(CHOTGOR_TOOLS_BLOCK)
+        chotgor_block = CHOTGOR_TOOLS_BLOCK
     else:
         chotgor_block = CHOTGOR_BLOCK3_TEMPLATE.strip() + "\n\n" + CHOTGOR_SELF_DRIFT_GUIDE.strip()
-        blocks.append(chotgor_block)
+
+    if available_presets:
+        switch_block = _build_switch_angle_block(available_presets, current_preset_name, use_tools)
+        chotgor_block = chotgor_block + "\n\n---\n\n" + switch_block
+
+    blocks.append(chotgor_block)
 
     return "\n\n---\n\n".join(blocks)

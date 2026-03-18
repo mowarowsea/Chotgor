@@ -32,3 +32,10 @@ class ChatRequest:
     # session_id が空の場合はdrift処理をスキップする。
     session_id: str = ""
     active_drifts: list = field(default_factory=list)
+    # switch_angle: このキャラクターが切り替え可能なプリセット一覧。
+    # 各エントリは {preset_id, preset_name, provider, model_id, additional_instructions,
+    #               thinking_level, when_to_switch} を持つ dict。
+    # 空の場合は switch_angle ツール・タグを使用不可とする。
+    available_presets: list[dict] = field(default_factory=list)
+    # 現在使用中のプリセット名（システムプロンプトの「現在のアングル」表示に使用）。
+    current_preset_name: str = ""

@@ -1,7 +1,7 @@
-"""Chotgor MCPツール定義 — 記憶・SELF_DRIFTのツールスキーマとexecutor。
+"""Chotgor MCPツール定義 — 記憶・SELF_DRIFT・アングル切り替えのツールスキーマとexecutor。
 
 タグ方式（[MEMORY:...] マーカー）に代わり、LLMのtool-use（function calling）で
-記憶・SELF_DRIFTを操作するための定義を提供する。
+記憶・SELF_DRIFT・switch_angle を操作するための定義を提供する。
 
 対応プロバイダー: Anthropic API、OpenAI API（xAI含む）
 非対応プロバイダー（Claude CLI、Ollama）は従来のマーカー方式にフォールバックする。
@@ -73,6 +73,22 @@ _DRIFT_RESET_SCHEMA: dict = {
     "required": [],
 }
 
+# --- switch_angle ツールのパラメータスキーマ ---
+_SWITCH_ANGLE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "preset_name": {
+            "type": "string",
+            "description": "切り替え先のプリセット名。利用可能なプリセットはシステムプロンプトに記載されている。",
+        },
+        "self_instruction": {
+            "type": "string",
+            "description": "切り替え後のプリセットに渡す自己指針テキスト。どのように応答するかを一言で。",
+        },
+    },
+    "required": ["preset_name", "self_instruction"],
+}
+
 # Anthropic形式のツール定義リスト
 ANTHROPIC_TOOLS: list[dict] = [
     {
@@ -95,6 +111,15 @@ ANTHROPIC_TOOLS: list[dict] = [
         "name": "drift_reset",
         "description": "現在有効な全SELF_DRIFT指針をリセットする。",
         "input_schema": _DRIFT_RESET_SCHEMA,
+    },
+    {
+        "name": "switch_angle",
+        "description": (
+            "プリセット（モデル）を切り替える。キャラクターは変わらない。"
+            "切り替え後のモデルがこの会話に改めて応答する。"
+            "利用可能なプリセットと切り替えタイミングはシステムプロンプトに記載されている。"
+        ),
+        "input_schema": _SWITCH_ANGLE_SCHEMA,
     },
 ]
 
@@ -167,6 +192,9 @@ class ToolExecutor:
         self.session_id = session_id
         self.memory_manager = memory_manager
         self.drift_manager = drift_manager
+        # switch_angle が呼ばれた場合に (preset_name, self_instruction) を格納する。
+        # generate_with_tools() ループがこれを検知して即中断する。
+        self.switch_request: tuple[str, str] | None = None
 
     def execute(self, tool_name: str, tool_input: dict) -> str:
         """ツール名と入力を受け取り実行して結果テキストを返す。
@@ -188,6 +216,11 @@ class ToolExecutor:
             return self._drift(content=str(tool_input.get("content", "")))
         if tool_name == "drift_reset":
             return self._drift_reset()
+        if tool_name == "switch_angle":
+            return self._switch_angle(
+                preset_name=str(tool_input.get("preset_name", "")),
+                self_instruction=str(tool_input.get("self_instruction", "")),
+            )
         return f"[Unknown tool: {tool_name}]"
 
     def _carve_memory(self, content: str, category: str, impact: float) -> str:
@@ -225,3 +258,13 @@ class ToolExecutor:
             return "指針をリセットした。"
         except Exception as e:
             return f"[drift_reset error: {e}]"
+
+    def _switch_angle(self, preset_name: str, self_instruction: str) -> str:
+        """switch_angle ツールの実装。アングル切り替えリクエストを記録する。
+
+        実際の切り替え処理（再ディスパッチ）は service.py が担う。
+        ここでは switch_request にリクエストを格納するだけ。
+        generate_with_tools() ループがこれを検知して即中断する。
+        """
+        self.switch_request = (preset_name, self_instruction)
+        return f"アングルを {preset_name} に切り替えます。"

@@ -178,6 +178,11 @@ class BaseLLMProvider:
                 for tc in result.tool_calls
             }
 
+            # switch_angle が呼ばれた場合はループを即中断する。
+            # 再ディスパッチは呼び出し元 (service.py) が担う。
+            if tool_executor.switch_request:
+                break
+
             # プロバイダー固有のフォーマットでメッセージリストを拡張する
             api_messages = self._extend_messages_with_results(api_messages, result, results)
 

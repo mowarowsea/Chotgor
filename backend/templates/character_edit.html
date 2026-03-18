@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}{% if character %}Edit {{ character.name }}{% else %}New Character{% endif %} &mdash; Chotgor{% endblock %}
+{% block title %}{% if character %}Edit {{ character.name }}{% else %}New Character{% endif %} &mdash; Chotgor{%
+endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -20,16 +21,14 @@
                 {% else %}
                 <div class="icon-placeholder">?</div>
                 {% endif %}
-                <input type="file" id="image" name="image" accept="image/*"
-                       class="form-control" style="flex:1">
+                <input type="file" id="image" name="image" accept="image/*" class="form-control" style="flex:1">
             </div>
         </div>
 
         <div class="form-group">
             <label for="name">Character Name</label>
             <input type="text" id="name" name="name" class="form-control"
-                   value="{% if character %}{{ character.name }}{% endif %}"
-                   placeholder="e.g. Aria, Sage, Luna" required>
+                value="{% if character %}{{ character.name }}{% endif %}" placeholder="e.g. Aria, Sage, Luna" required>
         </div>
 
         <div class="form-group">
@@ -37,9 +36,8 @@
                 Character Definition
                 <span class="label-hint">Block 1: Who is this character?</span>
             </label>
-            <textarea id="system_prompt_block1" name="system_prompt_block1"
-                      class="form-control textarea-tall"
-                      placeholder="Describe the character's personality, background, speaking style, values, and how they should behave...">{% if character %}{{ character.system_prompt_block1 }}{% endif %}</textarea>
+            <textarea id="system_prompt_block1" name="system_prompt_block1" class="form-control textarea-tall"
+                placeholder="Describe the character's personality, background, speaking style, values, and how they should behave...">{% if character %}{{ character.system_prompt_block1 }}{% endif %}</textarea>
         </div>
 
         <div class="form-group">
@@ -47,12 +45,20 @@
                 Meta Instructions
                 <span class="label-hint">Optional: additional behavioral guidelines (all models)</span>
             </label>
-            <textarea id="meta_instructions" name="meta_instructions"
-                      class="form-control textarea-medium"
-                      placeholder="Optional: memory usage preferences, response style guidelines, topics to avoid...">{% if character %}{{ character.meta_instructions }}{% endif %}</textarea>
+            <textarea id="meta_instructions" name="meta_instructions" class="form-control textarea-medium"
+                placeholder="Optional: memory usage preferences, response style guidelines, topics to avoid...">{% if character %}{{ character.meta_instructions }}{% endif %}</textarea>
         </div>
 
         <!-- Model accordion -->
+        <div class="form-group" id="switch-angle-group" style="display:none">
+            <label>
+                <input type="checkbox" id="switch_angle_enabled" name="switch_angle_enabled" value="1" {% if character
+                    and character.switch_angle_enabled %}checked{% endif %}>
+                switch_angle を使用する
+                <span class="label-hint">ONにするとアングル切り替えが有効になり、when_to_switch フィールドが表示されます</span>
+            </label>
+        </div>
+
         <div class="form-group">
             <label>利用モデル
                 <span class="label-hint">有効にしたモデルが OpenWebUI のモデルリストに表示されます</span>
@@ -68,14 +74,23 @@
                         <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
                         <strong>{{ preset.name }}</strong>
                         <span class="provider-badge">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
-                        <button type="button" class="btn-remove" onclick="removePreset(this, '{{ preset.id }}')">✕</button>
+                        <button type="button" class="btn-remove"
+                            onclick="removePreset(this, '{{ preset.id }}')">✕</button>
                     </div>
                     <div class="accordion-body">
                         <div class="form-group">
                             <label>Additional Instructions
                                 <span class="label-hint">このモデル向けの追記指示（省略可）</span>
                             </label>
-                            <textarea name="ai_{{ preset.id }}" class="form-control textarea-medium">{{ cfg.get('additional_instructions', '') }}</textarea>
+                            <textarea name="ai_{{ preset.id }}"
+                                class="form-control textarea-medium">{{ cfg.get('additional_instructions', '') }}</textarea>
+                        </div>
+                        <div class="form-group when-to-switch-field">
+                            <label>このモデルに切り替えるタイミング
+                                <span class="label-hint">switch_angle ツールの判断基準としてシステムプロンプトに挿入される（省略可）</span>
+                            </label>
+                            <textarea name="wts_{{ preset.id }}"
+                                class="form-control textarea-small">{{ cfg.get('when_to_switch', '') }}</textarea>
                         </div>
                     </div>
                 </div>
@@ -87,10 +102,10 @@
                 <select id="preset-select" class="form-control">
                     <option value="">-- モデルを選択 --</option>
                     {% for preset in model_presets %}
-                    <option value="{{ preset.id }}"
-                            data-name="{{ preset.name }}"
-                            data-provider-label="{{ provider_labels.get(preset.provider, preset.provider) }}"
-                            {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}disabled{% endif %}>
+                    <option value="{{ preset.id }}" data-name="{{ preset.name }}"
+                        data-provider-label="{{ provider_labels.get(preset.provider, preset.provider) }}" {% if
+                        character and (character.enabled_providers or {}).get(preset.id) is not none %}disabled{% endif
+                        %}>
                         {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
                     </option>
                     {% endfor %}
@@ -115,8 +130,8 @@
                 <option value="">(未設定)</option>
                 {% for preset in model_presets %}
                 {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}
-                <option value="{{ preset.id }}"
-                        {% if character and character.ghost_model == preset.id %}selected{% endif %}>
+                <option value="{{ preset.id }}" {% if character and character.ghost_model==preset.id %}selected{% endif
+                    %}>
                     {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
                 </option>
                 {% endif %}
@@ -126,8 +141,8 @@
 
         <div class="form-group">
             <label>
-                <input type="checkbox" name="digest_delete_originals"
-                       {% if character and character.cleanup_config and character.cleanup_config.get('digest_delete_originals') %}checked{% endif %}>
+                <input type="checkbox" name="digest_delete_originals" {% if character and character.cleanup_config and
+                    character.cleanup_config.get('digest_delete_originals') %}checked{% endif %}>
                 ダイジェスト後、元の記憶を削除する
             </label>
         </div>
@@ -152,123 +167,164 @@
 </div>
 
 <style>
-.image-upload-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-.icon-preview {
-    width: 72px;
-    height: 72px;
-    object-fit: cover;
-    border-radius: 50%;
-    border: 2px solid var(--border-color, #ddd);
-    flex-shrink: 0;
-}
-.icon-placeholder {
-    width: 72px;
-    height: 72px;
-    border-radius: 50%;
-    border: 2px dashed var(--border-color, #ddd);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 28px;
-    color: var(--text-muted, #aaa);
-    flex-shrink: 0;
-}
+    .image-upload-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
 
-.accordion {
-    border: 1px solid var(--border-color, #ddd);
-    border-radius: 6px;
-    overflow: hidden;
-    margin-bottom: 8px;
-}
-.accordion:empty {
-    display: none;
-}
-.accordion-item + .accordion-item {
-    border-top: 1px solid var(--border-color, #ddd);
-}
-.accordion-header {
-    display: flex;
-    align-items: center;
-    padding: 10px 14px;
-    background: var(--surface-alt, #f8f8f8);
-    gap: 10px;
-}
-.accordion-toggle {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 14px;
-    color: var(--text-muted, #666);
-    padding: 0 4px;
-    flex-shrink: 0;
-}
-.provider-badge {
-    font-size: 12px;
-    color: var(--text-muted, #888);
-    flex: 1;
-}
-.btn-remove {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 14px;
-    color: var(--text-muted, #999);
-    padding: 0 4px;
-    flex-shrink: 0;
-}
-.btn-remove:hover {
-    color: #c00;
-}
-.accordion-body {
-    padding: 14px 16px;
-    background: var(--surface, #fff);
-}
-.accordion-body .form-group:last-child {
-    margin-bottom: 0;
-}
+    .icon-preview {
+        width: 72px;
+        height: 72px;
+        object-fit: cover;
+        border-radius: 50%;
+        border: 2px solid var(--border-color, #ddd);
+        flex-shrink: 0;
+    }
 
-.add-model-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-}
-.add-model-row .form-control {
-    flex: 1;
-}
+    .icon-placeholder {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        border: 2px dashed var(--border-color, #ddd);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        color: var(--text-muted, #aaa);
+        flex-shrink: 0;
+    }
+
+    .accordion {
+        border: 1px solid var(--border-color, #ddd);
+        border-radius: 6px;
+        overflow: hidden;
+        margin-bottom: 8px;
+    }
+
+    .accordion:empty {
+        display: none;
+    }
+
+    .accordion-item+.accordion-item {
+        border-top: 1px solid var(--border-color, #ddd);
+    }
+
+    .accordion-header {
+        display: flex;
+        align-items: center;
+        padding: 10px 14px;
+        background: var(--surface-alt, #f8f8f8);
+        gap: 10px;
+    }
+
+    .accordion-toggle {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        color: var(--text-muted, #666);
+        padding: 0 4px;
+        flex-shrink: 0;
+    }
+
+    .provider-badge {
+        font-size: 12px;
+        color: var(--text-muted, #888);
+        flex: 1;
+    }
+
+    .btn-remove {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        color: var(--text-muted, #999);
+        padding: 0 4px;
+        flex-shrink: 0;
+    }
+
+    .btn-remove:hover {
+        color: #c00;
+    }
+
+    .accordion-body {
+        padding: 14px 16px;
+        background: var(--surface, #fff);
+    }
+
+    .accordion-body .form-group:last-child {
+        margin-bottom: 0;
+    }
+
+    .add-model-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    .add-model-row .form-control {
+        flex: 1;
+    }
 </style>
 
 <script>
-function toggleAccordion(btn) {
-    const body = btn.closest('.accordion-item').querySelector('.accordion-body');
-    body.style.display = body.style.display === 'none' ? 'block' : 'none';
-}
+    function toggleAccordion(btn) {
+        const body = btn.closest('.accordion-item').querySelector('.accordion-body');
+        body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    }
 
-function removePreset(btn, presetId) {
-    btn.closest('.accordion-item').remove();
-    const opt = document.querySelector(`#preset-select option[value="${presetId}"]`);
-    if (opt) opt.disabled = false;
-}
+    /**
+     * アコーディオン内のプリセット数をもとに switch-angle チェックボックスの表示を更新する。
+     * プリセットが2件以上あれば表示し、1件以下なら非表示にする。
+     */
+    function updateSwitchAngleVisibility() {
+        const count = document.querySelectorAll('#model-accordion .accordion-item').length;
+        const group = document.getElementById('switch-angle-group');
+        if (count >= 2) {
+            group.style.display = '';
+        } else {
+            group.style.display = 'none';
+            // プリセットが1つ以下の場合はチェックをOFFにしてwhen_to_switchも隠す
+            const cb = document.getElementById('switch_angle_enabled');
+            if (cb) cb.checked = false;
+            updateWhenToSwitchVisibility(false);
+        }
+    }
 
-function addPreset() {
-    const sel = document.getElementById('preset-select');
-    const opt = sel.options[sel.selectedIndex];
-    if (!opt || !opt.value) return;
+    /**
+     * when-to-switch フィールドの表示・非表示を切り替える。
+     * @param {boolean} show - true なら表示、false なら非表示
+     */
+    function updateWhenToSwitchVisibility(show) {
+        document.querySelectorAll('.when-to-switch-field').forEach(el => {
+            el.style.display = show ? '' : 'none';
+        });
+    }
 
-    const presetId = opt.value;
-    const name = opt.dataset.name;
-    const providerLabel = opt.dataset.providerLabel;
+    function removePreset(btn, presetId) {
+        btn.closest('.accordion-item').remove();
+        const opt = document.querySelector(`#preset-select option[value="${presetId}"]`);
+        if (opt) opt.disabled = false;
+        updateSwitchAngleVisibility();
+    }
 
-    if (document.querySelector(`.accordion-item[data-preset-id="${presetId}"]`)) return;
+    function addPreset() {
+        const sel = document.getElementById('preset-select');
+        const opt = sel.options[sel.selectedIndex];
+        if (!opt || !opt.value) return;
 
-    const accordion = document.getElementById('model-accordion');
-    const item = document.createElement('div');
-    item.className = 'accordion-item';
-    item.dataset.presetId = presetId;
-    item.innerHTML = `
+        const presetId = opt.value;
+        const name = opt.dataset.name;
+        const providerLabel = opt.dataset.providerLabel;
+
+        if (document.querySelector(`.accordion-item[data-preset-id="${presetId}"]`)) return;
+
+        const accordion = document.getElementById('model-accordion');
+        const item = document.createElement('div');
+        item.className = 'accordion-item';
+        item.dataset.presetId = presetId;
+        item.innerHTML = `
         <input type="hidden" name="preset_ids" value="${presetId}">
         <div class="accordion-header">
             <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
@@ -277,18 +333,38 @@ function addPreset() {
             <button type="button" class="btn-remove" onclick="removePreset(this, '${presetId}')">✕</button>
         </div>
         <div class="accordion-body">
-            <div class="form-group" style="margin-bottom:0">
+            <div class="form-group">
                 <label>Additional Instructions
                     <span class="label-hint">このモデル向けの追記指示（省略可）</span>
                 </label>
                 <textarea name="ai_${presetId}" class="form-control textarea-medium"></textarea>
             </div>
+            <div class="form-group when-to-switch-field" style="margin-bottom:0">
+                <label>このモデルに切り替えるタイミング
+                    <span class="label-hint">switch_angle ツールの判断基準としてシステムプロンプトに挿入される（省略可）</span>
+                </label>
+                <textarea name="wts_${presetId}" class="form-control textarea-small"></textarea>
+            </div>
         </div>
     `;
-    accordion.appendChild(item);
+        accordion.appendChild(item);
 
-    opt.disabled = true;
-    sel.value = '';
-}
+        opt.disabled = true;
+        sel.value = '';
+        updateSwitchAngleVisibility();
+    }
+
+    // ページロード時の初期化
+    document.addEventListener('DOMContentLoaded', () => {
+        // switch_angle チェックボックスの表示状態を初期化する
+        updateSwitchAngleVisibility();
+
+        // チェックボックスの初期状態に合わせて when-to-switch フィールドを表示・非表示にする
+        const cb = document.getElementById('switch_angle_enabled');
+        if (cb) {
+            updateWhenToSwitchVisibility(cb.checked);
+            cb.addEventListener('change', () => updateWhenToSwitchVisibility(cb.checked));
+        }
+    });
 </script>
 {% endblock %}

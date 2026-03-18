@@ -98,6 +98,28 @@ async def _build_chat_request(request: Request, session, history_messages: list,
     messages = build_1on1_history(history_messages, state.sqlite, state.uploads_dir)
     messages.append(Message(role="user", content=user_content))
 
+    # switch_angle 用プリセット一覧を構築する。
+    # 条件: switch_angle_enabled=True かつ 有効プリセット数が2以上のときのみ有効化する。
+    enabled_providers = character.enabled_providers or {}
+    available_presets = []
+    if character.switch_angle_enabled and len(enabled_providers) > 1:
+        all_presets = state.sqlite.list_model_presets()
+        for p in all_presets:
+            if p.id == preset.id:
+                continue  # 現在のアングルは除外する
+            cfg = enabled_providers.get(p.id)
+            if cfg is None:
+                continue  # このキャラクターで無効のプリセットは除外する
+            available_presets.append({
+                "preset_id": p.id,
+                "preset_name": p.name,
+                "provider": p.provider,
+                "model_id": p.model_id,
+                "additional_instructions": cfg.get("additional_instructions", ""),
+                "thinking_level": p.thinking_level or "default",
+                "when_to_switch": cfg.get("when_to_switch", ""),
+            })
+
     return ChatRequest(
         character_id=character.id,
         character_name=character.name,
@@ -113,6 +135,8 @@ async def _build_chat_request(request: Request, session, history_messages: list,
         current_time_str=current_time_str,
         time_since_last_interaction=time_since_last_interaction,
         session_id=session.id,
+        available_presets=available_presets,
+        current_preset_name=preset.name,
     )
 
 
@@ -379,11 +403,13 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             ("memories", list[dict]) — 想起した記憶リスト
             ("thinking", str)        — 思考ブロック（リアルタイム）
             ("text", str)            — carve済みの応答テキスト（1回だけyield）
+            ("angle_switched", str)  — switch_angle 後の新 model_id
 
         SSEイベント形式:
             {"type": "reasoning", "content": "..."} — 思考・記憶（フロントで折りたたみ表示）
             {"type": "chunk",     "content": "..."} — 応答テキスト
         """
+        nonlocal effective_model_id
         full_text = ""
         accumulated_reasoning = ""
         try:
@@ -407,6 +433,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                     if content:
                         data = json.dumps({"type": "chunk", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
+                elif chunk_type == "angle_switched":
+                    # switch_angle が実行された: セッションの model_id を更新する
+                    effective_model_id = content
         except Exception as e:
             err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
             yield f"data: {err_data}\n\n"
