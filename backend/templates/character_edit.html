@@ -2,6 +2,10 @@
 {% block title %}{% if character %}Edit {{ character.name }}{% else %}New Character{% endif %} &mdash; Chotgor{%
 endblock %}
 
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
+{% endblock %}
+
 {% block content %}
 <div class="page-header">
     <h1>{% if character %}Edit: {{ character.name }}{% else %}New Character{% endif %}</h1>
@@ -12,18 +16,35 @@ endblock %}
     <form method="post" action="{{ action }}" enctype="multipart/form-data">
 
         <div class="form-group">
-            <label for="image">Character Icon
+            <label>Character Icon
                 <span class="label-hint">PNG / JPG / WebP — 2MB まで</span>
             </label>
             <div class="image-upload-row">
-                {% if character and character.image_data %}
-                <img src="{{ character.image_data }}" class="icon-preview" alt="current icon">
-                {% else %}
-                <div class="icon-placeholder">?</div>
-                {% endif %}
-                <input type="file" id="image" name="image" accept="image/*" class="form-control" style="flex:1">
+                <!-- アイコンプレビュー（クロップ確定後に差し替わる） -->
+                <div id="icon-preview-container">
+                    {% if character and character.image_data %}
+                    <img src="{{ character.image_data }}" class="icon-preview" alt="current icon">
+                    {% else %}
+                    <div class="icon-placeholder">?</div>
+                    {% endif %}
+                </div>
+                <!-- 実際にサーバへ送るファイルインプット（非表示） -->
+                <input type="file" id="image-file-input" name="image" accept="image/*" style="display:none">
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('image-file-input').click()">
+                        画像を選択
+                    </button>
+                    <button type="button" id="remove-image-btn" class="btn btn-secondary"
+                        style="{% if not (character and character.image_data) %}display:none{% endif %}"
+                        onclick="removeImage()">
+                        削除
+                    </button>
+                </div>
             </div>
         </div>
+
+        <!-- 画像削除フラグ（削除ボタン押下時に true をセット） -->
+        <input type="hidden" id="remove-image-flag" name="remove_image" value="">
 
         <div class="form-group">
             <label for="name">Character Name</label>
@@ -158,6 +179,27 @@ endblock %}
         </div>
     </form>
 
+    <!-- クロップモーダル -->
+    <div id="crop-modal" class="crop-modal-overlay" style="display:none">
+        <div class="crop-modal-card">
+            <h3 style="margin:0 0 14px; font-size:15px; color:var(--text, #eee)">アイコンをトリミング</h3>
+            <div class="crop-container">
+                <img id="crop-img" src="" alt="">
+            </div>
+            <!-- ズームスライダー -->
+            <div class="crop-zoom-row">
+                <span class="crop-zoom-label">縮小</span>
+                <input type="range" id="crop-zoom-slider" min="0" max="3" step="0.01" value="0"
+                    class="crop-zoom-slider">
+                <span class="crop-zoom-label">拡大</span>
+            </div>
+            <div class="crop-modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="cancelCrop()">キャンセル</button>
+                <button type="button" class="btn btn-primary" onclick="confirmCrop()">確定</button>
+            </div>
+        </div>
+    </div>
+
     {% if character %}
     <div class="info-box">
         <strong>Character ID:</strong> <code>{{ character.id }}</code><br>
@@ -193,6 +235,65 @@ endblock %}
         font-size: 28px;
         color: var(--text-muted, #aaa);
         flex-shrink: 0;
+    }
+
+    /* クロップモーダル */
+    .crop-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.85);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .crop-modal-card {
+        background: var(--surface, #1e1e2e);
+        border: 1px solid var(--border-color, #444);
+        border-radius: 12px;
+        padding: 20px;
+        width: min(420px, 92vw);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    }
+
+    .crop-container {
+        width: 100%;
+        height: 300px;
+        background: #111;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+
+    /* クロップボックスを円形に見せる */
+    .cropper-view-box,
+    .cropper-face {
+        border-radius: 50%;
+    }
+
+    .crop-zoom-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .crop-zoom-label {
+        font-size: 11px;
+        color: var(--text-muted, #aaa);
+        white-space: nowrap;
+    }
+
+    .crop-zoom-slider {
+        flex: 1;
+        accent-color: var(--accent, #6366f1);
+    }
+
+    .crop-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 14px;
     }
 
     .accordion {
@@ -366,5 +467,115 @@ endblock %}
             cb.addEventListener('change', () => updateWhenToSwitchVisibility(cb.checked));
         }
     });
+
+    // ================================================================
+    // アイコントリミング (Cropper.js)
+    // ================================================================
+
+    /** @type {Cropper|null} 現在のCropperインスタンス */
+    let _cropper = null;
+
+    /** ファイル選択時にクロップモーダルを開く。 */
+    document.getElementById('image-file-input').addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function (ev) {
+            const cropImg = document.getElementById('crop-img');
+            cropImg.src = ev.target.result;
+
+            document.getElementById('crop-modal').style.display = 'flex';
+
+            // 既存の Cropper を破棄して再生成する
+            if (_cropper) { _cropper.destroy(); _cropper = null; }
+            _cropper = new Cropper(cropImg, {
+                aspectRatio: 1,
+                viewMode: 1,
+                dragMode: 'move',
+                autoCropArea: 0.85,
+                restore: false,
+                guides: false,
+                center: false,
+                highlight: false,
+                cropBoxMovable: false,
+                cropBoxResizable: false,
+                toggleDragModeOnDblclick: false,
+                ready() {
+                    // スライダーの初期値をリセットする
+                    document.getElementById('crop-zoom-slider').value = 0;
+                },
+                zoom(e) {
+                    // ズームスライダーと連動する
+                    document.getElementById('crop-zoom-slider').value = e.detail.ratio;
+                },
+            });
+        };
+        reader.readAsDataURL(file);
+
+        // 同じファイルを再選択できるようにリセットする
+        this.value = '';
+    });
+
+    /** ズームスライダーの操作を Cropper に伝える。 */
+    document.getElementById('crop-zoom-slider').addEventListener('input', function () {
+        if (_cropper) _cropper.zoomTo(parseFloat(this.value));
+    });
+
+    /** クロップをキャンセルしてモーダルを閉じる。 */
+    function cancelCrop() {
+        document.getElementById('crop-modal').style.display = 'none';
+        if (_cropper) { _cropper.destroy(); _cropper = null; }
+    }
+
+    /**
+     * クロップ領域を確定する。
+     * canvas → PNG Blob → File として隠しファイルインプットにセットし、プレビューを更新する。
+     */
+    function confirmCrop() {
+        if (!_cropper) return;
+
+        const canvas = _cropper.getCroppedCanvas({ width: 256, height: 256 });
+        canvas.toBlob(function (blob) {
+            // DataTransfer 経由でファイルインプットに差し込む
+            const dt = new DataTransfer();
+            dt.items.add(new File([blob], 'icon.png', { type: 'image/png' }));
+            document.getElementById('image-file-input').files = dt.files;
+
+            // プレビューを更新する
+            const container = document.getElementById('icon-preview-container');
+            container.innerHTML = `<img src="${canvas.toDataURL()}" class="icon-preview" alt="preview">`;
+
+            // 削除フラグをクリアし、削除ボタンを表示する
+            document.getElementById('remove-image-flag').value = '';
+            document.getElementById('remove-image-btn').style.display = '';
+
+            cancelCrop();
+        }, 'image/png');
+    }
+
+    /**
+     * アイコンを削除する。
+     * プレビューをプレースホルダーに戻し、削除フラグを立てる。
+     */
+    function removeImage() {
+        // ファイルインプットをクリアする
+        const fileInput = document.getElementById('image-file-input');
+        fileInput.value = '';
+        // DataTransfer で空のファイルリストをセットする（ブラウザ互換）
+        try {
+            fileInput.files = new DataTransfer().files;
+        } catch (_) { /* noop */ }
+
+        // プレビューをプレースホルダーに戻す
+        const container = document.getElementById('icon-preview-container');
+        container.innerHTML = '<div class="icon-placeholder">?</div>';
+
+        // 削除フラグをセットし、ボタンを隠す
+        document.getElementById('remove-image-flag').value = '1';
+        document.getElementById('remove-image-btn').style.display = 'none';
+    }
 </script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
 {% endblock %}

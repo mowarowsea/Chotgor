@@ -1,9 +1,10 @@
 """Character CRUD REST API."""
 
+import base64
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from .schemas import CharacterCreate, CharacterUpdate
 
@@ -58,6 +59,22 @@ async def update_character(request: Request, character_id: str, body: CharacterU
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
     return _char_to_dict(char)
+
+
+@router.get("/{character_id}/image")
+async def get_character_image(request: Request, character_id: str):
+    """キャラクターのアバター画像をバイナリで返す。画像未設定の場合は404を返す。"""
+    char = request.app.state.sqlite.get_character(character_id)
+    if not char or not char.image_data:
+        raise HTTPException(status_code=404, detail="Image not found")
+    try:
+        # "data:{mime_type};base64,{b64}" 形式をデコードする
+        header, b64_data = char.image_data.split(",", 1)
+        mime_type = header.split(":")[1].split(";")[0]
+        image_bytes = base64.b64decode(b64_data)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Image data is corrupted")
+    return Response(content=image_bytes, media_type=mime_type)
 
 
 @router.delete("/{character_id}", status_code=204)

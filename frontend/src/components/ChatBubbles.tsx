@@ -149,6 +149,42 @@ function CopyButton({ text, className = "" }: { text: string; className?: string
 }
 
 // ---------------------------------------------------------------------------
+// CharacterAvatar
+// ---------------------------------------------------------------------------
+
+/**
+ * キャラクターアバター。
+ * imageUrl が指定されている場合は画像を表示し、未指定またはロード失敗時はイニシャルを表示する。
+ */
+export function CharacterAvatar({
+  characterName,
+  imageUrl,
+  bgClass = "bg-indigo-600",
+}: {
+  characterName: string;
+  /** アバター画像URL（省略時はイニシャル表示）。 */
+  imageUrl?: string;
+  /** イニシャル表示時の背景色 Tailwind クラス。 */
+  bgClass?: string;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  return (
+    <div className={`w-8 h-8 rounded-full ${bgClass} flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden`}>
+      {imageUrl && !imgFailed ? (
+        <img
+          src={imageUrl}
+          alt=""
+          className="w-full h-full object-cover"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        characterName.charAt(0)
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CharacterBubble
 // ---------------------------------------------------------------------------
 
@@ -165,6 +201,7 @@ export function CharacterBubble({
   nameColor = "text-indigo-400",
   sending = false,
   onRegenerate,
+  imageUrl,
 }: {
   characterName: string;
   content: string;
@@ -177,13 +214,13 @@ export function CharacterBubble({
   sending?: boolean;
   /** 再生成コールバック（省略時はボタン非表示）。 */
   onRegenerate?: () => void;
+  /** アバター画像URL（省略時はイニシャル表示）。 */
+  imageUrl?: string;
 }) {
   return (
     <div className="group" data-testid="character-bubble">
       <div className="flex gap-3 items-start">
-        <div className={`w-8 h-8 rounded-full ${avatarBg} flex items-center justify-center text-xs font-bold shrink-0`}>
-          {characterName.charAt(0)}
-        </div>
+        <CharacterAvatar characterName={characterName} imageUrl={imageUrl} bgClass={avatarBg} />
         <div className="max-w-[85%] sm:max-w-[70%] space-y-0.5">
           <p className={`text-xs font-medium ${nameColor} px-1`}>{characterName}</p>
           {reasoning && <ThinkingBlock content={reasoning} />}

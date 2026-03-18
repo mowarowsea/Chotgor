@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef } from "react";
 import type { ChatMessage } from "../api";
-import { CharacterBubble, UserBubble, ThinkingBlock } from "./ChatBubbles";
+import { CharacterBubble, CharacterAvatar, UserBubble, ThinkingBlock } from "./ChatBubbles";
 
 /** キャラクターごとのカラーパレット。GroupChatView から移設。 */
 const CHAR_COLORS = [
@@ -41,6 +41,8 @@ interface Props {
     emptyMessage?: string;
     /** メッセージ編集・再生成時のコールバック */
     onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
+    /** キャラクター名→IDのマップ。アバター画像URLの生成に使用する。 */
+    characterIdMap?: Record<string, string>;
 }
 
 /**
@@ -59,6 +61,7 @@ export default function MessageList({
     emptyMessage = "メッセージを送ってみてください",
     onHeaderVisibilityChange,
     onRetry,
+    characterIdMap = {},
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
     /** スクロール方向検知用: 直前のスクロール位置を記録する。 */
@@ -76,6 +79,12 @@ export default function MessageList({
     const headerTransitioningRef = useRef(false);
     /** ヘッダーアニメーションロック解除タイマーID。 */
     const headerTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    /** キャラクター名からアバター画像URLを生成する。IDが不明な場合は undefined を返す。 */
+    const getCharImageUrl = (charName: string): string | undefined => {
+        const id = characterIdMap[charName];
+        return id ? `/api/characters/${id}/image` : undefined;
+    };
 
     /** キャラクター名からカラーパレットのインデックスを返す。 */
     const getCharColor = (charName: string) => {
@@ -179,6 +188,7 @@ export default function MessageList({
                         avatarBg={color.bg}
                         nameColor={color.text}
                         sending={sending}
+                        imageUrl={getCharImageUrl(charName)}
                         onRegenerate={onRetry ? () => {
                             const precedingUser = [...messages]
                                 .slice(0, idx)
@@ -198,9 +208,7 @@ export default function MessageList({
                 const color = getCharColor(streamCharName);
                 return (
                     <div className="flex gap-3 items-start">
-                        <div className={`w-8 h-8 rounded-full ${color.bg} flex items-center justify-center text-xs font-bold shrink-0`}>
-                            {streamCharName.charAt(0)}
-                        </div>
+                        <CharacterAvatar characterName={streamCharName} imageUrl={getCharImageUrl(streamCharName)} bgClass={color.bg} />
                         <div className="max-w-[85%] sm:max-w-[70%] space-y-1">
                             <p className={`text-xs font-medium ${color.text} px-1`}>{streamCharName}</p>
                             {streamingReasoning && (
@@ -223,9 +231,7 @@ export default function MessageList({
                 const color = getCharColor(charName);
                 return (
                     <div className="flex gap-3 items-start">
-                        <div className={`w-8 h-8 rounded-full ${color.bg} flex items-center justify-center text-xs font-bold shrink-0`}>
-                            {charName.charAt(0)}
-                        </div>
+                        <CharacterAvatar characterName={charName} imageUrl={getCharImageUrl(charName)} bgClass={color.bg} />
                         <div className="space-y-0.5">
                             <p className={`text-xs font-medium ${color.text} px-1`}>{charName}</p>
                             <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-400 text-sm">

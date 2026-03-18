@@ -39,6 +39,8 @@ interface Props {
   onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
   /** スクロール方向変化コールバック。MessageList から App へ伝播する。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
+  /** キャラクター名→IDのマップ。アバター画像の表示に使用する。 */
+  characterIdMap?: Record<string, string>;
 }
 
 /** グループチャットのレイアウトコンポーネント。 */
@@ -55,6 +57,7 @@ export default function GroupChatView({
   onSend,
   onRetry,
   onHeaderVisibilityChange,
+  characterIdMap,
 }: Props) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -70,6 +73,7 @@ export default function GroupChatView({
         emptyMessage="グループチャットを始めましょう"
         onRetry={onRetry}
         onHeaderVisibilityChange={onHeaderVisibilityChange}
+        characterIdMap={characterIdMap}
       />
       <MessageInput
         sessionId={sessionId}

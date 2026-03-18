@@ -63,6 +63,8 @@ export default function App() {
   const activeCharacterId = drifts.length > 0 ? drifts[0].character_id : "";
   /** アクティブセッションがグループチャットかどうか。 */
   const isGroupSession = activeSession?.session_type === "group";
+  /** キャラクター名→IDのマップ。アバター画像URL生成用。 */
+  const characterIdMap = Object.fromEntries(characters.map((c) => [c.name, c.id]));
   /** グループチャット参加者情報（char_name・preset_name）。 */
   const groupParticipantEntries = (() => {
     if (!isGroupSession || !activeSession?.group_config) return [];
@@ -561,6 +563,7 @@ export default function App() {
             onSend={handleSend}
             onRetry={handleGroupRetry}
             onHeaderVisibilityChange={setHeaderVisible}
+            characterIdMap={characterIdMap}
           />
         ) : activeSessionId ? (
           <ChatView
@@ -575,6 +578,7 @@ export default function App() {
             onSend={handleSend}
             onRetry={handleRetry}
             onHeaderVisibilityChange={setHeaderVisible}
+            characterIdMap={characterIdMap}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm px-4 text-center">

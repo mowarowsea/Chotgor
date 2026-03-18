@@ -226,6 +226,9 @@ async def update_character(request: Request, character_id: str):
     new_image = await _read_image_data(form)
     if new_image:
         update_kwargs["image_data"] = new_image
+    elif form.get("remove_image"):
+        # 削除フラグが立っている場合は画像をクリアする
+        update_kwargs["image_data"] = None
 
     request.app.state.sqlite.update_character(character_id, **update_kwargs)
     return RedirectResponse(url="/ui/", status_code=303)
