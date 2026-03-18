@@ -2,21 +2,24 @@
 
 フロントエンドからの直接アクセスに対応する。
 セッション管理 + LLM呼び出しを担当する。
+
+画像管理: chat_images.py
+SELF_DRIFT: chat_drifts.py
 """
 
 import json
-import os
 import uuid
 from datetime import datetime
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..core.chat.models import ChatRequest, Message
 from ..core.debug_logger import log_front_output
-from ..core.utils import format_time_delta
+from ..core.time_awareness import compute_time_awareness
+from .resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from .utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -45,7 +48,13 @@ class MessageCreate(BaseModel):
     model_id: Optional[str] = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
 
 
-async def _build_chat_request(request: Request, session, history_messages: list, user_content: Union[str, list], model_id: Optional[str] = None) -> ChatRequest:
+async def _build_chat_request(
+    request: Request,
+    session,
+    history_messages: list,
+    user_content: Union[str, list],
+    model_id: Optional[str] = None,
+) -> ChatRequest:
     """セッション情報からChatRequestを構築する内部ヘルパー。
 
     Args:
@@ -53,63 +62,34 @@ async def _build_chat_request(request: Request, session, history_messages: list,
     """
     state = request.app.state
 
-    # model_id を {char_name}@{preset_name} にパース（引数指定があればそちらを優先）
     effective_id = model_id or session.model_id
-    if "@" not in effective_id:
-        raise HTTPException(status_code=400, detail="Invalid model_id format")
-    char_name, preset_name = effective_id.rsplit("@", 1)
+    char_name, preset_name = parse_model_id(effective_id)
 
-    # キャラクターをDBから取得（名前優先）
-    character = state.sqlite.get_character_by_name(char_name) or state.sqlite.get_character(char_name)
-    if not character:
-        raise HTTPException(status_code=404, detail=f"Character '{char_name}' not found")
-
-    # プリセットをDBから取得（名前優先）
-    preset = state.sqlite.get_model_preset_by_name(preset_name) or state.sqlite.get_model_preset(preset_name)
-    if preset is None:
-        raise HTTPException(status_code=404, detail=f"Model preset '{preset_name}' not found")
-
-    model_config = (character.enabled_providers or {}).get(preset.id)
-    if model_config is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Preset '{preset_name}' is not enabled for character '{char_name}'",
-        )
+    character = require_character(state.sqlite, char_name)
+    preset = require_preset(state.sqlite, preset_name)
+    model_config = require_model_config(character, preset)
 
     settings = state.sqlite.get_all_settings()
 
-    # 時刻計算
+    # 時刻認識
     now = datetime.now()
-    enable_time_awareness = settings.get("enable_time_awareness", "true") == "true"
-    current_time_str = ""
-    time_since_last_interaction = ""
-    if enable_time_awareness:
-        current_time_str = now.isoformat(timespec="seconds")
-        last_str = settings.get(f"last_interaction_{character.id}")
-        if last_str:
-            try:
-                last_dt = datetime.fromisoformat(last_str)
-                time_since_last_interaction = format_time_delta(now - last_dt)
-            except Exception:
-                pass
+    ta = compute_time_awareness(settings, character.id, state.sqlite, now)
     state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
 
-    # OpenAI role形式に変換（character → assistant、画像付きメッセージは vision 形式に変換）
     messages = build_1on1_history(history_messages, state.sqlite, state.uploads_dir)
     messages.append(Message(role="user", content=user_content))
 
-    # switch_angle 用プリセット一覧を構築する。
-    # 条件: switch_angle_enabled=True かつ 有効プリセット数が2以上のときのみ有効化する。
+    # switch_angle 用プリセット一覧を構築する
     enabled_providers = character.enabled_providers or {}
     available_presets = []
     if character.switch_angle_enabled and len(enabled_providers) > 1:
         all_presets = state.sqlite.list_model_presets()
         for p in all_presets:
             if p.id == preset.id:
-                continue  # 現在のアングルは除外する
+                continue
             cfg = enabled_providers.get(p.id)
             if cfg is None:
-                continue  # このキャラクターで無効のプリセットは除外する
+                continue
             available_presets.append({
                 "preset_id": p.id,
                 "preset_name": p.name,
@@ -131,9 +111,9 @@ async def _build_chat_request(request: Request, session, history_messages: list,
         provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",
         settings=settings,
-        enable_time_awareness=enable_time_awareness,
-        current_time_str=current_time_str,
-        time_since_last_interaction=time_since_last_interaction,
+        enable_time_awareness=ta.enabled,
+        current_time_str=ta.current_time_str,
+        time_since_last_interaction=ta.time_since_last_interaction,
         session_id=session.id,
         available_presets=available_presets,
         current_preset_name=preset.name,
@@ -200,7 +180,7 @@ async def update_session(request: Request, session_id: str, body: SessionUpdate)
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(request: Request, session_id: str):
     """セッションとそのメッセージ・添付画像ファイルを削除する。"""
-    # ディスク上の画像ファイルを先に削除する
+    import os
     images = request.app.state.sqlite.list_chat_images_by_session(session_id)
     for img in images:
         img_path = os.path.join(request.app.state.uploads_dir, img.id)
@@ -213,65 +193,9 @@ async def delete_session(request: Request, session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
 
-@router.post("/sessions/{session_id}/images", status_code=201)
-async def upload_images(
-    request: Request,
-    session_id: str,
-    files: List[UploadFile] = File(...),
-):
-    """複数の画像ファイルをアップロードしてセッションに紐づける。
-
-    受け付けるMIMEタイプ: image/*
-    ファイルは uploads_dir/{image_id} として保存される。
-
-    Returns:
-        [{"id": image_id, "url": "/api/chat/images/{image_id}"}] の形式で返す。
-    """
-    state = request.app.state
-    session = state.sqlite.get_chat_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    results = []
-    for file in files:
-        if not (file.content_type or "").startswith("image/"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"'{file.filename}' は画像ファイルではありません",
-            )
-        image_id = str(uuid.uuid4())
-        data = await file.read()
-        img_path = os.path.join(state.uploads_dir, image_id)
-        with open(img_path, "wb") as f:
-            f.write(data)
-        state.sqlite.create_chat_image(
-            image_id=image_id,
-            session_id=session_id,
-            mime_type=file.content_type or "image/jpeg",
-        )
-        results.append({"id": image_id, "url": f"/api/chat/images/{image_id}"})
-    return results
-
-
-@router.get("/images/{image_id}")
-async def get_image(request: Request, image_id: str):
-    """添付画像ファイルを配信する。"""
-    img = request.app.state.sqlite.get_chat_image(image_id)
-    if not img:
-        raise HTTPException(status_code=404, detail="Image not found")
-    img_path = os.path.join(request.app.state.uploads_dir, image_id)
-    if not os.path.exists(img_path):
-        raise HTTPException(status_code=404, detail="Image file not found")
-    return FileResponse(img_path, media_type=img.mime_type)
-
-
 @router.delete("/sessions/{session_id}/messages/from/{message_id}", status_code=204)
 async def delete_messages_from(request: Request, session_id: str, message_id: str):
-    """指定メッセージ以降（自身を含む）をすべて削除する。
-
-    ユーザメッセージ編集・キャラクター応答再生成の前処理として呼び出す。
-    削除後、フロントは同セッションに対して streamMessage を再送する。
-    """
+    """指定メッセージ以降（自身を含む）をすべて削除する。"""
     session = request.app.state.sqlite.get_chat_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -282,23 +206,13 @@ async def delete_messages_from(request: Request, session_id: str, message_id: st
 
 @router.post("/sessions/{session_id}/messages")
 async def send_message(request: Request, session_id: str, body: MessageCreate):
-    """
-    ユーザーメッセージを送信し、キャラクターの応答を返す。
-
-    処理フロー:
-    1. ユーザーメッセージを保存
-    2. 会話履歴を取得
-    3. LLMを呼び出し
-    4. キャラクターの応答を保存
-    5. 両メッセージを返す
-    """
+    """ユーザーメッセージを送信し、キャラクターの応答を返す。"""
     state = request.app.state
 
     session = state.sqlite.get_chat_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # ユーザーメッセージ保存
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
         message_id=user_msg_id,
@@ -307,16 +221,13 @@ async def send_message(request: Request, session_id: str, body: MessageCreate):
         content=body.content,
     )
 
-    # 送信済みのユーザーメッセージを除いた履歴を取得（LLMには現在のメッセージを別途渡す）
     history_before = state.sqlite.list_chat_messages(session_id)
     history = [m for m in history_before if m.id != user_msg_id]
 
-    # セッションタイトル自動設定（最初のメッセージから先頭30文字を使う）
     if len(history) == 0 and session.title == "新しいチャット":
         auto_title = body.content[:30].replace("\n", " ")
         state.sqlite.update_chat_session(session_id, title=auto_title)
 
-    # LLM呼び出し
     try:
         response_text = await _call_llm(request, session, history, body.content)
     except HTTPException:
@@ -324,7 +235,6 @@ async def send_message(request: Request, session_id: str, body: MessageCreate):
     except Exception as e:
         response_text = f"[エラー: {e}]"
 
-    # キャラクター応答を保存
     char_msg_id = str(uuid.uuid4())
     char_msg = state.sqlite.create_chat_message(
         message_id=char_msg_id,
@@ -333,7 +243,6 @@ async def send_message(request: Request, session_id: str, body: MessageCreate):
         content=response_text,
     )
 
-    # セッションの updated_at を最新化
     state.sqlite.update_chat_session(
         session_id,
         title=state.sqlite.get_chat_session(session_id).title,
@@ -347,24 +256,15 @@ async def send_message(request: Request, session_id: str, body: MessageCreate):
 
 @router.post("/sessions/{session_id}/messages/stream")
 async def stream_message(request: Request, session_id: str, body: MessageCreate):
-    """
-    ユーザーメッセージを送信し、キャラクターの応答をSSEでストリーミング返却する。
-
-    SSEイベント形式:
-        data: {"type": "chunk", "content": "..."}   — テキストチャンク
-        data: {"type": "done", "user_message": {...}, "character_message": {...}}  — 完了
-        data: {"type": "error", "message": "..."}   — エラー
-    """
+    """ユーザーメッセージを送信し、キャラクターの応答をSSEでストリーミング返却する。"""
     state = request.app.state
 
     session = state.sqlite.get_chat_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # フロントから model_id が指定された場合はセッションの model_id を上書きする（DBへの永続化は送信完了後）
     effective_model_id = body.model_id or session.model_id
 
-    # ユーザーメッセージを保存
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
         message_id=user_msg_id,
@@ -374,82 +274,58 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         images=body.image_ids or None,
     )
 
-    # 現在のユーザーメッセージを除いた履歴を取得
     history_before = state.sqlite.list_chat_messages(session_id)
     history = [m for m in history_before if m.id != user_msg_id]
 
-    # セッションタイトル自動設定（最初のメッセージから先頭30文字）
-    # effective_title は後段の updated_at 更新時にも使うため変数に保持する
     if len(history) == 0 and session.title == "新しいチャット":
         effective_title = body.content[:30].replace("\n", " ")
         state.sqlite.update_chat_session(session_id, title=effective_title)
     else:
         effective_title = session.title
 
-    # 画像が添付されている場合は OpenAI vision 形式のコンテンツリストを構築する
     user_content: Union[str, list] = build_message_content(
         body.content, body.image_ids or [], state.sqlite, state.uploads_dir
     )
 
-    # ChatRequestの構築（HTTPExceptionが発生した場合はここで止まる）
     try:
         chat_request = await _build_chat_request(request, session, history, user_content, model_id=effective_model_id)
     except HTTPException:
         raise
 
     async def sse_generator():
-        """SSEストリームのジェネレータ。型付きチャンクをyieldし、完了後にDBへ保存する。
-
-        execute_stream() は (type, content) タプルをyieldする:
-            ("memories", list[dict]) — 想起した記憶リスト
-            ("thinking", str)        — 思考ブロック（リアルタイム）
-            ("text", str)            — carve済みの応答テキスト（1回だけyield）
-            ("angle_switched", str)  — switch_angle 後の新 model_id
-
-        SSEイベント形式:
-            {"type": "reasoning", "content": "..."} — 思考・記憶（フロントで折りたたみ表示）
-            {"type": "chunk",     "content": "..."} — 応答テキスト
-        """
         nonlocal effective_model_id
         full_text = ""
         accumulated_reasoning = ""
         try:
             async for chunk_type, content in state.chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
-                    # 記憶リストを表示用テキストにフォーマットして送信・蓄積する
                     display = format_memories_for_sse(content)
                     if display:
                         accumulated_reasoning += display
                         data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "thinking":
-                    # 思考ブロックをリアルタイム送信・蓄積する
                     if content:
                         accumulated_reasoning += content
                         data = json.dumps({"type": "reasoning", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "text":
-                    # carve済みの全テキストを1チャンクとして送信する
                     full_text = content
                     if content:
                         data = json.dumps({"type": "chunk", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "angle_switched":
-                    # switch_angle が実行された: セッションの model_id を更新する
                     effective_model_id = content
         except Exception as e:
             err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
             yield f"data: {err_data}\n\n"
             return
 
-        # execute_stream() 内で carve 済みのため再実行不要
         clean_text = full_text
         log_front_output(clean_text)
 
-        # effective_model_id からキャラクター名・プリセット名を抽出する
         used_char_name, used_preset_name = effective_model_id.rsplit("@", 1) if "@" in effective_model_id else (effective_model_id, None)
 
-        # キャラクターの応答をDBに保存（character_name・preset_name も保存して表示が変わらないようにする）
         char_msg_id = str(uuid.uuid4())
         char_msg = state.sqlite.create_chat_message(
             message_id=char_msg_id,
@@ -461,11 +337,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             preset_name=used_preset_name,
         )
 
-        # セッションのupdated_atを最新化し、使用したモデルIDを永続化する
-        # effective_title はクロージャ外で解決済み（自動タイトル適用後）
         state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)
 
-        # 完了イベントを送信
         done_data = json.dumps({
             "type": "done",
             "user_message": message_to_dict(user_msg),
@@ -482,52 +355,3 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             "X-Accel-Buffering": "no",
         },
     )
-
-
-# --- SELF_DRIFT API ---
-
-def _drift_to_dict(drift) -> dict:
-    """SessionDrift レコードをAPIレスポンス用dictに変換する。"""
-    return {
-        "id": drift.id,
-        "session_id": drift.session_id,
-        "character_id": drift.character_id,
-        "content": drift.content,
-        "enabled": bool(drift.enabled),
-        "created_at": drift.created_at.isoformat() if drift.created_at else None,
-    }
-
-
-@router.get("/sessions/{session_id}/drifts")
-async def list_drifts(request: Request, session_id: str):
-    """セッションの全キャラのSELF_DRIFT一覧を返す。"""
-    session = request.app.state.sqlite.get_chat_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    drifts = request.app.state.drift_manager.list_drifts(session_id)
-    return [_drift_to_dict(d) for d in drifts]
-
-
-@router.patch("/sessions/{session_id}/drifts/{drift_id}/toggle")
-async def toggle_drift(request: Request, session_id: str, drift_id: str):
-    """SELF_DRIFT の enabled フラグを反転する。"""
-    session = request.app.state.sqlite.get_chat_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    drift = request.app.state.drift_manager.toggle_drift(drift_id)
-    if not drift:
-        raise HTTPException(status_code=404, detail="Drift not found")
-    return _drift_to_dict(drift)
-
-
-@router.delete("/sessions/{session_id}/drifts", status_code=204)
-async def reset_drifts(request: Request, session_id: str, character_id: str):
-    """指定キャラの全SELF_DRIFTを削除する。
-
-    Query params:
-        character_id: リセット対象のキャラクターID。
-    """
-    session = request.app.state.sqlite.get_chat_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    request.app.state.drift_manager.reset_drifts(session_id, character_id)

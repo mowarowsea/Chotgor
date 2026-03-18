@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..core.group_chat.service import run_group_turn
+from .resource_resolver import parse_model_id, require_character, require_preset
 from .utils import message_to_dict, session_to_dict
 
 router = APIRouter(prefix="/api/group", tags=["group_chat"])
@@ -87,24 +88,9 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
     state = request.app.state
 
     # 司会キャラクターをパースして存在チェック
-    if "@" not in body.director_model_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"director_model_id のフォーマットが不正です: '{body.director_model_id}' (expected 'CharName@PresetName')",
-        )
-    director_char_name, director_preset_key = body.director_model_id.rsplit("@", 1)
-    director_char = (
-        state.sqlite.get_character_by_name(director_char_name)
-        or state.sqlite.get_character(director_char_name)
-    )
-    if not director_char:
-        raise HTTPException(status_code=404, detail=f"司会キャラクター '{director_char_name}' が見つかりません")
-    director_preset = (
-        state.sqlite.get_model_preset_by_name(director_preset_key)
-        or state.sqlite.get_model_preset(director_preset_key)
-    )
-    if not director_preset:
-        raise HTTPException(status_code=404, detail=f"プリセット '{director_preset_key}' が見つかりません")
+    director_char_name, director_preset_key = parse_model_id(body.director_model_id)
+    director_char = require_character(state.sqlite, director_char_name)
+    director_preset = require_preset(state.sqlite, director_preset_key)
 
     # 参加者をパースして存在チェックし、preset_id を解決する
     try:
@@ -114,12 +100,8 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
 
     participants = []
     for p in parsed:
-        char = state.sqlite.get_character_by_name(p["char_name"]) or state.sqlite.get_character(p["char_name"])
-        if not char:
-            raise HTTPException(status_code=404, detail=f"キャラクター '{p['char_name']}' が見つかりません")
-        preset = state.sqlite.get_model_preset_by_name(p["preset_key"]) or state.sqlite.get_model_preset(p["preset_key"])
-        if not preset:
-            raise HTTPException(status_code=404, detail=f"プリセット '{p['preset_key']}' が見つかりません")
+        char = require_character(state.sqlite, p["char_name"])
+        preset = require_preset(state.sqlite, p["preset_key"])
         # 名前ではなくIDで保存することで、プリセット名変更の影響を受けないようにする
         participants.append({"char_name": p["char_name"], "preset_id": preset.id})
 

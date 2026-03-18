@@ -1,9 +1,19 @@
-"""SQLite store — 設定・キャラクターメタデータ・記憶レコードの永続化層。"""
+"""SQLite store — 設定・キャラクターメタデータ・記憶レコードの永続化層。
 
-import json
+SQLiteStore はドメイン別 Mixin を多重継承したファサードクラス。
+各ドメインの実装は backend/core/memory/stores/ 以下を参照。
+
+  SettingsStoreMixin  — グローバル設定 (key/value)
+  CharacterStoreMixin — キャラクター管理
+  MemoryStoreMixin    — 記憶レコード
+  DigestStoreMixin    — ダイジェストログ
+  PresetStoreMixin    — LLMモデルプリセット
+  ChatStoreMixin      — セッション・メッセージ・画像
+  DriftStoreMixin     — SELF_DRIFT指針
+"""
+
 import os
 from datetime import datetime
-from typing import Any, Optional
 
 from sqlalchemy import (
     JSON,
@@ -18,6 +28,14 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from .stores.character_store import CharacterStoreMixin
+from .stores.chat_store import ChatStoreMixin
+from .stores.digest_store import DigestStoreMixin
+from .stores.drift_store import DriftStoreMixin
+from .stores.memory_store import MemoryStoreMixin
+from .stores.preset_store import PresetStoreMixin
+from .stores.settings_store import SettingsStoreMixin
 
 
 class Base(DeclarativeBase):
@@ -66,11 +84,7 @@ class ChatMessage(Base):
 
 
 class ChatImage(Base):
-    """チャット添付画像 — セッションに紐づく画像ファイルのメタデータ。
-
-    実ファイルは uploads_dir/{id} に保存される。
-    セッション削除時にファイルとレコードをまとめて削除する。
-    """
+    """チャット添付画像 — セッションに紐づく画像ファイルのメタデータ。"""
 
     __tablename__ = "chat_images"
 
@@ -168,8 +182,19 @@ class LLMModelPreset(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
-class SQLiteStore:
-    """SQLite永続化ストア — 全テーブルへのCRUD操作を提供する。"""
+class SQLiteStore(
+    SettingsStoreMixin,
+    CharacterStoreMixin,
+    MemoryStoreMixin,
+    DigestStoreMixin,
+    PresetStoreMixin,
+    ChatStoreMixin,
+    DriftStoreMixin,
+):
+    """SQLite永続化ストア — 全テーブルへのCRUD操作を提供するファサードクラス。
+
+    ドメイン別 Mixin を多重継承し、外部からは従来通り単一クラスとして利用できる。
+    """
 
     def __init__(self, db_path: str):
         """データベースを初期化し、マイグレーションを実行する。"""
@@ -182,7 +207,6 @@ class SQLiteStore:
     def _migrate(self):
         """既存テーブルへの新カラム追加とテーブル新設を冪等に実行する。"""
         with self.engine.connect() as conn:
-            # 既存テーブルへのカラム追加（失敗は無視）
             for stmt in [
                 "ALTER TABLE memories ADD COLUMN updated_at TIMESTAMP",
                 "ALTER TABLE characters ADD COLUMN enabled_providers TEXT NOT NULL DEFAULT '{}'",
@@ -198,7 +222,6 @@ class SQLiteStore:
                 except Exception:
                     pass
 
-            # chat_messages テーブルへの新カラム追加（冪等）
             for stmt in [
                 "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT",
                 "ALTER TABLE chat_messages ADD COLUMN images TEXT",
@@ -213,7 +236,6 @@ class SQLiteStore:
                 except Exception:
                     pass
 
-            # チャット関連テーブルの新設（IF NOT EXISTS で冪等）
             for stmt in [
                 (
                     "CREATE TABLE IF NOT EXISTS chat_sessions "
@@ -251,685 +273,5 @@ class SQLiteStore:
                     pass
 
     def get_session(self) -> Session:
-        """新しいDBセッションを返す。"""
+        """新しいDBセッションを返す。Mixin クラスが共通して使用する。"""
         return self.SessionLocal()
-
-    # --- Global Settings ---
-
-    def get_setting(self, key: str, default: Any = None) -> Any:
-        """キーで設定値を取得する。JSON文字列は自動的にパースする。"""
-        with self.get_session() as session:
-            row = session.get(GlobalSetting, key)
-            if row is None:
-                return default
-            try:
-                return json.loads(row.value)
-            except (json.JSONDecodeError, TypeError):
-                return row.value
-
-    def set_setting(self, key: str, value: Any) -> None:
-        """設定値をupsertする。文字列以外はJSONシリアライズする。"""
-        with self.get_session() as session:
-            serialized = json.dumps(value) if not isinstance(value, str) else value
-            row = session.get(GlobalSetting, key)
-            if row:
-                row.value = serialized
-            else:
-                session.add(GlobalSetting(key=key, value=serialized))
-            session.commit()
-
-    def get_all_settings(self) -> dict[str, Any]:
-        """全設定をdict形式で返す。"""
-        with self.get_session() as session:
-            rows = session.query(GlobalSetting).all()
-            result = {}
-            for row in rows:
-                try:
-                    result[row.key] = json.loads(row.value)
-                except (json.JSONDecodeError, TypeError):
-                    result[row.key] = row.value
-            return result
-
-    # --- Characters ---
-
-    def create_character(
-        self,
-        character_id: str,
-        name: str,
-        system_prompt_block1: str = "",
-        meta_instructions: str = "",
-        cleanup_config: Optional[dict] = None,
-        enabled_providers: Optional[dict] = None,
-        ghost_model: Optional[str] = None,
-        image_data: Optional[str] = None,
-        switch_angle_enabled: bool = False,
-    ) -> Character:
-        """キャラクターを新規作成する。"""
-        with self.get_session() as session:
-            char = Character(
-                id=character_id,
-                name=name,
-                system_prompt_block1=system_prompt_block1,
-                meta_instructions=meta_instructions,
-                cleanup_config=cleanup_config or {},
-                enabled_providers=enabled_providers or {},
-                ghost_model=ghost_model,
-                image_data=image_data,
-                switch_angle_enabled=1 if switch_angle_enabled else 0,
-            )
-            session.add(char)
-            session.commit()
-            session.refresh(char)
-            return char
-
-    def get_character(self, character_id: str) -> Optional[Character]:
-        """IDでキャラクターを取得する。"""
-        with self.get_session() as session:
-            return session.get(Character, character_id)
-
-    def get_character_by_name(self, name: str) -> Optional[Character]:
-        """名前でキャラクターを取得する。"""
-        with self.get_session() as session:
-            return session.query(Character).filter(Character.name == name).first()
-
-    def list_characters(self) -> list[Character]:
-        """全キャラクターを返す。"""
-        with self.get_session() as session:
-            return session.query(Character).all()
-
-    def update_character(self, character_id: str, **kwargs) -> Optional[Character]:
-        """キャラクターの指定フィールドを更新する。"""
-        with self.get_session() as session:
-            char = session.get(Character, character_id)
-            if not char:
-                return None
-            for k, v in kwargs.items():
-                if hasattr(char, k):
-                    setattr(char, k, v)
-            char.updated_at = datetime.now()
-            session.commit()
-            session.refresh(char)
-            return char
-
-    def delete_character(self, character_id: str) -> bool:
-        """キャラクターを削除する。"""
-        with self.get_session() as session:
-            char = session.get(Character, character_id)
-            if not char:
-                return False
-            session.delete(char)
-            session.commit()
-            return True
-
-    # --- Memories ---
-
-    def create_memory(
-        self,
-        memory_id: str,
-        character_id: str,
-        content: str,
-        memory_category: str = "general",
-        contextual_importance: float = 0.5,
-        semantic_importance: float = 0.5,
-        identity_importance: float = 0.5,
-        user_importance: float = 0.5,
-        source_preset_id: Optional[str] = None,
-    ) -> Memory:
-        """記憶レコードを新規作成する。"""
-        with self.get_session() as session:
-            mem = Memory(
-                id=memory_id,
-                character_id=character_id,
-                content=content,
-                memory_category=memory_category,
-                contextual_importance=contextual_importance,
-                semantic_importance=semantic_importance,
-                identity_importance=identity_importance,
-                user_importance=user_importance,
-                source_preset_id=source_preset_id,
-            )
-            session.add(mem)
-            session.commit()
-            session.refresh(mem)
-            return mem
-
-    def get_memory(self, memory_id: str) -> Optional[Memory]:
-        """IDで記憶レコードを取得する。"""
-        with self.get_session() as session:
-            return session.get(Memory, memory_id)
-
-    def list_memories(
-        self,
-        character_id: str,
-        category: Optional[str] = None,
-        include_deleted: bool = False,
-        sort_by: str = "created_at",
-    ) -> list[Memory]:
-        """キャラクターの記憶一覧を指定順で返す。
-
-        Args:
-            sort_by: ソートキー。"created_at"（デフォルト）/ "updated_at"。
-                     updated_at は NULL のものを created_at で代替してソートする。
-        """
-        with self.get_session() as session:
-            q = session.query(Memory).filter(Memory.character_id == character_id)
-            if not include_deleted:
-                q = q.filter(Memory.deleted_at.is_(None))
-            if category:
-                q = q.filter(Memory.memory_category == category)
-            if sort_by == "updated_at":
-                # updated_at が NULL（一度も上書きされていない記憶）は created_at で代替
-                from sqlalchemy import func
-                q = q.order_by(
-                    func.coalesce(Memory.updated_at, Memory.created_at).desc()
-                )
-            else:
-                q = q.order_by(Memory.created_at.desc())
-            return q.all()
-
-    def update_memory_content(
-        self,
-        memory_id: str,
-        content: str,
-        contextual_importance: float,
-        semantic_importance: float,
-        identity_importance: float,
-        user_importance: float,
-    ) -> bool:
-        """記憶のcontentと各importanceを上書き更新する。
-
-        引き継ぐフィールド: access_count, created_at
-        更新するフィールド: content, 各importance, last_accessed_at（現在時刻）
-
-        類似記憶が見つかった際の更新専用メソッド（Issue #50）。
-
-        Args:
-            memory_id: 更新対象の記憶ID。
-            content: 新しい記憶テキスト。
-            contextual_importance: 新しいコンテクスト重要度 (0.0-1.0)。
-            semantic_importance: 新しい意味的重要度 (0.0-1.0)。
-            identity_importance: 新しいアイデンティティ重要度 (0.0-1.0)。
-            user_importance: 新しいユーザー重要度 (0.0-1.0)。
-
-        Returns:
-            更新成功した場合True、レコードが存在しない場合False。
-        """
-        with self.get_session() as session:
-            mem = session.get(Memory, memory_id)
-            if not mem:
-                return False
-            mem.content = content
-            mem.contextual_importance = contextual_importance
-            mem.semantic_importance = semantic_importance
-            mem.identity_importance = identity_importance
-            mem.user_importance = user_importance
-            mem.last_accessed_at = datetime.now()
-            mem.updated_at = datetime.now()
-            # access_count と created_at は引き継ぐ（変更しない）
-            session.commit()
-            return True
-
-    def touch_memory(self, memory_id: str) -> None:
-        """last_accessed_at を更新し access_count をインクリメントする。"""
-        with self.get_session() as session:
-            mem = session.get(Memory, memory_id)
-            if mem:
-                mem.last_accessed_at = datetime.now()
-                mem.access_count = (mem.access_count or 0) + 1
-                session.commit()
-
-    def soft_delete_memory(self, memory_id: str) -> bool:
-        """記憶をソフト削除する（deleted_at をセット）。"""
-        with self.get_session() as session:
-            mem = session.get(Memory, memory_id)
-            if not mem:
-                return False
-            mem.deleted_at = datetime.now()
-            session.commit()
-            return True
-
-    def restore_memory(self, memory_id: str) -> bool:
-        """ソフト削除された記憶を復元する。"""
-        with self.get_session() as session:
-            mem = session.get(Memory, memory_id)
-            if not mem:
-                return False
-            mem.deleted_at = None
-            session.commit()
-            return True
-
-    def get_memories_by_date_range(
-        self, character_id: str, start: datetime, end: datetime
-    ) -> list[Memory]:
-        """指定期間内に作成された、削除済みでないダイジスト以外の記憶を返す。"""
-        with self.get_session() as session:
-            return (
-                session.query(Memory)
-                .filter(
-                    Memory.character_id == character_id,
-                    Memory.deleted_at.is_(None),
-                    Memory.memory_category != "digest",
-                    Memory.created_at >= start,
-                    Memory.created_at < end,
-                )
-                .order_by(Memory.created_at.asc())
-                .all()
-            )
-
-    def get_all_active_memories(self, character_id: str) -> list[Memory]:
-        """キャラクターの全アクティブ記憶（削除済みを除く）を返す。"""
-        with self.get_session() as session:
-            return (
-                session.query(Memory)
-                .filter(
-                    Memory.character_id == character_id,
-                    Memory.deleted_at.is_(None)
-                )
-                .all()
-            )
-
-    def has_digest(self, character_id: str, date_str: str) -> bool:
-        """指定キャラクター・日付のダイジストログが存在するか返す。"""
-        with self.get_session() as session:
-            count = (
-                session.query(DigestLog)
-                .filter(
-                    DigestLog.character_id == character_id,
-                    DigestLog.digest_date == date_str,
-                )
-                .count()
-            )
-            return count > 0
-
-    def record_digest(
-        self,
-        character_id: str,
-        date_str: str,
-        status: str,
-        memory_id: Optional[str] = None,
-        memory_count: int = 0,
-        message: Optional[str] = None,
-    ) -> None:
-        """ダイジストログを1行追記する。"""
-        with self.get_session() as session:
-            log = DigestLog(
-                character_id=character_id,
-                digest_date=date_str,
-                status=status,
-                memory_id=memory_id,
-                memory_count=memory_count,
-                message=message,
-            )
-            session.add(log)
-            session.commit()
-
-    def get_digest_logs(self, character_id: str, limit: int = 50) -> list[DigestLog]:
-        """キャラクターのダイジストログを新しい順で返す。"""
-        with self.get_session() as session:
-            return (
-                session.query(DigestLog)
-                .filter(DigestLog.character_id == character_id)
-                .order_by(DigestLog.created_at.desc())
-                .limit(limit)
-                .all()
-            )
-
-    # --- LLM Model Presets ---
-
-    def create_model_preset(self, preset_id: str, name: str, provider: str, model_id: str, thinking_level: str = "default") -> LLMModelPreset:
-        """LLMモデルプリセットを新規作成する。"""
-        with self.get_session() as session:
-            preset = LLMModelPreset(id=preset_id, name=name, provider=provider, model_id=model_id, thinking_level=thinking_level)
-            session.add(preset)
-            session.commit()
-            session.refresh(preset)
-            return preset
-
-    def list_model_presets(self) -> list[LLMModelPreset]:
-        """LLMモデルプリセット一覧を作成日順で返す。"""
-        with self.get_session() as session:
-            return session.query(LLMModelPreset).order_by(LLMModelPreset.created_at).all()
-
-    def get_model_preset(self, preset_id: str) -> Optional[LLMModelPreset]:
-        """IDでLLMモデルプリセットを取得する。"""
-        with self.get_session() as session:
-            return session.get(LLMModelPreset, preset_id)
-
-    def get_model_preset_by_name(self, name: str) -> Optional[LLMModelPreset]:
-        """名前でLLMモデルプリセットを取得する。"""
-        with self.get_session() as session:
-            return session.query(LLMModelPreset).filter(LLMModelPreset.name == name).first()
-
-    def update_model_preset(self, preset_id: str, **kwargs) -> Optional[LLMModelPreset]:
-        """LLMモデルプリセットの指定フィールドを更新する。"""
-        with self.get_session() as session:
-            preset = session.get(LLMModelPreset, preset_id)
-            if not preset:
-                return None
-            for k, v in kwargs.items():
-                if hasattr(preset, k):
-                    setattr(preset, k, v)
-            session.commit()
-            session.refresh(preset)
-            return preset
-
-    def delete_model_preset(self, preset_id: str) -> bool:
-        """LLMモデルプリセットを削除する。"""
-        with self.get_session() as session:
-            preset = session.get(LLMModelPreset, preset_id)
-            if not preset:
-                return False
-            session.delete(preset)
-            session.commit()
-            return True
-
-    # --- Chat Sessions ---
-
-    def create_chat_session(
-        self,
-        session_id: str,
-        model_id: str,
-        title: str = "新しいチャット",
-        session_type: str = "1on1",
-        group_config: Optional[str] = None,
-    ) -> "ChatSession":
-        """チャットセッションを作成する。
-
-        Args:
-            session_id: セッションのUUID。
-            model_id: 1on1は "{char_name}@{preset_name}"、グループは "group"。
-            title: セッションタイトル。
-            session_type: "1on1" または "group"。
-            group_config: グループチャット設定のJSONテキスト（session_type="group"時のみ）。
-        """
-        with self.get_session() as session:
-            obj = ChatSession(
-                id=session_id,
-                model_id=model_id,
-                title=title,
-                session_type=session_type,
-                group_config=group_config,
-            )
-            session.add(obj)
-            session.commit()
-            session.refresh(obj)
-            return obj
-
-    def get_chat_session(self, session_id: str) -> Optional["ChatSession"]:
-        """IDでチャットセッションを取得する。"""
-        with self.get_session() as session:
-            return session.get(ChatSession, session_id)
-
-    def list_chat_sessions(self, limit: int = 100) -> list:
-        """チャットセッション一覧を新しい順で返す。"""
-        with self.get_session() as session:
-            return (
-                session.query(ChatSession)
-                .order_by(ChatSession.updated_at.desc())
-                .limit(limit)
-                .all()
-            )
-
-    def update_chat_session(self, session_id: str, **kwargs) -> Optional["ChatSession"]:
-        """チャットセッションを更新する。"""
-        with self.get_session() as session:
-            obj = session.get(ChatSession, session_id)
-            if not obj:
-                return None
-            for k, v in kwargs.items():
-                if hasattr(obj, k):
-                    setattr(obj, k, v)
-            obj.updated_at = datetime.now()
-            session.commit()
-            session.refresh(obj)
-            return obj
-
-    def delete_chat_session(self, session_id: str) -> bool:
-        """チャットセッションとそのメッセージ・画像レコードを削除する。
-
-        ディスク上の画像ファイルは呼び出し元（chat.py）で削除すること。
-        """
-        with self.get_session() as session:
-            # 関連レコードを先に削除してから親セッションを削除する
-            session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
-            session.query(ChatImage).filter(ChatImage.session_id == session_id).delete()
-            session.query(SessionDrift).filter(SessionDrift.session_id == session_id).delete()
-            obj = session.get(ChatSession, session_id)
-            if not obj:
-                session.commit()
-                return False
-            session.delete(obj)
-            session.commit()
-            return True
-
-    # --- Chat Messages ---
-
-    def create_chat_message(
-        self,
-        message_id: str,
-        session_id: str,
-        role: str,
-        content: str,
-        reasoning: Optional[str] = None,
-        images: Optional[list] = None,
-        character_name: Optional[str] = None,
-        preset_name: Optional[str] = None,
-    ) -> "ChatMessage":
-        """チャットメッセージを作成する。
-
-        Args:
-            message_id: メッセージのUUID。
-            session_id: 所属セッションのID。
-            role: "user" または "character"。
-            content: クリーン済みの本文テキスト。
-            reasoning: 思考ブロック・想起記憶テキスト（キャラクターメッセージのみ）。
-            images: 添付画像IDのリスト（ユーザメッセージのみ）。
-            character_name: グループチャット時の発言キャラクター名（1on1では None）。
-            preset_name: メッセージ送信時に使用したプリセット名（バブル表示用）。
-        """
-        with self.get_session() as session:
-            msg = ChatMessage(
-                id=message_id,
-                session_id=session_id,
-                role=role,
-                content=content,
-                reasoning=reasoning,
-                images=images or None,
-                character_name=character_name,
-                preset_name=preset_name,
-            )
-            session.add(msg)
-            session.commit()
-            session.refresh(msg)
-            return msg
-
-    def list_chat_messages(self, session_id: str) -> list:
-        """セッション内のメッセージを時系列順で返す。"""
-        with self.get_session() as session:
-            return (
-                session.query(ChatMessage)
-                .filter(ChatMessage.session_id == session_id)
-                .order_by(ChatMessage.created_at.asc())
-                .all()
-            )
-
-    def delete_chat_messages_from(self, session_id: str, message_id: str) -> bool:
-        """指定メッセージ以降（自身を含む）をすべて削除する。
-
-        ユーザメッセージ編集・キャラクター応答再生成で使用する。
-        対象メッセージの created_at 以降の全メッセージを削除する。
-
-        Args:
-            session_id: セッションID。
-            message_id: 削除起点メッセージのID。
-
-        Returns:
-            削除対象メッセージが存在した場合 True、存在しなかった場合 False。
-        """
-        with self.get_session() as session:
-            # セッション内の全メッセージIDを時系列順で取得し、削除起点の位置を特定する。
-            # created_at の等値衝突を避けるため、タイムスタンプではなくIDリストで削除範囲を確定する。
-            all_ids: list[str] = [
-                row[0]
-                for row in (
-                    session.query(ChatMessage.id)
-                    .filter(ChatMessage.session_id == session_id)
-                    .order_by(ChatMessage.created_at.asc())
-                    .all()
-                )
-            ]
-            if message_id not in all_ids:
-                return False
-            pivot_idx = all_ids.index(message_id)
-            ids_to_delete = all_ids[pivot_idx:]
-            session.query(ChatMessage).filter(
-                ChatMessage.id.in_(ids_to_delete)
-            ).delete(synchronize_session=False)
-            session.commit()
-            return True
-
-    # --- Chat Images ---
-
-    def create_chat_image(
-        self,
-        image_id: str,
-        session_id: str,
-        mime_type: str,
-        message_id: Optional[str] = None,
-    ) -> "ChatImage":
-        """添付画像レコードを作成する。
-
-        Args:
-            image_id: 画像のUUID（ディスク上のファイル名としても使用）。
-            session_id: 所属セッションのID。
-            mime_type: 画像のMIMEタイプ（例: "image/jpeg"）。
-            message_id: 紐づくメッセージID（メッセージ保存前は None）。
-        """
-        with self.get_session() as session:
-            img = ChatImage(
-                id=image_id,
-                session_id=session_id,
-                message_id=message_id,
-                mime_type=mime_type,
-            )
-            session.add(img)
-            session.commit()
-            session.refresh(img)
-            return img
-
-    def get_chat_image(self, image_id: str) -> Optional["ChatImage"]:
-        """画像IDでレコードを取得する。存在しない場合は None を返す。"""
-        with self.get_session() as session:
-            return session.get(ChatImage, image_id)
-
-    def list_chat_images_by_session(self, session_id: str) -> list:
-        """セッションに紐づく全画像レコードを返す。セッション削除時のファイル掃除に使う。"""
-        with self.get_session() as session:
-            return (
-                session.query(ChatImage)
-                .filter(ChatImage.session_id == session_id)
-                .all()
-            )
-
-    # --- Session Drifts (SELF_DRIFT) ---
-
-    def add_session_drift(
-        self, session_id: str, character_id: str, content: str
-    ) -> "SessionDrift":
-        """SELF_DRIFT指針を追加する。同キャラの上限3件を超えた場合は最古を削除してから追加する。
-
-        キャラクターごとに独立管理するため、session_id と character_id の両方でフィルタする。
-
-        Args:
-            session_id: 所属セッションのID。
-            character_id: キャラクターID。
-            content: drift内容テキスト。
-
-        Returns:
-            作成された SessionDrift レコード。
-        """
-        import uuid as _uuid
-        with self.get_session() as session:
-            # 同キャラの既存driftを作成日時順で取得し、上限3件を超えていれば古いものを削除する
-            existing = (
-                session.query(SessionDrift)
-                .filter(
-                    SessionDrift.session_id == session_id,
-                    SessionDrift.character_id == character_id,
-                )
-                .order_by(SessionDrift.created_at.asc())
-                .all()
-            )
-            while len(existing) >= 3:
-                oldest = existing.pop(0)
-                session.delete(oldest)
-            drift = SessionDrift(
-                id=str(_uuid.uuid4()),
-                session_id=session_id,
-                character_id=character_id,
-                content=content,
-            )
-            session.add(drift)
-            session.commit()
-            session.refresh(drift)
-            return drift
-
-    def list_session_drifts(self, session_id: str) -> list:
-        """セッションの全キャラのdrift一覧を作成日時順で返す（UI表示用）。"""
-        with self.get_session() as session:
-            return (
-                session.query(SessionDrift)
-                .filter(SessionDrift.session_id == session_id)
-                .order_by(SessionDrift.created_at.asc())
-                .all()
-            )
-
-    def list_active_session_drifts(self, session_id: str, character_id: str) -> list[str]:
-        """指定キャラの有効（enabled=1）なdrift内容テキスト一覧を返す（システムプロンプト注入用）。"""
-        with self.get_session() as session:
-            rows = (
-                session.query(SessionDrift)
-                .filter(
-                    SessionDrift.session_id == session_id,
-                    SessionDrift.character_id == character_id,
-                    SessionDrift.enabled == 1,
-                )
-                .order_by(SessionDrift.created_at.asc())
-                .all()
-            )
-            return [r.content for r in rows]
-
-    def toggle_session_drift(self, drift_id: str) -> Optional["SessionDrift"]:
-        """drift の enabled フラグを反転する。"""
-        with self.get_session() as session:
-            drift = session.get(SessionDrift, drift_id)
-            if not drift:
-                return None
-            drift.enabled = 0 if drift.enabled else 1
-            session.commit()
-            session.refresh(drift)
-            return drift
-
-    def reset_session_drifts(self, session_id: str, character_id: str) -> int:
-        """指定キャラのdriftを全件物理削除する。[DRIFT_RESET] マーカー処理用。
-
-        他キャラのdriftには影響しない。
-
-        Args:
-            session_id: セッションID。
-            character_id: リセット対象のキャラクターID。
-
-        Returns:
-            削除件数。
-        """
-        with self.get_session() as session:
-            deleted = (
-                session.query(SessionDrift)
-                .filter(
-                    SessionDrift.session_id == session_id,
-                    SessionDrift.character_id == character_id,
-                )
-                .delete()
-            )
-            session.commit()
-            return deleted
