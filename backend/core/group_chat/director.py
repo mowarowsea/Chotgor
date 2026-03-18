@@ -19,7 +19,7 @@ def _build_director_messages(
 
     Args:
         history_text: <タグ>付き形式にフォーマットされた会話履歴テキスト。
-        participants: 参加者情報リスト [{"char_name": str, "preset_name": str}]。
+        participants: 参加者情報リスト [{"char_name": str, "preset_id": str}]。
         sqlite: キャラクター情報取得用のSQLiteStoreインスタンス。
         user_name: ユーザーの表示名（選択肢として提示する）。
 
@@ -97,7 +97,7 @@ async def decide_next_speakers(
     sqlite,
     settings: dict,
     director_char_name: str,
-    director_preset_name: str,
+    director_preset_id: str,
     user_name: str = "ユーザ",
     timeout: int = 30,
 ) -> list[str] | None:
@@ -107,11 +107,11 @@ async def decide_next_speakers(
 
     Args:
         history: ChatMessageオブジェクトのリスト（時系列順）。
-        participants: 参加者情報リスト [{"char_name": str, "preset_name": str}]。
+        participants: 参加者情報リスト [{"char_name": str, "preset_id": str}]。
         sqlite: キャラクター情報取得用のSQLiteStoreインスタンス。
         settings: グローバル設定辞書（APIキー等）。
         director_char_name: 司会役キャラクターの名前。
-        director_preset_name: 司会役が使用するモデルプリセット名。
+        director_preset_id: 司会役が使用するモデルプリセットのID。
         user_name: ユーザーの表示名（選択肢として提示し、選ばれたらユーザーターン）。
         timeout: タイムアウト秒数（将来拡張用）。
 
@@ -134,11 +134,8 @@ async def decide_next_speakers(
 
     system_prompt, user_message = _build_director_messages(history_text, participants, sqlite, user_name=user_name)
 
-    # 司会キャラクターのプリセットを取得してプロバイダーを生成する
-    preset = (
-        sqlite.get_model_preset_by_name(director_preset_name)
-        or sqlite.get_model_preset(director_preset_name)
-    )
+    # 司会キャラクターのプリセットをIDで取得してプロバイダーを生成する
+    preset = sqlite.get_model_preset(director_preset_id)
     if not preset:
         return None
 

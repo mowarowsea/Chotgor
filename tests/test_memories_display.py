@@ -293,7 +293,7 @@ async def test_execute_stream_text_is_carved():
     provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed
 
-    def _fake_carve(text, char_id, manager):
+    def _fake_carve(text, char_id, manager, preset_id=""):
         # [MEMORY:...] を除去する簡易実装
         import re
         return re.sub(r"\[MEMORY:[^\]]*\]", "", text)

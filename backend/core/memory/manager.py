@@ -78,6 +78,7 @@ class MemoryManager:
         semantic_importance: float = 0.5,
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
+        source_preset_id: Optional[str] = None,
     ) -> str:
         """記憶をSQLiteとChromaDBに書き込む。類似記憶があれば更新、なければ新規作成する。
 
@@ -118,6 +119,7 @@ class MemoryManager:
             semantic_importance=semantic_importance,
             identity_importance=identity_importance,
             user_importance=user_importance,
+            source_preset_id=source_preset_id,
         )
 
         self.chroma.add_memory(
@@ -274,6 +276,7 @@ class MemoryManager:
                 "created_at": m.created_at.isoformat() if m.created_at else None,
                 "updated_at": m.updated_at.isoformat() if m.updated_at else None,
                 "deleted_at": m.deleted_at.isoformat() if m.deleted_at else None,
+                "source_preset_id": m.source_preset_id,
             }
             for m in mems
         ]

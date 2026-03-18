@@ -56,21 +56,21 @@ class GroupMessageCreate(BaseModel):
 
 
 def _parse_participant(model_id: str) -> dict:
-    """"{char_name}@{preset_name}" 形式の文字列を参加者辞書に変換する。
+    """"{char_name}@{preset_name_or_id}" 形式の文字列をパースして (char_name, preset_key) を返す。
 
     Args:
-        model_id: "{char_name}@{preset_name}" 形式の文字列。
+        model_id: "{char_name}@{preset_name_or_id}" 形式の文字列。
 
     Returns:
-        {"char_name": str, "preset_name": str} の辞書。
+        {"char_name": str, "preset_key": str} の辞書。preset_key は名前またはIDの文字列。
 
     Raises:
         ValueError: フォーマットが不正な場合。
     """
     if "@" not in model_id:
         raise ValueError(f"Invalid participant model_id format: '{model_id}' (expected 'CharName@PresetName')")
-    char_name, preset_name = model_id.rsplit("@", 1)
-    return {"char_name": char_name, "preset_name": preset_name}
+    char_name, preset_key = model_id.rsplit("@", 1)
+    return {"char_name": char_name, "preset_key": preset_key}
 
 
 # --- エンドポイント ---
@@ -92,7 +92,7 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
             status_code=400,
             detail=f"director_model_id のフォーマットが不正です: '{body.director_model_id}' (expected 'CharName@PresetName')",
         )
-    director_char_name, director_preset_name = body.director_model_id.rsplit("@", 1)
+    director_char_name, director_preset_key = body.director_model_id.rsplit("@", 1)
     director_char = (
         state.sqlite.get_character_by_name(director_char_name)
         or state.sqlite.get_character(director_char_name)
@@ -100,30 +100,34 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
     if not director_char:
         raise HTTPException(status_code=404, detail=f"司会キャラクター '{director_char_name}' が見つかりません")
     director_preset = (
-        state.sqlite.get_model_preset_by_name(director_preset_name)
-        or state.sqlite.get_model_preset(director_preset_name)
+        state.sqlite.get_model_preset_by_name(director_preset_key)
+        or state.sqlite.get_model_preset(director_preset_key)
     )
     if not director_preset:
-        raise HTTPException(status_code=404, detail=f"プリセット '{director_preset_name}' が見つかりません")
+        raise HTTPException(status_code=404, detail=f"プリセット '{director_preset_key}' が見つかりません")
 
-    # 参加者をパースして存在チェック
+    # 参加者をパースして存在チェックし、preset_id を解決する
     try:
-        participants = [_parse_participant(p.model_id) for p in body.participants]
+        parsed = [_parse_participant(p.model_id) for p in body.participants]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    for p in participants:
+    participants = []
+    for p in parsed:
         char = state.sqlite.get_character_by_name(p["char_name"]) or state.sqlite.get_character(p["char_name"])
         if not char:
             raise HTTPException(status_code=404, detail=f"キャラクター '{p['char_name']}' が見つかりません")
-        preset = state.sqlite.get_model_preset_by_name(p["preset_name"]) or state.sqlite.get_model_preset(p["preset_name"])
+        preset = state.sqlite.get_model_preset_by_name(p["preset_key"]) or state.sqlite.get_model_preset(p["preset_key"])
         if not preset:
-            raise HTTPException(status_code=404, detail=f"プリセット '{p['preset_name']}' が見つかりません")
+            raise HTTPException(status_code=404, detail=f"プリセット '{p['preset_key']}' が見つかりません")
+        # 名前ではなくIDで保存することで、プリセット名変更の影響を受けないようにする
+        participants.append({"char_name": p["char_name"], "preset_id": preset.id})
 
-    # グループ設定を構築してDBに保存する
+    # グループ設定を構築してDBに保存する（IDで保存）
     group_config = {
         "participants": participants,
-        "director_model_id": body.director_model_id,
+        "director_char_name": director_char_name,
+        "director_preset_id": director_preset.id,
         "max_auto_turns": body.max_auto_turns,
         "turn_timeout_sec": body.turn_timeout_sec,
     }

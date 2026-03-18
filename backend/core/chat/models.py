@@ -39,3 +39,5 @@ class ChatRequest:
     available_presets: list[dict] = field(default_factory=list)
     # 現在使用中のプリセット名（システムプロンプトの「現在のアングル」表示に使用）。
     current_preset_name: str = ""
+    # 現在使用中のプリセットID（記憶作成時の出所記録に使用）。
+    current_preset_id: str = ""

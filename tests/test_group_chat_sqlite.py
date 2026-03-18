@@ -26,10 +26,11 @@ class TestGroupChatSession:
         """デフォルトのグループ設定JSONテキストを生成するヘルパー。"""
         config = {
             "participants": [
-                {"char_name": "はる", "preset_name": "Sonnet"},
-                {"char_name": "Chotgor君", "preset_name": "Gemini"},
+                {"char_name": "はる", "preset_id": "preset-sonnet"},
+                {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
             ],
-            "director_model": "qwen2.5:latest",
+            "director_char_name": "はる",
+            "director_preset_id": "preset-sonnet",
             "max_auto_turns": 3,
             "turn_timeout_sec": 30,
         }

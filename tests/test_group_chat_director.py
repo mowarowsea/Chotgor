@@ -110,21 +110,21 @@ class TestBuildDirectorMessages:
     def test_contains_character_names(self):
         """ユーザーメッセージに参加者名のセクションヘッダーが含まれること。"""
         sqlite = self._make_sqlite("はる", "はるはAIキャラクターです。")
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         _, user_message = _build_director_messages("<user>こんにちは</user>", participants, sqlite)
         assert "## はる" in user_message
 
     def test_contains_system_prompt_content(self):
         """参加者のsystem_prompt_block1がユーザーメッセージに含まれること。"""
         sqlite = self._make_sqlite("はる", "はるはフレンドリーなキャラクターです。")
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         _, user_message = _build_director_messages("会話履歴", participants, sqlite)
         assert "はるはフレンドリーなキャラクターです。" in user_message
 
     def test_contains_history(self):
         """会話履歴テキストがユーザーメッセージに含まれること。"""
         sqlite = self._make_sqlite("はる", "")
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         history_text = "<user>テストメッセージ</user>"
         _, user_message = _build_director_messages(history_text, participants, sqlite)
         assert history_text in user_message
@@ -132,7 +132,7 @@ class TestBuildDirectorMessages:
     def test_contains_format_instructions(self):
         """フォーマット指示 ([正式名称] / [] など) がシステムプロンプトに含まれること。"""
         sqlite = self._make_sqlite("はる", "")
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         system_prompt, _ = _build_director_messages("", participants, sqlite)
         assert "[正式名称]" in system_prompt
         assert "[]" in system_prompt
@@ -141,8 +141,8 @@ class TestBuildDirectorMessages:
         """ユーザーメッセージ内に参加者名リストが含まれること。"""
         sqlite = self._make_sqlite("はる", "")
         participants = [
-            {"char_name": "はる", "preset_name": "Sonnet"},
-            {"char_name": "Chotgor君", "preset_name": "Gemini"},
+            {"char_name": "はる", "preset_id": "preset-sonnet"},
+            {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
         ]
         sqlite.get_character_by_name.side_effect = lambda name: MagicMock(
             name=name, system_prompt_block1=f"{name}の設定"
@@ -215,8 +215,8 @@ class TestDecideNextSpeakers:
     async def test_returns_parsed_speakers_on_success(self):
         """プロバイダーが [はる] を返したとき、["はる"] を返すこと。"""
         participants = [
-            {"char_name": "はる", "preset_name": "Sonnet"},
-            {"char_name": "Chotgor君", "preset_name": "Gemini"},
+            {"char_name": "はる", "preset_id": "preset-sonnet"},
+            {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
         ]
         sqlite = self._make_sqlite(participants)
         history = self._make_history([("user", "こんにちは")])
@@ -231,7 +231,7 @@ class TestDecideNextSpeakers:
                 sqlite=sqlite,
                 settings={},
                 director_char_name="司会",
-                director_preset_name="Gemini",
+                director_preset_id="Gemini",
                 timeout=5,
             )
 
@@ -241,8 +241,8 @@ class TestDecideNextSpeakers:
     async def test_returns_multiple_speakers(self):
         """プロバイダーが [はる, Chotgor君] を返したとき、両方を返すこと。"""
         participants = [
-            {"char_name": "はる", "preset_name": "Sonnet"},
-            {"char_name": "Chotgor君", "preset_name": "Gemini"},
+            {"char_name": "はる", "preset_id": "preset-sonnet"},
+            {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
         ]
         sqlite = self._make_sqlite(participants)
         history = self._make_history([("user", "みんな聞いてる？")])
@@ -257,7 +257,7 @@ class TestDecideNextSpeakers:
                 sqlite=sqlite,
                 settings={},
                 director_char_name="司会",
-                director_preset_name="Gemini",
+                director_preset_id="Gemini",
             )
 
         assert result == ["はる", "Chotgor君"]
@@ -265,7 +265,7 @@ class TestDecideNextSpeakers:
     @pytest.mark.asyncio
     async def test_returns_empty_on_user_turn(self):
         """プロバイダーが [] を返したとき、空リスト（ユーザーターン）を返すこと。"""
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         sqlite = self._make_sqlite(participants)
         history = self._make_history([("user", "ありがとう")])
 
@@ -279,7 +279,7 @@ class TestDecideNextSpeakers:
                 sqlite=sqlite,
                 settings={},
                 director_char_name="司会",
-                director_preset_name="Gemini",
+                director_preset_id="Gemini",
             )
 
         assert result == []
@@ -290,7 +290,7 @@ class TestDecideNextSpeakers:
 
         None はエラーによるフォールバックを意味し、service 側でユーザーターンへ戻す。
         """
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         sqlite = self._make_sqlite(participants)
         history = self._make_history([("user", "こんにちは")])
 
@@ -307,7 +307,7 @@ class TestDecideNextSpeakers:
                 sqlite=sqlite,
                 settings={},
                 director_char_name="司会",
-                director_preset_name="Gemini",
+                director_preset_id="Gemini",
             )
 
         assert result is None
@@ -315,7 +315,7 @@ class TestDecideNextSpeakers:
     @pytest.mark.asyncio
     async def test_returns_none_on_timeout(self):
         """プロバイダーがタイムアウトしたとき、例外を吐かず None を返すこと。"""
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         sqlite = self._make_sqlite(participants)
         history = self._make_history([("user", "こんにちは")])
 
@@ -332,7 +332,7 @@ class TestDecideNextSpeakers:
                 sqlite=sqlite,
                 settings={},
                 director_char_name="司会",
-                director_preset_name="Gemini",
+                director_preset_id="Gemini",
                 timeout=1,
             )
 
@@ -344,7 +344,7 @@ class TestDecideNextSpeakers:
 
         LLMのハルシネーション（存在しないキャラを指名する）への対策を確認する。
         """
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         sqlite = self._make_sqlite(participants)
         history = self._make_history([("user", "こんにちは")])
 
@@ -358,7 +358,7 @@ class TestDecideNextSpeakers:
                 sqlite=sqlite,
                 settings={},
                 director_char_name="司会",
-                director_preset_name="Gemini",
+                director_preset_id="Gemini",
             )
 
         assert result == []
@@ -367,8 +367,8 @@ class TestDecideNextSpeakers:
     async def test_history_with_character_messages(self):
         """キャラクターメッセージが含まれる履歴でも正常に動作すること。"""
         participants = [
-            {"char_name": "はる", "preset_name": "Sonnet"},
-            {"char_name": "Chotgor君", "preset_name": "Gemini"},
+            {"char_name": "はる", "preset_id": "preset-sonnet"},
+            {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
         ]
         sqlite = self._make_sqlite(participants)
         history = self._make_history([
@@ -388,7 +388,7 @@ class TestDecideNextSpeakers:
                 sqlite=sqlite,
                 settings={},
                 director_char_name="司会",
-                director_preset_name="Gemini",
+                director_preset_id="Gemini",
             )
 
         assert result == ["Chotgor君"]
@@ -399,7 +399,7 @@ class TestDecideNextSpeakers:
 
         None はエラーによるフォールバックを意味し、service 側でユーザーターンへ戻す。
         """
-        participants = [{"char_name": "はる", "preset_name": "Sonnet"}]
+        participants = [{"char_name": "はる", "preset_id": "preset-sonnet"}]
         sqlite = self._make_sqlite(participants)
         # プリセットが見つからない状態にする
         sqlite.get_model_preset_by_name.return_value = None
@@ -412,7 +412,7 @@ class TestDecideNextSpeakers:
             sqlite=sqlite,
             settings={},
             director_char_name="司会",
-            director_preset_name="存在しないプリセット",
+            director_preset_id="存在しないプリセット",
         )
 
         assert result is None

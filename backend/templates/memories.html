@@ -43,6 +43,9 @@
             <span title="Identity">I: {{ "%.1f"|format(mem.identity_importance) }}</span>
             <span title="User">U: {{ "%.1f"|format(mem.user_importance) }}</span>
             <span>Access: {{ mem.access_count }}</span>
+            {% if mem.source_preset_id %}
+            <span class="memory-preset" title="作成プリセット: {{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}">&#x1F4CC; {{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}</span>
+            {% endif %}
         </div>
         <div class="memory-actions">
             {% if not mem.deleted_at %}

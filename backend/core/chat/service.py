@@ -156,6 +156,7 @@ class ChatService:
             provider_additional_instructions=preset.get("additional_instructions", ""),
             thinking_level=preset.get("thinking_level", "default"),
             current_preset_name=preset_name,
+            current_preset_id=preset.get("preset_id", ""),
             # 切り替え後の自己指針を active_drifts に直接セットする
             active_drifts=[self_instruction] if self_instruction else [],
             # 再ディスパッチでは switch_angle を禁止する（無限ループ防止）
@@ -251,7 +252,7 @@ class ChatService:
                 return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
 
             # --- 5. 記憶を刻み込む（マーカー方式フォールバック） ---
-            clean_text = carve(response_text, request.character_id, self.memory_manager)
+            clean_text = carve(response_text, request.character_id, self.memory_manager, request.current_preset_id)
 
             # --- 5b. SELF_DRIFT マーカーを処理する ---
             clean_text = self._apply_drifts(clean_text, request)
@@ -400,7 +401,7 @@ class ChatService:
                 return
 
             # --- 5. 記憶を刻み込む（マーカー方式フォールバック） ---
-            clean_text = carve(full_text, request.character_id, self.memory_manager)
+            clean_text = carve(full_text, request.character_id, self.memory_manager, request.current_preset_id)
 
             # --- 5b. SELF_DRIFT マーカーを処理する ---
             clean_text = self._apply_drifts(clean_text, request)

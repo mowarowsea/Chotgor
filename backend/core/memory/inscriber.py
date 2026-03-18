@@ -51,18 +51,26 @@ def _extract(text: str) -> tuple[str, list[tuple[str, str, str]]]:
     return clean, memories
 
 
-def carve(text: str, character_id: str, memory_manager: MemoryManager) -> str:
+def carve(
+    text: str,
+    character_id: str,
+    memory_manager: MemoryManager,
+    source_preset_id: str = "",
+) -> str:
     """LLM応答から [MEMORY:...] マーカーを読み取り、記憶として刻み込む。
 
     Args:
         text: LLMの生応答テキスト
         character_id: 保存先キャラクターID
         memory_manager: 記憶の書き込みを担うマネージャー
+        source_preset_id: 記憶を作成したプリセットID（空文字列の場合はNULL保存）
 
     Returns:
         マーカーを除去したクリーンなテキスト
     """
     clean, memories = _extract(text)
+
+    preset_id_or_none = source_preset_id if source_preset_id else None
 
     for category, impact_str, content in memories:
         impact = float(impact_str) if impact_str else 1.0
@@ -75,6 +83,7 @@ def carve(text: str, character_id: str, memory_manager: MemoryManager) -> str:
                 character_id=character_id,
                 content=content.strip(),
                 category=category.strip(),
+                source_preset_id=preset_id_or_none,
                 **scores,
             )
         except Exception:

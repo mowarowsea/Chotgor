@@ -189,6 +189,8 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         current_time_str=current_time_str,
         time_since_last_interaction=time_since_last_interaction,
         session_id=session_id,
+        current_preset_name=preset.name,
+        current_preset_id=preset.id,
     )
 
     chat_service = state.chat_service

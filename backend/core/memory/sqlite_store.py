@@ -117,6 +117,8 @@ class Memory(Base):
     semantic_importance = Column(Float, default=0.5)
     identity_importance = Column(Float, default=0.5)
     user_importance = Column(Float, default=0.5)
+    # 記憶を作成したプリセットID（NULLは旧データまたは不明）
+    source_preset_id = Column(String, nullable=True)
     # アクセス追跡
     last_accessed_at = Column(DateTime, nullable=True)
     access_count = Column(Integer, default=0)
@@ -188,6 +190,7 @@ class SQLiteStore:
                 "ALTER TABLE characters ADD COLUMN ghost_model TEXT",
                 "ALTER TABLE llm_model_presets ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'default'",
                 "ALTER TABLE characters ADD COLUMN switch_angle_enabled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE memories ADD COLUMN source_preset_id TEXT",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -370,6 +373,7 @@ class SQLiteStore:
         semantic_importance: float = 0.5,
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
+        source_preset_id: Optional[str] = None,
     ) -> Memory:
         """記憶レコードを新規作成する。"""
         with self.get_session() as session:
@@ -382,6 +386,7 @@ class SQLiteStore:
                 semantic_importance=semantic_importance,
                 identity_importance=identity_importance,
                 user_importance=user_importance,
+                source_preset_id=source_preset_id,
             )
             session.add(mem)
             session.commit()

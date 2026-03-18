@@ -45,10 +45,11 @@ def _fake_group_session(
     """グループセッション風 MagicMock を返すヘルパー。"""
     cfg = group_config or {
         "participants": [
-            {"char_name": "はる", "preset_name": "Sonnet"},
-            {"char_name": "Chotgor君", "preset_name": "Gemini"},
+            {"char_name": "はる", "preset_id": "preset-sonnet"},
+            {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
         ],
-        "director_model_id": "はる@Sonnet",
+        "director_char_name": "はる",
+        "director_preset_id": "preset-sonnet",
         "max_auto_turns": 3,
         "turn_timeout_sec": 30,
     }
@@ -108,11 +109,14 @@ def _make_valid_sqlite(sid=None):
     def get_preset_by_name(name):
         return preset_sonnet if name == "Sonnet" else preset_gemini if name == "Gemini" else None
 
+    def get_preset_by_id(pid):
+        return preset_sonnet if pid in ("preset-sonnet", "Sonnet") else preset_gemini if pid in ("preset-gemini", "Gemini") else None
+
     sqlite = MagicMock()
     sqlite.get_character_by_name.side_effect = get_char_by_name
     sqlite.get_character.side_effect = get_char_by_name
     sqlite.get_model_preset_by_name.side_effect = get_preset_by_name
-    sqlite.get_model_preset.side_effect = get_preset_by_name
+    sqlite.get_model_preset.side_effect = get_preset_by_id
     sqlite.create_chat_session.return_value = session
     sqlite.get_chat_session.return_value = session
     sqlite.list_chat_messages.return_value = []

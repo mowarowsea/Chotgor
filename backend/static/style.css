@@ -341,6 +341,13 @@ body {
   border-top: 1px solid var(--border);
   padding-top: 0.5rem;
   margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.memory-preset {
+  margin-left: auto;
+  opacity: 0.6;
+  font-size: 0.72rem;
 }
 
 .memory-actions {

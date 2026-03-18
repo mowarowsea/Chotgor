@@ -264,6 +264,10 @@ async def memories_view(
     if deleted_only:
         memories = [m for m in memories if m["deleted_at"]]
 
+    # プリセットID→名前マップを構築し、記憶作成元プリセット名をテンプレートで表示できるようにする
+    presets = request.app.state.sqlite.list_model_presets()
+    preset_name_map = {p.id: p.name for p in presets}
+
     categories = ["identity", "user", "semantic", "contextual"]
     return get_templates().TemplateResponse(
         "memories.html",
@@ -274,6 +278,7 @@ async def memories_view(
             "categories": categories,
             "selected_category": category,
             "deleted_only": deleted_only,
+            "preset_name_map": preset_name_map,
         },
     )
 

@@ -56,7 +56,7 @@ async def _stream_character_response(
     Args:
         char_name: 応答するキャラクターの名前。
         session_id: 対象セッションID。
-        participants: 参加者情報リスト（preset_name取得に使用）。
+        participants: 参加者情報リスト（preset_id取得に使用）。
         history: 現在の会話履歴（ChatMessageオブジェクトのリスト）。
         sqlite: SQLiteStoreインスタンス。
         settings: グローバル設定辞書。
@@ -68,15 +68,15 @@ async def _stream_character_response(
     if not char:
         raise ValueError(f"キャラクター '{char_name}' が見つかりません")
 
-    # 参加者情報からプリセット名を取得する
+    # 参加者情報からプリセットIDを取得する
     participant = next((p for p in participants if p["char_name"] == char_name), None)
     if not participant:
         raise ValueError(f"参加者リストに '{char_name}' がありません")
 
-    preset_name = participant["preset_name"]
-    preset = sqlite.get_model_preset_by_name(preset_name) or sqlite.get_model_preset(preset_name)
+    preset_id = participant["preset_id"]
+    preset = sqlite.get_model_preset(preset_id)
     if not preset:
-        raise ValueError(f"プリセット '{preset_name}' が見つかりません")
+        raise ValueError(f"プリセット '{preset_id}' が見つかりません")
 
     model_config = (char.enabled_providers or {}).get(preset.id, {})
 
@@ -123,6 +123,8 @@ async def _stream_character_response(
         current_time_str=current_time_str,
         time_since_last_interaction=time_since_last_interaction,
         session_id=session_id,
+        current_preset_name=preset.name,
+        current_preset_id=preset.id,
     )
 
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする
@@ -155,7 +157,7 @@ async def _stream_character_response(
         content=full_text,
         character_name=char_name,
         reasoning=reasoning_text,
-        preset_name=preset_name,
+        preset_name=preset.name,
     )
     yield ("character_done", {"character": char_name, "message": msg})
 
@@ -192,12 +194,8 @@ async def run_group_turn(
         uploads_dir: 画像ファイルの保存ディレクトリパス。
     """
     participants = group_config.get("participants", [])
-    director_model_id = group_config.get("director_model_id", "")
-    # "{char_name}@{preset_name}" 形式をパースする
-    if "@" in director_model_id:
-        director_char_name, director_preset_name = director_model_id.rsplit("@", 1)
-    else:
-        director_char_name, director_preset_name = "", ""
+    director_char_name = group_config.get("director_char_name", "")
+    director_preset_id = group_config.get("director_preset_id", "")
     max_auto_turns = int(group_config.get("max_auto_turns", 3))
     user_name = settings.get("user_name", "ユーザ")
 
@@ -214,7 +212,7 @@ async def run_group_turn(
             sqlite=sqlite,
             settings=settings,
             director_char_name=director_char_name,
-            director_preset_name=director_preset_name,
+            director_preset_id=director_preset_id,
             user_name=user_name,
         )
 
