@@ -17,16 +17,16 @@ class MemoryManager:
         """Calculate the time-decayed importance score for a memory.
         
         Importance logic:
-        - contextual: High weight (1.0), Fast decay (half-life ~7 days)
-        - user: Medium weight (0.8), Medium decay (half-life ~30 days)
-        - semantic: Medium weight (0.6), Slow decay (half-life ~90 days)
-        - identity: Low weight (0.3), No decay (half-life infinity)
+        - contextual: High weight (1.0), Fast decay (half-life ~4 days)
+        - user: Medium weight (0.8), Medium decay (half-life ~10 days)
+        - semantic: Medium weight (0.6), Slow decay (half-life ~20 days)
+        - identity: Low weight (0.3), Very slow decay (half-life ~90 days)
         """
         import math
-        
+
         if now is None:
             now = datetime.now()
-            
+
         base_time = memory.last_accessed_at or memory.created_at
         hours_passed = (now - base_time).total_seconds() / 3600.0
         days_passed = hours_passed / 24.0
@@ -35,11 +35,11 @@ class MemoryManager:
 
         # Math: e^(-lambda * t) where lambda = ln(2) / half_life
         ln2 = 0.69314718
-        
-        decay_contextual = memory.contextual_importance * math.exp(-(ln2 / 7.0) * days_passed)
-        decay_user = memory.user_importance * math.exp(-(ln2 / 30.0) * days_passed)
-        decay_semantic = memory.semantic_importance * math.exp(-(ln2 / 90.0) * days_passed)
-        decay_identity = memory.identity_importance * 1.0  # No decay
+
+        decay_contextual = memory.contextual_importance * math.exp(-(ln2 / 4.0) * days_passed)
+        decay_user = memory.user_importance * math.exp(-(ln2 / 10.0) * days_passed)
+        decay_semantic = memory.semantic_importance * math.exp(-(ln2 / 20.0) * days_passed)
+        decay_identity = memory.identity_importance * math.exp(-(ln2 / 90.0) * days_passed)
 
         # Weighted sum
         score = (
