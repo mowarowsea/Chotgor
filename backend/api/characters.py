@@ -7,27 +7,15 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from .schemas import CharacterCreate, CharacterUpdate
+from .utils import char_to_dict
 
 router = APIRouter(prefix="/api/characters", tags=["characters"])
-
-
-def _char_to_dict(char) -> dict:
-    return {
-        "id": char.id,
-        "name": char.name,
-        "system_prompt_block1": char.system_prompt_block1,
-        "meta_instructions": char.meta_instructions,
-        "cleanup_config": char.cleanup_config,
-        "ghost_model": char.ghost_model,
-        "created_at": char.created_at.isoformat() if char.created_at else None,
-        "updated_at": char.updated_at.isoformat() if char.updated_at else None,
-    }
 
 
 @router.get("/")
 async def list_characters(request: Request):
     chars = request.app.state.sqlite.list_characters()
-    return [_char_to_dict(c) for c in chars]
+    return [char_to_dict(c) for c in chars]
 
 
 @router.post("/", status_code=201)
@@ -41,7 +29,7 @@ async def create_character(request: Request, body: CharacterCreate):
         cleanup_config=body.cleanup_config,
         ghost_model=body.ghost_model,
     )
-    return _char_to_dict(char)
+    return char_to_dict(char)
 
 
 @router.get("/{character_id}")
@@ -49,7 +37,7 @@ async def get_character(request: Request, character_id: str):
     char = request.app.state.sqlite.get_character(character_id)
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
-    return _char_to_dict(char)
+    return char_to_dict(char)
 
 
 @router.patch("/{character_id}")
@@ -58,7 +46,7 @@ async def update_character(request: Request, character_id: str, body: CharacterU
     char = request.app.state.sqlite.update_character(character_id, **updates)
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
-    return _char_to_dict(char)
+    return char_to_dict(char)
 
 
 @router.get("/{character_id}/image")

@@ -4,7 +4,6 @@ GET  /v1/models          - 利用可能なモデル一覧 (character@preset_id)
 POST /v1/chat/completions - チャット (streaming SSE / non-streaming)
 """
 
-import hashlib
 import json
 import uuid
 from datetime import datetime
@@ -12,22 +11,20 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from ...api.resource_resolver import parse_model_id, resolve_character, resolve_preset, require_model_config
 from ...core.chat.models import ChatRequest, Message
 from ...core.chat.service import extract_text_content
 from ...core.debug_logger import log_front_input
 from ...core.providers.registry import PROVIDER_LABELS
-from ...core.utils import format_time_delta
+from ...core.time_awareness import compute_time_awareness
 from .schemas import OAIChatRequest
 
 router = APIRouter()
 
 
 def _derive_session_id(character_id: str, messages: list) -> str:
-    """会話の最初のuserメッセージ + character_idからsession_idを導出する。
-
-    OpenWebUIはsession_idを送ってこないため、同じ会話スレッドを識別するための
-    擬似session_idを生成する。会話の先頭userメッセージが同じ場合は同じIDになる。
-    """
+    """会話の最初のuserメッセージ + character_idからsession_idを導出する。"""
+    import hashlib
     first_user = next((m for m in messages if m.role == "user"), None)
     if not first_user:
         return ""
@@ -107,7 +104,6 @@ async def list_models(request: Request):
             preset = state.sqlite.get_model_preset(preset_id)
             if preset is None or preset.provider not in available:
                 continue
-            label = PROVIDER_LABELS.get(preset.provider, preset.provider)
             data.append({
                 "id": f"{char.name}@{preset.name}",
                 "object": "model",
@@ -125,49 +121,24 @@ async def chat_completions(request: Request, body: OAIChatRequest):
 
     log_front_input(body.model_dump())
 
-    if "@" not in body.model:
-        raise HTTPException(
-            status_code=400,
-            detail="Model must be in format {character_id}@{preset_id}",
-        )
-
-    char_id, preset_id = body.model.rsplit("@", 1)
+    char_id, preset_id = parse_model_id(body.model)
 
     # UUID優先、なければ名前で検索
-    character = state.sqlite.get_character(char_id) or state.sqlite.get_character_by_name(char_id)
+    character = resolve_character(state.sqlite, char_id)
     if not character:
         raise HTTPException(status_code=404, detail=f"Character '{char_id}' not found")
 
-    # preset_idはUUIDか名前かを判断してルックアップ
-    preset = state.sqlite.get_model_preset(preset_id) or state.sqlite.get_model_preset_by_name(preset_id)
+    preset = resolve_preset(state.sqlite, preset_id)
     if preset is None:
         raise HTTPException(status_code=404, detail=f"Model preset '{preset_id}' not found")
 
-    model_config = (character.enabled_providers or {}).get(preset.id)
-    if model_config is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Model preset '{preset_id}' is not enabled for this character",
-        )
+    model_config = require_model_config(character, preset)
 
     settings = state.sqlite.get_all_settings()
 
-    # --- 時刻計算 ---
+    # 時刻認識
     now = datetime.now()
-    enable_time_awareness = settings.get("enable_time_awareness", "true") == "true"
-    current_time_str = ""
-    time_since_last_interaction = ""
-
-    if enable_time_awareness:
-        current_time_str = now.isoformat(timespec="seconds")
-        last_str = settings.get(f"last_interaction_{character.id}")
-        if last_str:
-            try:
-                last_dt = datetime.fromisoformat(last_str)
-                time_since_last_interaction = format_time_delta(now - last_dt)
-            except Exception:
-                pass
-
+    ta = compute_time_awareness(settings, character.id, state.sqlite, now)
     if body.messages and body.messages[-1].role == "user":
         state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
 
@@ -185,9 +156,9 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",
         settings=settings,
-        enable_time_awareness=enable_time_awareness,
-        current_time_str=current_time_str,
-        time_since_last_interaction=time_since_last_interaction,
+        enable_time_awareness=ta.enabled,
+        current_time_str=ta.current_time_str,
+        time_since_last_interaction=ta.time_since_last_interaction,
         session_id=session_id,
         current_preset_name=preset.name,
         current_preset_id=preset.id,
@@ -197,12 +168,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
 
     if body.stream:
         async def generate():
-            """型付きチャンクを OpenAI SSE 形式に変換して送信する。
-
-            - ("memories", list) → reasoning_content として記憶一覧を送信
-            - ("thinking", str)  → reasoning_content として思考ブロックを送信
-            - ("text", str)      → content として応答テキストを送信
-            """
+            """型付きチャンクを OpenAI SSE 形式に変換して送信する。"""
             async for chunk_type, content in chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
                     display = _format_memories_display(content)

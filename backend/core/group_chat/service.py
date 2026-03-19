@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator
 from ..chat.models import ChatRequest, Message
 from ..chat.service import ChatService
 from ..memory.format import format_recalled_memories
-from ..utils import format_time_delta
+from ..time_awareness import compute_time_awareness
 from . import context as ctx
 from .director import decide_next_speakers
 
@@ -90,20 +90,8 @@ async def _stream_character_response(
     last_user_text = _extract_last_user_text(history)
 
     # 時刻認識パラメータを計算する（1on1チャットと同様）
-    enable_time_awareness = settings.get("enable_time_awareness", "true") == "true"
     now = datetime.now()
-    current_time_str = ""
-    time_since_last_interaction = ""
-    if enable_time_awareness:
-        current_time_str = now.isoformat(timespec="seconds")
-        last_str = sqlite.get_setting(f"last_interaction_{char.id}")
-        if last_str:
-            try:
-                last_dt = datetime.fromisoformat(last_str)
-                time_since_last_interaction = format_time_delta(now - last_dt)
-            except Exception:
-                pass
-    # インタラクション時刻を更新する（1on1と同様）
+    ta = compute_time_awareness(settings, char.id, sqlite, now)
     sqlite.set_setting(f"last_interaction_{char.id}", now.isoformat())
 
     # ChatRequest を構築して ChatService に委譲する
@@ -119,9 +107,9 @@ async def _stream_character_response(
         thinking_level=preset.thinking_level or "default",
         settings=settings,
         recall_query_override=last_user_text,
-        enable_time_awareness=enable_time_awareness,
-        current_time_str=current_time_str,
-        time_since_last_interaction=time_since_last_interaction,
+        enable_time_awareness=ta.enabled,
+        current_time_str=ta.current_time_str,
+        time_since_last_interaction=ta.time_since_last_interaction,
         session_id=session_id,
         current_preset_name=preset.name,
         current_preset_id=preset.id,
