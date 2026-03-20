@@ -63,7 +63,6 @@ class AnthropicProvider(BaseLLMProvider):
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """Anthropic APIから応答テキストを一括生成する。"""
         import anthropic
-        from ..debug_logger import log_provider_request, log_provider_response
 
         client = anthropic.Anthropic(api_key=self.api_key)
         api_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
@@ -76,9 +75,9 @@ class AnthropicProvider(BaseLLMProvider):
                 "max_tokens": 4096,
                 **_build_thinking_params(self.model, self.thinking_level),
             }
-            log_provider_request("anthropic", params)
+            self._log_request(params)
             response = client.messages.create(**params)
-            log_provider_response("anthropic", response.model_dump())
+            self._log_response(response.model_dump())
             # Filter out thinking blocks; return only text blocks
             return "".join(b.text for b in response.content if b.type == "text")
 
@@ -97,8 +96,6 @@ class AnthropicProvider(BaseLLMProvider):
 
         import anthropic
 
-        from ..debug_logger import log_provider_request, log_provider_response
-
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
         client = anthropic.Anthropic(api_key=self.api_key)
@@ -111,7 +108,7 @@ class AnthropicProvider(BaseLLMProvider):
             "max_tokens": 4096,
             **_build_thinking_params(self.model, self.thinking_level),
         }
-        log_provider_request("anthropic", params)
+        self._log_request(params)
 
         def run():
             """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
@@ -124,7 +121,7 @@ class AnthropicProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                log_provider_response("anthropic", "".join(accumulated))
+                self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -153,8 +150,6 @@ class AnthropicProvider(BaseLLMProvider):
 
         import anthropic
 
-        from ..debug_logger import log_provider_request, log_provider_response
-
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
         client = anthropic.Anthropic(api_key=self.api_key)
@@ -167,7 +162,7 @@ class AnthropicProvider(BaseLLMProvider):
             "max_tokens": 4096,
             **_build_thinking_params(self.model, self.thinking_level),
         }
-        log_provider_request("anthropic", params)
+        self._log_request(params)
 
         def run():
             """同期SDKのイベントストリームを逐次読み取り、型付きチャンクをキューへ送信する。
@@ -198,7 +193,7 @@ class AnthropicProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                log_provider_response("anthropic", "".join(accumulated))
+                self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -225,8 +220,6 @@ class AnthropicProvider(BaseLLMProvider):
         """
         import anthropic
 
-        from ..debug_logger import log_provider_request, log_provider_response
-
         client = anthropic.Anthropic(api_key=self.api_key)
 
         params: dict = {
@@ -240,9 +233,9 @@ class AnthropicProvider(BaseLLMProvider):
 
         def run() -> ToolTurnResult:
             """同期APIを呼び出してToolTurnResultを返す内部関数。"""
-            log_provider_request("anthropic", params)
+            self._log_request(params)
             response = client.messages.create(**params)
-            log_provider_response("anthropic", response.model_dump())
+            self._log_response(response.model_dump())
 
             text = "".join(b.text for b in response.content if b.type == "text")
             tool_calls = [

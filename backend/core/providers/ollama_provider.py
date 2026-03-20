@@ -9,7 +9,6 @@ import json
 import urllib.error
 import urllib.request
 
-from ..debug_logger import log_provider_request, log_provider_response
 from .base import BaseLLMProvider
 
 DEFAULT_MODEL = "qwen2.5:latest"
@@ -62,12 +61,12 @@ class OllamaProvider(BaseLLMProvider):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        log_provider_request("ollama", {"model": self.model, "prompt": prompt[:200]})
+        self._log_request({"model": self.model, "prompt": prompt[:200]})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 text = result.get("message", {}).get("content", "")
-                log_provider_response("ollama", {"content": text[:200]})
+                self._log_response({"content": text[:200]})
                 return text
         except urllib.error.URLError as e:
             return f"[Ollama接続エラー: {e.reason}. Ollamaが起動しているか確認してください]"

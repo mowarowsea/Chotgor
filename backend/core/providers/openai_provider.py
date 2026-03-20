@@ -55,8 +55,6 @@ class OpenAIProvider(BaseLLMProvider):
     @_api_guard("openai")
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """OpenAI APIから応答テキストを一括生成する。"""
-        from ..debug_logger import log_provider_request, log_provider_response
-
         client = self._make_openai_client()
         api_messages = [{"role": "system", "content": system_prompt}]
         api_messages += [m for m in messages if m.get("role") in ("user", "assistant")]
@@ -70,9 +68,9 @@ class OpenAIProvider(BaseLLMProvider):
                 call_kwargs["max_completion_tokens"] = 16000
             else:
                 call_kwargs["max_tokens"] = 4096
-            log_provider_request(self.PROVIDER_ID, call_kwargs)
+            self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
-            log_provider_response(self.PROVIDER_ID, response.model_dump())
+            self._log_response(response.model_dump())
             return response.choices[0].message.content
 
         try:
@@ -87,8 +85,6 @@ class OpenAIProvider(BaseLLMProvider):
         XAIProvider はこのメソッドを継承して使用する。
         """
         import threading
-
-        from ..debug_logger import log_provider_request, log_provider_response
 
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -109,7 +105,7 @@ class OpenAIProvider(BaseLLMProvider):
                     call_kwargs["max_completion_tokens"] = 16000
                 else:
                     call_kwargs["max_tokens"] = 4096
-                log_provider_request(self.PROVIDER_ID, call_kwargs)
+                self._log_request(call_kwargs)
                 response = client.chat.completions.create(**call_kwargs)
                 for chunk in response:
                     content = chunk.choices[0].delta.content if chunk.choices else None
@@ -119,7 +115,7 @@ class OpenAIProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                log_provider_response(self.PROVIDER_ID, "".join(accumulated))
+                self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -146,8 +142,6 @@ class OpenAIProvider(BaseLLMProvider):
         """
         import json
 
-        from ..debug_logger import log_provider_request, log_provider_response
-
         client = self._make_openai_client()
 
         # OpenAI形式ではsystemメッセージを先頭に追加する
@@ -168,9 +162,9 @@ class OpenAIProvider(BaseLLMProvider):
             else:
                 call_kwargs["max_tokens"] = 4096
 
-            log_provider_request(self.PROVIDER_ID, call_kwargs)
+            self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
-            log_provider_response(self.PROVIDER_ID, response.model_dump())
+            self._log_response(response.model_dump())
 
             message = response.choices[0].message
             text = message.content or ""

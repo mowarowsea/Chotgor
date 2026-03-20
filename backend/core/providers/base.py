@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import functools
 import inspect
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from ..debug_logger import log_provider_request, log_provider_response
 
 if TYPE_CHECKING:
     from ..tools import ToolExecutor, ToolTurnResult
@@ -97,6 +99,18 @@ class BaseLLMProvider:
     # _api_guard / _api_guard_tool_turn デコレータがエラーメッセージで参照するキー名。
     # サブクラスで上書きすることで、継承先でも正しいキー名のエラーが出る。
     _API_SETTINGS_KEY: str = "api_key"
+
+    def _log_request(self, params: Any) -> None:
+        """プロバイダーAPIへのリクエストパラメータをデバッグログに記録する。"""
+        if not self.PROVIDER_ID:
+            raise ValueError(f"{self.__class__.__name__} が PROVIDER_ID を設定していません")
+        log_provider_request(self.PROVIDER_ID, params)
+
+    def _log_response(self, data: Any) -> None:
+        """プロバイダーAPIからのレスポンスをデバッグログに記録する。"""
+        if not self.PROVIDER_ID:
+            raise ValueError(f"{self.__class__.__name__} が PROVIDER_ID を設定していません")
+        log_provider_response(self.PROVIDER_ID, data)
 
     @classmethod
     def from_config(cls, model: str, settings: dict, **kwargs) -> "BaseLLMProvider":

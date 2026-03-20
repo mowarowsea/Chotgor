@@ -4,7 +4,6 @@ import asyncio
 import base64
 import re
 
-from ..debug_logger import log_provider_request, log_provider_response
 from .base import BaseLLMProvider
 
 DEFAULT_MODEL = "gemini-2.0-flash"
@@ -118,13 +117,13 @@ class GoogleProvider(BaseLLMProvider):
                     thinking_budget=budget, include_thoughts=True
                 )
             config = types.GenerateContentConfig(**config_kwargs)
-            log_provider_request("google", {"model": self.model, "contents": contents, "config": config})
+            self._log_request({"model": self.model, "contents": contents, "config": config})
             response = client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=config,
             )
-            log_provider_response("google", response.model_dump() if hasattr(response, "model_dump") else str(response))
+            self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
             return response.text
 
         try:
@@ -173,7 +172,7 @@ class GoogleProvider(BaseLLMProvider):
                         thinking_budget=budget, include_thoughts=True
                     )
                 config = types.GenerateContentConfig(**config_kwargs)
-                log_provider_request("google", {"model": self.model, "contents": contents, "config": config})
+                self._log_request({"model": self.model, "contents": contents, "config": config})
                 for chunk in client.models.generate_content_stream(
                     model=self.model, contents=contents, config=config
                 ):
@@ -183,7 +182,7 @@ class GoogleProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                log_provider_response("google", "".join(accumulated))
+                self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -250,7 +249,7 @@ class GoogleProvider(BaseLLMProvider):
                         thinking_budget=budget, include_thoughts=True
                     )
                 config = types.GenerateContentConfig(**config_kwargs)
-                log_provider_request("google", {"model": self.model, "contents": contents, "config": config})
+                self._log_request({"model": self.model, "contents": contents, "config": config})
 
                 for chunk in client.models.generate_content_stream(
                     model=self.model, contents=contents, config=config
@@ -277,7 +276,7 @@ class GoogleProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                log_provider_response("google", "".join(accumulated))
+                self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()

@@ -16,7 +16,6 @@ import shutil
 import subprocess
 import tempfile
 
-from ..debug_logger import log_provider_request, log_provider_response
 from .base import BaseLLMProvider
 
 
@@ -151,7 +150,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         if self.thinking_level != "default":
             extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
 
-        log_provider_request("claude_cli", {
+        self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
             "extra_env": extra_env,
@@ -169,7 +168,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                 )
 
             raw_stdout = result.stdout.decode("utf-8", errors="replace")
-            log_provider_response("claude_cli", raw_stdout)
+            self._log_response(raw_stdout)
             return _parse_stream_json(raw_stdout)
 
         except FileNotFoundError:
@@ -219,7 +218,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
-        log_provider_request("claude_cli", {
+        self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
             "extra_env": extra_env,
@@ -276,7 +275,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                log_provider_response("claude_cli", "".join(accumulated))
+                self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -327,7 +326,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
-        log_provider_request("claude_cli", {
+        self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
             "extra_env": extra_env,
@@ -397,7 +396,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                log_provider_response("claude_cli", "".join(accumulated))
+                self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
