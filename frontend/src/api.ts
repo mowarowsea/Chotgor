@@ -61,10 +61,12 @@ export interface SessionDetail extends Session {
   messages: ChatMessage[];
 }
 
-/** キャラクターの型定義（ID・名前のみ）。 */
+/** キャラクターの型定義。 */
 export interface Character {
   id: string;
   name: string;
+  /** Afterglow（感情継続機構）の新規チャット作成時デフォルト値。 */
+  afterglow_default: boolean;
 }
 
 /** キャラクター一覧を取得する。 */
@@ -96,12 +98,18 @@ export async function fetchSession(sessionId: string): Promise<SessionDetail> {
   return res.json();
 }
 
-/** 新しいセッションを作成する。 */
-export async function createSession(modelId: string): Promise<Session> {
+/**
+ * 新しいセッションを作成する。
+ *
+ * @param modelId - "{char_name}@{preset_name}" 形式のモデルID。
+ * @param afterglow - Afterglow（感情継続機構）を有効にする場合は true。
+ *                   true の場合、同キャラクターの直近5ターンを引き継いでLLMに渡す。
+ */
+export async function createSession(modelId: string, afterglow = false): Promise<Session> {
   const res = await fetch("/api/chat/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model_id: modelId }),
+    body: JSON.stringify({ model_id: modelId, afterglow }),
   });
   if (!res.ok) throw new Error("セッションの作成に失敗しました");
   return res.json();

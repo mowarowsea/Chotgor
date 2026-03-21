@@ -63,6 +63,8 @@ class ChatSession(Base):
     title = Column(String, nullable=False, default="新しいチャット")
     session_type = Column(String, nullable=False, default="1on1")   # "1on1" | "group"
     group_config = Column(Text, nullable=True)  # グループチャット設定JSON（session_type="group"時のみ）
+    # Afterglow（感情継続機構）: このセッションが引き継ぐ元セッションID。NULLなら引き継ぎなし。
+    afterglow_session_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(DateTime, default=lambda: datetime.now(), onupdate=lambda: datetime.now())
 
@@ -109,6 +111,8 @@ class Character(Base):
     ghost_model = Column(String, nullable=True)  # digest/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
     switch_angle_enabled = Column(Integer, nullable=False, default=0)  # 1=ON, 0=OFF
+    # Afterglow（感情継続機構）: 新規チャット作成時のデフォルト値。1=ON, 0=OFF
+    afterglow_default = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -216,6 +220,7 @@ class SQLiteStore(
                 "ALTER TABLE characters ADD COLUMN switch_angle_enabled INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE memories ADD COLUMN source_preset_id TEXT",
                 "ALTER TABLE characters ADD COLUMN inner_narrative TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE characters ADD COLUMN afterglow_default INTEGER NOT NULL DEFAULT 0",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -230,6 +235,7 @@ class SQLiteStore(
                 "ALTER TABLE chat_messages ADD COLUMN preset_name TEXT",
                 "ALTER TABLE chat_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT '1on1'",
                 "ALTER TABLE chat_sessions ADD COLUMN group_config TEXT",
+                "ALTER TABLE chat_sessions ADD COLUMN afterglow_session_id TEXT",
             ]:
                 try:
                     conn.execute(text(stmt))

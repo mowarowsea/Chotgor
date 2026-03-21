@@ -80,6 +80,16 @@ endblock %}
             </label>
         </div>
 
+        <!-- Afterglow デフォルト設定 -->
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="afterglow_default" name="afterglow_default" value="1" {% if character
+                    and character.afterglow_default %}checked{% endif %}>
+                新規チャット開始時に「前回の流れを引き継ぐ」をデフォルトONにする（Afterglow）
+                <span class="label-hint">ONにすると、このキャラとの新規チャット作成時に前回の会話の余韻を引き継ぎます</span>
+            </label>
+        </div>
+
         <div class="form-group">
             <label>利用モデル
                 <span class="label-hint">有効にしたモデルが OpenWebUI のモデルリストに表示されます</span>

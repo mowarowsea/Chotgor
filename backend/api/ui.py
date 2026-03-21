@@ -96,6 +96,7 @@ async def create_character(request: Request):
     char_id = str(uuid.uuid4())
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = bool(form.get("switch_angle_enabled"))
+    afterglow_default = 1 if form.get("afterglow_default") else 0
 
     request.app.state.sqlite.create_character(
         character_id=char_id,
@@ -106,6 +107,7 @@ async def create_character(request: Request):
         ghost_model=ghost_model,
         image_data=image_data,
         switch_angle_enabled=switch_angle_enabled,
+        afterglow_default=afterglow_default,
     )
     return RedirectResponse(url="/ui/", status_code=303)
 
@@ -146,6 +148,7 @@ async def update_character(request: Request, character_id: str):
 
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
+    afterglow_default = 1 if form.get("afterglow_default") else 0
 
     update_kwargs: dict = dict(
         name=(form.get("name") or "").strip(),
@@ -154,6 +157,7 @@ async def update_character(request: Request, character_id: str):
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         switch_angle_enabled=switch_angle_enabled,
+        afterglow_default=afterglow_default,
     )
     new_image = await _read_image_data(form)
     if new_image:

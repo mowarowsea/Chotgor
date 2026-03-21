@@ -16,8 +16,14 @@ class ChatStoreMixin:
         title: str = "新しいチャット",
         session_type: str = "1on1",
         group_config: Optional[str] = None,
+        afterglow_session_id: Optional[str] = None,
     ):
-        """チャットセッションを作成する。"""
+        """チャットセッションを作成する。
+
+        Args:
+            afterglow_session_id: Afterglow（感情継続機構）で引き継ぐ元セッションID。
+                                  NULLなら引き継ぎなし。
+        """
         with self.get_session() as session:
             from ..sqlite_store import ChatSession
             obj = ChatSession(
@@ -26,6 +32,7 @@ class ChatStoreMixin:
                 title=title,
                 session_type=session_type,
                 group_config=group_config,
+                afterglow_session_id=afterglow_session_id,
             )
             session.add(obj)
             session.commit()
@@ -120,6 +127,51 @@ class ChatStoreMixin:
                 .order_by(ChatMessage.created_at.asc())
                 .all()
             )
+
+    def get_recent_turns(self, session_id: str, n_turns: int = 5) -> list:
+        """Afterglow用: 指定セッションの末尾 n_turns ターン分のメッセージを返す。
+
+        1ターン = user発言 + character応答のペア（最大 n_turns * 2 件）。
+        引き継ぎ元セッションの直近の流れをプリペンドする際に使用する。
+
+        Args:
+            session_id: 引き継ぎ元のセッションID。
+            n_turns: 引き継ぐターン数（デフォルト: 5ターン = 最大10メッセージ）。
+
+        Returns:
+            時系列順のメッセージリスト（最大 n_turns * 2 件）。
+        """
+        all_msgs = self.list_chat_messages(session_id)
+        return all_msgs[-(n_turns * 2):]
+
+    def find_latest_session_for_character(
+        self, character_name: str, exclude_session_id: Optional[str] = None
+    ) -> Optional[str]:
+        """Afterglow用: 指定キャラクターの最新1on1セッションIDを返す。
+
+        同キャラクターの新規セッション作成時に引き継ぎ元セッションを自動特定するために使用する。
+
+        Args:
+            character_name: キャラクター名（model_id の "@" より前の部分）。
+            exclude_session_id: 除外するセッションID（作成中のセッション自身を除くために使用）。
+
+        Returns:
+            最新セッションのID。見つからない場合は None。
+        """
+        with self.get_session() as session:
+            from ..sqlite_store import ChatSession
+            q = (
+                session.query(ChatSession)
+                .filter(
+                    ChatSession.session_type == "1on1",
+                    ChatSession.model_id.like(f"{character_name}@%"),
+                )
+                .order_by(ChatSession.updated_at.desc())
+            )
+            if exclude_session_id:
+                q = q.filter(ChatSession.id != exclude_session_id)
+            result = q.first()
+            return result.id if result else None
 
     def delete_chat_messages_from(self, session_id: str, message_id: str) -> bool:
         """指定メッセージ以降（自身を含む）をすべて削除する。"""

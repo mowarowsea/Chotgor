@@ -18,8 +18,13 @@ class CharacterStoreMixin:
         ghost_model: Optional[str] = None,
         image_data: Optional[str] = None,
         switch_angle_enabled: bool = False,
+        afterglow_default: int = 0,
     ):
-        """キャラクターを新規作成する。"""
+        """キャラクターを新規作成する。
+
+        Args:
+            afterglow_default: Afterglow（感情継続機構）の新規チャット作成時デフォルト値。1=ON, 0=OFF。
+        """
         with self.get_session() as session:
             from ..sqlite_store import Character
             char = Character(
@@ -32,6 +37,7 @@ class CharacterStoreMixin:
                 ghost_model=ghost_model,
                 image_data=image_data,
                 switch_angle_enabled=1 if switch_angle_enabled else 0,
+                afterglow_default=afterglow_default,
             )
             session.add(char)
             session.commit()

@@ -2,12 +2,14 @@
  * サイドバーコンポーネント。
  * セッション一覧の表示・新規チャット開始・グループチャット作成・セッション削除・タイトル編集を担当する。
  */
-import { useState, useRef } from "react";
-import type { Model, Session } from "../api";
+import { useState, useRef, useEffect } from "react";
+import type { Character, Model, Session } from "../api";
 
 interface Props {
   /** 利用可能なモデル一覧 */
   models: Model[];
+  /** キャラクター一覧（Afterglowデフォルト値の取得に使用） */
+  characters: Character[];
   /** セッション一覧 */
   sessions: Session[];
   /** 現在選択中のセッションID */
@@ -22,8 +24,12 @@ interface Props {
   onToggle: () => void;
   /** セッション選択時のコールバック */
   onSelectSession: (sessionId: string) => void;
-  /** 新規チャット作成時のコールバック */
-  onNewChat: (modelId: string) => void;
+  /**
+   * 新規チャット作成時のコールバック。
+   * @param modelId - "{char_name}@{preset_name}" 形式のモデルID。
+   * @param afterglow - Afterglow（感情継続機構）を有効にする場合は true。
+   */
+  onNewChat: (modelId: string, afterglow: boolean) => void;
   /** 新規グループチャット作成時のコールバック */
   onNewGroupChat: (participants: string[], directorModelId: string, maxAutoTurns: number) => void;
   /** セッション削除時のコールバック */
@@ -35,6 +41,7 @@ interface Props {
 /** セッション一覧とモデル選択UIを提供するサイドバー。モバイルはオーバーレイ表示、デスクトップはインライン表示。 */
 export default function Sidebar({
   models,
+  characters,
   sessions,
   activeSessionId,
   selectedModel,
@@ -88,6 +95,21 @@ export default function Sidebar({
     }
   };
 
+  /** 新規チャット作成パネルの開閉状態 */
+  const [newChatPanelOpen, setNewChatPanelOpen] = useState(false);
+  /**
+   * Afterglow（感情継続機構）チェックボックスの現在値。
+   * selectedModel が変わるたびにキャラのデフォルト値で初期化する。
+   */
+  const [afterglowEnabled, setAfterglowEnabled] = useState(false);
+
+  /** selectedModel が変わったとき、Afterglow チェックボックスのデフォルト値を更新する。 */
+  useEffect(() => {
+    const charName = selectedModel.split("@")[0];
+    const char = characters.find((c) => c.name === charName);
+    setAfterglowEnabled(char?.afterglow_default ?? false);
+  }, [selectedModel, characters]);
+
   /** グループチャット作成パネルの開閉状態 */
   const [groupPanelOpen, setGroupPanelOpen] = useState(false);
   /** グループチャット参加者として選択されたモデルIDセット */
@@ -100,9 +122,15 @@ export default function Sidebar({
   /** モデルIDからキャラクター名を抽出する */
   const charNameOf = (modelId: string) => modelId.split("@")[0];
 
+  /** 新規チャットを作成する。パネルが開いているときはその設定を使い、閉じているときはデフォルト値で直接作成する。 */
   const handleNewChat = () => {
     if (!selectedModel) return;
-    onNewChat(selectedModel);
+    if (newChatPanelOpen) {
+      onNewChat(selectedModel, afterglowEnabled);
+      setNewChatPanelOpen(false);
+    } else {
+      onNewChat(selectedModel, afterglowEnabled);
+    }
   };
 
   /** グループチャット参加者の選択をトグルする */
@@ -180,12 +208,42 @@ export default function Sidebar({
 
         {/* 新規チャットボタン */}
         <button
-          onClick={handleNewChat}
+          onClick={() => setNewChatPanelOpen((o) => !o)}
           disabled={!selectedModel}
-          className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded px-3 py-1.5 transition-colors"
+          className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded px-3 py-1.5 transition-colors flex items-center justify-between"
         >
-          + 新規チャット
+          <span>+ 新規チャット</span>
+          <span className="text-xs">{newChatPanelOpen ? "▲" : "▼"}</span>
         </button>
+
+        {/* 新規チャット作成パネル（Afterglow設定） */}
+        {newChatPanelOpen && (
+          <div className="mt-1 space-y-2 border border-zinc-700 rounded-lg p-3 bg-zinc-800/50">
+            {/* Afterglow チェックボックス */}
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={afterglowEnabled}
+                onChange={(e) => setAfterglowEnabled(e.target.checked)}
+                className="accent-indigo-500 mt-0.5 shrink-0"
+              />
+              <span className="text-zinc-300 text-xs leading-snug">
+                前回の流れを引き継ぐ
+                <span className="block text-zinc-500 text-xs mt-0.5">
+                  直近5ターンの会話をこのチャットの前置きとして引き継ぎます
+                </span>
+              </span>
+            </label>
+            {/* 作成ボタン */}
+            <button
+              onClick={handleNewChat}
+              disabled={!selectedModel}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded px-3 py-1.5 transition-colors"
+            >
+              チャット開始
+            </button>
+          </div>
+        )}
 
         {/* グループチャット作成ボタン */}
         <button

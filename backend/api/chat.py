@@ -28,10 +28,15 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 # --- Pydantic スキーマ ---
 
 class SessionCreate(BaseModel):
-    """セッション作成リクエスト。"""
+    """セッション作成リクエスト。
+
+    afterglow が True の場合、同キャラクターの最新1on1セッションを自動特定し、
+    その直近5ターンを Afterglow（感情継続機構）として引き継ぐ。
+    """
 
     model_id: str       # "{char_name}@{preset_name}"
     title: Optional[str] = None
+    afterglow: bool = False
 
 
 class SessionUpdate(BaseModel):
@@ -46,6 +51,28 @@ class MessageCreate(BaseModel):
     content: str
     image_ids: Optional[List[str]] = None
     model_id: Optional[str] = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
+
+
+def _prepend_afterglow(state, session, history_messages: list) -> list:
+    """Afterglow（感情継続機構）の引き継ぎメッセージを history_messages の先頭に追加する。
+
+    セッションに afterglow_session_id が設定されている場合、引き継ぎ元セッションの
+    直近5ターン（最大10メッセージ）を取得してプリペンドする。
+    これらのメッセージはDBには保存せず、LLMへのコンテキストとしてのみ使用される。
+
+    Args:
+        state: アプリケーションステート（sqlite / uploads_dir を含む）。
+        session: 現在のチャットセッション。
+        history_messages: 現在セッションの会話履歴。
+
+    Returns:
+        Afterglowメッセージがプリペンドされたメッセージリスト。
+    """
+    afterglow_id = getattr(session, "afterglow_session_id", None)
+    if not afterglow_id:
+        return history_messages
+    afterglow_msgs = state.sqlite.get_recent_turns(afterglow_id, n_turns=5)
+    return afterglow_msgs + history_messages
 
 
 async def _build_chat_request(
@@ -145,13 +172,28 @@ async def list_sessions(request: Request):
 
 @router.post("/sessions", status_code=201)
 async def create_session(request: Request, body: SessionCreate):
-    """新しいチャットセッションを作成する。"""
+    """新しいチャットセッションを作成する。
+
+    afterglow=True の場合、同キャラクターの最新1on1セッションを引き継ぎ元として設定する。
+    グループチャット（session_type="group"）では afterglow は無視される。
+    """
     session_id = str(uuid.uuid4())
     title = body.title or "新しいチャット"
+
+    # Afterglow: 同キャラの最新セッションを特定する
+    afterglow_session_id: Optional[str] = None
+    if body.afterglow:
+        char_name = body.model_id.split("@")[0] if "@" in body.model_id else body.model_id
+        afterglow_session_id = request.app.state.sqlite.find_latest_session_for_character(
+            character_name=char_name,
+            exclude_session_id=session_id,
+        )
+
     session = request.app.state.sqlite.create_chat_session(
         session_id=session_id,
         model_id=body.model_id,
         title=title,
+        afterglow_session_id=afterglow_session_id,
     )
     return session_to_dict(session)
 
@@ -228,8 +270,11 @@ async def send_message(request: Request, session_id: str, body: MessageCreate):
         auto_title = body.content[:30].replace("\n", " ")
         state.sqlite.update_chat_session(session_id, title=auto_title)
 
+    # Afterglow: 引き継ぎ元セッションの直近ターンを先頭に追加する
+    history_with_afterglow = _prepend_afterglow(state, session, history)
+
     try:
-        response_text = await _call_llm(request, session, history, body.content)
+        response_text = await _call_llm(request, session, history_with_afterglow, body.content)
     except HTTPException:
         raise
     except Exception as e:
@@ -287,8 +332,11 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         body.content, body.image_ids or [], state.sqlite, state.uploads_dir
     )
 
+    # Afterglow: 引き継ぎ元セッションの直近ターンを先頭に追加する
+    history_with_afterglow = _prepend_afterglow(state, session, history)
+
     try:
-        chat_request = await _build_chat_request(request, session, history, user_content, model_id=effective_model_id)
+        chat_request = await _build_chat_request(request, session, history_with_afterglow, user_content, model_id=effective_model_id)
     except HTTPException:
         raise
 

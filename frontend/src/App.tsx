@@ -167,11 +167,16 @@ export default function App() {
     }
   }, []);
 
-  /** 新規チャット作成。 */
-  const handleNewChat = useCallback(async (modelId: string) => {
+  /**
+   * 新規チャット作成。
+   *
+   * @param modelId - "{char_name}@{preset_name}" 形式のモデルID。
+   * @param afterglow - Afterglow（感情継続機構）を有効にする場合は true。
+   */
+  const handleNewChat = useCallback(async (modelId: string, afterglow = false) => {
     setError(null);
     try {
-      const session = await createSession(modelId);
+      const session = await createSession(modelId, afterglow);
       setSessions((prev) => [session, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
@@ -460,6 +465,7 @@ export default function App() {
 
       <Sidebar
         models={models}
+        characters={characters}
         sessions={sessions}
         activeSessionId={activeSessionId}
         selectedModel={selectedModel}
