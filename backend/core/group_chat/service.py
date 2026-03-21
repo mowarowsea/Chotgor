@@ -102,7 +102,7 @@ async def _stream_character_response(
         model=preset.model_id,
         messages=messages,
         character_system_prompt=char.system_prompt_block1,
-        meta_instructions=char.meta_instructions,
+        inner_narrative=char.inner_narrative,
         provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",
         settings=settings,

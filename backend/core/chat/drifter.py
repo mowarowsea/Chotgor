@@ -16,7 +16,7 @@ def extract(text: str) -> tuple[str, list[str], bool]:
     driftは永続化ではなくセッション内一時指針として扱う。
 
     Args:
-        text: LLMの応答テキスト（[MEMORY:...] 除去後）。
+        text: LLMの応答テキスト（[INSCRIBE_MEMORY:...] 除去後）。
 
     Returns:
         tuple:

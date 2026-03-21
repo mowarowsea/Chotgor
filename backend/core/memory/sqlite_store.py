@@ -103,7 +103,7 @@ class Character(Base):
     id = Column(String, primary_key=True)  # UUID
     name = Column(String, nullable=False)
     system_prompt_block1 = Column(Text, nullable=False, default="")
-    meta_instructions = Column(Text, nullable=False, default="")
+    inner_narrative = Column(Text, nullable=False, default="")
     cleanup_config = Column(JSON, nullable=False, default=dict)
     enabled_providers = Column(JSON, nullable=False, default=dict)
     ghost_model = Column(String, nullable=True)  # digest/forget に使うプリセットID
@@ -215,6 +215,7 @@ class SQLiteStore(
                 "ALTER TABLE llm_model_presets ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'default'",
                 "ALTER TABLE characters ADD COLUMN switch_angle_enabled INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE memories ADD COLUMN source_preset_id TEXT",
+                "ALTER TABLE characters ADD COLUMN inner_narrative TEXT NOT NULL DEFAULT ''",
             ]:
                 try:
                     conn.execute(text(stmt))

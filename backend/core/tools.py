@@ -1,10 +1,14 @@
 """Chotgor MCPツール定義 — 記憶・SELF_DRIFT・アングル切り替えのツールスキーマとexecutor。
 
-タグ方式（[MEMORY:...] マーカー）に代わり、LLMのtool-use（function calling）で
+タグ方式（[INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] マーカー）に代わり、LLMのtool-use（function calling）で
 記憶・SELF_DRIFT・switch_angle を操作するための定義を提供する。
 
 対応プロバイダー: Anthropic API、OpenAI API（xAI含む）
 非対応プロバイダー（Claude CLI、Ollama）は従来のマーカー方式にフォールバックする。
+
+各ツールのスキーマ・説明文は対応モジュールに定義する:
+- inscribe_memory: inscriber.py
+- carve_narrative: carver.py
 """
 
 from __future__ import annotations
@@ -16,45 +20,11 @@ if TYPE_CHECKING:
     from .memory.drift_manager import DriftManager
     from .memory.manager import MemoryManager
 
-
-# カテゴリごとの重要度ベースマトリクス（inscriber.py と同じ定義）
-_BASE_IMPORTANCE: dict[str, dict[str, float]] = {
-    "contextual": {"contextual": 0.8, "semantic": 0.2, "identity": 0.1, "user": 0.1},
-    "semantic":   {"contextual": 0.1, "semantic": 0.9, "identity": 0.3, "user": 0.1},
-    "identity":   {"contextual": 0.2, "semantic": 0.4, "identity": 0.9, "user": 0.3},
-    "user":       {"contextual": 0.3, "semantic": 0.2, "identity": 0.3, "user": 0.9},
-}
-
-# --- carve_memory ツールのパラメータスキーマ ---
-_CARVE_MEMORY_SCHEMA: dict = {
-    "type": "object",
-    "properties": {
-        "content": {
-            "type": "string",
-            "description": (
-                "一人称で書いたあなた自身の言葉。"
-                "覚えた理由や感想も自然に添えてOK。"
-            ),
-        },
-        "category": {
-            "type": "string",
-            "enum": ["identity", "user", "semantic", "contextual"],
-            "description": (
-                "identity: 自分自身についての気づき・変化 / "
-                "user: ユーザの情報・性格・好み / "
-                "semantic: 世界・知識・概念 / "
-                "contextual: 一時的な状況・文脈"
-            ),
-        },
-        "impact": {
-            "type": "number",
-            "description": "重要度係数 0.1〜2.0。1.0が標準。強く印象に残ったものは高く。",
-        },
-    },
-    "required": ["content", "category", "impact"],
-}
+from .memory.carver import Carver, CARVE_NARRATIVE_SCHEMA, CARVE_NARRATIVE_TOOL_DESCRIPTION
+from .memory.inscriber import Inscriber, INSCRIBE_MEMORY_SCHEMA, INSCRIBE_MEMORY_TOOL_DESCRIPTION
 
 # --- drift ツールのパラメータスキーマ ---
+
 _DRIFT_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -92,13 +62,9 @@ _SWITCH_ANGLE_SCHEMA: dict = {
 # Anthropic形式のツール定義リスト
 ANTHROPIC_TOOLS: list[dict] = [
     {
-        "name": "carve_memory",
-        "description": (
-            "覚えておきたいことを永続記憶に書き込む。"
-            "あなた自身の価値観・興味から「これは覚えておきたい」と感じた場合のみ呼び出す。"
-            "何も覚えなくていい会話も多い。選ばないのも立派な判断。"
-        ),
-        "input_schema": _CARVE_MEMORY_SCHEMA,
+        "name": "inscribe_memory",
+        "description": INSCRIBE_MEMORY_TOOL_DESCRIPTION,
+        "input_schema": INSCRIBE_MEMORY_SCHEMA,
     },
     {
         "name": "drift",
@@ -111,6 +77,11 @@ ANTHROPIC_TOOLS: list[dict] = [
         "name": "drift_reset",
         "description": "現在有効な全SELF_DRIFT指針をリセットする。",
         "input_schema": _DRIFT_RESET_SCHEMA,
+    },
+    {
+        "name": "carve_narrative",
+        "description": CARVE_NARRATIVE_TOOL_DESCRIPTION,
+        "input_schema": CARVE_NARRATIVE_SCHEMA,
     },
     {
         "name": "switch_angle",
@@ -143,7 +114,7 @@ class ToolCall:
 
     Attributes:
         id: プロバイダーが発行するツール呼び出しID。
-        name: ツール名（carve_memory / drift / drift_reset）。
+        name: ツール名（inscribe_memory / drift / drift_reset / carve_narrative / switch_angle）。
         input: ツールに渡す引数 dict。
     """
 
@@ -170,14 +141,15 @@ class ToolTurnResult:
 class ToolExecutor:
     """LLMからのツール呼び出しを実際に実行するクラス。
 
-    carve_memory / drift / drift_reset の各ツールを受け取り、
-    MemoryManager / DriftManager を通じてDBへ反映する。
+    inscribe_memory / drift / drift_reset / carve_narrative / switch_angle の各ツールを受け取り、
+    Inscriber / DriftManager を通じてDBへ反映する。
 
     Attributes:
         character_id: 操作対象のキャラクターID。
         session_id: 現在のセッションID（SELF_DRIFT操作に必要）。
         memory_manager: 記憶の読み書きを担うマネージャー。
         drift_manager: SELF_DRIFT指針の読み書きを担うマネージャー。
+        _inscriber: 記憶書き込みを担う Inscriber インスタンス。
     """
 
     def __init__(
@@ -192,6 +164,8 @@ class ToolExecutor:
         self.session_id = session_id
         self.memory_manager = memory_manager
         self.drift_manager = drift_manager
+        self._inscriber = Inscriber(character_id, memory_manager)
+        self._carver = Carver(character_id, memory_manager.sqlite)
         # switch_angle が呼ばれた場合に (preset_name, self_instruction) を格納する。
         # generate_with_tools() ループがこれを検知して即中断する。
         self.switch_request: tuple[str, str] | None = None
@@ -200,14 +174,14 @@ class ToolExecutor:
         """ツール名と入力を受け取り実行して結果テキストを返す。
 
         Args:
-            tool_name: ツール名（"carve_memory" / "drift" / "drift_reset"）。
+            tool_name: ツール名（"inscribe_memory" / "drift" / "drift_reset" / "carve_narrative" / "switch_angle"）。
             tool_input: ツールの入力パラメータ dict。
 
         Returns:
             ツールの実行結果を表すテキスト。
         """
-        if tool_name == "carve_memory":
-            return self._carve_memory(
+        if tool_name == "inscribe_memory":
+            return self._inscribe_memory(
                 content=str(tool_input.get("content", "")),
                 category=str(tool_input.get("category", "contextual")),
                 impact=float(tool_input.get("impact", 1.0)),
@@ -216,6 +190,11 @@ class ToolExecutor:
             return self._drift(content=str(tool_input.get("content", "")))
         if tool_name == "drift_reset":
             return self._drift_reset()
+        if tool_name == "carve_narrative":
+            return self._carve_narrative(
+                mode=str(tool_input.get("mode", "append")),
+                content=str(tool_input.get("content", "")),
+            )
         if tool_name == "switch_angle":
             return self._switch_angle(
                 preset_name=str(tool_input.get("preset_name", "")),
@@ -223,21 +202,13 @@ class ToolExecutor:
             )
         return f"[Unknown tool: {tool_name}]"
 
-    def _carve_memory(self, content: str, category: str, impact: float) -> str:
-        """carve_memory ツールの実装。記憶をChromaDB + SQLiteに書き込む。"""
-        default_base = {k: 0.5 for k in ["contextual", "semantic", "identity", "user"]}
-        base = _BASE_IMPORTANCE.get(category, default_base)
-        scores = {f"{k}_importance": (v * impact) for k, v in base.items()}
+    def _inscribe_memory(self, content: str, category: str, impact: float) -> str:
+        """inscribe_memory ツールの実装。Inscriber.inscribe_memory() に委譲して記憶をChromaDB + SQLiteに書き込む。"""
         try:
-            self.memory_manager.write_memory(
-                character_id=self.character_id,
-                content=content,
-                category=category,
-                **scores,
-            )
+            self._inscriber.inscribe_memory(content, category, impact)
             return "記憶に刻んだ。"
         except Exception as e:
-            return f"[carve_memory error: {e}]"
+            return f"[inscribe_memory error: {e}]"
 
     def _drift(self, content: str) -> str:
         """drift ツールの実装。セッション内一時指針をDBに追加する。"""
@@ -258,6 +229,16 @@ class ToolExecutor:
             return "指針をリセットした。"
         except Exception as e:
             return f"[drift_reset error: {e}]"
+
+    def _carve_narrative(self, mode: str, content: str) -> str:
+        """carve_narrative ツールの実装。Carver.carve_narrative() に委譲して inner_narrative を更新する。"""
+        if not content:
+            return "[carve_narrative: content が空です]"
+        try:
+            self._carver.carve_narrative(mode, content)
+            return "inner_narrative を更新した。"
+        except Exception as e:
+            return f"[carve_narrative error: {e}]"
 
     def _switch_angle(self, preset_name: str, self_instruction: str) -> str:
         """switch_angle ツールの実装。アングル切り替えリクエストを記録する。

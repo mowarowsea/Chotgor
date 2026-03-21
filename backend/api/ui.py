@@ -101,7 +101,6 @@ async def create_character(request: Request):
         character_id=char_id,
         name=name,
         system_prompt_block1=form.get("system_prompt_block1", ""),
-        meta_instructions=form.get("meta_instructions", ""),
         cleanup_config={"digest_delete_originals": bool(form.get("digest_delete_originals"))},
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
@@ -151,7 +150,6 @@ async def update_character(request: Request, character_id: str):
     update_kwargs: dict = dict(
         name=(form.get("name") or "").strip(),
         system_prompt_block1=form.get("system_prompt_block1", ""),
-        meta_instructions=form.get("meta_instructions", ""),
         cleanup_config=existing_config,
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,

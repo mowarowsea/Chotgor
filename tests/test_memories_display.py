@@ -1,4 +1,4 @@
-"""Tests for Issue #26 — 想起した記憶のフロント表示対応。
+"""Issue #26 — 想起した記憶のフロント表示対応のテスト。
 
 ChatService.execute_stream() が記憶を先頭で ("memories", list) としてyieldすること、
 および router ヘルパー関数の動作を検証する。
@@ -159,6 +159,20 @@ def _fake_provider_with_text(text: str):
     return provider
 
 
+def _mock_inscriber_passthrough():
+    """テキストをそのまま返す Inscriber モックを生成するヘルパー。"""
+    mock = MagicMock()
+    mock.inscribe_memory_from_text.side_effect = lambda text, *_: text
+    return mock
+
+
+def _mock_carver_passthrough():
+    """テキストをそのまま返す Carver モックを生成するヘルパー。"""
+    mock = MagicMock()
+    mock.carve_narrative_from_text.side_effect = lambda text: text
+    return mock
+
+
 @pytest.mark.asyncio
 async def test_execute_stream_yields_memories_first():
     """記憶がある場合、最初のチャンクが ("memories", list) であること。
@@ -176,7 +190,8 @@ async def test_execute_stream_yields_memories_first():
         patch("backend.core.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -201,7 +216,8 @@ async def test_execute_stream_no_memories_chunk_when_empty():
         patch("backend.core.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -233,7 +249,8 @@ async def test_execute_stream_yields_text_last():
         patch("backend.core.chat.service.create_provider", return_value=provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -265,7 +282,8 @@ async def test_execute_stream_thinking_chunks_yielded():
         patch("backend.core.chat.service.create_provider", return_value=provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -276,15 +294,19 @@ async def test_execute_stream_thinking_chunks_yielded():
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_text_is_carved():
-    """carve() によって [MEMORY:...] マーカーが取り除かれたテキストがyieldされること。"""
+async def test_execute_stream_text_is_cleaned_by_inscribe_memory_from_text():
+    """Inscriber.inscribe_memory_from_text() によって [INSCRIBE_MEMORY:...] マーカーが
+    取り除かれたテキストがyieldされること。
+
+    旧テスト名: test_execute_stream_text_is_carved（carve() 時代の名称から改名）
+    """
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
 
     request = _make_request()
     service = ChatService(memory_manager=memory_manager)
 
-    raw = "応答テキスト[MEMORY:general|記憶内容]"
+    raw = "応答テキスト[INSCRIBE_MEMORY:contextual|1.0|記憶内容]"
 
     async def _typed(system_prompt, messages):
         yield ("text", raw)
@@ -293,22 +315,29 @@ async def test_execute_stream_text_is_carved():
     provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed
 
-    def _fake_carve(text, char_id, manager, preset_id=""):
-        # [MEMORY:...] を除去する簡易実装
+    def _fake_inscribe(text, *_):
+        """[INSCRIBE_MEMORY:...] を除去する簡易実装。"""
         import re
-        return re.sub(r"\[MEMORY:[^\]]*\]", "", text)
+        return re.sub(r"\[INSCRIBE_MEMORY:[^\]]*\]", "", text)
+
+    mock_inscriber = MagicMock()
+    mock_inscriber.inscribe_memory_from_text.side_effect = _fake_inscribe
+
+    mock_carver = MagicMock()
+    mock_carver.carve_narrative_from_text.side_effect = lambda text: text
 
     with (
         patch("backend.core.chat.service.create_provider", return_value=provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=_fake_carve),
+        patch("backend.core.chat.service.Inscriber", return_value=mock_inscriber),
+        patch("backend.core.chat.service.Carver", return_value=mock_carver),
     ):
         chunks = await _collect_stream(service, request)
 
     text_chunks = [c for t, c in chunks if t == "text"]
     assert len(text_chunks) == 1
-    assert "[MEMORY:" not in text_chunks[0]
+    assert "[INSCRIBE_MEMORY:" not in text_chunks[0]
     assert "応答テキスト" in text_chunks[0]
 
 

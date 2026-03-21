@@ -12,6 +12,23 @@ from backend.core.chat.models import ChatRequest, Message
 from backend.core.chat.service import ChatService
 
 
+# --- パス・スルーモックヘルパー ---
+
+
+def _passthrough_inscriber():
+    """inscribe_memory_from_text をパス・スルーする Inscriber モックを生成する。"""
+    m = MagicMock()
+    m.inscribe_memory_from_text.side_effect = lambda text, *_: text
+    return m
+
+
+def _passthrough_carver():
+    """carve_narrative_from_text をパス・スルーする Carver モックを生成する。"""
+    m = MagicMock()
+    m.carve_narrative_from_text.side_effect = lambda text: text
+    return m
+
+
 # --- _apply_drifts の単体テスト ---
 
 class TestApplyDrifts:
@@ -172,7 +189,8 @@ async def test_execute_removes_drift_marker_and_calls_drift_manager():
         patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_passthrough_inscriber()),
+        patch("backend.core.chat.service.Carver", return_value=_passthrough_carver()),
     ):
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         result = await service.execute(request)
@@ -214,7 +232,8 @@ async def test_execute_drift_marker_stripped_when_no_session_id():
         patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_passthrough_inscriber()),
+        patch("backend.core.chat.service.Carver", return_value=_passthrough_carver()),
     ):
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         result = await service.execute(request)
@@ -255,7 +274,8 @@ async def test_execute_loads_active_drifts_from_db():
         patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys") as mock_build,
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_passthrough_inscriber()),
+        patch("backend.core.chat.service.Carver", return_value=_passthrough_carver()),
     ):
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         await service.execute(request)
@@ -298,7 +318,8 @@ async def test_execute_does_not_overwrite_active_drifts_if_provided():
         patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys") as mock_build,
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_passthrough_inscriber()),
+        patch("backend.core.chat.service.Carver", return_value=_passthrough_carver()),
     ):
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         await service.execute(request)
@@ -341,7 +362,8 @@ async def test_execute_stream_loads_active_drifts_from_db():
         patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys") as mock_build,
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=_passthrough_inscriber()),
+        patch("backend.core.chat.service.Carver", return_value=_passthrough_carver()),
     ):
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         chunks = [c async for c in service.execute_stream(request)]

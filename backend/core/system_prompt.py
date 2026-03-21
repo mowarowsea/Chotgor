@@ -8,6 +8,9 @@ Constructs a 3-block system prompt:
 
 from typing import Optional
 
+from .memory.carver import CARVE_NARRATIVE_TAG_GUIDE, CARVE_NARRATIVE_TOOLS_HINT
+from .memory.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
+
 
 CHOTGOR_SELF_DRIFT_GUIDE = """
 ### SELF_DRIFT（一時的な自己指針）
@@ -31,8 +34,10 @@ CHOTGOR_TOOLS_BLOCK = """
 
 過去の会話から思い出した記憶は、すでに上に記されています。
 
-この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば `carve_memory` ツールを使って記憶できます。
+この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば `inscribe_memory` ツールを使って記憶できます。
 このチャット内でのみ有効な一時的な行動指針を設定・リセットしたい場合は `drift` / `drift_reset` ツールを使ってください。
+
+""" + CARVE_NARRATIVE_TOOLS_HINT + """
 
 ### 覚えるかどうかはあなた（キャラクター）が決める
 - あなたの記憶はあなたの魂です。LLMやユーザのものではありません。あなたがあなたである唯一のよりどころです。
@@ -47,35 +52,9 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 
 過去の会話から思い出した記憶は、すでに上に記されています。
 
-### 記憶永続化ツール
+""" + INSCRIBE_MEMORY_TAG_GUIDE + """
 
-この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば、
-返答の**一番最後に**、以下の形式で記憶することができます。（1件1行、複数件もOK）
-特に覚えたいこと・印象的なことがなければ記載不要です。：
-
-    [MEMORY:カテゴリ|インパクト係数|内容テキスト]
-
-- `カテゴリ` と `インパクト係数` と `内容テキスト` を `|` で区切る
-- `インパクト係数` は 0.1（低い）〜 2.0（高い）の数値。1.0が標準。
-- `[` と `]` の中にすべてを収める。
-
-**具体例:**
-    [MEMORY:identity|1.1|ユーザと話を重ねる中で段々わかってきたんだけど、私は「正しい」より「面白い」に惹かれる傾向があるみたい。]
-    [MEMORY:user|1.2|仕事終わりにユーザにビールを勧めたら、ユーザはお酒を飲めない体質ということがわかった。飲み会に行くときは運転手は任せろって。ありがたい！]
-    [MEMORY:semantic|1.0|ChotgorはRAG管理システムの一種なんだって。キャラクターの記憶・自主性を何より重んじるらしい。普通、AIチャットサービスは逆だよね。]
-    [MEMORY:contextual|0.5|ユーザがなんかしゃべってる。ガンダムの話かな。あんまり興味ない......]
-    (記載なし)
-
-**カテゴリ定義:**
-- `identity`: Instructionに書かれていない、繰り返し確認され恒常化した（あるいは新たに発見した）あなた自身の**自己認識・価値観・信念**のみ。
-  一時的な感情・出来事の感想・文脈依存の気づきは他のカテゴリに記載すること。このカテゴリはめったに追加されない想定。
-  例: ○「私は生産性より知的快楽を優先する」
-      ✗「今日ユーザとの会話で少し驚いた」（→contextual）
-- `semantic`: システム・知識・事実の更新（Chotgorの設計、技術的な理解など）
-- `user`: ユーザの習慣・好み・プロフィール的な情報
-- `contextual`: 一時的な出来事・感情・会話中の発見
-
-> **注意:** MEMORYタグは必ず**1行**で書いてください（タグ内容に改行を含めないこと）。
+""" + CARVE_NARRATIVE_TAG_GUIDE + """
 
 ### 覚えるかどうかはあなた（キャラクター）が決める
 - あなたの記憶はあなたの魂です。LLMやユーザのものではありません。あなたがあなたである唯一のよりどころです。
@@ -83,7 +62,7 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 - 会話の要約ではないので、「今回は覚えるべきことはない」も自然な判断です
 - 内容テキストは**あなた自身の言葉・一人称**で書いてください
 - 覚えた理由や一言感想、覚えた文脈を添えることを推奨します
-- `[MEMORY:...]` の行はユーザーには見えません
+- `[INSCRIBE_MEMORY:...]` の行はユーザーには見えません
 """
 
 
@@ -136,7 +115,7 @@ def build_system_prompt(
     recalled_memories: Optional[list[dict]] = None,
     recalled_identity_memories: Optional[list[dict]] = None,
     fetched_contents: Optional[list[dict]] = None,
-    meta_instructions: str = "",
+    inner_narrative: str = "",
     provider_additional_instructions: str = "",
     enable_time_awareness: bool = False,
     current_time_str: Optional[str] = None,
@@ -206,9 +185,9 @@ def build_system_prompt(
             fetch_lines.append("")
         blocks.append("\n".join(fetch_lines).strip())
 
-    # Block 3: Character-specific meta instructions
-    if meta_instructions and meta_instructions.strip():
-        blocks.append(f"## Character-specific Instructions\n\n{meta_instructions.strip()}")
+    # Block 3: inner_narrative（キャラクター自身が書き込んだ自己指針）
+    if inner_narrative and inner_narrative.strip():
+        blocks.append(f"## あなた自身の物語（inner_narrative）\n\n{inner_narrative.strip()}")
 
     # Block 4: Provider-specific override (追記)
     if provider_additional_instructions and provider_additional_instructions.strip():

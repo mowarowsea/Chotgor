@@ -18,7 +18,7 @@ class ChatRequest:
     model: str
     messages: list[Message]
     character_system_prompt: str = ""
-    meta_instructions: str = ""
+    inner_narrative: str = ""
     provider_additional_instructions: str = ""
     thinking_level: str = "default"
     settings: dict = field(default_factory=dict)

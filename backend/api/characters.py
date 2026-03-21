@@ -25,7 +25,7 @@ async def create_character(request: Request, body: CharacterCreate):
         character_id=char_id,
         name=body.name,
         system_prompt_block1=body.system_prompt_block1,
-        meta_instructions=body.meta_instructions,
+        inner_narrative=body.inner_narrative,
         cleanup_config=body.cleanup_config,
         ghost_model=body.ghost_model,
     )

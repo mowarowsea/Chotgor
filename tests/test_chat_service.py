@@ -1,4 +1,9 @@
-"""Tests for core.chat.service and core.chat.models."""
+"""backend.core.chat.service と backend.core.chat.models のテスト。
+
+ChatService のフロー全体を検証する:
+- SUPPORTS_TOOLS=False パス: Inscriber.inscribe_memory_from_text / Carver.carve_narrative_from_text 経由
+- SUPPORTS_TOOLS=True パス: generate_with_tools / ToolExecutor 経由
+"""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,12 +15,15 @@ from backend.core.chat.service import ChatService, extract_text_content
 # --- extract_text_content (moved from test_llm_service_multimodal) ---
 
 def test_extract_text_content_string():
+    """文字列をそのまま返すこと。"""
     assert extract_text_content("hello") == "hello"
 
 def test_extract_text_content_none():
+    """None は空文字列を返すこと。"""
     assert extract_text_content(None) == ""
 
 def test_extract_text_content_list():
+    """リスト形式の content からテキスト部分だけ抽出すること。"""
     content = [
         {"type": "text", "text": "Hello "},
         {"type": "image_url", "image_url": {"url": "..."}},
@@ -24,12 +32,14 @@ def test_extract_text_content_list():
     assert extract_text_content(content) == "Hello world"
 
 def test_extract_text_content_empty_list():
+    """空リストは空文字列を返すこと。"""
     assert extract_text_content([]) == ""
 
 
-# --- ChatRequest construction ---
+# --- ChatRequest のデフォルト値確認 ---
 
 def test_chat_request_defaults():
+    """ChatRequest のデフォルト値が正しいこと。inner_narrative フィールドが存在すること。"""
     req = ChatRequest(
         character_id="char-1",
         character_name="Alice",
@@ -38,17 +48,35 @@ def test_chat_request_defaults():
         messages=[Message(role="user", content="hi")],
     )
     assert req.character_system_prompt == ""
-    assert req.meta_instructions == ""
+    assert req.inner_narrative == ""
     assert req.provider_additional_instructions == ""
     assert req.settings == {}
 
 
-# --- ChatService.execute ---
+def test_chat_request_has_no_meta_instructions_field():
+    """ChatRequest に旧フィールド名 meta_instructions が存在しないこと（改名済み確認）。"""
+    req = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[],
+    )
+    assert not hasattr(req, "meta_instructions"), (
+        "meta_instructions フィールドが残っています。inner_narrative に改名済みのはずです。"
+    )
+
+
+# --- ChatService.execute (SUPPORTS_TOOLS=False パス) ---
 
 @pytest.mark.asyncio
 async def test_chat_service_execute_returns_text():
+    """SUPPORTS_TOOLS=False のプロバイダーは generate() を呼び、クリーンテキストを返すこと。
+
+    Inscriber.inscribe_memory_from_text と Carver.carve_narrative_from_text はパス・スルーでモックする。
+    """
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = ChatRequest(
         character_id="char-1",
@@ -62,11 +90,17 @@ async def test_chat_service_execute_returns_text():
     fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="Hi there!")
 
+    mock_inscriber = MagicMock()
+    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+    mock_carver = MagicMock()
+    mock_carver.carve_narrative_from_text.side_effect = lambda text: text
+
     with (
         patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=mock_inscriber),
+        patch("backend.core.chat.service.Carver", return_value=mock_carver),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -76,8 +110,9 @@ async def test_chat_service_execute_returns_text():
 
 @pytest.mark.asyncio
 async def test_chat_service_execute_provider_error_returns_error_string():
+    """SUPPORTS_TOOLS=False でプロバイダーが例外を送出した場合、エラー文字列を返すこと。"""
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = ChatRequest(
         character_id="char-1",
@@ -88,6 +123,7 @@ async def test_chat_service_execute_provider_error_returns_error_string():
     )
 
     fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(side_effect=RuntimeError("oops"))
 
     with (
@@ -107,10 +143,11 @@ async def test_chat_service_execute_provider_error_returns_error_string():
 async def test_chat_service_execute_with_tools_returns_text():
     """SUPPORTS_TOOLS=True のプロバイダーは generate_with_tools を呼び、その戻り値を返すこと。
 
-    carve や _apply_drifts は呼ばれない（ツール側が直接記憶・DRIFTを操作する）。
+    Inscriber.inscribe_memory_from_text と Carver.carve_narrative_from_text は呼ばれない
+    （ツール側が直接 inscribe_memory / carve_narrative を操作する）。
     """
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = ChatRequest(
         character_id="char-1",
@@ -141,7 +178,7 @@ async def test_chat_service_execute_with_tools_returns_text():
 async def test_chat_service_execute_with_tools_error_returns_error_string():
     """SUPPORTS_TOOLS=True でプロバイダーが例外を送出した場合、エラー文字列を返すこと。"""
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = ChatRequest(
         character_id="char-1",
@@ -204,17 +241,17 @@ def _make_tool_provider(turn_results: list):
 
 
 @pytest.mark.asyncio
-async def test_execute_with_tools_calls_memory_manager():
-    """SUPPORTS_TOOLS=True のプロバイダーが carve_memory ツールを呼び出したとき、
+async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
+    """SUPPORTS_TOOLS=True のプロバイダーが inscribe_memory ツールを呼び出したとき、
     memory_manager.write_memory が実際に呼ばれること。
 
-    サービス → generate_with_tools → ToolExecutor → memory_manager という
+    サービス → generate_with_tools → ToolExecutor → inscribe_memory → memory_manager という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
     """
     from backend.core.tools import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = ChatRequest(
         character_id="char-1",
@@ -225,7 +262,7 @@ async def test_execute_with_tools_calls_memory_manager():
         session_id="session-abc",
     )
 
-    tc = ToolCall(id="tc-1", name="carve_memory", input={"content": "ユーザは猫が好き", "category": "user", "impact": 1.0})
+    tc = ToolCall(id="tc-1", name="inscribe_memory", input={"content": "ユーザは猫が好き", "category": "user", "impact": 1.0})
     provider = _make_tool_provider([
         ToolTurnResult(text="", tool_calls=[tc]),
         ToolTurnResult(text="覚えたよ", tool_calls=[]),
@@ -246,6 +283,49 @@ async def test_execute_with_tools_calls_memory_manager():
 
 
 @pytest.mark.asyncio
+async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
+    """SUPPORTS_TOOLS=True のプロバイダーが carve_narrative ツールを呼び出したとき、
+    sqlite_store.update_character が実際に呼ばれること。
+
+    サービス → generate_with_tools → ToolExecutor → carve_narrative → Carver → sqlite という
+    一連の呼び出しチェーンをサービスレベルで統合検証する。
+    """
+    from backend.core.tools import ToolCall, ToolTurnResult
+
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+    mock_char = MagicMock()
+    mock_char.inner_narrative = ""
+    memory_manager.sqlite.get_character.return_value = mock_char
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="自分を書き直したい")],
+        session_id="session-abc",
+    )
+
+    tc = ToolCall(id="tc-2", name="carve_narrative", input={"mode": "append", "content": "知的好奇心を大切にする"})
+    provider = _make_tool_provider([
+        ToolTurnResult(text="", tool_calls=[tc]),
+        ToolTurnResult(text="指針を彫り込んだ", tool_calls=[]),
+    ])
+
+    with (
+        patch("backend.core.chat.service.create_provider", return_value=provider),
+        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.core.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        result = await service.execute(request)
+
+    assert result == "指針を彫り込んだ"
+    memory_manager.sqlite.update_character.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_execute_with_tools_calls_drift_manager():
     """SUPPORTS_TOOLS=True のプロバイダーが drift ツールを呼び出したとき、
     drift_manager.add_drift が実際に呼ばれること。
@@ -253,7 +333,7 @@ async def test_execute_with_tools_calls_drift_manager():
     from backend.core.tools import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
     drift_manager = MagicMock()
 
     request = ChatRequest(
@@ -265,7 +345,7 @@ async def test_execute_with_tools_calls_drift_manager():
         session_id="session-abc",
     )
 
-    tc = ToolCall(id="tc-2", name="drift", input={"content": "クールに話す"})
+    tc = ToolCall(id="tc-3", name="drift", input={"content": "クールに話す"})
     provider = _make_tool_provider([
         ToolTurnResult(text="", tool_calls=[tc]),
         ToolTurnResult(text="了解", tool_calls=[]),
@@ -291,7 +371,7 @@ async def test_execute_with_tools_calls_drift_reset():
     from backend.core.tools import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
     drift_manager = MagicMock()
 
     request = ChatRequest(
@@ -303,7 +383,7 @@ async def test_execute_with_tools_calls_drift_reset():
         session_id="session-abc",
     )
 
-    tc = ToolCall(id="tc-3", name="drift_reset", input={})
+    tc = ToolCall(id="tc-4", name="drift_reset", input={})
     provider = _make_tool_provider([
         ToolTurnResult(text="", tool_calls=[tc]),
         ToolTurnResult(text="リセットした", tool_calls=[]),
@@ -322,14 +402,14 @@ async def test_execute_with_tools_calls_drift_reset():
 
 
 @pytest.mark.asyncio
-async def test_execute_without_tools_does_not_call_memory_via_tool_executor():
+async def test_execute_without_tools_does_not_use_tool_executor():
     """SUPPORTS_TOOLS=False のプロバイダーは generate_with_tools を呼ばず、
-    ToolExecutor 経由では memory_manager.write_memory が呼ばれないこと。
+    ToolExecutor は使用されないこと。
 
-    マーカー方式（carve）の呼び出しをモックして、ToolExecutorが介入しないことを確認する。
+    マーカー方式（Inscriber.inscribe_memory_from_text / Carver.carve_narrative_from_text）がパスすることを確認する。
     """
     memory_manager = MagicMock()
-    memory_manager.recall_memory.return_value = []
+    memory_manager.recall_with_identity.return_value = ([], [])
 
     request = ChatRequest(
         character_id="char-1",
@@ -343,11 +423,17 @@ async def test_execute_without_tools_does_not_call_memory_via_tool_executor():
     fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="Hi!")
 
+    mock_inscriber = MagicMock()
+    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+    mock_carver = MagicMock()
+    mock_carver.carve_narrative_from_text.side_effect = lambda text: text
+
     with (
         patch("backend.core.chat.service.create_provider", return_value=fake_provider),
         patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.carve", side_effect=lambda text, *_: text),
+        patch("backend.core.chat.service.Inscriber", return_value=mock_inscriber),
+        patch("backend.core.chat.service.Carver", return_value=mock_carver),
         patch("backend.core.chat.service.ToolExecutor") as mock_tool_executor_cls,
     ):
         service = ChatService(memory_manager=memory_manager)
@@ -355,4 +441,3 @@ async def test_execute_without_tools_does_not_call_memory_via_tool_executor():
 
     assert result == "Hi!"
     mock_tool_executor_cls.assert_not_called()
-    fake_provider.generate_with_tools = MagicMock()  # これが呼ばれていないことは上のパッチで保証済み

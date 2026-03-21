@@ -38,7 +38,7 @@ def char_to_dict(char) -> dict:
         "id": char.id,
         "name": char.name,
         "system_prompt_block1": char.system_prompt_block1,
-        "meta_instructions": char.meta_instructions,
+        "inner_narrative": char.inner_narrative,
         "cleanup_config": char.cleanup_config,
         "ghost_model": char.ghost_model,
         "created_at": fmt_dt(char.created_at),

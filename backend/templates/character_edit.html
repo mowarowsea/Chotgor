@@ -62,12 +62,12 @@ endblock %}
         </div>
 
         <div class="form-group">
-            <label for="meta_instructions">
-                Meta Instructions
-                <span class="label-hint">Optional: additional behavioral guidelines (all models)</span>
+            <label>
+                Inner Narrative
+                <span class="label-hint">キャラクター自身が inscribe_narrative で書き込む自己指針（読み取り専用）</span>
             </label>
-            <textarea id="meta_instructions" name="meta_instructions" class="form-control textarea-medium"
-                placeholder="Optional: memory usage preferences, response style guidelines, topics to avoid...">{% if character %}{{ character.meta_instructions }}{% endif %}</textarea>
+            <textarea class="form-control textarea-medium" readonly
+                placeholder="（まだ何も書かれていません）">{% if character %}{{ character.inner_narrative }}{% endif %}</textarea>
         </div>
 
         <!-- Model accordion -->

@@ -9,8 +9,9 @@ Flow:
   2. URL自動fetch
   3. システムプロンプト構築
   4. プロバイダーへディスパッチ
-  5. 応答から記憶を刻み込み (Inscriber.carve)
+  5. 応答から記憶を刻み込み (Inscriber.inscribe_memory_from_text)
   5b. SELF_DRIFTマーカーを処理してDBに保存
+  5c. inner_narrativeマーカーを処理してDBに保存 (Carver.carve_narrative_from_text)
   6. デバッグログ
 """
 
@@ -24,7 +25,8 @@ if TYPE_CHECKING:
 
 from ..debug_logger import log_front_output
 from ..memory.drift_manager import DriftManager
-from ..memory.inscriber import carve
+from ..memory.carver import Carver
+from ..memory.inscriber import Inscriber
 from ..memory.manager import MemoryManager
 from ..providers.registry import create_provider
 from ..system_prompt import build_system_prompt
@@ -82,7 +84,7 @@ class ChatService:
         """テキストから [DRIFT:...] / [DRIFT_RESET] マーカーを抽出しDBに反映する。
 
         Args:
-            text: [MEMORY:...] 除去済みの応答テキスト。
+            text: [INSCRIBE_MEMORY:...] 除去済みの応答テキスト。
             request: セッションID・キャラクターIDを含むリクエスト。
 
         Returns:
@@ -206,7 +208,7 @@ class ChatService:
             recalled_identity_memories=recalled_identity or None,
             recalled_memories=recalled or None,
             fetched_contents=fetched_contents,
-            meta_instructions=request.meta_instructions,
+            inner_narrative=request.inner_narrative,
             provider_additional_instructions=request.provider_additional_instructions,
             enable_time_awareness=request.enable_time_awareness,
             current_time_str=request.current_time_str,
@@ -267,7 +269,9 @@ class ChatService:
                 import traceback
                 return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
 
-            clean_text = carve(response_text, request.character_id, self.memory_manager, request.current_preset_id)
+            inscriber = Inscriber(request.character_id, self.memory_manager)
+            clean_text = inscriber.inscribe_memory_from_text(response_text, request.current_preset_id)
+            clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
             clean_text = self._apply_drifts(clean_text, request)
 
         clean_text, switch_info = self._extract_switch_info(
@@ -326,7 +330,9 @@ class ChatService:
                 yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
                 return
 
-            clean_text = carve(full_text, request.character_id, self.memory_manager, request.current_preset_id)
+            inscriber = Inscriber(request.character_id, self.memory_manager)
+            clean_text = inscriber.inscribe_memory_from_text(full_text, request.current_preset_id)
+            clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
             clean_text = self._apply_drifts(clean_text, request)
 
         clean_text, switch_info = self._extract_switch_info(
