@@ -429,7 +429,8 @@ def _patch_google_module(mock_client):
             "google.genai.types": mock_types,
         }),
         # MagicMock の __dict__ を再帰展開して無限ループするのを防ぐ
-        patch("backend.core.providers.google_provider.log_provider_request"),
+        # log_provider_request は base.py の名前空間で呼ばれるためそちらをパッチ
+        patch("backend.core.providers.base.log_provider_request"),
     ):
         yield
 

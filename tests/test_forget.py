@@ -47,15 +47,22 @@ def test_calculate_decayed_score(memory_manager):
     )
     
     score = manager.calculate_decayed_score(m, now)
-    
-    # Contextual after 14 days (2 half-lives) = 1.0 * 0.25 = 0.25 * 1.0 weight = 0.25
-    # User after 14 days (~0.46 half-lives) = 1.0 * 0.72 = 0.72 * 0.8 weight = 0.576
-    # Semantic after 14 days (~0.15 half-lives) = 1.0 * 0.89 = 0.89 * 0.6 weight = 0.534
-    # Identity after 14 days (0 half-lives) = 1.0 * 1.0 = 1.0 * 0.3 weight = 0.3
-    # Total ~ 1.66
-    
-    assert score > 1.5
-    assert score < 1.8
+
+    # 現在の実装パラメータ（manager.py より）:
+    #   contextual: 半減期 4日, weight 1.0
+    #   user:       半減期 10日, weight 0.8
+    #   semantic:   半減期 20日, weight 0.6
+    #   identity:   半減期 90日, weight 0.3
+    #
+    # 14日後の各スコア（importance=1.0）:
+    #   contextual: exp(-ln2/4 * 14) ≈ 0.0884 * 1.0 = 0.088
+    #   user:       exp(-ln2/10 * 14) ≈ 0.3789 * 0.8 = 0.303
+    #   semantic:   exp(-ln2/20 * 14) ≈ 0.6160 * 0.6 = 0.370
+    #   identity:   exp(-ln2/90 * 14) ≈ 0.8978 * 0.3 = 0.269
+    #   合計 ≈ 1.030
+
+    assert score > 1.0
+    assert score < 1.1
     
     # Immediate recall should have near max score
     m2 = Memory(
