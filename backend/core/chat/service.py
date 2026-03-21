@@ -32,9 +32,9 @@ from ..providers.registry import create_provider
 from ..system_prompt import build_system_prompt
 from ..tools import ToolExecutor
 from ..web_fetch import fetch_urls, find_urls
-from .drifter import extract as drift_extract
+from .drifter import Drifter
 from .models import ChatRequest
-from .switcher import extract as switch_extract
+from .switcher import Switcher
 
 
 def extract_text_content(content: Union[str, list, None]) -> str:
@@ -90,17 +90,8 @@ class ChatService:
         Returns:
             マーカーを除去したクリーンなテキスト。
         """
-        clean, drifts, reset = drift_extract(text)
-        if not self.drift_manager or not request.session_id:
-            return clean
-        if reset:
-            self.drift_manager.reset_drifts(request.session_id, request.character_id)
-        for content in drifts:
-            try:
-                self.drift_manager.add_drift(request.session_id, request.character_id, content)
-            except Exception:
-                pass
-        return clean
+        drifter = Drifter(request.session_id, request.character_id, self.drift_manager)
+        return drifter.drift_from_text(text)
 
     def _extract_switch_info(
         self, tool_executor: "ToolExecutor | None", clean_text: str, has_angle_presets: bool
@@ -110,7 +101,9 @@ class ChatService:
             return clean_text, tool_executor.switch_request
         if not has_angle_presets:
             return clean_text, None
-        return switch_extract(clean_text)
+        switcher = Switcher()
+        clean_text = switcher.switch_from_text(clean_text)
+        return clean_text, switcher.switch_request
 
     def _build_switched_request(
         self, original: ChatRequest, preset_name: str, self_instruction: str

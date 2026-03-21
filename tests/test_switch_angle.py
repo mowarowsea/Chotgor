@@ -224,7 +224,8 @@ class TestExtractSwitchInfo:
         """SUPPORTS_TOOLS=True 方式: tool_executor.switch_request が設定されていれば返す。"""
         service = self._make_service()
         executor = _make_executor()
-        executor.switch_request = ("fastModel", "軽く")
+        # switch_angle を呼び出して switch_request を設定する
+        executor.execute("switch_angle", {"preset_name": "fastModel", "self_instruction": "軽く"})
         clean_text, switch_info = service._extract_switch_info(executor, "some text", True)
         assert switch_info == ("fastModel", "軽く")
         assert clean_text == "some text"
