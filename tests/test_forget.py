@@ -250,3 +250,64 @@ async def test_forget_parse_failure_keeps_all(sqlite_store):
 
     assert result["deleted_count"] == 0
     assert result["kept_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_forget_kept_memories_have_updated_last_accessed_at(sqlite_store):
+    """忘却バッチで「残す」と判断された記憶の last_accessed_at が更新されることを確認する。
+
+    Issue #56: キャラクターが能動的に「残す」と判断した記憶のみ decay タイマーをリセットする。
+    これにより、その記憶は次の忘却サイクルで再び候補になりにくくなる。
+    _make_manager_with_candidates() で 60 日前の last_accessed_at をセットしているので、
+    「残す」判断後に現在時刻に近い値へ更新されることを検証する。
+    """
+    char_id = "char-keep-updated"
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
+
+    old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
+
+    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: NONE]")):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            character_system_prompt="You are TestChar.",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            threshold=1.0,
+        )
+
+    assert result["kept_count"] == 2
+    m1_after = sqlite_store.get_memory("m1")
+    m2_after = sqlite_store.get_memory("m2")
+    # 「残す」判断後は decay タイマーがリセットされている
+    assert m1_after.last_accessed_at > old_last_accessed
+    assert m2_after.last_accessed_at > old_last_accessed
+
+
+@pytest.mark.asyncio
+async def test_forget_deleted_memories_do_not_update_last_accessed_at(sqlite_store):
+    """忘却バッチで削除された記憶の last_accessed_at は更新されないことを確認する。
+
+    削除対象記憶は recall() を呼ばれないため、last_accessed_at が古いままであることを検証する。
+    （soft-delete されているため get_memory で取得するとオブジェクトは存在するが削除済み状態。）
+    """
+    char_id = "char-delete-check"
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
+
+    old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
+
+    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: m1]")):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            character_system_prompt="You are TestChar.",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            threshold=1.0,
+        )
+
+    assert result["deleted_count"] == 1
+    m1 = sqlite_store.get_memory("m1")
+    # 削除されているが last_accessed_at は更新されていないこと
+    assert m1.deleted_at is not None
+    assert m1.last_accessed_at == old_last_accessed

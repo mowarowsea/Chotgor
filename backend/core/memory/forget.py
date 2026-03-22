@@ -88,7 +88,7 @@ async def run_forget_process(
         else:
             kept_count += 1
             # Touching it gives it a boost and prevents it from being forgotten soon.
-            sqlite.touch_memory(m.id)
+            sqlite.recall(m.id)
 
     return {
         "status": "success",

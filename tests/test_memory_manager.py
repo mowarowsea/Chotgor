@@ -177,3 +177,93 @@ def test_delete_memory(manager, sqlite_store, mock_chroma):
     assert ok is True
     assert sqlite_store.get_memory("mem-1").deleted_at is not None
     mock_chroma.delete_memory.assert_called_once_with("mem-1", char_id)
+
+
+# --- remember / recall メソッドの単体テスト（Issue #56） ---
+
+def test_remember_increments_count_without_updating_date(sqlite_store):
+    """remember() は access_count のみ更新し、last_accessed_at は変更しないことを確認する。
+
+    システムによる自動想起（remember）では decay タイマーをリセットしてはならない。
+    last_accessed_at が None のまま維持され、access_count だけが増えることを検証する。
+    """
+    sqlite_store.create_memory("mem-r", "char-x", "content")
+    mem_before = sqlite_store.get_memory("mem-r")
+    assert (mem_before.access_count or 0) == 0
+    assert mem_before.last_accessed_at is None
+
+    sqlite_store.remember("mem-r")
+
+    mem_after = sqlite_store.get_memory("mem-r")
+    assert mem_after.access_count == 1
+    assert mem_after.last_accessed_at is None  # decay タイマー保持
+
+
+def test_remember_is_cumulative(sqlite_store):
+    """remember() を複数回呼んだとき、access_count が正しく累積されることを確認する。
+
+    3回呼び出すと access_count が 3 になり、last_accessed_at は依然として None のままであること。
+    """
+    sqlite_store.create_memory("mem-r", "char-x", "content")
+
+    sqlite_store.remember("mem-r")
+    sqlite_store.remember("mem-r")
+    sqlite_store.remember("mem-r")
+
+    mem = sqlite_store.get_memory("mem-r")
+    assert mem.access_count == 3
+    assert mem.last_accessed_at is None
+
+
+def test_recall_updates_both_count_and_date(sqlite_store):
+    """recall() は access_count と last_accessed_at 両方を更新することを確認する。
+
+    キャラクターが能動的に「残す」と判断した際（忘却バッチ保持）は
+    decay タイマーをリセットする必要がある。両フィールドが更新されることを検証する。
+    """
+    sqlite_store.create_memory("mem-c", "char-x", "content")
+    mem_before = sqlite_store.get_memory("mem-c")
+    assert (mem_before.access_count or 0) == 0
+    assert mem_before.last_accessed_at is None
+
+    sqlite_store.recall("mem-c")
+
+    mem_after = sqlite_store.get_memory("mem-c")
+    assert mem_after.access_count == 1
+    assert mem_after.last_accessed_at is not None  # decay タイマーリセット済み
+
+
+# --- recall_memory() の統合テスト（Issue #56） ---
+
+def test_recall_memory_does_not_update_last_accessed_at(manager, sqlite_store, mock_chroma):
+    """recall_memory() 後、想起された記憶の last_accessed_at が更新されないことを確認する。
+
+    Issue #56: システムによる自動想起では decay タイマーをリセットしてはならない。
+    last_accessed_at が変わらないことで、decay が継続して忘却候補に残り続けることを保証する。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory("mem-1", char_id, "real content")
+    mem_before = sqlite_store.get_memory("mem-1")
+    last_accessed_before = mem_before.last_accessed_at  # None のはず
+
+    manager.recall_memory(char_id, "test")
+
+    mem_after = sqlite_store.get_memory("mem-1")
+    assert mem_after.last_accessed_at == last_accessed_before
+
+
+def test_recall_memory_increments_access_count(manager, sqlite_store, mock_chroma):
+    """recall_memory() 後、想起された記憶の access_count がインクリメントされることを確認する。
+
+    Issue #56: last_accessed_at は更新しないが、想起回数（access_count）は記録する。
+    何回思い出されたかの統計は保持したまま、decay タイマーのみ保護する。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory("mem-1", char_id, "real content")
+    mem_before = sqlite_store.get_memory("mem-1")
+    count_before = mem_before.access_count or 0
+
+    manager.recall_memory(char_id, "test")
+
+    mem_after = sqlite_store.get_memory("mem-1")
+    assert mem_after.access_count == count_before + 1

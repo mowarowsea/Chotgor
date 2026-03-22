@@ -68,38 +68,30 @@ class MemoryStoreMixin:
                 q = q.order_by(Memory.created_at.desc())
             return q.all()
 
-    def update_memory_content(
-        self,
-        memory_id: str,
-        content: str,
-        contextual_importance: float,
-        semantic_importance: float,
-        identity_importance: float,
-        user_importance: float,
-    ) -> bool:
-        """記憶のcontentと各importanceを上書き更新する。"""
-        with self.get_session() as session:
-            from ..sqlite_store import Memory
-            mem = session.get(Memory, memory_id)
-            if not mem:
-                return False
-            mem.content = content
-            mem.contextual_importance = contextual_importance
-            mem.semantic_importance = semantic_importance
-            mem.identity_importance = identity_importance
-            mem.user_importance = user_importance
-            mem.last_accessed_at = datetime.now()
-            mem.updated_at = datetime.now()
-            session.commit()
-            return True
 
-    def touch_memory(self, memory_id: str) -> None:
-        """last_accessed_at を更新し access_count をインクリメントする。"""
+    def recall(self, memory_id: str) -> None:
+        """last_accessed_at を更新し access_count をインクリメントする。
+
+        忘却バッチで「残す」と判断した時・上書き時に使用。
+        単純な想起では使わないこと（参照日付更新による decay リセット防止のため）。
+        """
         with self.get_session() as session:
             from ..sqlite_store import Memory
             mem = session.get(Memory, memory_id)
             if mem:
                 mem.last_accessed_at = datetime.now()
+                mem.access_count = (mem.access_count or 0) + 1
+                session.commit()
+
+    def remember(self, memory_id: str) -> None:
+        """access_count をインクリメントする（last_accessed_at は更新しない）。
+
+        システムによる自動想起時に使用。参照日付を更新しないことで、decay タイマーを保持する。
+        """
+        with self.get_session() as session:
+            from ..sqlite_store import Memory
+            mem = session.get(Memory, memory_id)
+            if mem:
                 mem.access_count = (mem.access_count or 0) + 1
                 session.commit()
 

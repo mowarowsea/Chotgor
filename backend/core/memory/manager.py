@@ -200,11 +200,11 @@ class MemoryManager:
         reranked.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
         final_results = reranked[:top_k]
 
-        # Update access tracking in SQLite ONLY for the final recalled memories
+        # 想起回数をインクリメント（last_accessed_at は更新しない — decay タイマー保持のため）
         for mem in final_results:
             mem_id = mem.get("id")
             if mem_id:
-                self.sqlite.touch_memory(mem_id)
+                self.sqlite.remember(mem_id)
 
         return final_results
 
