@@ -65,6 +65,8 @@ class ChatSession(Base):
     group_config = Column(Text, nullable=True)  # グループチャット設定JSON（session_type="group"時のみ）
     # Afterglow（感情継続機構）: このセッションが引き継ぐ元セッションID。NULLなら引き継ぎなし。
     afterglow_session_id = Column(String, nullable=True)
+    # 退席者リスト: [{"char_name": "Alice", "reason": "理由"}]。NULLなら退席者なし。
+    exited_chars = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(DateTime, default=lambda: datetime.now(), onupdate=lambda: datetime.now())
 
@@ -82,6 +84,8 @@ class ChatMessage(Base):
     images = Column(JSON, nullable=True)            # [image_id, ...] 添付画像IDリスト
     character_name = Column(String, nullable=True)  # グループチャット時の発言キャラクター名
     preset_name = Column(String, nullable=True)     # メッセージ送信時に使用したプリセット名
+    # システムメッセージフラグ: 1=退席通知などのシステムメッセージ。NULLまたは0=通常メッセージ。
+    is_system_message = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -236,6 +240,8 @@ class SQLiteStore(
                 "ALTER TABLE chat_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT '1on1'",
                 "ALTER TABLE chat_sessions ADD COLUMN group_config TEXT",
                 "ALTER TABLE chat_sessions ADD COLUMN afterglow_session_id TEXT",
+                "ALTER TABLE chat_sessions ADD COLUMN exited_chars TEXT",
+                "ALTER TABLE chat_messages ADD COLUMN is_system_message INTEGER",
             ]:
                 try:
                     conn.execute(text(stmt))

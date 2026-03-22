@@ -33,6 +33,7 @@ from ..system_prompt import build_system_prompt
 from ..tools import ToolExecutor
 from ..web_fetch import fetch_urls, find_urls
 from .drifter import Drifter
+from .exiter import Exiter
 from .models import ChatRequest
 from .switcher import Switcher
 
@@ -239,7 +240,11 @@ class ChatService:
     # --- 公開メソッド ---
 
     async def execute(self, request: ChatRequest) -> str:
-        """LLMにディスパッチして応答テキストを返す。SSEを知らない。"""
+        """LLMにディスパッチして応答テキストを返す。SSEを知らない。
+
+        退席タグ・ツールが検出された場合も、退席メッセージをテキストに含めてそのまま返す。
+        （OpenWebUI non-stream 向け: セッション終了の永続化はここでは行わない）
+        """
         ctx = await self._prepare_context(request)
 
         if ctx.provider_impl.SUPPORTS_TOOLS:
@@ -266,6 +271,9 @@ class ChatService:
             clean_text = inscriber.inscribe_memory_from_text(response_text, request.current_preset_id)
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
             clean_text = self._apply_drifts(clean_text, request)
+            # タグ方式: [END_SESSION:...] タグを除去する（退席メッセージ生成はAPI層が担う）
+            exiter = Exiter()
+            clean_text = exiter.exit_from_text(clean_text)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -285,9 +293,10 @@ class ChatService:
 
         Yields:
             tuple[str, Any]:
-                ("memories", list[dict]) : 想起した記憶リスト（最初に1回だけyield）
-                ("thinking", str)        : 思考ブロック（リアルタイム）
-                ("text",     str)        : クリーンな応答テキスト（最後に1回）
+                ("memories",      list[dict])          : 想起した記憶リスト（最初に1回だけyield）
+                ("thinking",      str)                  : 思考ブロック（リアルタイム）
+                ("text",          str)                  : クリーンな応答テキスト（最後に1回）
+                ("session_exit",  {"char_name": str, "reason": str}) : 退席要求（textの後にyield）
         """
         import traceback
 
@@ -297,6 +306,8 @@ class ChatService:
         all_recalled = ctx.recalled_identity + ctx.recalled
         if all_recalled:
             yield ("memories", all_recalled)
+
+        exit_reason: str | None = None
 
         if ctx.provider_impl.SUPPORTS_TOOLS:
             tool_executor = ToolExecutor(
@@ -310,6 +321,8 @@ class ChatService:
             except Exception as e:
                 yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
                 return
+            # ツール方式: ToolExecutor から退席理由を取得する
+            exit_reason = tool_executor.exit_reason
         else:
             tool_executor = None
             full_text = ""
@@ -327,6 +340,10 @@ class ChatService:
             clean_text = inscriber.inscribe_memory_from_text(full_text, request.current_preset_id)
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
             clean_text = self._apply_drifts(clean_text, request)
+            # タグ方式: [END_SESSION:...] タグを除去して退席理由を取得する
+            exiter = Exiter()
+            clean_text = exiter.exit_from_text(clean_text)
+            exit_reason = exiter.exit_reason
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -344,3 +361,7 @@ class ChatService:
 
         if clean_text:
             yield ("text", clean_text)
+
+        # 退席要求があればテキストの後にyieldする
+        if exit_reason is not None:
+            yield ("session_exit", {"char_name": request.character_name, "reason": exit_reason})

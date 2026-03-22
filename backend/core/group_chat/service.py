@@ -1,11 +1,13 @@
 """グループチャットサービス — 複数キャラクターのターン制御と LLM 呼び出しを担当する。
 
 処理フロー（ユーザー発言ごとに1回実行）:
-  1. 司会AIに次の発言者を問い合わせる
+  1. 司会AIに次の発言者を問い合わせる（退席済みキャラクターは除外）
   2. 指名されたキャラクターの応答を順番にストリーミング生成する（1on1を複数回やるのと同じ形）
   3. 各キャラクター応答をDBに保存し、SSEイベントをyieldする
-  4. auto_turns_used >= max_auto_turns または司会が [] を返したらユーザーターンへ戻す
+  4. キャラクターが [END_SESSION:...] タグまたは end_session ツールを使用した場合は退席を記録する
+  5. auto_turns_used >= max_auto_turns または司会が [] を返したらユーザーターンへ戻す
   司会がNone（エラー）を返した場合もユーザーターンへ戻す。
+  全員退席した場合は全員退席システムメッセージをyieldしてユーザーターンへ戻す。
 
 グループチャット固有のLLM呼び出しは ChatService.execute_stream() に委譲する。
 1on1チャットと同じ記憶想起・URL取得・時刻認識・プロンプト構築・プロバイダーディスパッチ・記憶刻み込みを共用する。
@@ -33,6 +35,20 @@ def _extract_last_user_text(history: list) -> str:
     return ""
 
 
+def _build_exit_message(char_name: str, reason: str) -> str:
+    """退席通知テキストを生成する。"""
+    if reason:
+        return f"{char_name}は退席しました。理由: {reason}"
+    return f"{char_name}は退席しました。"
+
+
+def _build_all_exited_message(exited_chars: list[dict]) -> str:
+    """全員退席時の通知テキストを生成する。"""
+    lines = [_build_exit_message(e["char_name"], e.get("reason", "")) for e in exited_chars]
+    lines.append("（チャットを再開するには新しいセッションを作成してください）")
+    return "\n".join(lines)
+
+
 async def _stream_character_response(
     char_name: str,
     session_id: str,
@@ -52,6 +68,7 @@ async def _stream_character_response(
         ("character_reasoning", {"character": str, "content": str})  — 思考・想起記憶（リアルタイム）
         ("character_chunk",    {"character": str, "content": str})   — 応答テキスト（1チャンク）
         ("character_done",     {"character": str, "message": ORM})   — DB保存完了（ORM は呼び出し元で変換）
+        ("session_exit",       {"char_name": str, "reason": str})    — 退席要求（character_done の後にyield）
 
     Args:
         char_name: 応答するキャラクターの名前。
@@ -119,6 +136,7 @@ async def _stream_character_response(
     full_text = ""
     memory_text = ""
     thinking_parts: list[str] = []
+    exit_info: dict | None = None
 
     async for chunk_type, content in chat_service.execute_stream(request):
         if chunk_type == "memories":
@@ -132,6 +150,8 @@ async def _stream_character_response(
             full_text = content
             if content:
                 yield ("character_chunk", {"character": char_name, "content": content})
+        elif chunk_type == "session_exit":
+            exit_info = content
 
     # 1on1チャットと同様に想起記憶と思考ブロックをreasoningにまとめてDBに保存する
     combined = (memory_text + "".join(thinking_parts)).strip()
@@ -149,6 +169,10 @@ async def _stream_character_response(
     )
     yield ("character_done", {"character": char_name, "message": msg})
 
+    # 退席要求があれば character_done の後にyieldする
+    if exit_info:
+        yield ("session_exit", exit_info)
+
 
 async def run_group_turn(
     session_id: str,
@@ -164,13 +188,15 @@ async def run_group_turn(
     各キャラクターを順番にストリーミング処理する（1on1を複数回行う形）。
 
     Yields:
-        ("speaker_decided",     {"speakers": [str]})                  — 司会AIが発言者を一括決定
-        ("character_start",     {"character": str})                   — キャラクター応答開始
-        ("character_reasoning", {"character": str, "content": str})   — 思考・想起記憶（リアルタイム）
-        ("character_chunk",     {"character": str, "content": str})   — 応答テキスト
-        ("character_done",      {"character": str, "message": dict})  — 応答完了・DB保存済み
-        ("user_turn",           {"auto_turns_used": int})             — ユーザーターンへ戻す
-        ("error",               {"message": str, "character": str})   — エラー
+        ("speaker_decided",     {"speakers": [str]})                              — 司会AIが発言者を一括決定
+        ("character_start",     {"character": str})                               — キャラクター応答開始
+        ("character_reasoning", {"character": str, "content": str})               — 思考・想起記憶（リアルタイム）
+        ("character_chunk",     {"character": str, "content": str})               — 応答テキスト
+        ("character_done",      {"character": str, "message": dict})              — 応答完了・DB保存済み
+        ("character_exited",    {"character": str, "system_message": dict})       — キャラクター退席・システムメッセージ保存済み
+        ("all_exited",          {"system_message": dict})                         — 全員退席・システムメッセージ保存済み
+        ("user_turn",           {"auto_turns_used": int})                         — ユーザーターンへ戻す
+        ("error",               {"message": str, "character": str})               — エラー
 
     Args:
         session_id: 対象セッションID。
@@ -186,14 +212,23 @@ async def run_group_turn(
     director_preset_id = group_config.get("director_preset_id", "")
     max_auto_turns = int(group_config.get("max_auto_turns", 3))
     user_name = settings.get("user_name", "ユーザ")
+    all_char_names = {p["char_name"] for p in participants}
 
     auto_turn_count = 0
 
     while True:
-        # 最新の会話履歴を取得する
+        # 最新の会話履歴・セッション退席状態を取得する
         history = sqlite.list_chat_messages(session_id)
+        current_session = sqlite.get_chat_session(session_id)
+        exited_chars: list[dict] = getattr(current_session, "exited_chars", None) or []
+        exited_set = {e["char_name"] for e in exited_chars}
 
-        # 司会AIに次の発言者を問い合わせる
+        # 全員退席済みチェック: ユーザーターンに戻すのみ（退席メッセージはキャラクター退席時に送信済み）
+        if all_char_names and all_char_names.issubset(exited_set):
+            yield ("user_turn", {"auto_turns_used": auto_turn_count})
+            return
+
+        # 司会AIに次の発言者を問い合わせる（退席済みキャラクターを除外して渡す）
         next_speakers = await decide_next_speakers(
             history=history,
             participants=participants,
@@ -202,6 +237,7 @@ async def run_group_turn(
             director_char_name=director_char_name,
             director_preset_id=director_preset_id,
             user_name=user_name,
+            exited_chars=exited_chars,
         )
 
         # None はエラー（プリセット未発見・LLM障害）→ユーザーターンへ戻す
@@ -211,6 +247,12 @@ async def run_group_turn(
 
         # [] は司会の意図的なユーザーターン指示、または上限超過
         if not next_speakers or auto_turn_count >= max_auto_turns:
+            yield ("user_turn", {"auto_turns_used": auto_turn_count})
+            return
+
+        # 退席済みキャラクターを次発言者リストから除外する（司会の誤指名対策）
+        next_speakers = [s for s in next_speakers if s not in exited_set]
+        if not next_speakers:
             yield ("user_turn", {"auto_turns_used": auto_turn_count})
             return
 
@@ -236,6 +278,48 @@ async def run_group_turn(
                     if chunk_type == "character_done":
                         # message ORM を dict に変換してからyieldする
                         yield (chunk_type, {**payload, "message": message_to_dict(payload["message"])})
+                    elif chunk_type == "session_exit":
+                        # 退席処理: DBを更新しシステムメッセージを保存・通知する
+                        exit_char = payload["char_name"]
+                        exit_reason = payload["reason"]
+
+                        fresh_session = sqlite.get_chat_session(session_id)
+                        fresh_exited: list[dict] = getattr(fresh_session, "exited_chars", None) or []
+                        if not any(e["char_name"] == exit_char for e in fresh_exited):
+                            fresh_exited = fresh_exited + [{"char_name": exit_char, "reason": exit_reason}]
+                        sqlite.update_chat_session(session_id, exited_chars=fresh_exited)
+
+                        # 退席システムメッセージをDBに保存する
+                        import uuid as _uuid
+                        sys_text = _build_exit_message(exit_char, exit_reason)
+                        sys_msg = sqlite.create_chat_message(
+                            message_id=str(_uuid.uuid4()),
+                            session_id=session_id,
+                            role="character",
+                            content=sys_text,
+                            character_name=exit_char,
+                            is_system_message=True,
+                        )
+
+                        yield ("character_exited", {
+                            "character": exit_char,
+                            "system_message": message_to_dict(sys_msg),
+                        })
+
+                        # 全員退席チェック
+                        new_exited_set = {e["char_name"] for e in fresh_exited}
+                        if all_char_names and all_char_names.issubset(new_exited_set):
+                            all_sys_text = _build_all_exited_message(fresh_exited)
+                            all_sys_msg = sqlite.create_chat_message(
+                                message_id=str(_uuid.uuid4()),
+                                session_id=session_id,
+                                role="character",
+                                content=all_sys_text,
+                                is_system_message=True,
+                            )
+                            yield ("all_exited", {"system_message": message_to_dict(all_sys_msg)})
+                            yield ("user_turn", {"auto_turns_used": auto_turn_count})
+                            return
                     else:
                         yield (chunk_type, payload)
             except Exception as e:

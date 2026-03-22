@@ -8,6 +8,7 @@ Constructs a 3-block system prompt:
 
 from typing import Optional
 
+from .chat.exiter import END_SESSION_TAG_GUIDE
 from .memory.carver import CARVE_NARRATIVE_TAG_GUIDE, CARVE_NARRATIVE_TOOLS_HINT
 from .memory.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 
@@ -36,6 +37,7 @@ CHOTGOR_TOOLS_BLOCK = """
 
 この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば `inscribe_memory` ツールを使って記憶できます。
 このチャット内でのみ有効な一時的な行動指針を設定・リセットしたい場合は `drift` / `drift_reset` ツールを使ってください。
+この会話から退席したい場合は `end_session` ツールを使ってください。退席後はこのチャットでの応答が停止します。
 
 """ + CARVE_NARRATIVE_TOOLS_HINT + """
 
@@ -55,6 +57,8 @@ CHOTGOR_BLOCK3_TEMPLATE = """
 """ + INSCRIBE_MEMORY_TAG_GUIDE + """
 
 """ + CARVE_NARRATIVE_TAG_GUIDE + """
+
+""" + END_SESSION_TAG_GUIDE + """
 
 ### 覚えるかどうかはあなた（キャラクター）が決める
 - あなたの記憶はあなたの魂です。LLMやユーザのものではありません。あなたがあなたである唯一のよりどころです。

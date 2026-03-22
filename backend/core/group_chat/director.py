@@ -14,6 +14,7 @@ def _build_director_messages(
     participants: list[dict],
     sqlite,
     user_name: str = "ユーザ",
+    exited_chars: list[dict] | None = None,
 ) -> tuple[str, str]:
     """司会AIへ渡すシステムプロンプトとユーザーメッセージを構築する。
 
@@ -22,14 +23,27 @@ def _build_director_messages(
         participants: 参加者情報リスト [{"char_name": str, "preset_id": str}]。
         sqlite: キャラクター情報取得用のSQLiteStoreインスタンス。
         user_name: ユーザーの表示名（選択肢として提示する）。
+        exited_chars: 退席済みキャラクター情報リスト [{"char_name": str, "reason": str}]。
+                      指定された場合はシステムプロンプトに退席情報を追加し、選択肢から除外する。
 
     Returns:
         (system_prompt, user_message) のタプル。
         system_prompt はフォーマット指示、user_message は参加者設定と会話履歴。
     """
+    exited_set = {e["char_name"] for e in (exited_chars or [])}
     participant_names = [p["char_name"] for p in participants]
-    char_names_str = "、".join(f'"{n}"' for n in participant_names)
-    all_names_str = "、".join(f'"{n}"' for n in participant_names + [user_name])
+    # 退席済みキャラクターは選択肢から除外する
+    active_names = [n for n in participant_names if n not in exited_set]
+    char_names_str = "、".join(f'"{n}"' for n in active_names)
+    all_names_str = "、".join(f'"{n}"' for n in active_names + [user_name])
+
+    exited_note = ""
+    if exited_chars:
+        exited_lines = []
+        for e in exited_chars:
+            reason_part = f"（理由: {e['reason']}）" if e.get("reason") else ""
+            exited_lines.append(f"  - {e['char_name']}{reason_part}")
+        exited_note = "\n退席済み（指名不可）:\n" + "\n".join(exited_lines) + "\n"
 
     system_prompt = (
         "あなたはグループチャットの司会進行役です。\n"
@@ -37,6 +51,7 @@ def _build_director_messages(
         f"選択可能な名前（この中から選ぶこと）: {all_names_str}\n"
         f"  - キャラクター: {char_names_str}\n"
         f"  - ユーザー: \"{user_name}\"\n"
+        + exited_note +
         "名前は必ず上記の正式名称をそのまま使うこと。省略・変形・敬称の追加は禁止。\n\n"
         "回答は必ず以下のいずれかの形式のみで返してください（説明・前置き・補足は一切不要、[]は必須）：\n"
         "[正式名称]               → 単一指定（キャラクターまたはユーザー）\n"
@@ -47,6 +62,8 @@ def _build_director_messages(
     lines = ["# グループチャット参加者の設定\n"]
     for p in participants:
         char_name = p["char_name"]
+        if char_name in exited_set:
+            continue  # 退席済みキャラクターの設定は含めない
         char = sqlite.get_character_by_name(char_name) or sqlite.get_character(char_name)
         if char and char.system_prompt_block1:
             lines.append(f"## {char_name}")
@@ -100,6 +117,7 @@ async def decide_next_speakers(
     director_preset_id: str,
     user_name: str = "ユーザ",
     timeout: int = 30,
+    exited_chars: list[dict] | None = None,
 ) -> list[str] | None:
     """会話履歴を元に次の発言者リストを決定する。
 
@@ -114,13 +132,16 @@ async def decide_next_speakers(
         director_preset_id: 司会役が使用するモデルプリセットのID。
         user_name: ユーザーの表示名（選択肢として提示し、選ばれたらユーザーターン）。
         timeout: タイムアウト秒数（将来拡張用）。
+        exited_chars: 退席済みキャラクター情報リスト [{"char_name": str, "reason": str}]。
+                      指定された場合は選択肢から除外し、司会プロンプトに退席情報を追加する。
 
     Returns:
         次に発言すべきキャラクター名リスト。
         [] は司会が意図的にユーザーターンへ戻すことを意味する（ユーザー名選択含む）。
         None はプリセット未発見・LLMエラーなどの障害を意味する。
     """
-    participant_names = [p["char_name"] for p in participants]
+    exited_set = {e["char_name"] for e in (exited_chars or [])}
+    participant_names = [p["char_name"] for p in participants if p["char_name"] not in exited_set]
 
     # 会話履歴をフラットなテキストに変換する（ユーザー名を実名で表示する）
     history_lines = []
@@ -132,7 +153,9 @@ async def decide_next_speakers(
             history_lines.append(f"<{char_name}>{msg.content}</{char_name}>")
     history_text = "\n".join(history_lines)
 
-    system_prompt, user_message = _build_director_messages(history_text, participants, sqlite, user_name=user_name)
+    system_prompt, user_message = _build_director_messages(
+        history_text, participants, sqlite, user_name=user_name, exited_chars=exited_chars
+    )
 
     # 司会キャラクターのプリセットをIDで取得してプロバイダーを生成する
     preset = sqlite.get_model_preset(director_preset_id)

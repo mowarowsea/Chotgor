@@ -51,7 +51,7 @@ def char_to_dict(char) -> dict:
 def session_to_dict(s) -> dict:
     """ChatSession ORMオブジェクトを辞書に変換する。
 
-    group_config / afterglow_session_id は存在する場合のみレスポンスに含める。
+    group_config / afterglow_session_id / exited_chars は存在する場合のみレスポンスに含める。
     """
     result = {
         "id": s.id,
@@ -67,13 +67,16 @@ def session_to_dict(s) -> dict:
     afterglow_session_id = getattr(s, "afterglow_session_id", None)
     if afterglow_session_id:
         result["afterglow_session_id"] = afterglow_session_id
+    exited_chars = getattr(s, "exited_chars", None)
+    if exited_chars:
+        result["exited_chars"] = exited_chars
     return result
 
 
 def message_to_dict(m) -> dict:
     """ChatMessage ORMオブジェクトを辞書に変換する。
 
-    reasoning / images / character_name は None の場合は省略してレスポンスサイズを削減する。
+    reasoning / images / character_name / is_system_message は None の場合は省略してレスポンスサイズを削減する。
     """
     result = {
         "id": m.id,
@@ -90,6 +93,8 @@ def message_to_dict(m) -> dict:
         result["character_name"] = m.character_name
     if getattr(m, "preset_name", None):
         result["preset_name"] = m.preset_name
+    if getattr(m, "is_system_message", None):
+        result["is_system_message"] = True
     return result
 
 

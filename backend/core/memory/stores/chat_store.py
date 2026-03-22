@@ -98,8 +98,13 @@ class ChatStoreMixin:
         images: Optional[list] = None,
         character_name: Optional[str] = None,
         preset_name: Optional[str] = None,
+        is_system_message: bool = False,
     ):
-        """チャットメッセージを作成する。"""
+        """チャットメッセージを作成する。
+
+        Args:
+            is_system_message: True の場合、退席通知などのシステムメッセージとしてフラグを立てる。
+        """
         with self.get_session() as session:
             from ..sqlite_store import ChatMessage
             msg = ChatMessage(
@@ -111,6 +116,7 @@ class ChatStoreMixin:
                 images=images or None,
                 character_name=character_name,
                 preset_name=preset_name,
+                is_system_message=1 if is_system_message else None,
             )
             session.add(msg)
             session.commit()

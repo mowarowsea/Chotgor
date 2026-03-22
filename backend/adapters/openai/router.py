@@ -185,7 +185,13 @@ async def chat_completions(request: Request, body: OAIChatRequest):
 
     if body.stream:
         async def generate():
-            """型付きチャンクを OpenAI SSE 形式に変換して送信する。"""
+            """型付きチャンクを OpenAI SSE 形式に変換して送信する。
+
+            session_exit チャンクを受けた場合は退席メッセージテキストを
+            通常の assistant メッセージとしてそのまま流す。
+            OpenWebUI はステートレスなため、セッション終了の永続化は行わない。
+            """
+            exit_reason_holder: list[str | None] = [None]  # クロージャで参照するためリストに格納
             async for chunk_type, content in chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
                     display = _format_memories_display(content)
@@ -197,6 +203,15 @@ async def chat_completions(request: Request, body: OAIChatRequest):
                 elif chunk_type == "text":
                     if content:
                         yield _sse_chunk(content)
+                elif chunk_type == "session_exit":
+                    # 退席メッセージをアシスタントテキストとして送信する
+                    char_name = content.get("char_name", "")
+                    reason = content.get("reason", "")
+                    if reason:
+                        sys_text = f"{char_name}は退席しました。理由: {reason}"
+                    else:
+                        sys_text = f"{char_name}は退席しました。"
+                    yield _sse_chunk(sys_text)
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
