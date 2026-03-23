@@ -52,10 +52,17 @@ class GroupSessionCreate(BaseModel):
 
 
 class GroupMessageCreate(BaseModel):
-    """グループチャットメッセージ送信リクエスト。"""
+    """グループチャットメッセージ送信リクエスト。
+
+    Attributes:
+        content: メッセージ本文。skip=True の場合は無視される。
+        image_ids: 添付画像IDリスト。
+        skip: True の場合、ユーザメッセージを保存せずに司会へ直接ターンを委譲する（ユーザターンスキップ機能）。
+    """
 
     content: str
     image_ids: Optional[List[str]] = None
+    skip: bool = False
 
 
 def _parse_participant(model_id: str) -> dict:
@@ -173,36 +180,40 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
     except Exception:
         raise HTTPException(status_code=400, detail="グループ設定が不正です")
 
-    # チャット履歴インデックス登録用にセッション参加キャラIDとユーザ名を解決する
-    _chat_char_ids = get_participant_char_ids(session, state.sqlite)
-    _chat_user_name = state.sqlite.get_setting("user_name", "ユーザ")
-
-    # ユーザーメッセージをDBに保存する（画像IDも含む）
-    user_msg_id = str(uuid.uuid4())
-    user_msg = state.sqlite.create_chat_message(
-        message_id=user_msg_id,
-        session_id=session_id,
-        role="user",
-        content=body.content,
-        images=body.image_ids or None,
-    )
-    asyncio.create_task(asyncio.to_thread(
-        index_message_sync, user_msg, _chat_char_ids, state.chroma, _chat_user_name
-    ))
-
-    # セッションタイトルを自動設定する（最初のメッセージから）
-    existing = state.sqlite.list_chat_messages(session_id)
-    if len(existing) == 1 and session.title.endswith("のグループチャット"):
-        auto_title = body.content[:30].replace("\n", " ")
-        state.sqlite.update_chat_session(session_id, title=auto_title)
-
     settings = state.sqlite.get_all_settings()
+
+    # スキップ時はユーザメッセージを保存せずに司会へ直接ターンを委譲する
+    saved_user_msg = None
+    if not body.skip:
+        # チャット履歴インデックス登録用にセッション参加キャラIDとユーザ名を解決する
+        _chat_char_ids = get_participant_char_ids(session, state.sqlite)
+        _chat_user_name = state.sqlite.get_setting("user_name", "ユーザ")
+
+        # ユーザーメッセージをDBに保存する（画像IDも含む）
+        user_msg_id = str(uuid.uuid4())
+        saved_user_msg = state.sqlite.create_chat_message(
+            message_id=user_msg_id,
+            session_id=session_id,
+            role="user",
+            content=body.content,
+            images=body.image_ids or None,
+        )
+        asyncio.create_task(asyncio.to_thread(
+            index_message_sync, saved_user_msg, _chat_char_ids, state.chroma, _chat_user_name
+        ))
+
+        # セッションタイトルを自動設定する（最初のメッセージから）
+        existing = state.sqlite.list_chat_messages(session_id)
+        if len(existing) == 1 and session.title.endswith("のグループチャット"):
+            auto_title = body.content[:30].replace("\n", " ")
+            state.sqlite.update_chat_session(session_id, title=auto_title)
 
     async def sse_generator():
         """グループターンのSSEジェネレーター。"""
-        # ユーザーメッセージ保存完了を通知する
-        user_msg_dict = message_to_dict(user_msg)
-        yield f"data: {json.dumps({'type': 'user_saved', 'message': user_msg_dict}, ensure_ascii=False)}\n\n"
+        # ユーザーメッセージ保存完了を通知する（スキップ時は送信しない）
+        if saved_user_msg is not None:
+            user_msg_dict = message_to_dict(saved_user_msg)
+            yield f"data: {json.dumps({'type': 'user_saved', 'message': user_msg_dict}, ensure_ascii=False)}\n\n"
 
         try:
             async for event_type, payload in run_group_turn(

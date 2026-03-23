@@ -98,6 +98,8 @@ export default function App() {
   const [groupStreamingReasoning, setGroupStreamingReasoning] = useState<string | null>(null);
   /** グループチャットメッセージIDに紐付いた reasoning テキスト。 */
   const [groupReasoningMap, setGroupReasoningMap] = useState<Record<string, string>>({});
+  /** グループチャットがユーザターン待ち状態かどうか。スキップボタンの表示制御に使用する。 */
+  const [isGroupUserTurn, setIsGroupUserTurn] = useState(false);
 
   /** 初期データ取得。URL ハッシュに対応するセッションがあれば自動選択する。 */
   useEffect(() => {
@@ -141,6 +143,7 @@ export default function App() {
     setGroupWaitingCharacter(null);
     setGroupStreamingContent(null);
     setGroupStreamingReasoning(null);
+    setIsGroupUserTurn(false);
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
     window.location.hash = sessionId;
     try {
@@ -153,6 +156,11 @@ export default function App() {
         setSelectedModel(detail.model_id);
       }
       setMessages(detail.messages);
+      // グループチャットで最後のメッセージがキャラクター発言ならユーザターン待ち状態を復元する
+      if (detail.session_type === "group" && detail.messages.length > 0) {
+        const last = detail.messages[detail.messages.length - 1];
+        setIsGroupUserTurn(last.role !== "user");
+      }
       // DBに保存された reasoning をメッセージIDに紐付けて復元する
       const restored: Record<string, string> = {};
       for (const msg of detail.messages) {
@@ -236,25 +244,31 @@ export default function App() {
    * グループチャットのメッセージ送信実装。
    * SSE受信中はキャラクター名を waitingCharacter で表示し、
    * 受信完了後に全メッセージをサーバーから再取得して確定する。
+   *
+   * @param skip - true の場合、ユーザメッセージを保存せず司会へ直接ターンを委譲する（ユーザターンスキップ）。
    */
-  const _doGroupStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = []) => {
+  const _doGroupStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = [], skip = false) => {
     setError(null);
     setSending(true);
+    setIsGroupUserTurn(false);
     setGroupWaitingCharacter(null);
 
     const optimisticId = `optimistic-${Date.now()}`;
-    const optimisticUserMsg: ChatMessage = {
-      id: optimisticId,
-      session_id: sessionId,
-      role: "user",
-      content,
-      images: imageIds.length > 0 ? imageIds : undefined,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, optimisticUserMsg]);
+    // スキップ時は楽観的ユーザメッセージを追加しない
+    if (!skip) {
+      const optimisticUserMsg: ChatMessage = {
+        id: optimisticId,
+        session_id: sessionId,
+        role: "user",
+        content,
+        images: imageIds.length > 0 ? imageIds : undefined,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, optimisticUserMsg]);
+    }
 
     try {
-      for await (const event of streamGroupMessage(sessionId, content, imageIds)) {
+      for await (const event of streamGroupMessage(sessionId, content, imageIds, skip)) {
         const ev = event as GroupStreamEvent;
         if (ev.type === "user_saved") {
           // optimisticメッセージを確定済みユーザーメッセージで差し替える
@@ -283,6 +297,7 @@ export default function App() {
           setGroupWaitingCharacter(null);
           setGroupStreamingContent(null);
           setGroupStreamingReasoning(null);
+          if (ev.type === "user_turn") setIsGroupUserTurn(true);
           break;
         } else if (ev.type === "error") {
           setGroupWaitingCharacter(null);
@@ -333,6 +348,15 @@ export default function App() {
       return;
     }
     _doGroupStream(activeSessionId, content, imageIds);
+  }, [activeSessionId, sending, _doGroupStream]);
+
+  /**
+   * グループチャットのユーザターンスキップ。
+   * ユーザメッセージを保存せず、司会へ直接ターンを委譲する。
+   */
+  const handleGroupSkip = useCallback(async () => {
+    if (!activeSessionId || sending) return;
+    _doGroupStream(activeSessionId, "", [], true);
   }, [activeSessionId, sending, _doGroupStream]);
 
   /**
@@ -575,6 +599,8 @@ export default function App() {
             onRetry={handleGroupRetry}
             onHeaderVisibilityChange={setHeaderVisible}
             characterIdMap={characterIdMap}
+            isUserTurn={isGroupUserTurn}
+            onSkip={handleGroupSkip}
           />
         ) : activeSessionId ? (
           <ChatView

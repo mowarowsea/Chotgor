@@ -17,6 +17,8 @@ interface Props {
     placeholder?: string;
     /** 画像添付を許可するかどうか（デフォルト: true） */
     allowImages?: boolean;
+    /** ユーザターンスキップコールバック。指定時は送信ボタン隣にスキップボタンを表示する。 */
+    onSkip?: () => void;
 }
 
 /**
@@ -28,6 +30,7 @@ export default function MessageInput({
     onSend,
     placeholder = "メッセージを入力… (Ctrl+Enter で送信)",
     allowImages = true,
+    onSkip,
 }: Props) {
     const [input, setInput] = useState("");
     /** 送信前の添付ファイルリスト */
@@ -187,14 +190,26 @@ export default function MessageInput({
                         </>
                     )}
 
-                    {/* 送信ボタン（右端） */}
-                    <button
-                        type="submit"
-                        disabled={!input.trim() || sending}
-                        className="ml-auto bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg px-3 py-1 text-xs font-medium transition-colors"
-                    >
-                        送信
-                    </button>
+                    {/* 送信ボタン・スキップボタン（右端） */}
+                    <div className="ml-auto flex items-center gap-2">
+                        {onSkip && (
+                            <button
+                                type="button"
+                                onClick={onSkip}
+                                disabled={sending}
+                                className="text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 disabled:opacity-40 rounded-lg px-3 py-1 transition-colors"
+                            >
+                                スキップ
+                            </button>
+                        )}
+                        <button
+                            type="submit"
+                            disabled={!input.trim() || sending}
+                            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg px-3 py-1 text-xs font-medium transition-colors"
+                        >
+                            送信
+                        </button>
+                    </div>
                 </div>
             </div>
         </form>

@@ -41,6 +41,10 @@ interface Props {
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** キャラクター名→IDのマップ。アバター画像の表示に使用する。 */
   characterIdMap?: Record<string, string>;
+  /** ユーザターン待ち状態かどうか。true のときスキップボタンを表示する。 */
+  isUserTurn?: boolean;
+  /** ユーザターンスキップコールバック。スキップボタン押下時に呼ばれる。 */
+  onSkip?: () => void;
 }
 
 /** グループチャットのレイアウトコンポーネント。 */
@@ -58,6 +62,8 @@ export default function GroupChatView({
   onRetry,
   onHeaderVisibilityChange,
   characterIdMap,
+  isUserTurn = false,
+  onSkip,
 }: Props) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -80,6 +86,7 @@ export default function GroupChatView({
         sending={sending}
         onSend={onSend}
         allowImages={true}
+        onSkip={isUserTurn ? onSkip : undefined}
       />
     </div>
   );

@@ -296,11 +296,15 @@ export async function resetDrifts(sessionId: string, characterId: string): Promi
   if (!res.ok) throw new Error("SELF_DRIFT のリセットに失敗しました");
 }
 
-/** グループチャットメッセージをSSEでストリーミング送信し、イベントをyieldする。 */
+/** グループチャットメッセージをSSEでストリーミング送信し、イベントをyieldする。
+ *
+ * @param skip - true の場合、ユーザメッセージを保存せず司会へ直接ターンを委譲する（ユーザターンスキップ）。
+ */
 export async function* streamGroupMessage(
   sessionId: string,
   content: string,
   imageIds?: string[],
+  skip?: boolean,
 ): AsyncGenerator<GroupStreamEvent> {
   const res = await fetch(`/api/group/sessions/${sessionId}/messages/stream`, {
     method: "POST",
@@ -308,6 +312,7 @@ export async function* streamGroupMessage(
     body: JSON.stringify({
       content,
       ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
+      ...(skip ? { skip: true } : {}),
     }),
   });
   if (!res.ok) throw new Error("グループメッセージの送信に失敗しました");
