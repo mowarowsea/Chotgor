@@ -1,13 +1,10 @@
 """Tests for ghost_model: DB persistence, digest/forget routing, and logging."""
 
-import os
-import tempfile
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.core.memory.sqlite_store import SQLiteStore
 from backend.core.memory.manager import MemoryManager
 from backend.core.memory.digest import run_daily_digest, _call_llm_for_digest
 from backend.core.memory.forget import run_forget_process, _call_llm_for_forget
@@ -16,19 +13,6 @@ from backend.core.memory.forget import run_forget_process, _call_llm_for_forget
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def sqlite_store():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    store = SQLiteStore(path)
-    yield store
-    store.engine.dispose()
-    try:
-        os.remove(path)
-    except PermissionError:
-        pass
-
 
 @pytest.fixture
 def memory_manager(sqlite_store):

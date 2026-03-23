@@ -1,26 +1,10 @@
 import pytest
 from datetime import datetime, timedelta
-import tempfile
-import os
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from backend.core.memory.sqlite_store import SQLiteStore, Memory
+from backend.core.memory.sqlite_store import Memory
 from backend.core.memory.manager import MemoryManager
 from backend.core.memory.forget import run_forget_process
-
-@pytest.fixture
-def sqlite_store():
-    # Use an in-memory or temporary file db for tests
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    store = SQLiteStore(path)
-    yield store
-    # Cleanup DB connection before removing file
-    store.engine.dispose()
-    try:
-        os.remove(path)
-    except PermissionError:
-        pass
 
 @pytest.fixture
 def memory_manager(sqlite_store):

@@ -232,6 +232,57 @@ class SQLiteStore(
                 except Exception:
                     pass
 
+            # characters テーブルに旧カラム（meta_instructions 等）が残っている場合、
+            # テーブルを再作成して現行 ORM スキーマに揃える。
+            # meta_instructions は NOT NULL かつ DEFAULT なしのため、
+            # ORM 経由の INSERT が失敗する原因になる。
+            try:
+                result = conn.execute(
+                    text("SELECT count(*) FROM pragma_table_info('characters') WHERE name='meta_instructions'")
+                )
+                if result.fetchone()[0] > 0:
+                    # 中途失敗時の残骸テーブルを除去してからリトライ
+                    conn.execute(text("DROP TABLE IF EXISTS characters_new"))
+                    conn.execute(text("""
+                        CREATE TABLE characters_new (
+                            id VARCHAR NOT NULL PRIMARY KEY,
+                            name VARCHAR NOT NULL,
+                            system_prompt_block1 TEXT NOT NULL DEFAULT '',
+                            inner_narrative TEXT NOT NULL DEFAULT '',
+                            cleanup_config JSON NOT NULL DEFAULT '{}',
+                            enabled_providers TEXT NOT NULL DEFAULT '{}',
+                            ghost_model TEXT,
+                            image_data TEXT,
+                            switch_angle_enabled INTEGER NOT NULL DEFAULT 0,
+                            afterglow_default INTEGER NOT NULL DEFAULT 0,
+                            created_at DATETIME,
+                            updated_at DATETIME
+                        )
+                    """))
+                    conn.execute(text("""
+                        INSERT INTO characters_new
+                            (id, name, system_prompt_block1, inner_narrative,
+                             cleanup_config, enabled_providers, ghost_model,
+                             image_data, switch_angle_enabled, afterglow_default,
+                             created_at, updated_at)
+                        SELECT
+                            id, name, system_prompt_block1,
+                            COALESCE(NULLIF(inner_narrative, ''), meta_instructions, ''),
+                            COALESCE(cleanup_config, '{}'),
+                            COALESCE(enabled_providers, '{}'),
+                            ghost_model, image_data,
+                            COALESCE(switch_angle_enabled, 0),
+                            COALESCE(afterglow_default, 0),
+                            created_at, updated_at
+                        FROM characters
+                    """))
+                    conn.execute(text("ALTER TABLE characters RENAME TO characters_old"))
+                    conn.execute(text("ALTER TABLE characters_new RENAME TO characters"))
+                    conn.execute(text("DROP TABLE characters_old"))
+                    conn.commit()
+            except Exception:
+                pass
+
             for stmt in [
                 "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT",
                 "ALTER TABLE chat_messages ADD COLUMN images TEXT",
