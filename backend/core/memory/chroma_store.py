@@ -173,7 +173,21 @@ class ChromaStore:
         }
         if where:
             query_kwargs["where"] = where
-        results = collection.query(**query_kwargs)
+            # where フィルタ適用時は全件数ではなくフィルタ後の件数で n_results を調整する。
+            # コレクション全件数 < n_results でなくても、フィルタ後の件数 < n_results の場合に
+            # ChromaDB が "Number of requested results > elements in index" を投げるため。
+            try:
+                filtered_ids = collection.get(where=where, limit=n, include=[])["ids"]
+                filtered_count = len(filtered_ids)
+            except Exception:
+                filtered_count = 0
+            if filtered_count == 0:
+                return []
+            query_kwargs["n_results"] = min(n, filtered_count)
+        try:
+            results = collection.query(**query_kwargs)
+        except Exception:
+            return []
 
         memories = []
         if results["ids"] and results["ids"][0]:
@@ -219,6 +233,14 @@ class ChromaStore:
         if count == 0:
             return None
 
+        # カテゴリフィルタ後に0件の場合も同様に ChromaDB が例外を投げるため、事前確認する。
+        try:
+            check = collection.get(where={"category": category}, limit=1, include=[])
+            if not check["ids"]:
+                return None
+        except Exception:
+            return None
+
         try:
             results = collection.query(
                 query_texts=[content],
@@ -227,9 +249,6 @@ class ChromaStore:
                 where={"category": category},
             )
         except Exception:
-            # 同カテゴリの記憶が0件の場合、ChromaDBが
-            # "Number of requested results > elements in index" 例外を投げることがある。
-            # その場合は類似なし（新規作成）として扱う。
             return None
 
         if not results["ids"] or not results["ids"][0]:
