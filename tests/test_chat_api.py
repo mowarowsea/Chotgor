@@ -29,6 +29,7 @@ def _make_app(sqlite_mock, chat_service_mock=None, memory_manager_mock=None) -> 
     app.state.sqlite = sqlite_mock
     app.state.chat_service = chat_service_mock or MagicMock()
     app.state.memory_manager = memory_manager_mock or MagicMock()
+    app.state.chroma = MagicMock()
     app.state.uploads_dir = "/tmp"
     return app
 

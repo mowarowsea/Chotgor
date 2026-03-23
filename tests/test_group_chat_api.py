@@ -33,6 +33,7 @@ def _make_app(sqlite_mock, memory_manager_mock=None) -> FastAPI:
     app.state.sqlite = sqlite_mock
     app.state.memory_manager = memory_manager_mock or MagicMock()
     app.state.chat_service = MagicMock()
+    app.state.chroma = MagicMock()
     app.state.uploads_dir = "/tmp"
     return app
 

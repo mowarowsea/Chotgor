@@ -149,7 +149,7 @@ async def _stream_character_response(
             thinking_parts.append(content)
             yield ("character_reasoning", {"character": char_name, "content": content})
         elif chunk_type == "text":
-            full_text = content
+            full_text += content
             if content:
                 yield ("character_chunk", {"character": char_name, "content": content})
         elif chunk_type == "session_exit":
