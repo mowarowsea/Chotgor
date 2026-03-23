@@ -258,3 +258,159 @@ def parse_tags(
         parts.append(text[prev:])
 
     return "".join(parts).strip(), matches
+
+
+class StreamingTagStripper:
+    """ストリーミングチャンクからツールタグをリアルタイムで除去するバッファ。
+
+    LLM応答をチャンク単位で受け取り、[TAG:...] 形式のマーカーを除去しながら
+    安全な部分だけを逐次返す。マーカーが複数チャンクにまたがっても正しく処理できる。
+
+    使い方:
+        stripper = StreamingTagStripper()
+        for chunk in stream:
+            safe = stripper.feed(chunk)
+            if safe:
+                yield safe
+        remaining = stripper.flush()
+        if remaining:
+            yield remaining
+    """
+
+    # 除去対象マーカーのプレフィックス。
+    # 固定マーカー（']' で終わるもの）はプレフィックスがマーカー全体と一致する。
+    KNOWN_PREFIXES: list[str] = [
+        "[INSCRIBE_MEMORY:",
+        "[CARVE_NARRATIVE:",
+        "[DRIFT_RESET]",    # 固定マーカー
+        "[DRIFT:",
+        "[END_SESSION]",    # 固定マーカー
+        "[END_SESSION:",
+        # [SWITCH_ANGLE:] は除外: switch 発生前の第1プロバイダーのテキストはストリーム表示し、
+        # switch 検知後に ("clear", None) イベントで表示をリセットする設計のため除去不要。
+        # available_presets が空のとき（switch不可）はタグをテキストとしてそのまま通す。
+    ]
+
+    # バッファがこの長さを超えたら強制フラッシュ（無限バッファを防ぐ）
+    MAX_BUFFER: int = 1000
+
+    def __init__(self) -> None:
+        """StreamingTagStripper を初期化する。"""
+        self._buffer: str = ""
+
+    def feed(self, chunk: str) -> str:
+        """チャンクを投入し、マーカーを除去した安全なテキストを返す。
+
+        マーカーが複数チャンクにまたがる場合、完結するまでバッファに保持する。
+
+        Args:
+            chunk: LLMから受け取った生テキストチャンク。
+
+        Returns:
+            マーカーを除去した、即座に表示可能なテキスト。空文字列の場合もある。
+        """
+        self._buffer += chunk
+        return self._drain()
+
+    def flush(self) -> str:
+        """ストリーム終了時に残ったバッファを全て返す。完全なマーカーは除去される。
+
+        Returns:
+            残バッファのクリーンテキスト。
+        """
+        tag_names = []
+        for p in self.KNOWN_PREFIXES:
+            name = p.lstrip("[").rstrip(":]")
+            if name not in tag_names:
+                tag_names.append(name)
+        clean, _ = parse_tags(self._buffer, tag_names)
+        self._buffer = ""
+        return clean
+
+    def _could_be_marker_prefix(self, buf: str) -> bool:
+        """buf が既知マーカーのプレフィックスになり得るか判定する。
+
+        buf が既知プレフィックスのいずれかの冒頭部分（部分マッチ）の場合 True。
+        例: buf="[DRIFT" → "[DRIFT_RESET]" や "[DRIFT:" の冒頭に一致 → True
+
+        Args:
+            buf: '[' から始まる未確定バッファ。
+
+        Returns:
+            既知マーカーになり得る場合 True。
+        """
+        for prefix in self.KNOWN_PREFIXES:
+            if prefix.startswith(buf):
+                return True
+        return False
+
+    def _find_complete_prefix(self, buf: str) -> str | None:
+        """buf の先頭に完全マッチする既知プレフィックスを返す。なければ None。
+
+        Args:
+            buf: '[' から始まるバッファ。
+
+        Returns:
+            マッチしたプレフィックス文字列、またはNone。
+        """
+        for prefix in self.KNOWN_PREFIXES:
+            if buf.startswith(prefix):
+                return prefix
+        return None
+
+    def _drain(self) -> str:
+        """バッファから安全に流せる部分を取り出して返す。
+
+        '[' を見つけるまでは直接出力し、'[' を見つけたらマーカー判定を行う。
+        マーカーが完結したら除去して続きを処理、未確定なら次のチャンクを待つ。
+
+        Returns:
+            マーカーを除去した出力可能テキスト。
+        """
+        output: list[str] = []
+        buf = self._buffer
+
+        while buf:
+            open_pos = buf.find("[")
+            if open_pos == -1:
+                # '[' がない → 全部流す
+                output.append(buf)
+                buf = ""
+                break
+
+            # '[' の手前を安全に流す
+            if open_pos > 0:
+                output.append(buf[:open_pos])
+                buf = buf[open_pos:]
+
+            # buf は今 '[' から始まる
+            complete_prefix = self._find_complete_prefix(buf)
+            if complete_prefix is not None:
+                # 既知プレフィックスが確定した
+                if complete_prefix.endswith("]"):
+                    # 固定マーカー（例: [DRIFT_RESET]）: プレフィックス自体がマーカー全体
+                    buf = buf[len(complete_prefix):]
+                else:
+                    # コンテンツマーカー（例: [INSCRIBE_MEMORY:...]）: ']' を探す
+                    close_pos = buf.find("]", len(complete_prefix))
+                    if close_pos == -1:
+                        # ']' がまだ来ていない → 次のチャンクを待つ
+                        break
+                    buf = buf[close_pos + 1:]
+                continue
+
+            # 既知プレフィックスとの部分マッチが残っているか確認
+            if self._could_be_marker_prefix(buf):
+                # まだ確定できない → 次のチャンクを待つ。
+                # バッファが長くなりすぎた場合（']' が永遠に来ない等）は強制フラッシュする。
+                if len(buf) > self.MAX_BUFFER:
+                    output.append(buf)
+                    buf = ""
+                break
+
+            # マーカーではない '[' → そのまま流す
+            output.append("[")
+            buf = buf[1:]
+
+        self._buffer = buf
+        return "".join(output)

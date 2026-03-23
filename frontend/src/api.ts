@@ -137,6 +137,8 @@ export type StreamEvent =
   | { type: "chunk"; content: string }
   /** 思考ブロック・想起した記憶（フロントで折りたたみ表示する） */
   | { type: "reasoning"; content: string }
+  /** switch_angle 発動: 表示をクリアして第2プロバイダーのストリームを開始する */
+  | { type: "clear" }
   | { type: "done"; user_message: ChatMessage; character_message: ChatMessage }
   | { type: "error"; message: string };
 

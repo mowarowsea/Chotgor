@@ -30,6 +30,7 @@ from ..memory.inscriber import Inscriber
 from ..memory.manager import MemoryManager
 from ..providers.registry import create_provider
 from ..system_prompt import build_system_prompt
+from ..tag_parser import StreamingTagStripper
 from ..tools import ToolExecutor
 from ..web_fetch import fetch_urls, find_urls
 from .drifter import Drifter
@@ -308,6 +309,9 @@ class ChatService:
             yield ("memories", all_recalled)
 
         exit_reason: str | None = None
+        # タグ方式でリアルタイムストリーミングした場合 True。
+        # True の場合、最終 yield ("text", clean_text) をスキップする。
+        text_already_streamed = False
 
         if ctx.provider_impl.SUPPORTS_TOOLS:
             tool_executor = ToolExecutor(
@@ -326,16 +330,30 @@ class ChatService:
         else:
             tool_executor = None
             full_text = ""
+            stripper = StreamingTagStripper()
+
             try:
                 async for chunk_type, content in ctx.provider_impl.generate_stream_typed(ctx.system_prompt, ctx.messages):
                     if chunk_type == "thinking":
                         yield ("thinking", content)
                     elif chunk_type == "text":
                         full_text += content
+                        # マーカーを除去しながらリアルタイムでチャンクをyieldする
+                        safe_chunk = stripper.feed(content)
+                        if safe_chunk:
+                            yield ("text", safe_chunk)
             except Exception as e:
                 yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
                 return
 
+            # ストリーム終了後、バッファに残ったテキストを流す
+            remaining = stripper.flush()
+            if remaining:
+                yield ("text", remaining)
+            text_already_streamed = True
+
+            # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み・drift適用）
+            # テキスト表示は済んでいるため、clean_text は副作用処理とログ用途にのみ使う。
             inscriber = Inscriber(request.character_id, self.memory_manager)
             clean_text = inscriber.inscribe_memory_from_text(full_text, request.current_preset_id)
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
@@ -351,6 +369,8 @@ class ChatService:
         if switch_info:
             switched = self._build_switched_request(request, *switch_info)
             if switched is not None:
+                # 第1プロバイダーの表示をクリアしてから第2プロバイダーをストリームする
+                yield ("clear", None)
                 async for event in self.execute_stream(switched):
                     yield event
                 yield ("angle_switched", f"{request.character_name}@{switch_info[0]}")
@@ -359,7 +379,7 @@ class ChatService:
         log_front_output(clean_text)
         self._log_debug("CHAT stream", request, ctx.messages, clean_text)
 
-        if clean_text:
+        if clean_text and not text_already_streamed:
             yield ("text", clean_text)
 
         # 退席要求があればテキストの後にyieldする

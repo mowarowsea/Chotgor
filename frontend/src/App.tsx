@@ -359,6 +359,11 @@ export default function App() {
       for await (const event of streamMessage(sessionId, content, imageIds, modelId)) {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
+        } else if (event.type === "clear") {
+          // switch_angle 発動: 第1プロバイダーの表示をクリアして第2プロバイダーを待つ
+          setStreamingContent("");
+          accumulatedReasoning = "";
+          setStreamingReasoning(null);
         } else if (event.type === "reasoning") {
           accumulatedReasoning += event.content;
           setStreamingReasoning(accumulatedReasoning);

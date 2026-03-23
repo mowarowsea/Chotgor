@@ -552,7 +552,12 @@ class TestChatServiceExecuteStreamWithSwitch:
 
     @pytest.mark.asyncio
     async def test_execute_stream_switch_text_from_second_provider(self, monkeypatch):
-        """switch 後のテキストは新プロバイダーからのものである。"""
+        """switch 後のテキストは新プロバイダーからのものである。
+
+        switch_angle 発動前の第1プロバイダーのテキストもストリームされる（途中まで表示）。
+        switch 検知後は ("clear", None) イベントが yield され、第2プロバイダーのテキストが続く。
+        clear より後の text イベントには第2プロバイダーのテキストのみが含まれる。
+        """
         first_provider = MagicMock()
         first_provider.SUPPORTS_TOOLS = False
 
@@ -587,14 +592,23 @@ class TestChatServiceExecuteStreamWithSwitch:
         service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
 
-        text_events = []
-        async for chunk_type, content in service.execute_stream(request):
-            if chunk_type == "text":
-                text_events.append(content)
+        events = []
+        async for event in service.execute_stream(request):
+            events.append(event)
 
-        # 最初の応答("最初の応答...")はユーザーに渡らず、新プロバイダーの応答のみ
-        assert any("軽い応答テキスト" in t for t in text_events)
-        assert not any("最初の応答" in t for t in text_events)
+        event_types = [e[0] for e in events]
+
+        # clear イベントが yield される
+        assert "clear" in event_types
+
+        # clear より前に第1プロバイダーのテキストが含まれる
+        clear_idx = next(i for i, e in enumerate(events) if e[0] == "clear")
+        before_clear_texts = [e[1] for e in events[:clear_idx] if e[0] == "text"]
+        assert any("最初の応答" in t for t in before_clear_texts)
+
+        # clear より後に第2プロバイダーのテキストが含まれる
+        after_clear_texts = [e[1] for e in events[clear_idx:] if e[0] == "text"]
+        assert any("軽い応答テキスト" in t for t in after_clear_texts)
 
     @pytest.mark.asyncio
     async def test_execute_stream_no_switch_when_presets_empty(self, monkeypatch):

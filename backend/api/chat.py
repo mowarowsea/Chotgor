@@ -426,8 +426,14 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                         accumulated_reasoning += content
                         data = json.dumps({"type": "reasoning", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
+                elif chunk_type == "clear":
+                    # switch_angle 発動: 第1プロバイダーのテキストを破棄してフロントをクリアする
+                    full_text = ""
+                    accumulated_reasoning = ""
+                    data = json.dumps({"type": "clear"}, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
                 elif chunk_type == "text":
-                    full_text = content
+                    full_text += content
                     if content:
                         data = json.dumps({"type": "chunk", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"

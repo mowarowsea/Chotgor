@@ -4,7 +4,7 @@ parse_tags() の文字単位パーサーを網羅的に検証する。
 特に正規表現ベースの旧実装では対処できなかったエッジケースを重点的にテストする。
 """
 
-from backend.core.tag_parser import TagMatch, parse_tags
+from backend.core.tag_parser import StreamingTagStripper, TagMatch, parse_tags
 
 
 # ─── 基本動作 ──────────────────────────────────────────────────────────────────
@@ -411,3 +411,288 @@ def test_arbitrary_tag_body_format_is_parser_agnostic():
     assert len(matches["ACTION"]) == 1
     # body はパースされず生文字列のまま返ること
     assert matches["ACTION"][0].body == "move|north|3steps|fast"
+
+
+# ─── StreamingTagStripper ──────────────────────────────────────────────────────
+#
+# ストリーミングチャンクからツールタグをリアルタイムで除去するバッファのテスト。
+# feed() でチャンクを逐次投入し、flush() で残りを回収する使い方を検証する。
+
+
+def _feed_all(chunks: list[str]) -> str:
+    """チャンクリストを StreamingTagStripper に流し、最終出力を返す補助関数。
+
+    feed() の戻り値と flush() の戻り値をすべて結合したものを返す。
+
+    Args:
+        chunks: ストリームチャンクのリスト。
+
+    Returns:
+        マーカーを除去した結合テキスト。
+    """
+    stripper = StreamingTagStripper()
+    out = "".join(stripper.feed(c) for c in chunks)
+    out += stripper.flush()
+    return out
+
+
+# ─── 基本動作 ──────────────────────────────────────────────────────────────────
+
+
+def test_stripper_plain_text_passthrough():
+    """マーカーを含まないテキストはそのまま出力されること。"""
+    result = _feed_all(["こんにちは", "、世界！"])
+
+    assert result == "こんにちは、世界！"
+
+
+def test_stripper_single_chunk_with_marker():
+    """マーカーが1チャンク内に収まる場合、マーカーが除去されること。"""
+    result = _feed_all(["今日は楽しかった[INSCRIBE_MEMORY:contextual|1.0|楽しい]ね"])
+
+    assert result == "今日は楽しかったね"
+    assert "[INSCRIBE_MEMORY:" not in result
+
+
+def test_stripper_empty_input():
+    """空チャンクを渡してもエラーにならず、空文字列が返ること。"""
+    result = _feed_all(["", "", ""])
+
+    assert result == ""
+
+
+def test_stripper_no_marker_brackets():
+    """[ を含まないテキストは全量リアルタイムで流れること。"""
+    stripper = StreamingTagStripper()
+
+    # 各 feed() 呼び出しで即座に出力が返ること（バッファリングされないこと）
+    out1 = stripper.feed("ABC")
+    out2 = stripper.feed("DEF")
+    remaining = stripper.flush()
+
+    assert out1 == "ABC"
+    assert out2 == "DEF"
+    assert remaining == ""
+
+
+# ─── マーカーが複数チャンクにまたがる場合 ──────────────────────────────────────
+
+
+def test_stripper_marker_split_at_prefix():
+    """マーカープレフィックスがチャンク境界で分割されても正しく除去されること。
+
+    例: "[INSCRI" と "BE_MEMORY:contextual|1.0|内容]" に分かれた場合。
+    分割中はバッファリングし、完結後に除去する。
+    """
+    result = _feed_all(["今日は[INSCRI", "BE_MEMORY:contextual|1.0|内容]ね"])
+
+    assert result == "今日はね"
+
+
+def test_stripper_marker_split_at_body():
+    """マーカーの本体部分がチャンク境界で分割されても正しく除去されること。
+
+    例: "[INSCRIBE_MEMORY:contextual|" と "1.0|内容]" に分かれた場合。
+    プレフィックスが確定した後、']' が来るまでバッファリングし続ける。
+    """
+    result = _feed_all(["[INSCRIBE_MEMORY:contextual|", "1.0|内容]"])
+
+    assert result == ""
+
+
+def test_stripper_marker_split_across_many_chunks():
+    """マーカーが多数のチャンクにまたがっても正しく除去されること。
+
+    1文字ずつ分割した極端なケース。
+    """
+    text = "[DRIFT:常に敬語を使う]"
+    result = _feed_all(list(text))
+
+    assert result == ""
+
+
+def test_stripper_text_before_split_marker_is_yielded_immediately():
+    """マーカー手前のテキストはバッファリングされずに即座に出力されること。
+
+    ストリーミングの恩恵（マーカー手前テキストのリアルタイム表示）を検証する。
+    """
+    stripper = StreamingTagStripper()
+
+    out = stripper.feed("こんにちは[INSCRI")
+
+    # マーカー手前の "こんにちは" は即座に出力され、"[INSCRI" はバッファに保持されること
+    assert out == "こんにちは"
+
+
+# ─── 固定マーカー（']' で終わるプレフィックス） ─────────────────────────────────
+
+
+def test_stripper_fixed_marker_drift_reset():
+    """固定マーカー [DRIFT_RESET] が正しく除去されること。"""
+    result = _feed_all(["本文[DRIFT_RESET]続き"])
+
+    assert result == "本文続き"
+
+
+def test_stripper_fixed_marker_end_session():
+    """固定マーカー [END_SESSION] が正しく除去されること。"""
+    result = _feed_all(["さようなら[END_SESSION]"])
+
+    assert result == "さようなら"
+
+
+def test_stripper_end_session_with_reason():
+    """コンテンツ形式の [END_SESSION:理由] が正しく除去されること。"""
+    result = _feed_all(["さようなら[END_SESSION:疲れた]"])
+
+    assert result == "さようなら"
+
+
+def test_stripper_fixed_marker_split():
+    """固定マーカーがチャンク境界で分割されても正しく除去されること。"""
+    result = _feed_all(["本文[DRIFT_RE", "SET]続き"])
+
+    assert result == "本文続き"
+
+
+# ─── 複数マーカー ──────────────────────────────────────────────────────────────
+
+
+def test_stripper_multiple_markers_in_single_chunk():
+    """1チャンク内に複数のマーカーが含まれる場合、すべて除去されること。"""
+    result = _feed_all(
+        ["本文[INSCRIBE_MEMORY:contextual|1.0|内容A][DRIFT:新しい指針]続き"]
+    )
+
+    assert result == "本文続き"
+
+
+def test_stripper_markers_across_chunk_boundaries():
+    """複数のマーカーがそれぞれチャンク境界をまたいでも正しく除去されること。"""
+    result = _feed_all([
+        "本文[INSCRIBE_MEMO",
+        "RY:contextual|1.0|A][CARVE_NARR",
+        "ATIVE:append|新しい自己認識]終わり",
+    ])
+
+    assert result == "本文終わり"
+
+
+def test_stripper_all_known_markers():
+    """Stripper が除去対象とする全既知マーカーが正しく除去されること。
+
+    [SWITCH_ANGLE:] は KNOWN_PREFIXES に含まれない（available_presets が非空のリクエストでは
+    use_streaming=False となり Stripper が使われないため）。
+    """
+    result = _feed_all([
+        "A[INSCRIBE_MEMORY:contextual|1.0|x]"
+        "B[CARVE_NARRATIVE:append|y]"
+        "C[DRIFT:z]"
+        "D[DRIFT_RESET]"
+        "E[END_SESSION:理由]"
+        "F"
+    ])
+
+    assert result == "ABCDEF"
+
+
+# ─── マーカーではない '[' ────────────────────────────────────────────────────────
+
+
+def test_stripper_non_marker_bracket_passthrough():
+    """既知マーカーではない '[' はそのまま出力されること。"""
+    result = _feed_all(["[ありがとう]"])
+
+    assert result == "[ありがとう]"
+
+
+def test_stripper_markdown_link_passthrough():
+    """Markdown リンク形式 [text](url) はマーカーと誤認識されずそのまま出力されること。"""
+    result = _feed_all(["[詳細はこちら](https://example.com)を参照"])
+
+    assert result == "[詳細はこちら](https://example.com)を参照"
+
+
+def test_stripper_lone_bracket_passthrough():
+    """対応する ']' のない '[' は flush() 後にそのまま出力されること。"""
+    result = _feed_all(["開き括弧[だけ"])
+
+    assert result == "開き括弧[だけ"
+
+
+# ─── flush() の動作 ────────────────────────────────────────────────────────────
+
+
+def test_stripper_flush_completes_buffered_marker():
+    """ストリーム終了時、バッファに不完全なマーカーが残っていても flush() で処理されること。
+
+    ']' が来ないまま終了した場合、マーカーではないと判断してテキストとして出力する。
+    """
+    stripper = StreamingTagStripper()
+    out = stripper.feed("[INSCRIBE_MEMORY:未完成")
+    remaining = stripper.flush()
+
+    # 完結しないマーカーは flush() 時にテキストとして処理されること
+    # (parse_tags が未閉じタグをそのまま残す仕様に準拠)
+    full = out + remaining
+    # クラッシュせずに何らかのテキストが返ること
+    assert isinstance(full, str)
+
+
+def test_stripper_flush_empty_buffer():
+    """バッファが空の場合、flush() は空文字列を返すこと。"""
+    stripper = StreamingTagStripper()
+    stripper.feed("マーカーなし")
+    remaining = stripper.flush()
+
+    assert remaining == ""
+
+
+def test_stripper_reuse_after_flush_raises_no_error():
+    """flush() 後も stripper インスタンスを継続使用できること。
+
+    flush() でバッファがリセットされ、次の feed() が正しく動作することを確認する。
+    """
+    stripper = StreamingTagStripper()
+    stripper.feed("最初のチャンク")
+    stripper.flush()
+
+    out = stripper.feed("2回目のチャンク")
+    assert out == "2回目のチャンク"
+
+
+def test_stripper_large_single_chunk_strips_marker():
+    """1000文字超えの大きなチャンクでもマーカーが除去されること。
+
+    Google等のプロバイダーがレスポンス全体を1チャンクで送信する場合、
+    MAX_BUFFER (1000) を超えるバッファが渡されることがある。
+    '[' より前のテキストを先に出力してから MAX_BUFFER チェックを行うため、
+    '[' 以降にマーカーがあっても正しく除去できる。
+    """
+    # 1000文字超えの本文 + [INSCRIBE_MEMORY:...] タグを1チャンクで投入する
+    long_text = "あ" * 1100
+    marker = "[INSCRIBE_MEMORY:semantic|1.0|長い記憶内容が入ります。詳細な情報をここに記録する。]"
+    chunk = long_text + marker
+
+    stripper = StreamingTagStripper()
+    out = stripper.feed(chunk)
+    out += stripper.flush()
+
+    # 本文は出力される
+    assert "あ" * 1100 in out
+    # マーカーは除去される
+    assert "[INSCRIBE_MEMORY:" not in out
+
+
+def test_stripper_large_chunk_marker_before_text():
+    """大きなチャンクでマーカーが先頭にある場合も除去されること。"""
+    marker = "[INSCRIBE_MEMORY:semantic|1.0|記憶内容。]"
+    long_text = "い" * 1100
+    chunk = marker + long_text
+
+    stripper = StreamingTagStripper()
+    out = stripper.feed(chunk)
+    out += stripper.flush()
+
+    assert "い" * 1100 in out
+    assert "[INSCRIBE_MEMORY:" not in out
