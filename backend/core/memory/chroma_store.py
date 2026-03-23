@@ -95,6 +95,7 @@ class ChromaStore:
 
         embeddingモデル変更による次元不一致エラーが発生した場合は、
         コレクションを削除して再作成する（記憶はSQLiteから再インデックス可能）。
+        ただしデータが存在するコレクションは絶対に削除しない（データ保護）。
         """
         collection_name = f"char_{character_id.replace('-', '_')}"
         kwargs: dict = {
@@ -106,7 +107,17 @@ class ChromaStore:
         try:
             return self.client.get_or_create_collection(**kwargs)
         except Exception:
-            # embeddingモデル変更による次元不一致エラーの場合、コレクションを再作成する
+            # get_or_create_collection が失敗した場合、データが存在しない空コレクションのみ削除して再作成する。
+            # データが残っているコレクションを誤って消さないよう、件数を確認してから判断する。
+            has_data = False
+            try:
+                existing = self.client.get_collection(collection_name)
+                has_data = existing.count() > 0
+            except Exception:
+                pass
+            if has_data:
+                # データあり → 再作成をスキップし、既存コレクションをそのまま返す
+                return self.client.get_collection(collection_name)
             try:
                 self.client.delete_collection(collection_name)
             except Exception:
@@ -274,6 +285,7 @@ class ChromaStore:
         """キャラクターのチャット履歴コレクションを取得または作成する。
 
         embeddingモデル変更による次元不一致時はコレクションを再作成する。
+        ただしデータが存在するコレクションは削除しない（データ保護）。
 
         Args:
             character_id: キャラクターID。
@@ -288,6 +300,14 @@ class ChromaStore:
         try:
             return self.client.get_or_create_collection(**kwargs)
         except Exception:
+            has_data = False
+            try:
+                existing = self.client.get_collection(collection_name)
+                has_data = existing.count() > 0
+            except Exception:
+                pass
+            if has_data:
+                return self.client.get_collection(collection_name)
             try:
                 self.client.delete_collection(collection_name)
             except Exception:
