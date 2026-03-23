@@ -251,6 +251,57 @@ class ChromaStore:
         collection = self._get_collection(character_id)
         collection.delete(ids=[memory_id])
 
+    def _get_chat_collection(self, character_id: str):
+        """キャラクターのチャット履歴コレクションを取得または作成する。
+
+        embeddingモデル変更による次元不一致時はコレクションを再作成する。
+
+        Args:
+            character_id: キャラクターID。
+        """
+        collection_name = f"chat_{character_id.replace('-', '_')}"
+        kwargs: dict = {
+            "name": collection_name,
+            "metadata": {"hnsw:space": "cosine"},
+        }
+        if self._embedding_fn is not None:
+            kwargs["embedding_function"] = self._embedding_fn
+        try:
+            return self.client.get_or_create_collection(**kwargs)
+        except Exception:
+            try:
+                self.client.delete_collection(collection_name)
+            except Exception:
+                pass
+            return self.client.get_or_create_collection(**kwargs)
+
+    def add_chat_turn(
+        self,
+        message_id: str,
+        content: str,
+        character_id: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """チャット履歴ターンを chat_{character_id} コレクションへupsertする。
+
+        Args:
+            message_id: SQLite の chat_messages.id と同一。
+            content: "{speaker_name}: {content}" 形式のテキスト。
+            character_id: upsert先のキャラクターID。
+            metadata: 追加メタデータ（str/int/float/bool型の値のみ有効）。
+        """
+        collection = self._get_chat_collection(character_id)
+        meta = {"character_id": character_id}
+        if metadata:
+            for k, v in metadata.items():
+                if isinstance(v, (str, int, float, bool)):
+                    meta[k] = v
+        collection.upsert(
+            ids=[message_id],
+            documents=[content],
+            metadatas=[meta],
+        )
+
     def delete_all_memories(self, character_id: str) -> None:
         """キャラクターのコレクション全体を削除する。
 

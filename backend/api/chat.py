@@ -7,6 +7,7 @@
 SELF_DRIFT: chat_drifts.py
 """
 
+import asyncio
 import json
 import uuid
 from datetime import datetime
@@ -16,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..core.chat.indexer import get_participant_char_ids, index_message_sync
 from ..core.chat.models import ChatRequest, Message
 from ..core.debug_logger import log_front_output
 from ..core.time_awareness import compute_time_awareness
@@ -349,6 +351,10 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     exited_chars: list[dict] = getattr(session, "exited_chars", None) or []
     already_exited = any(e["char_name"] == char_name_for_check for e in exited_chars)
 
+    # チャット履歴インデックス登録用にセッション参加キャラIDとユーザ名を解決する
+    _chat_char_ids = get_participant_char_ids(session, state.sqlite)
+    _chat_user_name = state.sqlite.get_setting("user_name", "ユーザ")
+
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
         message_id=user_msg_id,
@@ -357,6 +363,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         content=body.content,
         images=body.image_ids or None,
     )
+    asyncio.create_task(asyncio.to_thread(
+        index_message_sync, user_msg, _chat_char_ids, state.chroma, _chat_user_name
+    ))
 
     if already_exited:
         # 退席済み → 全退席者のシステムメッセージを1件返す
@@ -461,6 +470,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             character_name=used_char_name,
             preset_name=used_preset_name,
         )
+        asyncio.create_task(asyncio.to_thread(
+            index_message_sync, char_msg, _chat_char_ids, state.chroma, _chat_user_name
+        ))
 
         state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)
 

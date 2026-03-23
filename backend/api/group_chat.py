@@ -4,6 +4,7 @@
 エンドポイントはすべて /api/group プレフィックス以下に配置する。
 """
 
+import asyncio
 import json
 import uuid
 from typing import List, Optional
@@ -12,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..core.chat.indexer import get_participant_char_ids, index_message_sync
 from ..core.group_chat.service import run_group_turn
 from .resource_resolver import parse_model_id, require_character, require_preset
 from .utils import message_to_dict, session_to_dict
@@ -171,6 +173,10 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
     except Exception:
         raise HTTPException(status_code=400, detail="グループ設定が不正です")
 
+    # チャット履歴インデックス登録用にセッション参加キャラIDとユーザ名を解決する
+    _chat_char_ids = get_participant_char_ids(session, state.sqlite)
+    _chat_user_name = state.sqlite.get_setting("user_name", "ユーザ")
+
     # ユーザーメッセージをDBに保存する（画像IDも含む）
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
@@ -180,6 +186,9 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
         content=body.content,
         images=body.image_ids or None,
     )
+    asyncio.create_task(asyncio.to_thread(
+        index_message_sync, user_msg, _chat_char_ids, state.chroma, _chat_user_name
+    ))
 
     # セッションタイトルを自動設定する（最初のメッセージから）
     existing = state.sqlite.list_chat_messages(session_id)
@@ -204,6 +213,7 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
                 chat_service=state.chat_service,
                 message_to_dict=message_to_dict,
                 uploads_dir=state.uploads_dir,
+                chroma=state.chroma,
             ):
                 data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
                 yield f"data: {data}\n\n"
