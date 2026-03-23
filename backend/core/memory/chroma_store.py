@@ -90,14 +90,13 @@ class ChromaStore:
         )
         self._embedding_fn = get_embedding_function(embedding_provider, embedding_model, api_key)
 
-    def _get_collection(self, character_id: str):
-        """キャラクターごとのコレクションを取得または作成する。
+    def _safe_get_or_create_collection(self, collection_name: str):
+        """コレクションを安全に取得または作成する共通ヘルパー。
 
-        embeddingモデル変更による次元不一致エラーが発生した場合は、
-        コレクションを削除して再作成する（記憶はSQLiteから再インデックス可能）。
-        ただしデータが存在するコレクションは絶対に削除しない（データ保護）。
+        get_or_create_collection が失敗した場合、データが存在しない空コレクションのみ
+        削除して再作成する。データが残っているコレクションは削除しない（データ保護）。
+        embeddingモデル変更による次元不一致エラーへの対応を想定している。
         """
-        collection_name = f"char_{character_id.replace('-', '_')}"
         kwargs: dict = {
             "name": collection_name,
             "metadata": {"hnsw:space": "cosine"},
@@ -107,22 +106,22 @@ class ChromaStore:
         try:
             return self.client.get_or_create_collection(**kwargs)
         except Exception:
-            # get_or_create_collection が失敗した場合、データが存在しない空コレクションのみ削除して再作成する。
-            # データが残っているコレクションを誤って消さないよう、件数を確認してから判断する。
-            has_data = False
+            # データが存在するコレクションは削除しない
             try:
                 existing = self.client.get_collection(collection_name)
-                has_data = existing.count() > 0
+                if existing.count() > 0:
+                    return existing
             except Exception:
                 pass
-            if has_data:
-                # データあり → 再作成をスキップし、既存コレクションをそのまま返す
-                return self.client.get_collection(collection_name)
             try:
                 self.client.delete_collection(collection_name)
             except Exception:
                 pass
             return self.client.get_or_create_collection(**kwargs)
+
+    def _get_collection(self, character_id: str):
+        """キャラクターの記憶コレクションを取得または作成する。"""
+        return self._safe_get_or_create_collection(f"char_{character_id.replace('-', '_')}")
 
     def add_memory(
         self,
@@ -244,14 +243,6 @@ class ChromaStore:
         if count == 0:
             return None
 
-        # カテゴリフィルタ後に0件の場合も同様に ChromaDB が例外を投げるため、事前確認する。
-        try:
-            check = collection.get(where={"category": category}, limit=1, include=[])
-            if not check["ids"]:
-                return None
-        except Exception:
-            return None
-
         try:
             results = collection.query(
                 query_texts=[content],
@@ -282,37 +273,8 @@ class ChromaStore:
         collection.delete(ids=[memory_id])
 
     def _get_chat_collection(self, character_id: str):
-        """キャラクターのチャット履歴コレクションを取得または作成する。
-
-        embeddingモデル変更による次元不一致時はコレクションを再作成する。
-        ただしデータが存在するコレクションは削除しない（データ保護）。
-
-        Args:
-            character_id: キャラクターID。
-        """
-        collection_name = f"chat_{character_id.replace('-', '_')}"
-        kwargs: dict = {
-            "name": collection_name,
-            "metadata": {"hnsw:space": "cosine"},
-        }
-        if self._embedding_fn is not None:
-            kwargs["embedding_function"] = self._embedding_fn
-        try:
-            return self.client.get_or_create_collection(**kwargs)
-        except Exception:
-            has_data = False
-            try:
-                existing = self.client.get_collection(collection_name)
-                has_data = existing.count() > 0
-            except Exception:
-                pass
-            if has_data:
-                return self.client.get_collection(collection_name)
-            try:
-                self.client.delete_collection(collection_name)
-            except Exception:
-                pass
-            return self.client.get_or_create_collection(**kwargs)
+        """キャラクターのチャット履歴コレクションを取得または作成する。"""
+        return self._safe_get_or_create_collection(f"chat_{character_id.replace('-', '_')}")
 
     def add_chat_turn(
         self,
