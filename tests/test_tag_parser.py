@@ -696,3 +696,43 @@ def test_stripper_large_chunk_marker_before_text():
 
     assert "い" * 1100 in out
     assert "[INSCRIBE_MEMORY:" not in out
+
+
+# ─── StreamingTagStripper バッククォート処理 ────────────────────────────────────
+
+
+def test_stripper_inline_code_marker_not_stripped():
+    """インラインバッククォート内のマーカー形式テキストは除去されないこと。"""
+    result = _feed_all(["`[INSCRIBE_MEMORY:cat|content]`"])
+
+    assert "`[INSCRIBE_MEMORY:cat|content]`" in result
+
+
+def test_stripper_inline_code_marker_with_surrounding_text():
+    """バッククォート外の本物のマーカーは除去され、バッククォート内は残ること。"""
+    result = _feed_all([
+        "説明として `[INSCRIBE_MEMORY:x|y]` と書いた。[INSCRIBE_MEMORY:real|data]"
+    ])
+
+    assert "`[INSCRIBE_MEMORY:x|y]`" in result
+    assert "[INSCRIBE_MEMORY:real|data]" not in result
+
+
+def test_stripper_fenced_code_marker_not_stripped():
+    """コードフェンス内のマーカー形式テキストは除去されないこと。"""
+    result = _feed_all(["```\n[INSCRIBE_MEMORY:fact|data]\n```"])
+
+    assert "[INSCRIBE_MEMORY:fact|data]" in result
+
+
+def test_stripper_inline_code_split_across_chunks():
+    """インラインコードがチャンク境界をまたいでも、内部のマーカーは除去されないこと。"""
+    result = _feed_all([
+        "前 `[INSCRIBE_",
+        "MEMORY:x|y]` 後 [INSCRIBE_MEMORY:real|tag]",
+    ])
+
+    assert "[INSCRIBE_MEMORY:x|y]" in result
+    assert "[INSCRIBE_MEMORY:real|tag]" not in result
+    assert "前" in result
+    assert "後" in result

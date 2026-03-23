@@ -371,7 +371,29 @@ class StreamingTagStripper:
         buf = self._buffer
 
         while buf:
+            bt_pos = buf.find("`")
             open_pos = buf.find("[")
+
+            if open_pos == -1 and bt_pos == -1:
+                # '[' も '`' もない → 全部流す
+                output.append(buf)
+                buf = ""
+                break
+
+            # '`' が '[' より手前にある場合、バッククォートブロックを処理する
+            if bt_pos != -1 and (open_pos == -1 or bt_pos < open_pos):
+                n_buf = len(buf)
+                next_pos = _skip_backtick(buf, bt_pos, n_buf)
+                if next_pos == n_buf:
+                    # 閉じバッククォートがまだ来ていない → bt_pos 手前まで流して待つ
+                    output.append(buf[:bt_pos])
+                    buf = buf[bt_pos:]
+                    break
+                # 完結したバッククォートブロックをそのまま出力して続ける
+                output.append(buf[:next_pos])
+                buf = buf[next_pos:]
+                continue
+
             if open_pos == -1:
                 # '[' がない → 全部流す
                 output.append(buf)
