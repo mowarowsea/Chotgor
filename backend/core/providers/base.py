@@ -6,7 +6,7 @@ import functools
 import inspect
 from typing import TYPE_CHECKING, Any
 
-from ..debug_logger import log_provider_request, log_provider_response
+from ..debug_logger import logger
 
 if TYPE_CHECKING:
     from ..tools import ToolExecutor, ToolTurnResult
@@ -104,13 +104,13 @@ class BaseLLMProvider:
         """プロバイダーAPIへのリクエストパラメータをデバッグログに記録する。"""
         if not self.PROVIDER_ID:
             raise ValueError(f"{self.__class__.__name__} が PROVIDER_ID を設定していません")
-        log_provider_request(self.PROVIDER_ID, params)
+        logger.log_provider_request(self.PROVIDER_ID, params)
 
     def _log_response(self, data: Any) -> None:
         """プロバイダーAPIからのレスポンスをデバッグログに記録する。"""
         if not self.PROVIDER_ID:
             raise ValueError(f"{self.__class__.__name__} が PROVIDER_ID を設定していません")
-        log_provider_response(self.PROVIDER_ID, data)
+        logger.log_provider_response(self.PROVIDER_ID, data)
 
     @classmethod
     def from_config(cls, model: str, settings: dict, **kwargs) -> "BaseLLMProvider":

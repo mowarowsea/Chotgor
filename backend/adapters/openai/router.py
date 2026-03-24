@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from ...api.resource_resolver import parse_model_id, resolve_character, resolve_preset, require_model_config
 from ...core.chat.models import ChatRequest, Message
 from ...core.chat.service import extract_text_content
-from ...core.debug_logger import log_front_input
+from ...core.debug_logger import logger
 from ...core.providers.registry import PROVIDER_LABELS
 from ...core.time_awareness import compute_time_awareness
 from .schemas import OAIChatRequest
@@ -119,7 +119,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
     """OpenAI互換チャット補完エンドポイント。"""
     state = request.app.state
 
-    log_front_input(body.model_dump())
+    logger.log_front_input(body.model_dump())
 
     char_id, preset_id = parse_model_id(body.model)
 

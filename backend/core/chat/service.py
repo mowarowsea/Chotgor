@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Union
 if TYPE_CHECKING:
     from ..tools import ToolExecutor
 
-from ..debug_logger import log_front_output
+from ..debug_logger import logger
 from ..memory.drift_manager import DriftManager
 from ..memory.carver import Carver
 from ..memory.inscriber import Inscriber
@@ -225,20 +225,12 @@ class ChatService:
         )
 
     def _log_debug(self, label: str, request: ChatRequest, messages: list[dict], clean_text: str) -> None:
-        """デバッグログを出力する。"""
-        sep = "-" * 60
-        print(f"\n{sep}")
-        print(
-            f"[{label}] character={request.character_id}"
-            f" provider={request.provider}"
-            f" model={request.model or '(default)'}"
-        )
-        for m in messages:
-            role = m.get("role", "?").upper()
-            content = extract_text_content(m.get("content"))
-            print(f"  [{role}] {content[:300]}{'...' if len(content) > 300 else ''}")
-        print(f"  [RESPONSE] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
-        print(sep, flush=True)
+        """デバッグログを logger に委譲する。"""
+        summaries = [
+            (m.get("role", "?").upper(), extract_text_content(m.get("content")))
+            for m in messages
+        ]
+        logger.log_chat_debug(label, request.character_id, request.provider, request.model, summaries, clean_text)
 
     # --- 公開メソッド ---
 
@@ -286,7 +278,7 @@ class ChatService:
             if switched is not None:
                 return await self.execute(switched)
 
-        log_front_output(clean_text)
+        logger.log_front_output(clean_text)
         self._log_debug("CHAT", request, ctx.messages, clean_text)
 
         return clean_text
@@ -368,7 +360,7 @@ class ChatService:
                         top_k,
                     )
                 except Exception as e:
-                    print(f"[PowerRecall] 検索失敗 character={request.character_id}: {e}", flush=True)
+                    logger.log_warning("PowerRecall", f"検索失敗 character={request.character_id}: {e}")
                     power_recalled = {}
 
                 # キャラクターのターン終了 → Chotgor からの新ターンとして再呼び出しする。
@@ -412,7 +404,7 @@ class ChatService:
                 yield ("angle_switched", f"{request.character_name}@{switch_info[0]}")
                 return
 
-        log_front_output(clean_text)
+        logger.log_front_output(clean_text)
         self._log_debug("CHAT stream", request, ctx.messages, clean_text)
 
         if clean_text and not text_already_streamed:

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from ..core.chat.indexer import get_participant_char_ids, index_message_sync
 from ..core.chat.models import ChatRequest, Message
-from ..core.debug_logger import log_front_output
+from ..core.debug_logger import logger
 from ..core.time_awareness import compute_time_awareness
 from .resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from .utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
@@ -456,7 +456,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             return
 
         clean_text = full_text
-        log_front_output(clean_text)
+        logger.log_front_output(clean_text)
 
         used_char_name, used_preset_name = effective_model_id.rsplit("@", 1) if "@" in effective_model_id else (effective_model_id, None)
 

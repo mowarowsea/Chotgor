@@ -6,6 +6,7 @@ from datetime import datetime
 
 from .chroma_store import ChromaStore
 from .sqlite_store import SQLiteStore
+from ..debug_logger import logger
 
 
 class MemoryManager:
@@ -274,7 +275,7 @@ class MemoryManager:
         for turn in chat_turns:
             session_id = turn.get("metadata", {}).get("session_id")
             if not session_id:
-                print(f"[PowerRecall] session_id なしの chat_turn をスキップ: id={turn.get('id')}", flush=True)
+                logger.log_warning("PowerRecall", f"session_id なしの chat_turn をスキップ: id={turn.get('id')}")
                 turn["context"] = []
                 continue
             if session_id not in session_messages:
