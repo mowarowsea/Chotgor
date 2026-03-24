@@ -40,7 +40,7 @@ def test_active_drifts_block_position():
     """active_drifts ブロックが Provider ブロックの後かつ Chotgor ブロックの前にあること。
 
     ブロック順序:
-        ... → (Provider Instructions) → SELF_DRIFT → Chotgor 記憶ブロック
+        ... → (Provider Instructions) → (inner_narrative) → SELF_DRIFT → Chotgor 記憶ブロック
     provider_additional_instructions を指定した場合の位置を検証する。
     """
     prompt = build_system_prompt(

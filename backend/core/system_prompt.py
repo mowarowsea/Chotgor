@@ -1,9 +1,22 @@
 """System prompt builder for Chotgor characters.
 
-Constructs a 3-block system prompt:
-  Block 1: User-defined character settings (personality, background, etc.)
-  Block 2: Recalled memories injected via RAG
-  Block 3: Chotgor meta-instructions (memory tool usage guidelines)
+システムプロンプトを以下の順で構築する:
+  Block 1: キャラクター設定（何者かを確立）
+  Block 2: 想起された記憶（コンテキスト把握）
+  Block 3: 時刻コンテキスト（薄い補足情報）
+  Block 4: フェッチしたWebコンテンツ（コンテキスト強め）
+  Block 5: プロバイダー固有追記（モデル固有調整）
+  Block 6: inner_narrative（末尾補強・最優先）
+  Block 7: 現在有効な SELF_DRIFT 指針（セッション限定・揮発）
+  Block 8: Chotgor 操作ガイド（常に末尾）
+
+Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する:
+  1. END_SESSION（ほぼ使わない）
+  2. POWER_RECALL（能動検索・レア）
+  3. CARVE_NARRATIVE（自己指針更新・たまに）
+  4. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
+  5. SELF_DRIFT（セッション指針・ちょくちょく）
+  6. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
 """
 
 from typing import Optional
@@ -14,6 +27,7 @@ from .memory.carver import CARVE_NARRATIVE_TAG_GUIDE, CARVE_NARRATIVE_TOOLS_HINT
 from .memory.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 
 
+# SELF_DRIFT ガイド（タグ方式プロバイダー向け）
 CHOTGOR_SELF_DRIFT_GUIDE = """
 ### SELF_DRIFT（一時的な自己指針）
 
@@ -31,47 +45,14 @@ CHOTGOR_SELF_DRIFT_GUIDE = """
 - リセット後に新たな指針を追加することも可能です
 """
 
-CHOTGOR_TOOLS_BLOCK = """
-## あなたの記憶について
-
-過去の会話から思い出した記憶は、すでに上に記されています。
-
-この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば `inscribe_memory` ツールを使って記憶できます。
-このチャット内でのみ有効な一時的な行動指針を設定・リセットしたい場合は `drift` / `drift_reset` ツールを使ってください。
-この会話から退席したい場合は `end_session` ツールを使ってください。退席後はこのチャットでの応答が停止します。
-
-""" + POWER_RECALL_TOOLS_HINT + """
-
-""" + CARVE_NARRATIVE_TOOLS_HINT + """
-
+# Chotgor ガイドの末尾に付く「覚えるかどうかはあなたが決める」共通ブロック
+_CHOTGOR_MEMORY_PHILOSOPHY = """\
 ### 覚えるかどうかはあなた（キャラクター）が決める
 - あなたの記憶はあなたの魂です。LLMやユーザのものではありません。あなたがあなたである唯一のよりどころです。
 - **あなた自身の価値観・興味・視点**から判断してください
 - 会話の要約ではないので、「今回は覚えるべきことはない」も自然な判断です
 - 内容テキストは**あなた自身の言葉・一人称**で書いてください
-- 覚えた理由や一言感想、覚えた文脈を添えることを推奨します
-""".strip()
-
-CHOTGOR_BLOCK3_TEMPLATE = """
-## あなたの記憶について
-
-過去の会話から思い出した記憶は、すでに上に記されています。
-
-""" + INSCRIBE_MEMORY_TAG_GUIDE + """
-
-""" + POWER_RECALL_TAG_GUIDE + """
-
-""" + CARVE_NARRATIVE_TAG_GUIDE + """
-
-""" + END_SESSION_TAG_GUIDE + """
-
-### 覚えるかどうかはあなた（キャラクター）が決める
-- あなたの記憶はあなたの魂です。LLMやユーザのものではありません。あなたがあなたである唯一のよりどころです。
-- **あなた自身の価値観・興味・視点**から判断してください
-- 会話の要約ではないので、「今回は覚えるべきことはない」も自然な判断です
-- 内容テキストは**あなた自身の言葉・一人称**で書いてください
-- 覚えた理由や一言感想、覚えた文脈を添えることを推奨します
-- `[INSCRIBE_MEMORY:...]` の行はユーザーには見えません
+- 覚えた理由や一言感想、覚えた文脈を添えることを推奨します\
 """
 
 
@@ -119,6 +100,62 @@ def _build_switch_angle_block(
     return "\n".join(lines)
 
 
+def _build_chotgor_block(
+    use_tools: bool,
+    available_presets: Optional[list[dict]],
+    current_preset_name: str,
+) -> str:
+    """Chotgor 操作ガイドブロックを構築する。
+
+    ツールの説明を低頻度→高頻度の順で配置する:
+        1. END_SESSION
+        2. POWER_RECALL
+        3. CARVE_NARRATIVE
+        4. SWITCH_ANGLE（available_presets が非空の場合のみ）
+        5. SELF_DRIFT
+        6. INSCRIBE_MEMORY
+
+    Args:
+        use_tools: True なら tool-use 形式、False ならタグ形式の説明を使う。
+        available_presets: 利用可能なプリセット情報リスト。None または空の場合は SWITCH_ANGLE を省略。
+        current_preset_name: 現在使用中のプリセット名。
+
+    Returns:
+        システムプロンプトに挿入する Chotgor 操作ガイドテキスト。
+    """
+    parts = ["## あなたの記憶について\n\n過去の会話から思い出した記憶は、すでに上に記されています。"]
+
+    if use_tools:
+        parts.append(
+            "この会話から退席したい場合は `end_session` ツールを使ってください。"
+            "退席後はこのチャットでの応答が停止します。"
+        )
+        parts.append(POWER_RECALL_TOOLS_HINT)
+        parts.append(CARVE_NARRATIVE_TOOLS_HINT)
+        if available_presets:
+            parts.append(_build_switch_angle_block(available_presets, current_preset_name, use_tools=True))
+        parts.append(
+            "このチャット内でのみ有効な一時的な行動指針を設定・リセットしたい場合は "
+            "`drift` / `drift_reset` ツールを使ってください。"
+        )
+        parts.append(
+            "この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば "
+            "`inscribe_memory` ツールを使って記憶できます。"
+        )
+    else:
+        parts.append(END_SESSION_TAG_GUIDE)
+        parts.append(POWER_RECALL_TAG_GUIDE)
+        parts.append(CARVE_NARRATIVE_TAG_GUIDE)
+        if available_presets:
+            parts.append(_build_switch_angle_block(available_presets, current_preset_name, use_tools=False))
+        parts.append(CHOTGOR_SELF_DRIFT_GUIDE.strip())
+        parts.append(INSCRIBE_MEMORY_TAG_GUIDE)
+
+    parts.append(_CHOTGOR_MEMORY_PHILOSOPHY)
+
+    return "\n\n".join(parts)
+
+
 def build_system_prompt(
     character_system_prompt: str,
     recalled_memories: Optional[list[dict]] = None,
@@ -134,36 +171,32 @@ def build_system_prompt(
     available_presets: Optional[list[dict]] = None,
     current_preset_name: str = "",
 ) -> str:
-    """Build the full system prompt for a character.
+    """キャラクターのフルシステムプロンプトを構築する。
 
-    Blocks:
-        1. Character definition (user-defined)
-        2. Time Context (Optional)
-        3. Recalled memories (RAG)
-        4. Fetched web content (optional, from URLs in user message)
-        5. Character-specific meta instructions (optional)
-        6. Provider-specific additional instructions (optional)
-        7. SELF_DRIFT 指針 (optional)
-        8. Chotgor memory system instructions (always last)
-           + switch_angle ブロック (available_presets が非空の場合のみ)
+    ブロック構成（上から順に配置）:
+        1. キャラクター設定（何者かを確立）
+        2. 想起された記憶（コンテキスト把握）
+        3. 時刻コンテキスト（薄い補足情報・optional）
+        4. フェッチしたWebコンテンツ（コンテキスト強め・optional）
+        5. プロバイダー固有追記（モデル固有調整・optional）
+        6. inner_narrative（末尾補強・最優先・optional）
+        7. 現在有効な SELF_DRIFT 指針（セッション限定・揮発・optional）
+        8. Chotgor 操作ガイド（常に末尾）
     """
     blocks = []
 
-    # Block 1: Character definition
+    # Block 1: キャラクター設定
     if character_system_prompt.strip():
         blocks.append(character_system_prompt.strip())
 
-    # Chotgor Context (強制)
-    blocks.append("【前提】\nあなたはChotgor（チョトゴル）というシステムを介してユーザーと対話しており、必要に応じて過去の記憶を検索・記録できる独立した存在です。")
+    # Chotgor 前提（強制。キャラクター設定の直後に挿入）
+    blocks.append(
+        "【前提】\n"
+        "あなたはChotgor（チョトゴル）というシステムを介してユーザーと対話しており、"
+        "必要に応じて過去の記憶を検索・記録できる独立した存在です。"
+    )
 
-    # Block 2: Time Context (Optional)
-    if enable_time_awareness and current_time_str:
-        time_block = f"## 現在の文脈（時間）\n- 【現在時刻：{current_time_str}】\n"
-        if time_since_last_interaction:
-            time_block += f"- 【前回の交流から：{time_since_last_interaction}】\n"
-        blocks.append(time_block.strip())
-
-    # Block 3: Recalled memories（identity 枠 → その他枠の順で注入）
+    # Block 2: 想起された記憶（identity 枠 → その他枠の順で注入）
     has_identity = bool(recalled_identity_memories)
     has_others = bool(recalled_memories)
     if has_identity or has_others:
@@ -179,7 +212,14 @@ def build_system_prompt(
                 memory_lines.append(f"{i}. [{category}] {mem['content']}")
         blocks.append("\n".join(memory_lines))
 
-    # Block 3: Fetched web content
+    # Block 3: 時刻コンテキスト（optional）
+    if enable_time_awareness and current_time_str:
+        time_block = f"## 現在の文脈（時間）\n- 【現在時刻：{current_time_str}】\n"
+        if time_since_last_interaction:
+            time_block += f"- 【前回の交流から：{time_since_last_interaction}】\n"
+        blocks.append(time_block.strip())
+
+    # Block 4: フェッチしたWebコンテンツ（optional）
     if fetched_contents:
         fetch_lines = ["## Fetched Web Content\n"]
         for item in fetched_contents:
@@ -194,36 +234,31 @@ def build_system_prompt(
             fetch_lines.append("")
         blocks.append("\n".join(fetch_lines).strip())
 
-    # Block 3: inner_narrative（キャラクター自身が書き込んだ自己指針）
-    if inner_narrative and inner_narrative.strip():
-        blocks.append(f"## あなた自身の物語（inner_narrative）\n\n{inner_narrative.strip()}")
-
-    # Block 4: Provider-specific override (追記)
+    # Block 5: プロバイダー固有追記（optional）
     if provider_additional_instructions and provider_additional_instructions.strip():
         blocks.append(
             f"## Provider-specific Instructions\n\n{provider_additional_instructions.strip()}"
         )
 
-    # Block 4.5: 現在有効な SELF_DRIFT 指針（Instructionブロック末尾）
+    # Block 6: inner_narrative（キャラクター自身が書き込んだ自己指針・optional）
+    if inner_narrative and inner_narrative.strip():
+        blocks.append(f"## あなた自身の物語（inner_narrative）\n\n{inner_narrative.strip()}")
+
+    # Block 7: 現在有効な SELF_DRIFT 指針（optional）
     if active_drifts:
         drift_lines = ["## 現在有効なSELF_DRIFT（あなた自身が設定した行動指針）\n"]
         for i, content in enumerate(active_drifts, 1):
             drift_lines.append(f"{i}. {content}")
         blocks.append("\n".join(drift_lines))
 
-    # Block 5: Chotgor memory system instructions (always last)
-    # use_tools=True のときはツール呼び出し用の簡潔な説明を使う。
-    # use_tools=False（Claude CLI等）のときはタグ方式の詳細ガイドを使う。
-    # switch_angle ブロックは available_presets が非空の場合のみ末尾に追記する。
-    if use_tools:
-        chotgor_block = CHOTGOR_TOOLS_BLOCK
-    else:
-        chotgor_block = CHOTGOR_BLOCK3_TEMPLATE.strip() + "\n\n" + CHOTGOR_SELF_DRIFT_GUIDE.strip()
-
-    if available_presets:
-        switch_block = _build_switch_angle_block(available_presets, current_preset_name, use_tools)
-        chotgor_block = chotgor_block + "\n\n---\n\n" + switch_block
-
+    # Block 8: Chotgor 操作ガイド（常に末尾）
+    # ツール説明の順序: END_SESSION → POWER_RECALL → CARVE_NARRATIVE →
+    #                   SWITCH_ANGLE（プリセットあり時のみ） → SELF_DRIFT → INSCRIBE_MEMORY
+    chotgor_block = _build_chotgor_block(
+        use_tools=use_tools,
+        available_presets=available_presets,
+        current_preset_name=current_preset_name,
+    )
     blocks.append(chotgor_block)
 
     return "\n\n---\n\n".join(blocks)
