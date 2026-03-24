@@ -17,6 +17,7 @@ Flow:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Union
 
@@ -35,7 +36,8 @@ from ..tools import ToolExecutor
 from ..web_fetch import fetch_urls, find_urls
 from .drifter import Drifter
 from .exiter import Exiter
-from .models import ChatRequest
+from .models import ChatRequest, Message
+from .recaller import Recaller, format_power_recall_turn
 from .switcher import Switcher
 
 
@@ -351,6 +353,40 @@ class ChatService:
             if remaining:
                 yield ("text", remaining)
             text_already_streamed = True
+
+            # PowerRecall: Inscriber 等の後処理より先に実行し、検知したら即 return する。
+            # request.power_recalled が非空の場合は再呼び出し中なので処理しない（ループ防止）。
+            recaller = Recaller()
+            pre_recall_text = recaller.power_recall_from_text(full_text)
+            if recaller.recall_request is not None and not request.power_recalled:
+                query, top_k = recaller.recall_request
+                try:
+                    power_recalled = await asyncio.to_thread(
+                        self.memory_manager.power_recall,
+                        request.character_id,
+                        query,
+                        top_k,
+                    )
+                except Exception as e:
+                    print(f"[PowerRecall] 検索失敗 character={request.character_id}: {e}", flush=True)
+                    power_recalled = {}
+
+                # キャラクターのターン終了 → Chotgor からの新ターンとして再呼び出しする。
+                # assistant: pre_recall_text（キャラクターの発話途中）
+                # user: Chotgor が検索結果を注入（新しいターン）
+                chotgor_turn = format_power_recall_turn(power_recalled, query)
+                new_messages = list(request.messages) + [
+                    Message(role="assistant", content=pre_recall_text),
+                    Message(role="user", content=chotgor_turn),
+                ]
+                recalled_request = replace(
+                    request,
+                    messages=new_messages,
+                    power_recalled=power_recalled,  # ループ防止フラグとして使用
+                )
+                async for event in self.execute_stream(recalled_request):
+                    yield event
+                return
 
             # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み・drift適用）
             # テキスト表示は済んでいるため、clean_text は副作用処理とログ用途にのみ使う。

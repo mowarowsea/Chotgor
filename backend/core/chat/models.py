@@ -41,3 +41,8 @@ class ChatRequest:
     current_preset_name: str = ""
     # 現在使用中のプリセットID（記憶作成時の出所記録に使用）。
     current_preset_id: str = ""
+    # PowerRecall: キャラクターが能動的に検索した記憶・会話履歴。
+    # {"memories": [...], "chat_turns": [...]} の辞書。
+    # 再呼び出し時に Chotgor ユーザーターン（messages）として注入される。
+    # 非空時はループ防止フラグとしても機能する。
+    power_recalled: dict = field(default_factory=dict)

@@ -243,6 +243,84 @@ class MemoryManager:
         )
         return identity_memories, other_memories
 
+    def power_recall(
+        self,
+        character_id: str,
+        query: str,
+        top_k: int = 10,
+    ) -> dict[str, list[dict]]:
+        """記憶コレクションとチャット履歴コレクションを横断して検索する（PowerRecall用）。
+
+        通常のrecall_memoryと異なり、以下の点が異なる:
+          - 時間減衰スコアによるリランクを行わない（意味的類似度のみで返す）
+          - 論理削除レコードも除外しない（ChromaDB側での管理のみ）
+          - 記憶コレクション（char_*）とチャット履歴コレクション（chat_*）を両方検索する
+
+        Args:
+            character_id: キャラクターID。
+            query: 検索クエリテキスト。
+            top_k: 各コレクションから取得する最大件数。
+
+        Returns:
+            {"memories": [...], "chat_turns": [...]} の辞書。
+            各リストは id / content / distance / metadata を持つdict。
+        """
+        memories = self.chroma.recall_memory(query, character_id, top_k=top_k)
+        chat_turns = self.chroma.recall_chat_turns(query, character_id, top_k=top_k)
+
+        # 各ヒットに前後コンテキストを付与する。
+        # 同一セッションへの重複クエリを避けるため、セッションIDごとに一度だけ取得する。
+        session_messages: dict[str, list] = {}
+        for turn in chat_turns:
+            session_id = turn.get("metadata", {}).get("session_id")
+            if not session_id:
+                print(f"[PowerRecall] session_id なしの chat_turn をスキップ: id={turn.get('id')}", flush=True)
+                turn["context"] = []
+                continue
+            if session_id not in session_messages:
+                session_messages[session_id] = self.sqlite.list_chat_messages(session_id)
+            turn["context"] = self._build_context_window(
+                session_messages[session_id], turn["id"], window=2
+            )
+
+        return {"memories": memories, "chat_turns": chat_turns}
+
+    @staticmethod
+    def _build_context_window(msgs: list, message_id: str, window: int) -> list[dict]:
+        """セッションのメッセージリストから指定IDを中心にウィンドウを切り出す。
+
+        Args:
+            msgs: list_chat_messages() が返す ORM オブジェクトのリスト（時系列順）。
+            message_id: 中心メッセージの ID。
+            window: 前後に含めるメッセージ数。
+
+        Returns:
+            id / role / speaker_name / content / created_at / is_hit を持つ dict のリスト。
+        """
+        clean = [m for m in msgs if not getattr(m, "is_system_message", None)]
+        ids = [m.id for m in clean]
+        try:
+            idx = ids.index(message_id)
+        except ValueError:
+            return []
+
+        start = max(0, idx - window)
+        end = min(len(clean), idx + window + 1)
+        result = []
+        for m in clean[start:end]:
+            speaker = getattr(m, "character_name", None) or ("ユーザ" if m.role == "user" else "キャラクター")
+            result.append(
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "speaker_name": speaker,
+                    "content": m.content,
+                    "created_at": m.created_at.isoformat(timespec="seconds") if m.created_at else "",
+                    "is_hit": m.id == message_id,
+                }
+            )
+        return result
+
     def delete_memory(self, memory_id: str, character_id: str) -> bool:
         """Soft delete from SQLite, hard delete from ChromaDB."""
         ok = self.sqlite.soft_delete_memory(memory_id)

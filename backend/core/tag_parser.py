@@ -289,6 +289,8 @@ class StreamingTagStripper:
         # [SWITCH_ANGLE:] は除外: switch 発生前の第1プロバイダーのテキストはストリーム表示し、
         # switch 検知後に ("clear", None) イベントで表示をリセットする設計のため除去不要。
         # available_presets が空のとき（switch不可）はタグをテキストとしてそのまま通す。
+        "[POWER_RECALL:",  # マーカー前テキストはUIへ流すが、タグ自体は除去する。
+        # full_text（生テキスト）にはタグが残るため、ストリーム終了後に Recaller で検出できる。
     ]
 
     # バッファがこの長さを超えたら強制フラッシュ（無限バッファを防ぐ）

@@ -303,6 +303,53 @@ class ChromaStore:
             metadatas=[meta],
         )
 
+    def recall_chat_turns(
+        self,
+        query: str,
+        character_id: str,
+        top_k: int = 10,
+    ) -> list[dict]:
+        """類似度検索でチャット履歴ターンを取得する。
+
+        chat_{character_id} コレクションを対象に、クエリと意味的に近い
+        過去の会話ターンを返す。時間減衰は適用しない（PowerRecall用）。
+
+        Args:
+            query: 検索クエリテキスト。
+            character_id: キャラクターID。
+            top_k: 取得する最大件数。
+
+        Returns:
+            id / content / distance / metadata キーを持つdictのリスト。
+        """
+        collection = self._get_chat_collection(character_id)
+        count = collection.count()
+        if count == 0:
+            return []
+
+        n = min(top_k, count)
+        try:
+            results = collection.query(
+                query_texts=[query],
+                n_results=n,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception:
+            return []
+
+        turns = []
+        if results["ids"] and results["ids"][0]:
+            for i, turn_id in enumerate(results["ids"][0]):
+                turns.append(
+                    {
+                        "id": turn_id,
+                        "content": results["documents"][0][i],
+                        "distance": results["distances"][0][i],
+                        "metadata": results["metadatas"][0][i],
+                    }
+                )
+        return turns
+
     def delete_all_memories(self, character_id: str) -> None:
         """キャラクターのコレクション全体を削除する。
 

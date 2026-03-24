@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 from .chat.drifter import Drifter, DRIFT_SCHEMA, DRIFT_RESET_SCHEMA, DRIFT_TOOL_DESCRIPTION, DRIFT_RESET_TOOL_DESCRIPTION
 from .chat.exiter import Exiter, END_SESSION_SCHEMA, END_SESSION_TOOL_DESCRIPTION
+from .chat.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
 from .chat.switcher import Switcher, SWITCH_ANGLE_SCHEMA, SWITCH_ANGLE_TOOL_DESCRIPTION
 from .memory.carver import Carver, CARVE_NARRATIVE_SCHEMA, CARVE_NARRATIVE_TOOL_DESCRIPTION
 from .memory.inscriber import Inscriber, INSCRIBE_MEMORY_SCHEMA, INSCRIBE_MEMORY_TOOL_DESCRIPTION
@@ -58,6 +59,11 @@ ANTHROPIC_TOOLS: list[dict] = [
         "name": "end_session",
         "description": END_SESSION_TOOL_DESCRIPTION,
         "input_schema": END_SESSION_SCHEMA,
+    },
+    {
+        "name": "power_recall",
+        "description": POWER_RECALL_TOOL_DESCRIPTION,
+        "input_schema": POWER_RECALL_SCHEMA,
     },
 ]
 
@@ -183,6 +189,11 @@ class ToolExecutor:
             )
         if tool_name == "end_session":
             return self._exiter.set_exit(reason=str(tool_input.get("reason", "")))
+        if tool_name == "power_recall":
+            return self._power_recall(
+                query=str(tool_input.get("query", "")),
+                top_k=int(tool_input.get("top_k", 5)),
+            )
         return f"[Unknown tool: {tool_name}]"
 
     def _inscribe_memory(self, content: str, category: str, impact: float) -> str:
@@ -202,3 +213,48 @@ class ToolExecutor:
             return "inner_narrative を更新した。"
         except Exception as e:
             return f"[carve_narrative error: {e}]"
+
+    def _power_recall(self, query: str, top_k: int) -> str:
+        """power_recall ツールの実装。記憶コレクションとチャット履歴コレクションを横断検索して結果をテキストで返す。
+
+        Args:
+            query: 検索クエリテキスト。
+            top_k: 各コレクションから取得する最大件数。
+
+        Returns:
+            検索結果を整形したテキスト。LLMのtool resultとして渡される。
+        """
+        if not query:
+            return "[power_recall: query が空です]"
+        try:
+            results = self.memory_manager.power_recall(self.character_id, query, top_k)
+        except Exception as e:
+            return f"[power_recall error: {e}]"
+
+        memories = results.get("memories", [])
+        chat_turns = results.get("chat_turns", [])
+
+        if not memories and not chat_turns:
+            return f"「{query}」に関する記憶・会話は見つからなかった。"
+
+        lines = [f"【PowerRecall 検索結果】 クエリ: 「{query}」\n"]
+
+        if memories:
+            lines.append(f"▼ 記憶 ({len(memories)}件)")
+            for i, mem in enumerate(memories, 1):
+                category = mem.get("metadata", {}).get("category", "general")
+                lines.append(f"  {i}. [{category}] {mem['content']}")
+
+        if chat_turns:
+            lines.append(f"\n▼ 過去の会話 ({len(chat_turns)}件)")
+            for i, turn in enumerate(chat_turns, 1):
+                context = turn.get("context", [])
+                if context:
+                    lines.append(f"  [{i}] 前後の会話:")
+                    for msg in context:
+                        marker = " ←ヒット" if msg.get("is_hit") else ""
+                        lines.append(f"    {msg['speaker_name']}: {msg['content']}{marker}")
+                else:
+                    lines.append(f"  {i}. {turn['content']}")
+
+        return "\n".join(lines)
