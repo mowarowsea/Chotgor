@@ -1,9 +1,18 @@
-"""Google Gemini provider via google-genai SDK."""
+"""Google Gemini provider via google-genai SDK。
+
+tool-use（function calling）に対応している。SUPPORTS_TOOLS = True を設定しており、
+_tool_turn / _extend_messages_with_results を実装することで
+inscribe_memory・drift・carve_narrative 等の操作を tool-use で行う。
+
+multi-turn の tool-use ループでは types.Content オブジェクトのリストを
+messages として受け渡す（最初のターンのみ dict → Content 変換を行う）。
+"""
 
 import asyncio
 import base64
 import re
 
+from ..tools import OPENAI_TOOLS, ToolCall, ToolTurnResult
 from .base import BaseLLMProvider
 
 DEFAULT_MODEL = "gemini-2.0-flash"
@@ -19,6 +28,7 @@ class GoogleProvider(BaseLLMProvider):
     PROVIDER_ID = "google"
     DEFAULT_MODEL = DEFAULT_MODEL
     REQUIRES_API_KEY = True
+    SUPPORTS_TOOLS = True
 
     def __init__(self, api_key: str, model: str = "", thinking_level: str = "default"):
         self.api_key = api_key
@@ -289,3 +299,152 @@ class GoogleProvider(BaseLLMProvider):
                 yield ("text", f"[Google API error: {item}]")
                 break
             yield item
+
+    async def _tool_turn(self, system_prompt: str, messages: list) -> ToolTurnResult:
+        """Google Gemini APIを1ターン呼び出し、テキストと正規化ツール呼び出しを返す。
+
+        最初のターンは dict メッセージを _build_contents() で types.Content に変換する。
+        2ターン目以降は _extend_messages_with_results() が返した types.Content リストを
+        そのまま使用する（hasattr(messages[0], "parts") で判別）。
+
+        Args:
+            system_prompt: 構築済みのシステムプロンプト。
+            messages: dict メッセージリスト（初回）または types.Content リスト（2回目以降）。
+
+        Returns:
+            テキスト・正規化ツール呼び出し・生レスポンスを含む ToolTurnResult。
+            _raw には (contents, response) タプルを格納する。
+        """
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            return ToolTurnResult(
+                text="[Error: google-genai パッケージがインストールされていません]",
+                tool_calls=[],
+            )
+
+        if not self.api_key:
+            return ToolTurnResult(
+                text="[Error: google_api_key が設定されていません。Settings ページで設定してください]",
+                tool_calls=[],
+            )
+
+        client = genai.Client(api_key=self.api_key)
+
+        # 2ターン目以降は types.Content オブジェクトのリストが渡される
+        if messages and hasattr(messages[0], "parts"):
+            contents = messages
+            supports_system_instruction = not self.model.lower().startswith("gemma")
+        else:
+            contents, supports_system_instruction = self._build_contents(system_prompt, messages)
+
+        # OPENAI_TOOLS 形式の function["parameters"] は JSON Schema 形式であり
+        # Gemini の function_declarations でもそのまま利用できる
+        function_declarations = [
+            {
+                "name": t["function"]["name"],
+                "description": t["function"]["description"],
+                "parameters": t["function"]["parameters"],
+            }
+            for t in OPENAI_TOOLS
+        ]
+
+        def run() -> ToolTurnResult:
+            """同期APIを呼び出してToolTurnResultを返す内部関数。"""
+            config_kwargs: dict = {
+                "max_output_tokens": 4096,
+                "safety_settings": [
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                ],
+                "tools": [types.Tool(function_declarations=function_declarations)],
+            }
+            if supports_system_instruction:
+                config_kwargs["system_instruction"] = system_prompt
+
+            config = types.GenerateContentConfig(**config_kwargs)
+            self._log_request({"model": self.model, "contents": contents, "config": config})
+            response = client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
+            self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
+
+            text = ""
+            tool_calls: list[ToolCall] = []
+            for candidate in (response.candidates or []):
+                if not candidate.content:
+                    continue
+                for part in (candidate.content.parts or []):
+                    if part.text:
+                        text += part.text
+                    elif getattr(part, "function_call", None):
+                        fc = part.function_call
+                        # プロバイダー固有のIDがないため連番で生成する
+                        call_id = f"call_{len(tool_calls)}_{fc.name}"
+                        tool_calls.append(ToolCall(
+                            id=call_id,
+                            name=fc.name,
+                            input=dict(fc.args) if fc.args else {},
+                        ))
+
+            # _raw に (contents, response) を格納し _extend_messages_with_results で利用する
+            return ToolTurnResult(text=text, tool_calls=tool_calls, _raw=(contents, response))
+
+        try:
+            return await asyncio.to_thread(run)
+        except Exception as e:
+            return ToolTurnResult(text=f"[Google API error: {e}]", tool_calls=[])
+
+    def _extend_messages_with_results(
+        self,
+        messages: list,
+        turn_result: ToolTurnResult,
+        results: dict[str, str],
+    ) -> list:
+        """Google形式でツール実行結果を types.Content リストに追加して返す。
+
+        _tool_turn の _raw に格納した (contents, response) から
+        モデルのレスポンス Content を取り出し、各ツール結果を
+        function_response パートとして追加する。
+
+        戻り値は types.Content のリストであり、次の _tool_turn に渡される。
+
+        Args:
+            messages: 今ターン前のメッセージリスト（未使用。_raw の contents を使う）。
+            turn_result: 直前の _tool_turn の結果（_raw に (contents, response) を格納）。
+            results: {tool_call_id: result_text} 形式のツール実行結果 dict。
+
+        Returns:
+            types.Content オブジェクトのリスト（次ターンの入力として使用）。
+        """
+        from google.genai import types
+
+        contents, response = turn_result._raw
+        # モデルが返した Content（function_call パートを含む）を取り出す
+        model_content = response.candidates[0].content
+
+        new_contents = list(contents)
+        new_contents.append(model_content)
+
+        # 各ツール呼び出しの結果を function_response パートとして追加する
+        for tc in turn_result.tool_calls:
+            new_contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=tc.name,
+                                response={"content": results[tc.id]},
+                            )
+                        )
+                    ],
+                )
+            )
+
+        return new_contents
