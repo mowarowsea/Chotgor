@@ -102,7 +102,6 @@ async def create_character(request: Request):
         character_id=char_id,
         name=name,
         system_prompt_block1=form.get("system_prompt_block1", ""),
-        cleanup_config={"digest_delete_originals": bool(form.get("digest_delete_originals"))},
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         image_data=image_data,
@@ -142,10 +141,6 @@ async def update_character(request: Request, character_id: str):
             "when_to_switch": form.get(f"wts_{pid}", ""),
         }
 
-    char = request.app.state.sqlite.get_character(character_id)
-    existing_config = (char.cleanup_config or {}) if char else {}
-    existing_config["digest_delete_originals"] = bool(form.get("digest_delete_originals"))
-
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
     afterglow_default = 1 if form.get("afterglow_default") else 0
@@ -153,7 +148,6 @@ async def update_character(request: Request, character_id: str):
     update_kwargs: dict = dict(
         name=(form.get("name") or "").strip(),
         system_prompt_block1=form.get("system_prompt_block1", ""),
-        cleanup_config=existing_config,
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         switch_angle_enabled=switch_angle_enabled,
@@ -310,7 +304,7 @@ async def save_settings(
     xai_api_key: str = Form(""),
     google_api_key: str = Form(""),
     tavily_api_key: str = Form(""),
-    digest_time: str = Form("03:00"),
+    chronicle_time: str = Form("03:00"),
     enable_time_awareness: Optional[str] = Form(None),
     embedding_provider: str = Form("default"),
     embedding_model: str = Form(""),
@@ -337,9 +331,9 @@ async def save_settings(
             store.set_setting(key, value)
 
     try:
-        h, m = map(int, digest_time.split(":"))
+        h, m = map(int, chronicle_time.split(":"))
         assert 0 <= h <= 23 and 0 <= m <= 59
-        store.set_setting("digest_time", digest_time)
+        store.set_setting("chronicle_time", chronicle_time)
     except Exception:
         pass
 

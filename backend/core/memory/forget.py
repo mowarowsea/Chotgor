@@ -23,7 +23,7 @@ async def run_forget_process(
 ) -> dict:
     """Run forget process for a character.
     
-    1. Extract candidates with decayed_score < threshold (including digests)
+    1. Extract candidates with decayed_score < threshold
     2. Ask Claude if any should be kept
     3. Soft-delete those not kept
     """

@@ -70,6 +70,24 @@ endblock %}
                 placeholder="（まだ何も書かれていません）">{% if character %}{{ character.inner_narrative }}{% endif %}</textarea>
         </div>
 
+        <div class="form-group">
+            <label>
+                Self History
+                <span class="label-hint">chronicle 処理でキャラクター自身が積み上げていく歴史・経緯（読み取り専用）</span>
+            </label>
+            <textarea class="form-control textarea-medium" readonly
+                placeholder="（まだありません）">{% if character %}{{ character.self_history }}{% endif %}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label>
+                Relationship State
+                <span class="label-hint">chronicle 処理でキャラクター自身が更新するユーザ・他キャラとの関係（読み取り専用）</span>
+            </label>
+            <textarea class="form-control textarea-medium" readonly
+                placeholder="（まだありません）">{% if character %}{{ character.relationship_state }}{% endif %}</textarea>
+        </div>
+
         <!-- Model accordion -->
         <div class="form-group" id="switch-angle-group" style="display:none">
             <label>
@@ -168,14 +186,6 @@ endblock %}
                 {% endif %}
                 {% endfor %}
             </select>
-        </div>
-
-        <div class="form-group">
-            <label>
-                <input type="checkbox" name="digest_delete_originals" {% if character and character.cleanup_config and
-                    character.cleanup_config.get('digest_delete_originals') %}checked{% endif %}>
-                ダイジェスト後、元の記憶を削除する
-            </label>
         </div>
 
         <div class="form-actions">

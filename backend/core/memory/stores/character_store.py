@@ -13,6 +13,8 @@ class CharacterStoreMixin:
         name: str,
         system_prompt_block1: str = "",
         inner_narrative: str = "",
+        self_history: str = "",
+        relationship_state: str = "",
         cleanup_config: Optional[dict] = None,
         enabled_providers: Optional[dict] = None,
         ghost_model: Optional[str] = None,
@@ -24,6 +26,8 @@ class CharacterStoreMixin:
 
         Args:
             afterglow_default: Afterglow（感情継続機構）の新規チャット作成時デフォルト値。1=ON, 0=OFF。
+            self_history: chronicle で更新されるキャラクターの歴史・経緯。
+            relationship_state: chronicle で更新されるユーザ・他キャラとの現在の関係。
         """
         with self.get_session() as session:
             from ..sqlite_store import Character
@@ -32,6 +36,8 @@ class CharacterStoreMixin:
                 name=name,
                 system_prompt_block1=system_prompt_block1,
                 inner_narrative=inner_narrative,
+                self_history=self_history,
+                relationship_state=relationship_state,
                 cleanup_config=cleanup_config or {},
                 enabled_providers=enabled_providers or {},
                 ghost_model=ghost_model,

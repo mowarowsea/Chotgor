@@ -40,6 +40,8 @@ def char_to_dict(char) -> dict:
         "name": char.name,
         "system_prompt_block1": char.system_prompt_block1,
         "inner_narrative": char.inner_narrative,
+        "self_history": char.self_history,
+        "relationship_state": char.relationship_state,
         "cleanup_config": char.cleanup_config,
         "ghost_model": char.ghost_model,
         "afterglow_default": bool(getattr(char, "afterglow_default", 0)),

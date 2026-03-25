@@ -18,6 +18,8 @@ class ChatRequest:
     model: str
     messages: list[Message]
     character_system_prompt: str = ""
+    self_history: str = ""
+    relationship_state: str = ""
     inner_narrative: str = ""
     provider_additional_instructions: str = ""
     thinking_level: str = "default"

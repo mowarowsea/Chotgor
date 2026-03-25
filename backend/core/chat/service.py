@@ -205,6 +205,8 @@ class ChatService:
             recalled_identity_memories=recalled_identity or None,
             recalled_memories=recalled or None,
             fetched_contents=fetched_contents,
+            self_history=request.self_history,
+            relationship_state=request.relationship_state,
             inner_narrative=request.inner_narrative,
             provider_additional_instructions=request.provider_additional_instructions,
             enable_time_awareness=request.enable_time_awareness,

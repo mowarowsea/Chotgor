@@ -19,5 +19,7 @@ class CharacterUpdate(BaseModel):
     name: Optional[str] = None
     system_prompt_block1: Optional[str] = None
     inner_narrative: Optional[str] = None
+    self_history: Optional[str] = None
+    relationship_state: Optional[str] = None
     cleanup_config: Optional[dict] = None
     ghost_model: Optional[str] = None

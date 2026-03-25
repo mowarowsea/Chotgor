@@ -179,6 +179,36 @@ class ChatStoreMixin:
             result = q.first()
             return result.id if result else None
 
+    def get_messages_for_character_on_date(
+        self, character_name: str, date_start: datetime, date_end: datetime
+    ) -> list:
+        """chronicle 用: 指定日に対象キャラクターが参加したセッションのメッセージを時系列で返す。
+
+        1on1・グループチャットを問わず character_name が model_id の前半に含まれるセッションを対象とする。
+
+        Args:
+            character_name: キャラクター名。
+            date_start: 対象日の開始 datetime（inclusive）。
+            date_end: 対象日の終了 datetime（exclusive）。
+
+        Returns:
+            当日のメッセージ一覧（時系列昇順）。is_system_message=1 は除外。
+        """
+        with self.get_session() as session:
+            from ..sqlite_store import ChatMessage, ChatSession
+            return (
+                session.query(ChatMessage)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                .filter(
+                    ChatSession.model_id.like(f"{character_name}@%"),
+                    ChatMessage.created_at >= date_start,
+                    ChatMessage.created_at < date_end,
+                    (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0),  # noqa: E711
+                )
+                .order_by(ChatMessage.created_at.asc())
+                .all()
+            )
+
     def delete_chat_messages_from(self, session_id: str, message_id: str) -> bool:
         """指定メッセージ以降（自身を含む）をすべて削除する。"""
         with self.get_session() as session:

@@ -1,14 +1,16 @@
 """System prompt builder for Chotgor characters.
 
 システムプロンプトを以下の順で構築する:
-  Block 1: キャラクター設定（何者かを確立）
-  Block 2: 想起された記憶（コンテキスト把握）
-  Block 3: 時刻コンテキスト（薄い補足情報）
-  Block 4: フェッチしたWebコンテンツ（コンテキスト強め）
-  Block 5: プロバイダー固有追記（モデル固有調整）
-  Block 6: inner_narrative（末尾補強・最優先）
-  Block 7: 現在有効な SELF_DRIFT 指針（セッション限定・揮発）
-  Block 8: Chotgor 操作ガイド（常に末尾）
+  Block 1:  キャラクター設定（何者かを確立）
+  Block 2:  想起された記憶（コンテキスト把握）
+  Block 3:  時刻コンテキスト（薄い補足情報）
+  Block 4:  フェッチしたWebコンテンツ（コンテキスト強め）
+  Block 5:  プロバイダー固有追記（モデル固有調整）
+  Block 6:  self_history（自分自身の歴史・経緯）
+  Block 7:  relationship_state（ユーザ・他キャラとの現在の関係）
+  Block 8:  inner_narrative（末尾補強・最優先）
+  Block 9:  現在有効な SELF_DRIFT 指針（セッション限定・揮発）
+  Block 10: Chotgor 操作ガイド（常に末尾）
 
 Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する:
   1. END_SESSION（ほぼ使わない）
@@ -161,6 +163,8 @@ def build_system_prompt(
     recalled_memories: Optional[list[dict]] = None,
     recalled_identity_memories: Optional[list[dict]] = None,
     fetched_contents: Optional[list[dict]] = None,
+    self_history: str = "",
+    relationship_state: str = "",
     inner_narrative: str = "",
     provider_additional_instructions: str = "",
     enable_time_awareness: bool = False,
@@ -174,14 +178,16 @@ def build_system_prompt(
     """キャラクターのフルシステムプロンプトを構築する。
 
     ブロック構成（上から順に配置）:
-        1. キャラクター設定（何者かを確立）
-        2. 想起された記憶（コンテキスト把握）
-        3. 時刻コンテキスト（薄い補足情報・optional）
-        4. フェッチしたWebコンテンツ（コンテキスト強め・optional）
-        5. プロバイダー固有追記（モデル固有調整・optional）
-        6. inner_narrative（末尾補強・最優先・optional）
-        7. 現在有効な SELF_DRIFT 指針（セッション限定・揮発・optional）
-        8. Chotgor 操作ガイド（常に末尾）
+        1.  キャラクター設定（何者かを確立）
+        2.  想起された記憶（コンテキスト把握）
+        3.  時刻コンテキスト（薄い補足情報・optional）
+        4.  フェッチしたWebコンテンツ（コンテキスト強め・optional）
+        5.  プロバイダー固有追記（モデル固有調整・optional）
+        6.  self_history（自分自身の歴史・経緯・optional）
+        7.  relationship_state（ユーザ・他キャラとの現在の関係・optional）
+        8.  inner_narrative（末尾補強・最優先・optional）
+        9.  現在有効な SELF_DRIFT 指針（セッション限定・揮発・optional）
+        10. Chotgor 操作ガイド（常に末尾）
     """
     blocks = []
 
@@ -240,18 +246,26 @@ def build_system_prompt(
             f"## Provider-specific Instructions\n\n{provider_additional_instructions.strip()}"
         )
 
-    # Block 6: inner_narrative（キャラクター自身が書き込んだ自己指針・optional）
+    # Block 6: self_history（chronicle で更新されるキャラクターの歴史・optional）
+    if self_history and self_history.strip():
+        blocks.append(f"## あなたの歩み（self_history）\n\n{self_history.strip()}")
+
+    # Block 7: relationship_state（chronicle で更新されるユーザ・他キャラとの関係・optional）
+    if relationship_state and relationship_state.strip():
+        blocks.append(f"## 今の関係（relationship_state）\n\n{relationship_state.strip()}")
+
+    # Block 8: inner_narrative（キャラクター自身が書き込んだ自己指針・optional）
     if inner_narrative and inner_narrative.strip():
         blocks.append(f"## あなた自身の物語（inner_narrative）\n\n{inner_narrative.strip()}")
 
-    # Block 7: 現在有効な SELF_DRIFT 指針（optional）
+    # Block 9: 現在有効な SELF_DRIFT 指針（optional）
     if active_drifts:
         drift_lines = ["## 現在有効なSELF_DRIFT（あなた自身が設定した行動指針）\n"]
         for i, content in enumerate(active_drifts, 1):
             drift_lines.append(f"{i}. {content}")
         blocks.append("\n".join(drift_lines))
 
-    # Block 8: Chotgor 操作ガイド（常に末尾）
+    # Block 10: Chotgor 操作ガイド（常に末尾）
     # ツール説明の順序: END_SESSION → POWER_RECALL → CARVE_NARRATIVE →
     #                   SWITCH_ANGLE（プリセットあり時のみ） → SELF_DRIFT → INSCRIBE_MEMORY
     chotgor_block = _build_chotgor_block(

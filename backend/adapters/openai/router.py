@@ -169,6 +169,8 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         model=preset.model_id,
         messages=messages,
         character_system_prompt=character.system_prompt_block1,
+        self_history=character.self_history,
+        relationship_state=character.relationship_state,
         inner_narrative=character.inner_narrative,
         provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",

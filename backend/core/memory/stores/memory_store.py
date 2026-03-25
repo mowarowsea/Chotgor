@@ -117,23 +117,6 @@ class MemoryStoreMixin:
             session.commit()
             return True
 
-    def get_memories_by_date_range(self, character_id: str, start: datetime, end: datetime) -> list:
-        """指定期間内に作成された、削除済みでないダイジスト以外の記憶を返す。"""
-        with self.get_session() as session:
-            from ..sqlite_store import Memory
-            return (
-                session.query(Memory)
-                .filter(
-                    Memory.character_id == character_id,
-                    Memory.deleted_at.is_(None),
-                    Memory.memory_category != "digest",
-                    Memory.created_at >= start,
-                    Memory.created_at < end,
-                )
-                .order_by(Memory.created_at.asc())
-                .all()
-            )
-
     def get_all_active_memories(self, character_id: str) -> list:
         """キャラクターの全アクティブ記憶（削除済みを除く）を返す。"""
         with self.get_session() as session:

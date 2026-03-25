@@ -16,7 +16,7 @@ from .api import characters, memories, chat as chat_module, chat_images as chat_
 from .api import ui as ui_module
 from .core.chat.service import ChatService
 from .core.memory.chroma_store import ChromaStore
-from .core.memory.digest import run_pending_digests
+from .core.memory.chronicle import run_pending_chronicles
 from .core.memory.drift_manager import DriftManager
 from .core.memory.forget import run_pending_forget
 from .core.memory.manager import MemoryManager
@@ -73,30 +73,30 @@ async def lifespan(app: FastAPI):
 
     ui_module.templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-    asyncio.create_task(_digest_scheduler(app))
+    asyncio.create_task(_chronicle_scheduler(app))
     asyncio.create_task(_forget_scheduler(app))
 
     yield
     # Shutdown: nothing to clean up for SQLite/ChromaDB
 
 
-async def _digest_scheduler(app: FastAPI) -> None:
-    """Background task: run pending digests once per day at the configured time."""
+async def _chronicle_scheduler(app: FastAPI) -> None:
+    """Background task: 毎日設定時刻に chronicle を実行する。"""
     while True:
         await asyncio.sleep(60)
         now = datetime.now()
-        digest_time_str = app.state.sqlite.get_setting("digest_time", "03:00")
+        chronicle_time_str = app.state.sqlite.get_setting("chronicle_time", "03:00")
         try:
-            h, m = map(int, digest_time_str.split(":"))
+            h, m = map(int, chronicle_time_str.split(":"))
         except Exception:
             h, m = 3, 0
         scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
         today_str = now.date().isoformat()
-        last_run = app.state.sqlite.get_setting("digest_last_run_date", "")
+        last_run = app.state.sqlite.get_setting("chronicle_last_run_date", "")
         if now >= scheduled and last_run != today_str:
-            app.state.sqlite.set_setting("digest_last_run_date", today_str)
+            app.state.sqlite.set_setting("chronicle_last_run_date", today_str)
             try:
-                await run_pending_digests(app.state.sqlite, app.state.memory_manager)
+                await run_pending_chronicles(app.state.sqlite)
             except Exception:
                 pass
 

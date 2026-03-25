@@ -112,12 +112,12 @@
         </div>
 
         <div class="form-group">
-            <label for="digest_time">
-                Daily Digest Time
-                <span class="label-hint">毎日この時刻に記憶を自動整理します</span>
+            <label for="chronicle_time">
+                Chronicle Time
+                <span class="label-hint">毎日この時刻に self_history / relationship_state を更新します</span>
             </label>
-            <input type="time" id="digest_time" name="digest_time"
-                   value="{{ settings.get('digest_time', '03:00') }}"
+            <input type="time" id="chronicle_time" name="chronicle_time"
+                   value="{{ settings.get('chronicle_time', '03:00') }}"
                    class="form-control">
         </div>
 
