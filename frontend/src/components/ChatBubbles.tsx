@@ -221,10 +221,10 @@ export function CharacterBubble({
     <div className="group" data-testid="character-bubble">
       <div className="flex gap-3 items-start">
         <CharacterAvatar characterName={characterName} imageUrl={imageUrl} bgClass={avatarBg} />
-        <div className="max-w-[85%] sm:max-w-[70%] space-y-0.5">
+        <div className="max-w-[85%] sm:max-w-[70%] min-w-0 space-y-0.5">
           <p className={`text-xs font-medium ${nameColor} px-1`}>{characterName}</p>
           {reasoning && <ThinkingBlock content={reasoning} />}
-          <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm">
+          <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm overflow-hidden">
             <MarkdownContent content={content} />
           </div>
         </div>
@@ -298,7 +298,7 @@ export function UserBubble({
       <div className="w-8 h-8 rounded-full bg-zinc-600 flex items-center justify-center text-xs font-bold shrink-0">
         {userName.charAt(0)}
       </div>
-      <div className={`flex flex-col items-end gap-1 ${editing ? "w-full" : "max-w-[85%] sm:max-w-[70%]"}`}>
+      <div className={`flex flex-col items-end gap-1 min-w-0 ${editing ? "w-full" : "max-w-[85%] sm:max-w-[70%]"}`}>
         {images && images.length > 0 && <ImageGrid imageIds={images} />}
         {editing ? (
           /* インライン編集フォーム */
@@ -330,7 +330,7 @@ export function UserBubble({
         ) : (
           /* 通常表示 + ホバー時にコピー・編集ボタン */
           <div className="flex items-end gap-1 flex-row-reverse">
-            <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm">
+            <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm overflow-hidden">
               <MarkdownContent content={content} />
             </div>
             {!sending && (
@@ -447,7 +447,7 @@ function CodeBlock({
   }, [codeText]);
 
   return (
-    <div className="relative group/code my-2">
+    <div className="relative group/code my-2 overflow-x-auto">
       {/* 言語ラベル + コピーボタン（右肩） */}
       <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
         {language && (
