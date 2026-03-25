@@ -219,19 +219,26 @@ export function CharacterBubble({
 }) {
   return (
     <div className="group" data-testid="character-bubble">
-      <div className="flex gap-3 items-start">
-        <CharacterAvatar characterName={characterName} imageUrl={imageUrl} bgClass={avatarBg} />
-        <div className="max-w-[85%] sm:max-w-[70%] min-w-0 space-y-0.5">
-          <p className={`text-xs font-medium ${nameColor} px-1`}>{characterName}</p>
+      {/* スマホ: アバター+名前を上段に、バブルを下段にフルwidth表示
+          デスクトップ: アバター左・バブル右の横並び（従来レイアウト） */}
+      <div className="flex flex-col sm:flex-row gap-1 sm:gap-3 items-start">
+        {/* アバター行: スマホはアバター+名前を横並び、デスクトップはアバターのみ */}
+        <div className="flex items-center gap-2">
+          <CharacterAvatar characterName={characterName} imageUrl={imageUrl} bgClass={avatarBg} />
+          <p className={`text-xs font-medium ${nameColor} sm:hidden`}>{characterName}</p>
+        </div>
+        {/* バブルコンテナ: スマホはフルwidth、デスクトップは90%まで */}
+        <div className="w-full sm:max-w-[90%] min-w-0 space-y-0.5">
+          <p className={`hidden sm:block text-xs font-medium ${nameColor} px-1`}>{characterName}</p>
           {reasoning && <ThinkingBlock content={reasoning} />}
           <div className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-zinc-100 text-sm overflow-hidden">
             <MarkdownContent content={content} />
           </div>
         </div>
       </div>
-      {/* アクションエリア（アバター幅分インデント、モバイルは常時・デスクトップはホバー時） */}
+      {/* アクションエリア: スマホはインデントなし、デスクトップはアバター幅分インデント */}
       {!sending && (
-        <div className="pl-11 flex items-center gap-1">
+        <div className="pl-0 sm:pl-11 flex items-center gap-1">
           <CopyButton text={content} />
           {onRegenerate && (
             <button
@@ -294,12 +301,20 @@ export function UserBubble({
   };
 
   return (
-    <div className="flex gap-3 items-start flex-row-reverse group">
-      <div className="w-8 h-8 rounded-full bg-zinc-600 flex items-center justify-center text-xs font-bold shrink-0">
-        {userName.charAt(0)}
-      </div>
-      <div className={`flex flex-col items-end gap-1 min-w-0 ${editing ? "w-full" : "max-w-[85%] sm:max-w-[70%]"}`}>
-        {images && images.length > 0 && <ImageGrid imageIds={images} />}
+    <div className="group">
+      {/* スマホ: アバター+名前を上段に、バブルを下段にフルwidth表示
+          デスクトップ: アバター右・バブル左の横並び（従来レイアウト） */}
+      <div className="flex flex-col sm:flex-row-reverse sm:gap-3 items-start">
+        {/* アバター行: スマホはアバター+名前を右寄り横並び、デスクトップはアバターのみ */}
+        <div className="flex flex-row-reverse sm:flex-row items-center gap-2 mb-1 sm:mb-0 w-full sm:w-auto">
+          <div className="w-8 h-8 rounded-full bg-zinc-600 flex items-center justify-center text-xs font-bold shrink-0">
+            {userName.charAt(0)}
+          </div>
+          <p className="text-xs font-medium text-zinc-400 sm:hidden">{userName}</p>
+        </div>
+        {/* バブルコンテナ: スマホはフルwidth、デスクトップは右寄り90%まで */}
+        <div className={`w-full sm:max-w-[90%] sm:flex sm:flex-col sm:items-end min-w-0 ${editing ? "" : ""}`}>
+          {images && images.length > 0 && <ImageGrid imageIds={images} />}
         {editing ? (
           /* インライン編集フォーム */
           <div className="flex flex-col gap-2 w-full">
@@ -329,7 +344,7 @@ export function UserBubble({
           </div>
         ) : (
           /* 通常表示 + ホバー時にコピー・編集ボタン */
-          <div className="flex items-end gap-1 flex-row-reverse">
+          <div className="flex items-end gap-1 flex-row-reverse min-w-0 w-full">
             <div className="bg-indigo-900 rounded-2xl rounded-tr-sm px-4 py-2.5 text-zinc-100 text-sm overflow-hidden">
               <MarkdownContent content={content} />
             </div>
@@ -351,6 +366,7 @@ export function UserBubble({
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   );
@@ -447,7 +463,7 @@ function CodeBlock({
   }, [codeText]);
 
   return (
-    <div className="relative group/code my-2 overflow-x-auto">
+    <div className="relative group/code my-2 max-w-full overflow-x-auto">
       {/* 言語ラベル + コピーボタン（右肩） */}
       <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
         {language && (
@@ -504,7 +520,7 @@ export function MarkdownContent({ content }: { content: string }) {
                   style={oneDark}
                   language={match[1]}
                   PreTag="div"
-                  customStyle={{ borderRadius: "0.5rem", fontSize: "0.8rem", margin: 0 }}
+                  customStyle={{ borderRadius: "0.5rem", fontSize: "0.8rem", margin: 0, overflowX: "auto" }}
                 >
                   {codeText}
                 </SyntaxHighlighter>

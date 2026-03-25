@@ -32,6 +32,8 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  /* 横方向のはみ出しをページレベルで抑止 */
+  overflow-x: hidden;
 }
 
 /* Navbar */
@@ -331,6 +333,9 @@ body {
   font-size: 0.9rem;
   line-height: 1.6;
   margin-bottom: 0.5rem;
+  /* 長いURLや単語が枠外にはみ出さないよう折り返す */
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .memory-meta {
@@ -407,4 +412,71 @@ code {
   color: var(--text-muted);
   font-size: 0.8rem;
   border-top: 1px solid var(--border);
+}
+
+/* ----------------------------------------
+   カスタムスクロールバー（PC のみ）
+   ---------------------------------------- */
+@media (hover: hover) {
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(124, 106, 247, 0.25);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(124, 106, 247, 0.5);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* ----------------------------------------
+   スマホ対応 (〜640px)
+   ---------------------------------------- */
+@media (max-width: 640px) {
+  /* ナビゲーションバー: 折り返しを許可し、高さを自動に */
+  .navbar {
+    padding: 0.5rem 1rem;
+    height: auto;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .nav-links {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .nav-link {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  /* コンテナ: 左右 padding を縮小 */
+  .container {
+    padding: 1rem;
+  }
+
+  /* ページヘッダ: タイトルとボタンが縦並びになれるように */
+  .page-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* フィルターバー: 折り返しを許可 */
+  .filter-bar {
+    flex-wrap: wrap;
+  }
+
+  /* 記憶ヘッダ: 日付が長くなっても折り返す */
+  .memory-header {
+    flex-wrap: wrap;
+  }
 }

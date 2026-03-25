@@ -153,7 +153,7 @@ export default function MessageList({
     };
 
     return (
-        <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-4" onScroll={handleScroll}>
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-6 py-4 space-y-4" onScroll={handleScroll}>
             {messages.length === 0 && !sending && !waitingCharacter && (
                 <p className="text-zinc-500 text-sm text-center mt-16">
                     {emptyMessage}
@@ -209,7 +209,7 @@ export default function MessageList({
                 return (
                     <div className="flex gap-3 items-start">
                         <CharacterAvatar characterName={streamCharName} imageUrl={getCharImageUrl(streamCharName)} bgClass={color.bg} />
-                        <div className="max-w-[85%] sm:max-w-[70%] space-y-1">
+                        <div className="max-w-[95%] sm:max-w-[90%] min-w-0 space-y-1">
                             <p className={`text-xs font-medium ${color.text} px-1`}>{streamCharName}</p>
                             {streamingReasoning && (
                                 <ThinkingBlock content={streamingReasoning} streaming />

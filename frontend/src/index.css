@@ -9,3 +9,24 @@ body {
   overflow: hidden;
   font-family: system-ui, sans-serif;
 }
+
+/* カスタムスクロールバー（PC のみ。スマホは自動非表示） */
+@media (hover: hover) {
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(124, 106, 247, 0.25);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(124, 106, 247, 0.5);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
