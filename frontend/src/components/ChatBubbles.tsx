@@ -124,7 +124,19 @@ function CopyButton({ text, className = "" }: { text: string; className?: string
   const [done, setDone] = useState(false);
 
   const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(text);
+    try {
+      // Secure Context（HTTPS / localhost）では Clipboard API を使用する
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // HTTP環境（スマホからのローカルアクセス等）向けフォールバック
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
     setDone(true);
     setTimeout(() => setDone(false), 1500);
   }, [text]);
@@ -457,7 +469,17 @@ function CodeBlock({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(codeText);
+    try {
+      await navigator.clipboard.writeText(codeText);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = codeText;
+      el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [codeText]);
