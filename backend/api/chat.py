@@ -340,6 +340,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     退席状態をDBに保存し、SSEで session_exit イベントを送信する。
     """
     new_message_id()
+    logger.log_front_input(body.model_dump())
 
     state = request.app.state
 

@@ -231,13 +231,13 @@ class ChatService:
         )
 
     def _log_debug(self, label: str, request: ChatRequest, messages: list[dict], clean_text: str) -> None:
-        """デバッグログを logger に委譲する。char_label は {name}@{preset} 形式で出力する。"""
-        summaries = [
-            (m.get("role", "?").upper(), extract_text_content(m.get("content")))
-            for m in messages
-        ]
+        """LLM呼び出しの操作ログを出力する。char_label は {name}@{preset} 形式で出力する。"""
         char_label = f"{request.character_name}@{request.current_preset_name or request.provider}"
-        logger.log_chat_debug(label, char_label, request.provider, request.model, summaries, clean_text)
+        _log.info(
+            "%s char=%s provider=%s model=%s messages=%d response_chars=%d",
+            label, char_label, request.provider, request.model or "(default)",
+            len(messages), len(clean_text),
+        )
 
     # --- 公開メソッド ---
 

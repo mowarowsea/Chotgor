@@ -105,39 +105,6 @@ class ChotgorLogger:
 
     # --- コンソールログメソッド ---
 
-    def log_chat_debug(
-        self,
-        label: str,
-        character_id: str,
-        provider: str,
-        model: str | None,
-        message_summaries: list[tuple[str, str]],
-        clean_text: str,
-    ) -> None:
-        """LLM呼び出しの操作ログを出力する（内容なし・メタ情報のみ）。
-
-        「いつ・だれに・何した」のみ記録し、メッセージ内容・レスポンス内容は含めない。
-        内容の詳細は CHOTGOR_DEBUG=1 時の debug/{message_id}/ フォルダを参照。
-
-        Args:
-            label: ログラベル（"CHAT" / "CHAT stream" など）
-            character_id: キャラクターID（またはキャラクター名@プリセット名）
-            provider: プロバイダー名
-            model: モデル名（省略可）
-            message_summaries: (role, content) のリスト（件数カウントのみ使用）
-            clean_text: キャラクターの最終応答テキスト（文字数カウントのみ使用）
-        """
-        log = _logging.getLogger("backend.core.debug_logger")
-        log.info(
-            "%s char=%s provider=%s model=%s messages=%d response_chars=%d",
-            label,
-            character_id,
-            provider,
-            model or "(default)",
-            len(message_summaries),
-            len(clean_text),
-        )
-
     def log_warning(self, tag: str, message: str) -> None:
         """警告メッセージを標準 logging で出力する。
 
