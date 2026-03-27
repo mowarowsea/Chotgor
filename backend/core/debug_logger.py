@@ -114,32 +114,28 @@ class ChotgorLogger:
         message_summaries: list[tuple[str, str]],
         clean_text: str,
     ) -> None:
-        """チャット入出力のデバッグサマリーを標準 logging で出力する。
+        """LLM呼び出しの操作ログを出力する（内容なし・メタ情報のみ）。
 
-        print() を使わず logging.info() に変更。
-        メッセージサマリーは最大100文字、レスポンスは最大200文字に切り詰めて出力する。
+        「いつ・だれに・何した」のみ記録し、メッセージ内容・レスポンス内容は含めない。
+        内容の詳細は CHOTGOR_DEBUG=1 時の debug/{message_id}/ フォルダを参照。
 
         Args:
             label: ログラベル（"CHAT" / "CHAT stream" など）
-            character_id: キャラクターID
+            character_id: キャラクターID（またはキャラクター名@プリセット名）
             provider: プロバイダー名
             model: モデル名（省略可）
-            message_summaries: (role, content) のリスト
-            clean_text: キャラクターの最終応答テキスト
+            message_summaries: (role, content) のリスト（件数カウントのみ使用）
+            clean_text: キャラクターの最終応答テキスト（文字数カウントのみ使用）
         """
         log = _logging.getLogger("backend.core.debug_logger")
-        summary_lines = " | ".join(
-            f"[{role}] {content[:100]}{'...' if len(content) > 100 else ''}"
-            for role, content in message_summaries
-        )
         log.info(
-            "%s char=%s provider=%s model=%s | %s | RESPONSE: %s",
+            "%s char=%s provider=%s model=%s messages=%d response_chars=%d",
             label,
             character_id,
             provider,
             model or "(default)",
-            summary_lines,
-            clean_text[:200] + ("..." if len(clean_text) > 200 else ""),
+            len(message_summaries),
+            len(clean_text),
         )
 
     def log_warning(self, tag: str, message: str) -> None:

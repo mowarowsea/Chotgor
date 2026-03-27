@@ -10,6 +10,7 @@ invoke_claude_cli(system_prompt, input_text) -> str
 """
 
 import asyncio
+import contextvars
 import json
 import os
 import shutil
@@ -278,7 +279,8 @@ class ClaudeCliProvider(BaseLLMProvider):
                 self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        threading.Thread(target=run, daemon=True).start()
+        ctx = contextvars.copy_context()
+        threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
 
         while True:
             item = await queue.get()
@@ -399,7 +401,8 @@ class ClaudeCliProvider(BaseLLMProvider):
                 self._log_response("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        threading.Thread(target=run, daemon=True).start()
+        ctx = contextvars.copy_context()
+        threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
 
         while True:
             item = await queue.get()
