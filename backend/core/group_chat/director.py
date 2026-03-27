@@ -4,9 +4,12 @@
 パース失敗・タイムアウト・接続エラーは全て [] に統一し、ユーザーターンへ戻す。
 """
 
+import logging
 import re
 
 from ..providers.registry import create_provider
+
+logger = logging.getLogger(__name__)
 
 
 def _build_director_messages(
@@ -160,6 +163,7 @@ async def decide_next_speakers(
     # 司会キャラクターのプリセットをIDで取得してプロバイダーを生成する
     preset = sqlite.get_model_preset(director_preset_id)
     if not preset:
+        logger.warning("プリセット未発見 director=%s preset_id=%s", director_char_name, director_preset_id)
         return None
 
     provider = create_provider(preset.provider, preset.model_id, settings)
@@ -170,6 +174,9 @@ async def decide_next_speakers(
             [{"role": "user", "content": user_message}],
         )
     except Exception:
+        logger.exception("LLM呼び出し失敗 director=%s", director_char_name)
         return None
 
-    return _parse_director_response(raw, participant_names, user_name=user_name)
+    result = _parse_director_response(raw, participant_names, user_name=user_name)
+    logger.debug("判定結果 director=%s next_speakers=%s", director_char_name, result)
+    return result

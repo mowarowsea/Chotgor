@@ -3,10 +3,13 @@
 ユーザーメッセージ内のURLを検出し、内容を取得してLLMのコンテキストに注入する。
 """
 
+import logging
 import re
 from html.parser import HTMLParser
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # URL検出（内部文字に日本語句読点などを含めず、末尾の記号も除外）
 URL_PATTERN = re.compile(r'https?://[^\s\]<>"\'`。、）]+(?<![.,!?);:。、）])')
@@ -74,6 +77,7 @@ async def fetch_urls(urls: list[str]) -> list[dict]:
             try:
                 resp = await client.get(url)
                 if resp.status_code >= 400:
+                    logger.warning("HTTPエラー url=%s status=%d", url, resp.status_code)
                     results.append({
                         "url": url,
                         "error": f"HTTP {resp.status_code} {resp.reason_phrase}",
@@ -85,15 +89,19 @@ async def fetch_urls(urls: list[str]) -> list[dict]:
                 else:
                     text = resp.text
                 truncated = len(text) > MAX_CONTENT_CHARS
+                logger.info("成功 url=%s truncated=%s", url, truncated)
                 results.append({
                     "url": url,
                     "content": text[:MAX_CONTENT_CHARS],
                     "truncated": truncated,
                 })
             except httpx.ConnectError:
+                logger.warning("接続失敗 url=%s", url)
                 results.append({"url": url, "error": "ホストに接続できませんでした"})
             except httpx.TimeoutException:
+                logger.warning("タイムアウト url=%s", url)
                 results.append({"url": url, "error": "接続がタイムアウトしました"})
             except Exception as e:
+                logger.warning("取得エラー url=%s error=%s", url, str(e))
                 results.append({"url": url, "error": f"取得エラー: {e}"})
     return results

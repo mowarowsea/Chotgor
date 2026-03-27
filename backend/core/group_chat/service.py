@@ -14,6 +14,7 @@
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
@@ -25,6 +26,8 @@ from ..memory.format import format_recalled_memories
 from ..time_awareness import compute_time_awareness
 from . import context as ctx
 from .director import decide_next_speakers
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_last_user_text(history: list) -> str:
@@ -85,16 +88,19 @@ async def _stream_character_response(
     # キャラクター情報を取得する
     char = sqlite.get_character_by_name(char_name) or sqlite.get_character(char_name)
     if not char:
+        logger.error("キャラクター未発見 char=%s", char_name)
         raise ValueError(f"キャラクター '{char_name}' が見つかりません")
 
     # 参加者情報からプリセットIDを取得する
     participant = next((p for p in participants if p["char_name"] == char_name), None)
     if not participant:
+        logger.error("参加者リスト不整合 char=%s", char_name)
         raise ValueError(f"参加者リストに '{char_name}' がありません")
 
     preset_id = participant["preset_id"]
     preset = sqlite.get_model_preset(preset_id)
     if not preset:
+        logger.error("プリセット未発見 char=%s preset_id=%s", char_name, preset_id)
         raise ValueError(f"プリセット '{preset_id}' が見つかりません")
 
     model_config = (char.enabled_providers or {}).get(preset.id, {})
@@ -254,11 +260,17 @@ async def run_group_turn(
 
         # None はエラー（プリセット未発見・LLM障害）→ユーザーターンへ戻す
         if next_speakers is None:
+            logger.warning("director エラーによりユーザーターンへ session=%s", session_id)
             yield ("user_turn", {"auto_turns_used": auto_turn_count})
             return
 
         # [] は司会の意図的なユーザーターン指示、または上限超過
-        if not next_speakers or auto_turn_count >= max_auto_turns:
+        if not next_speakers:
+            logger.debug("ユーザーターン指示 session=%s auto_turns=%d", session_id, auto_turn_count)
+            yield ("user_turn", {"auto_turns_used": auto_turn_count})
+            return
+        if auto_turn_count >= max_auto_turns:
+            logger.info("最大自動ターン数到達 session=%s auto_turns=%d", session_id, auto_turn_count)
             yield ("user_turn", {"auto_turns_used": auto_turn_count})
             return
 
@@ -269,6 +281,7 @@ async def run_group_turn(
             return
 
         # 司会AIの決定を一括通知する
+        logger.info("発言者決定 session=%s turn=%d speakers=%s", session_id, auto_turn_count + 1, next_speakers)
         yield ("speaker_decided", {"speakers": next_speakers})
 
         # 各キャラクターを順番にストリーミング処理する
@@ -322,6 +335,7 @@ async def run_group_turn(
                             is_system_message=True,
                         )
 
+                        logger.info("キャラクター退席 char=%s reason=%.80s session=%s", exit_char, exit_reason or "（理由なし）", session_id)
                         yield ("character_exited", {
                             "character": exit_char,
                             "system_message": message_to_dict(sys_msg),
@@ -338,12 +352,14 @@ async def run_group_turn(
                                 content=all_sys_text,
                                 is_system_message=True,
                             )
+                            logger.info("全員退席 session=%s", session_id)
                             yield ("all_exited", {"system_message": message_to_dict(all_sys_msg)})
                             yield ("user_turn", {"auto_turns_used": auto_turn_count})
                             return
                     else:
                         yield (chunk_type, payload)
             except Exception as e:
+                logger.exception("キャラクター応答エラー char=%s session=%s", char_name, session_id)
                 yield ("error", {"message": str(e), "character": char_name})
                 yield ("user_turn", {"auto_turns_used": auto_turn_count})
                 error_occurred = True

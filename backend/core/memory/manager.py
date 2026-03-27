@@ -1,12 +1,14 @@
 """Memory manager: coordinates SQLite and ChromaDB, handles write/recall/cleanup."""
 
+import logging
 import uuid
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
 from .chroma_store import ChromaStore
 from .sqlite_store import SQLiteStore
-from ..debug_logger import logger
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
@@ -275,7 +277,7 @@ class MemoryManager:
         for turn in chat_turns:
             session_id = turn.get("metadata", {}).get("session_id")
             if not session_id:
-                logger.log_warning("PowerRecall", f"session_id なしの chat_turn をスキップ: id={turn.get('id')}")
+                logger.warning("session_id なしの chat_turn をスキップ id=%s", turn.get("id"))
                 turn["context"] = []
                 continue
             if session_id not in session_messages:
@@ -284,6 +286,10 @@ class MemoryManager:
                 session_messages[session_id], turn["id"], window=2
             )
 
+        logger.info(
+            "完了 char=%s query=%.50s memories=%d chat_turns=%d",
+            character_id, query, len(memories), len(chat_turns),
+        )
         return {"memories": memories, "chat_turns": chat_turns}
 
     @staticmethod

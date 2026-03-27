@@ -1,6 +1,7 @@
 """Chotgor backend — FastAPI application entry point."""
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -15,6 +16,7 @@ from .adapters.openai import router as openai_router
 from .api import characters, memories, chat as chat_module, chat_images as chat_images_module, chat_drifts as chat_drifts_module, group_chat as group_chat_module
 from .api import ui as ui_module
 from .core.chat.service import ChatService
+from .core.log_context import setup_logging
 from .core.memory.chroma_store import ChromaStore
 from .core.memory.chronicle import run_pending_chronicles
 from .core.memory.drift_manager import DriftManager
@@ -33,6 +35,11 @@ STATIC_DIR = str(Path(__file__).parent / "static")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """アプリケーションのライフサイクル管理。起動・終了処理を担う。"""
+    # ロギング設定を最初に適用する
+    setup_logging()
+    _log = logging.getLogger(__name__)
+
     # Startup: initialize stores
     os.makedirs(os.path.dirname(os.path.abspath(SQLITE_DB_PATH)), exist_ok=True)
     os.makedirs(UPLOADS_DIR, exist_ok=True)
@@ -73,15 +80,20 @@ async def lifespan(app: FastAPI):
 
     ui_module.templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
+    _log.info("Chotgor backend 起動 sqlite=%s", SQLITE_DB_PATH)
+
     asyncio.create_task(_chronicle_scheduler(app))
     asyncio.create_task(_forget_scheduler(app))
 
     yield
-    # Shutdown: nothing to clean up for SQLite/ChromaDB
+
+    # Shutdown
+    _log.info("Chotgor backend 終了")
 
 
 async def _chronicle_scheduler(app: FastAPI) -> None:
     """Background task: 毎日設定時刻に chronicle を実行する。"""
+    _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
         now = datetime.now()
@@ -94,29 +106,32 @@ async def _chronicle_scheduler(app: FastAPI) -> None:
         today_str = now.date().isoformat()
         last_run = app.state.sqlite.get_setting("chronicle_last_run_date", "")
         if now >= scheduled and last_run != today_str:
+            _log.info("chronicle スケジューラー 起動 設定時刻=%s", chronicle_time_str)
             app.state.sqlite.set_setting("chronicle_last_run_date", today_str)
             try:
                 await run_pending_chronicles(app.state.sqlite)
             except Exception:
-                pass
+                _log.exception("chronicle スケジューラー 実行エラー")
 
 
 async def _forget_scheduler(app: FastAPI) -> None:
-    """Background task: run pending forget process once per day at 04:00."""
+    """Background task: 毎日 04:00 に forget プロセスを実行する。"""
+    _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
         now = datetime.now()
-        # Default to 04:00 (after digest usually runs)
+        # デフォルト 04:00（chronicle 実行後）
         h, m = 4, 0
         scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
         today_str = now.date().isoformat()
         last_run = app.state.sqlite.get_setting("forget_last_run_date", "")
         if now >= scheduled and last_run != today_str:
+            _log.info("forget スケジューラー 起動 設定時刻=%02d:%02d", h, m)
             app.state.sqlite.set_setting("forget_last_run_date", today_str)
             try:
                 await run_pending_forget(app.state.sqlite, app.state.memory_manager)
             except Exception:
-                pass
+                _log.exception("forget スケジューラー 実行エラー")
 
 
 app = FastAPI(

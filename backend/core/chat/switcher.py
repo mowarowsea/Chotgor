@@ -18,7 +18,11 @@ Claude CLI 等 SUPPORTS_TOOLS=False のプロバイダーが [SWITCH_ANGLE:...] 
     [SWITCH_ANGLE:gemini2FlashLite|軽くさっぱりと応答する]
 """
 
+import logging
+
 from ..tag_parser import parse_tags
+
+logger = logging.getLogger(__name__)
 
 # --- ツール呼び出し方式: パラメータスキーマ ---
 SWITCH_ANGLE_SCHEMA: dict = {
@@ -126,6 +130,11 @@ class Switcher:
         clean, switch_request = _extract(text)
         if switch_request:
             self.switch_request = switch_request
+            preset_name, self_instruction = switch_request
+            logger.info(
+                "タグ方式 preset=%s instruction=%.50s",
+                preset_name, self_instruction,
+            )
         return clean
 
     def switch_angle(self, preset_name: str, self_instruction: str) -> str:
@@ -142,4 +151,8 @@ class Switcher:
             実行結果メッセージ。
         """
         self.switch_request = (preset_name, self_instruction)
+        logger.info(
+            "ツール方式 preset=%s instruction=%.50s",
+            preset_name, self_instruction,
+        )
         return f"アングルを {preset_name} に切り替えます。"

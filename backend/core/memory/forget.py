@@ -2,9 +2,9 @@
 
 import logging
 import re
-from datetime import datetime
 from typing import Optional
 
+from ..log_context import new_message_id
 from ..providers.registry import create_provider
 from .manager import MemoryManager
 from .sqlite_store import SQLiteStore
@@ -27,9 +27,12 @@ async def run_forget_process(
     2. Ask Claude if any should be kept
     3. Soft-delete those not kept
     """
+    char_label = f"{character_name}@GhostModel"
+
     candidates = memory_manager.get_forgotten_candidates(character_id, threshold=threshold, limit=50)
-    
+
     if not candidates:
+        logger.info("スキップ char=%s reason=対象記憶なし", char_label)
         return {"status": "skipped", "reason": "No forgotten candidates found"}
         
     memory_text = "【忘れかけている記憶リスト】\n"
@@ -64,9 +67,11 @@ async def run_forget_process(
         "※IDは正確に記載してください。"
     )
 
+    logger.debug("LLM呼び出し char=%s candidates=%d", char_label, len(candidates))
     try:
         response_text = await _call_llm_for_forget(system_prompt, memory_text, ghost_model, sqlite)
     except Exception as e:
+        logger.exception("エラー char=%s", char_label)
         return {"status": "error", "error": str(e)}
 
     # Parse [DELETE: ...]
@@ -90,6 +95,10 @@ async def run_forget_process(
             # Touching it gives it a boost and prevents it from being forgotten soon.
             sqlite.recall(m.id)
 
+    logger.info(
+        "forget 完了 char=%s candidates=%d deleted=%d kept=%d",
+        char_label, len(candidates), deleted_count, kept_count,
+    )
     return {
         "status": "success",
         "candidates_count": len(candidates),
@@ -100,10 +109,16 @@ async def run_forget_process(
 
 
 async def run_pending_forget(sqlite: SQLiteStore, memory_manager: MemoryManager) -> None:
-    """Run forget process for all characters."""
+    """全キャラクターに対して forget プロセスを実行する。
+
+    _forget_scheduler から呼び出される。
+    各キャラクター処理時に message_id をセットしてログを追跡可能にする。
+    """
     characters = sqlite.list_characters()
+    logger.info("開始")
 
     for char in characters:
+        new_message_id()
         threshold = 0.2
         try:
             await run_forget_process(
@@ -116,7 +131,9 @@ async def run_pending_forget(sqlite: SQLiteStore, memory_manager: MemoryManager)
                 ghost_model=char.ghost_model,
             )
         except Exception:
-            pass
+            logger.exception("エラー char=%s", char.name)
+
+    logger.info("完了")
 
 
 async def _call_llm_for_forget(

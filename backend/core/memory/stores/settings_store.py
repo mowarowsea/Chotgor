@@ -1,7 +1,13 @@
 """グローバル設定 CRUD — SQLiteStore Mixin。"""
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# APIキー・シークレット系のキー名に含まれるキーワード（マスク対象）
+_SENSITIVE_KEYS = ("api_key", "secret", "token", "password")
 
 
 class SettingsStoreMixin:
@@ -20,7 +26,10 @@ class SettingsStoreMixin:
                 return row.value
 
     def set_setting(self, key: str, value: Any) -> None:
-        """設定値をupsertする。文字列以外はJSONシリアライズする。"""
+        """設定値をupsertする。文字列以外はJSONシリアライズする。
+
+        APIキー・シークレット系のキーは値をマスクしてログ出力する。
+        """
         with self.get_session() as session:
             from ..sqlite_store import GlobalSetting
             serialized = json.dumps(value) if not isinstance(value, str) else value
@@ -30,6 +39,9 @@ class SettingsStoreMixin:
             else:
                 session.add(GlobalSetting(key=key, value=serialized))
             session.commit()
+        # センシティブなキーは値をマスクして記録する
+        masked = "***" if any(s in key for s in _SENSITIVE_KEYS) else str(value)[:80]
+        logger.debug("設定更新 key=%s value=%s", key, masked)
 
     def get_all_settings(self) -> dict[str, Any]:
         """全設定をdict形式で返す。"""

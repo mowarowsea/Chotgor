@@ -199,3 +199,4 @@ class Inscriber:
             source_preset_id=preset_id_or_none,
             **scores,
         )
+        logger.info("記憶を刻み込み: char=%s category=%s impact=%.1f content=%.50s", self.character_id, category, impact, content)

@@ -1,12 +1,13 @@
 """Chotgorのログ出力を一元管理するモジュール。
 
-ファイルログ（CHOTGOR_DEBUG=1 時のみ）とコンソールログの両方を扱う。
+ファイルログ（CHOTGOR_DEBUG=1 時のみ debug/{message_id}/ フォルダに書き込み）と
+標準 logging モジュール経由のログ出力の両方を扱う。
 モジュールレベルのシングルトン `logger` を通じて利用すること。
 """
 
 import json
+import logging as _logging
 import os
-from datetime import datetime
 from typing import Any
 
 
@@ -53,14 +54,17 @@ class ChotgorLogger:
     def _write_log(self, prefix: str, content: str) -> None:
         """デバッグログをファイルに書き出す。CHOTGOR_DEBUG=1 の時のみ有効。
 
-        ファイル名形式: yyyyMMddhhmmssffff_{prefix}.log
+        出力先: debug/{message_id}/{prefix}.log
+        message_id は ContextVar（current_message_id）から取得する。
         """
         if not self.is_debug_enabled():
             return
-        os.makedirs(self.DEBUG_DIR, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")[:18]
-        filename = f"{timestamp}_{prefix}.log"
-        filepath = os.path.join(self.DEBUG_DIR, filename)
+        from .log_context import current_message_id
+        msg_id = current_message_id.get()
+        folder = os.path.join(self.DEBUG_DIR, msg_id)
+        os.makedirs(folder, exist_ok=True)
+        filename = f"{prefix}.log"
+        filepath = os.path.join(folder, filename)
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
 
@@ -110,7 +114,10 @@ class ChotgorLogger:
         message_summaries: list[tuple[str, str]],
         clean_text: str,
     ) -> None:
-        """チャット入出力のデバッグサマリーをコンソールに出力する。
+        """チャット入出力のデバッグサマリーを標準 logging で出力する。
+
+        print() を使わず logging.info() に変更。
+        メッセージサマリーは最大100文字、レスポンスは最大200文字に切り詰めて出力する。
 
         Args:
             label: ログラベル（"CHAT" / "CHAT stream" など）
@@ -120,22 +127,31 @@ class ChotgorLogger:
             message_summaries: (role, content) のリスト
             clean_text: キャラクターの最終応答テキスト
         """
-        sep = "-" * 60
-        print(f"\n{sep}")
-        print(f"[{label}] character={character_id} provider={provider} model={model or '(default)'}")
-        for role, content in message_summaries:
-            print(f"  [{role}] {content[:300]}{'...' if len(content) > 300 else ''}")
-        print(f"  [RESPONSE] {clean_text[:500]}{'...' if len(clean_text) > 500 else ''}")
-        print(sep, flush=True)
+        log = _logging.getLogger("backend.core.debug_logger")
+        summary_lines = " | ".join(
+            f"[{role}] {content[:100]}{'...' if len(content) > 100 else ''}"
+            for role, content in message_summaries
+        )
+        log.info(
+            "%s char=%s provider=%s model=%s | %s | RESPONSE: %s",
+            label,
+            character_id,
+            provider,
+            model or "(default)",
+            summary_lines,
+            clean_text[:200] + ("..." if len(clean_text) > 200 else ""),
+        )
 
     def log_warning(self, tag: str, message: str) -> None:
-        """警告メッセージをコンソールに出力する。
+        """警告メッセージを標準 logging で出力する。
+
+        print() を使わず logging.warning() に変更。
 
         Args:
             tag: ログタグ（例: "PowerRecall"）
             message: 警告メッセージ
         """
-        print(f"[{tag}] {message}", flush=True)
+        _logging.getLogger("backend.core.debug_logger").warning("[%s] %s", tag, message)
 
 
 # モジュールレベルのシングルトン

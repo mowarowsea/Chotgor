@@ -14,6 +14,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
+from ..log_context import new_message_id
 from ..providers.registry import create_provider
 from .sqlite_store import SQLiteStore
 
@@ -138,7 +139,10 @@ async def run_chronicle(
     if not char:
         return {"status": "error", "error": f"Character '{character_id}' not found"}
 
+    char_label = f"{char.name}@GhostModel"
+
     if not char.ghost_model:
+        logger.info("スキップ char=%s reason=ghost_model未設定", char_label)
         return {"status": "skipped", "reason": "ghost_model が未設定のためスキップ"}
 
     preset = sqlite.get_model_preset(char.ghost_model)
@@ -167,12 +171,15 @@ async def run_chronicle(
             thinking_level=preset.thinking_level or "default",
         )
         llm_messages = [{"role": "user", "content": prompt_text}]
+        logger.debug("LLM呼び出し char=%s date=%s", char_label, target_date)
         response_text = await provider.generate(char.system_prompt_block1, llm_messages)
     except Exception as e:
+        logger.exception("エラー char=%s", char_label)
         return {"status": "error", "error": str(e)}
 
     parsed = _parse_chronicle_response(response_text)
     if not parsed:
+        logger.warning("JSONパース失敗 char=%s raw=%.100s", char_label, response_text)
         return {"status": "error", "error": "JSON のパースに失敗しました", "raw": response_text[:500]}
 
     updates = {}
@@ -188,6 +195,7 @@ async def run_chronicle(
     if updates:
         sqlite.update_character(character_id, **updates)
 
+    logger.info("完了 char=%s updated=%s", char_label, list(updates.keys()) or "なし")
     return {"status": "success", "updated_fields": list(updates.keys())}
 
 
@@ -196,14 +204,17 @@ async def run_pending_chronicles(sqlite: SQLiteStore) -> None:
 
     _chronicle_scheduler から呼び出される。
     ghost_model が設定されていないキャラクターはスキップする。
+    各キャラクター処理時に message_id をセットしてログを追跡可能にする。
     """
     characters = sqlite.list_characters()
+    targets = [c for c in characters if c.ghost_model]
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
     settings = sqlite.get_all_settings()
 
-    for char in characters:
-        if not char.ghost_model:
-            continue
+    logger.info("開始 対象=%d キャラ", len(targets))
+
+    for char in targets:
+        new_message_id()
         try:
             await run_chronicle(
                 character_id=char.id,
@@ -212,4 +223,6 @@ async def run_pending_chronicles(sqlite: SQLiteStore) -> None:
                 settings=settings,
             )
         except Exception as e:
-            logger.warning("chronicle 失敗 char=%s: %s", char.id, e)
+            logger.warning("失敗 char=%s: %s", char.id, e)
+
+    logger.info("完了")

@@ -121,7 +121,7 @@ class Carver:
         for m in matches["CARVE_NARRATIVE"]:
             parts = m.body.split("|", 1)
             if len(parts) != 2:
-                logger.warning("CARVE_NARRATIVE タグの形式が不正（mode|content が必要）: %s", m.raw)
+                logger.warning("タグの形式が不正（mode|content が必要）: %s", m.raw)
                 continue
             mode, content = parts[0].strip(), parts[1].strip()
             if not content:
@@ -129,7 +129,7 @@ class Carver:
             try:
                 self.carve_narrative(mode, content)
             except Exception:
-                logger.exception("inner_narrative の更新に失敗: character_id=%s", self.character_id)
+                logger.exception("更新失敗 char=%s", self.character_id)
         return clean
 
     def carve_narrative(self, mode: str, content: str) -> None:
@@ -141,7 +141,7 @@ class Carver:
         """
         if mode == "overwrite":
             # 非推奨: inner_narrative を完全に置き換える
-            logger.info("inner_narrative を上書き: character_id=%s", self.character_id)
+            logger.info("上書き char=%s", self.character_id)
             self.sqlite_store.update_character(self.character_id, inner_narrative=content)
         else:
             # append（デフォルト）: 既存テキストに改行区切りで追記
@@ -149,3 +149,4 @@ class Carver:
             existing = (char.inner_narrative or "") if char else ""
             new_narrative = (existing + "\n" + content).strip() if existing else content
             self.sqlite_store.update_character(self.character_id, inner_narrative=new_narrative)
+            logger.info("追記 char=%s content=%.50s", self.character_id, content)

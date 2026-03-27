@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -129,6 +130,9 @@ class ToolExecutor:
         _exiter: 退席リクエストを記録する Exiter インスタンス。
     """
 
+    # クラスレベルロガー
+    logger = logging.getLogger(__name__)
+
     def __init__(
         self,
         character_id: str,
@@ -167,6 +171,7 @@ class ToolExecutor:
         Returns:
             ツールの実行結果を表すテキスト。
         """
+        self.logger.debug("ツール呼び出し name=%s", tool_name)
         if tool_name == "inscribe_memory":
             return self._inscribe_memory(
                 content=str(tool_input.get("content", "")),
@@ -194,14 +199,20 @@ class ToolExecutor:
                 query=str(tool_input.get("query", "")),
                 top_k=int(tool_input.get("top_k", 5)),
             )
+        self.logger.warning("未知のツール name=%s", tool_name)
         return f"[Unknown tool: {tool_name}]"
 
     def _inscribe_memory(self, content: str, category: str, impact: float) -> str:
         """inscribe_memory ツールの実装。Inscriber.inscribe_memory() に委譲して記憶をChromaDB + SQLiteに書き込む。"""
         try:
             self._inscriber.inscribe_memory(content, category, impact)
+            self.logger.info(
+                "完了 char=%s category=%s content=%.50s",
+                self.character_id, category, content,
+            )
             return "記憶に刻んだ。"
         except Exception as e:
+            self.logger.exception("エラー char=%s", self.character_id)
             return f"[inscribe_memory error: {e}]"
 
     def _carve_narrative(self, mode: str, content: str) -> str:
@@ -210,8 +221,13 @@ class ToolExecutor:
             return "[carve_narrative: content が空です]"
         try:
             self._carver.carve_narrative(mode, content)
+            self.logger.info(
+                "完了 char=%s mode=%s content=%.50s",
+                self.character_id, mode, content,
+            )
             return "inner_narrative を更新した。"
         except Exception as e:
+            self.logger.exception("エラー char=%s", self.character_id)
             return f"[carve_narrative error: {e}]"
 
     def _power_recall(self, query: str, top_k: int) -> str:
@@ -229,11 +245,16 @@ class ToolExecutor:
         try:
             results = self.memory_manager.power_recall(self.character_id, query, top_k)
         except Exception as e:
+            self.logger.exception("エラー char=%s query=%.50s", self.character_id, query)
             return f"[power_recall error: {e}]"
 
         memories = results.get("memories", [])
         chat_turns = results.get("chat_turns", [])
 
+        self.logger.info(
+            "完了 char=%s query=%.50s memories=%d chat_turns=%d",
+            self.character_id, query, len(memories), len(chat_turns),
+        )
         if not memories and not chat_turns:
             return f"「{query}」に関する記憶・会話は見つからなかった。"
 

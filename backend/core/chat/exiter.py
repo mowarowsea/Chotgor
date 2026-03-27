@@ -11,7 +11,11 @@ Exiter クラスと関連定数を一元管理する。
     [END_SESSION]         ← 固定マーカー形式（reason なし）
 """
 
+import logging
+
 from ..tag_parser import parse_tags
+
+logger = logging.getLogger(__name__)
 
 
 # --- タグ方式: ガイド文 ---
@@ -121,6 +125,7 @@ class Exiter:
         clean, reason = _extract(text)
         if reason is not None:
             self.exit_reason = reason
+            logger.info("タグ方式 reason=%.80s", reason or "（理由なし）")
         return clean
 
     def set_exit(self, reason: str = "") -> str:
@@ -133,4 +138,5 @@ class Exiter:
             ツール実行結果テキスト。
         """
         self.exit_reason = reason.strip()
+        logger.info("ツール方式 reason=%.80s", reason.strip() or "（理由なし）")
         return "退席リクエストを受け付けた。"

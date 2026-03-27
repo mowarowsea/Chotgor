@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from ..core.chat.indexer import get_participant_char_ids, index_message_sync
 from ..core.chat.models import ChatRequest, Message
 from ..core.debug_logger import logger
+from ..core.log_context import new_message_id
 from ..core.time_awareness import compute_time_awareness
 from .resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from .utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
@@ -338,6 +339,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     キャラクターが [END_SESSION:...] タグまたは end_session ツールを使用した場合は
     退席状態をDBに保存し、SSEで session_exit イベントを送信する。
     """
+    new_message_id()
+
     state = request.app.state
 
     session = state.sqlite.get_chat_session(session_id)

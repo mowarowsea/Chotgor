@@ -15,6 +15,7 @@ from ...api.resource_resolver import parse_model_id, resolve_character, resolve_
 from ...core.chat.models import ChatRequest, Message
 from ...core.chat.service import extract_text_content
 from ...core.debug_logger import logger
+from ...core.log_context import new_message_id
 from ...core.providers.registry import PROVIDER_LABELS
 from ...core.time_awareness import compute_time_awareness
 from .schemas import OAIChatRequest
@@ -117,6 +118,8 @@ async def list_models(request: Request):
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: OAIChatRequest):
     """OpenAI互換チャット補完エンドポイント。"""
+    new_message_id()
+
     state = request.app.state
 
     logger.log_front_input(body.model_dump())

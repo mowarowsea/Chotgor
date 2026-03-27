@@ -133,12 +133,12 @@ class Drifter:
             try:
                 self.drift_manager.reset_drifts(self.session_id, self.character_id)
             except Exception:
-                logger.exception("SELF_DRIFT リセットに失敗: session_id=%s", self.session_id)
+                logger.exception("リセット失敗 session_id=%s", self.session_id)
         for content in drifts:
             try:
                 self.drift_manager.add_drift(self.session_id, self.character_id, content)
             except Exception:
-                logger.exception("SELF_DRIFT 追加に失敗: session_id=%s content=%.50s...", self.session_id, content)
+                logger.exception("追加失敗 session_id=%s content=%.50s", self.session_id, content)
         return clean
 
     def drift(self, content: str) -> str:
@@ -168,6 +168,7 @@ class Drifter:
             return "SELF_DRIFT は利用できない。"
         try:
             self.drift_manager.reset_drifts(self.session_id, self.character_id)
+            logger.info("実行 char=%s session=%s", self.character_id, self.session_id)
             return "指針をリセットした。"
         except Exception as e:
             return f"[drift_reset error: {e}]"

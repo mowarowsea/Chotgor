@@ -18,8 +18,11 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Union
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..tools import ToolExecutor
@@ -118,6 +121,7 @@ class ChatService:
             None,
         )
         if preset is None:
+            _log.warning("switch_angle プリセット未発見 char=%s@%s preset=%s", original.character_name, original.current_preset_name, preset_name)
             return None
 
         if self.drift_manager and original.session_id:
@@ -173,8 +177,8 @@ class ChatService:
                 recalled_identity, recalled = self.memory_manager.recall_with_identity(
                     request.character_id, last_user_msg
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("記憶想起失敗 char=%s error=%s", request.character_id, e)
 
         # --- 1b. SELF_DRIFT指針をDBからロード ---
         active_drifts = request.active_drifts or []
@@ -227,12 +231,13 @@ class ChatService:
         )
 
     def _log_debug(self, label: str, request: ChatRequest, messages: list[dict], clean_text: str) -> None:
-        """デバッグログを logger に委譲する。"""
+        """デバッグログを logger に委譲する。char_label は {name}@{preset} 形式で出力する。"""
         summaries = [
             (m.get("role", "?").upper(), extract_text_content(m.get("content")))
             for m in messages
         ]
-        logger.log_chat_debug(label, request.character_id, request.provider, request.model, summaries, clean_text)
+        char_label = f"{request.character_name}@{request.current_preset_name or request.provider}"
+        logger.log_chat_debug(label, char_label, request.provider, request.model, summaries, clean_text)
 
     # --- 公開メソッド ---
 
@@ -254,15 +259,15 @@ class ChatService:
             try:
                 clean_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
             except Exception as e:
-                import traceback
-                return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+                _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
+                return f"[Error: {type(e).__name__}: {e}]"
         else:
             tool_executor = None
             try:
                 response_text = await ctx.provider_impl.generate(ctx.system_prompt, ctx.messages)
             except Exception as e:
-                import traceback
-                return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+                _log.exception("LLM呼び出し失敗（タグ方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
+                return f"[Error: {type(e).__name__}: {e}]"
 
             inscriber = Inscriber(request.character_id, self.memory_manager)
             clean_text = inscriber.inscribe_memory_from_text(response_text, request.current_preset_id)
@@ -295,8 +300,6 @@ class ChatService:
                 ("text",          str)                  : クリーンな応答テキスト（最後に1回）
                 ("session_exit",  {"char_name": str, "reason": str}) : 退席要求（textの後にyield）
         """
-        import traceback
-
         ctx = await self._prepare_context(request)
 
         # 想起した記憶を最初にyield
@@ -319,7 +322,8 @@ class ChatService:
             try:
                 clean_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
             except Exception as e:
-                yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
+                _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
+                yield ("text", f"[Error: {type(e).__name__}: {e}]")
                 return
             # ツール方式: ToolExecutor から退席理由を取得する
             exit_reason = tool_executor.exit_reason
@@ -339,7 +343,8 @@ class ChatService:
                         if safe_chunk:
                             yield ("text", safe_chunk)
             except Exception as e:
-                yield ("text", f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]")
+                _log.exception("LLM呼び出し失敗（タグ方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
+                yield ("text", f"[Error: {type(e).__name__}: {e}]")
                 return
 
             # ストリーム終了後、バッファに残ったテキストを流す
