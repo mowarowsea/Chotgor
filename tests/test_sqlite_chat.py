@@ -5,6 +5,7 @@ fixtures の sqlite_store は conftest.py が提供するインメモリ一時DB
 各テストは独立した一時DBで動作するため、テスト間の干渉はない。
 """
 
+import time
 import uuid
 
 import pytest
@@ -45,14 +46,17 @@ class TestChatSessionCRUD:
     def test_list_sessions_ordered_by_updated_at_desc(self, sqlite_store):
         """list_chat_sessions は更新日時の降順で返すこと。
 
-        全セッションを作成後、最後のセッションだけを明示的に更新することで
-        updated_at の差を確実につける（同一ミリ秒での同着を防ぐ）。
+        プロダクションでは create_chat_session と update_chat_session は
+        必ず別HTTPリクエストで呼ばれるため同一ミリ秒衝突は発生しない。
+        テストでは sleep を挟むことで同条件を再現する。
         """
         ids = [str(uuid.uuid4()) for _ in range(3)]
         for i, sid in enumerate(ids):
             sqlite_store.create_chat_session(session_id=sid, model_id=f"char{i}@gemini")
 
-        # 最後のセッションのみ明示的に更新して updated_at を確実に最新にする
+        # 全 create の後にわずか待機してから update することで
+        # updated_at の差を確実につける
+        time.sleep(0.1)
         sqlite_store.update_chat_session(ids[-1], title="最新")
 
         sessions = sqlite_store.list_chat_sessions()
