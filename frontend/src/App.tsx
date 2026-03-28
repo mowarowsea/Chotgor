@@ -2,7 +2,7 @@
  * アプリルートコンポーネント。
  * セッション管理・モデル取得・メッセージ送受信のロジックを担当する。
  */
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   fetchModels,
   fetchSessions,
@@ -20,6 +20,7 @@ import {
   updateSessionTitle,
 } from "./api";
 import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent, Drift, Character } from "./api";
+import { charNameOf } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import GroupChatView from "./components/GroupChatView";
@@ -63,8 +64,14 @@ export default function App() {
   const activeCharacterId = drifts.length > 0 ? drifts[0].character_id : "";
   /** アクティブセッションがグループチャットかどうか。 */
   const isGroupSession = activeSession?.session_type === "group";
-  /** キャラクター名→IDのマップ。アバター画像URL生成用。 */
-  const characterIdMap = Object.fromEntries(characters.map((c) => [c.name, c.id]));
+  /**
+   * キャラクター名→IDのマップ。アバター画像URL生成用。
+   * characters が変わるたびに再計算するため useMemo でメモ化する。
+   */
+  const characterIdMap = useMemo(
+    () => Object.fromEntries(characters.map((c) => [c.name, c.id])),
+    [characters],
+  );
   /** グループチャット参加者情報（char_name・preset_name）。 */
   const groupParticipantEntries = (() => {
     if (!isGroupSession || !activeSession?.group_config) return [];

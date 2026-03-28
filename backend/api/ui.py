@@ -20,6 +20,28 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 MAX_IMAGE_BYTES = 2 * 1024 * 1024  # 2MB
 
 
+def _build_enabled_providers(form) -> dict:
+    """フォームから enabled_providers 辞書を構築する。
+
+    create_character・update_character の両方で同じロジックが必要なため一元化する。
+    preset_ids は複数値フォームフィールドで、各 preset_id に対して
+    additional_instructions と when_to_switch を取得して辞書に格納する。
+
+    Args:
+        form: await request.form() の結果。
+
+    Returns:
+        {preset_id: {additional_instructions, when_to_switch}} の辞書。
+    """
+    enabled_providers = {}
+    for pid in form.getlist("preset_ids"):
+        enabled_providers[pid] = {
+            "additional_instructions": form.get(f"ai_{pid}", ""),
+            "when_to_switch": form.get(f"wts_{pid}", ""),
+        }
+    return enabled_providers
+
+
 async def _read_image_data(form) -> Optional[str]:
     """フォームから画像を読み込みbase64 data URIとして返す。画像がなければNone。"""
     image_file = form.get("image")
@@ -83,13 +105,7 @@ async def create_character(request: Request):
     if not name:
         return RedirectResponse(url="/ui/characters/new", status_code=303)
 
-    preset_ids = form.getlist("preset_ids")
-    enabled_providers = {}
-    for pid in preset_ids:
-        enabled_providers[pid] = {
-            "additional_instructions": form.get(f"ai_{pid}", ""),
-            "when_to_switch": form.get(f"wts_{pid}", ""),
-        }
+    enabled_providers = _build_enabled_providers(form)
 
     image_data = await _read_image_data(form)
 
@@ -133,13 +149,7 @@ async def edit_character_form(request: Request, character_id: str):
 async def update_character(request: Request, character_id: str):
     form = await request.form()
 
-    preset_ids = form.getlist("preset_ids")
-    enabled_providers = {}
-    for pid in preset_ids:
-        enabled_providers[pid] = {
-            "additional_instructions": form.get(f"ai_{pid}", ""),
-            "when_to_switch": form.get(f"wts_{pid}", ""),
-        }
+    enabled_providers = _build_enabled_providers(form)
 
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0

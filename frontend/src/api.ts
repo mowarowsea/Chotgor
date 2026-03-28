@@ -1,5 +1,29 @@
 /** バックエンドAPI呼び出し層。 */
 
+// ---------------------------------------------------------------------------
+// モデルID ユーティリティ
+// ---------------------------------------------------------------------------
+
+/**
+ * モデルID（"{char_name}@{preset_name}" 形式）からキャラクター名を抽出する。
+ *
+ * Sidebar.tsx・App.tsx など複数箇所で使われるため api.ts に一元化する。
+ *
+ * @example charNameOf("Alice@thinking")  // => "Alice"
+ */
+export function charNameOf(modelId: string): string {
+  return modelId.split("@")[0];
+}
+
+/**
+ * モデルID（"{char_name}@{preset_name}" 形式）からプリセット名を抽出する。
+ *
+ * @example presetNameOf("Alice@thinking")  // => "thinking"
+ */
+export function presetNameOf(modelId: string): string {
+  return modelId.split("@")[1] ?? "";
+}
+
 export interface Model {
   id: string;   // "{char_name}@{preset_name}"
   object: string;

@@ -4,6 +4,7 @@
  */
 import { useState, useRef, useEffect } from "react";
 import type { Character, Model, Session } from "../api";
+import { charNameOf, presetNameOf } from "../api";
 
 interface Props {
   /** 利用可能なモデル一覧 */
@@ -105,7 +106,7 @@ export default function Sidebar({
 
   /** selectedModel が変わったとき、Afterglow チェックボックスのデフォルト値を更新する。 */
   useEffect(() => {
-    const charName = selectedModel.split("@")[0];
+    const charName = charNameOf(selectedModel);
     const char = characters.find((c) => c.name === charName);
     setAfterglowEnabled(char?.afterglow_default ?? false);
   }, [selectedModel, characters]);
@@ -118,9 +119,6 @@ export default function Sidebar({
   const [directorModelId, setDirectorModelId] = useState("");
   /** 最大自動ターン数 */
   const [maxAutoTurns, setMaxAutoTurns] = useState(3);
-
-  /** モデルIDからキャラクター名を抽出する */
-  const charNameOf = (modelId: string) => modelId.split("@")[0];
 
   /** 新規チャットを作成する。パネルが開いているときはその設定を使い、閉じているときはデフォルト値で直接作成する。 */
   const handleNewChat = () => {
@@ -274,7 +272,7 @@ export default function Sidebar({
                   />
                   <span className="text-zinc-300 text-xs truncate group/check-hover:text-zinc-100">
                     {charNameOf(m.id)}
-                    <span className="text-zinc-500 ml-1">@{m.id.split("@")[1]}</span>
+                    <span className="text-zinc-500 ml-1">@{presetNameOf(m.id)}</span>
                   </span>
                 </label>
               ))}
@@ -291,8 +289,7 @@ export default function Sidebar({
                 <option value="">司会役を選択...</option>
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {charNameOf(m.id)}
-                    <span> @{m.id.split("@")[1]}</span>
+                    {charNameOf(m.id)} @{presetNameOf(m.id)}
                   </option>
                 ))}
               </select>
