@@ -30,7 +30,9 @@
                     <span class="label-hint">空欄 = プロバイダーデフォルト</span>
                 </label>
                 <input type="text" id="new-model-id" name="model_id" class="form-control"
-                       placeholder="例: gemini-2.0-flash">
+                       placeholder="例: gemini-2.0-flash"
+                       autocomplete="off">
+                <datalist id="openrouter-models-list"></datalist>
             </div>
             <div class="form-group" style="flex:1.2; margin-bottom:0">
                 <label for="new-thinking-level">思考レベル</label>
@@ -89,7 +91,8 @@
                         {% if preset.model_id %}{{ preset.model_id }}{% else %}<span class="text-muted">(デフォルト)</span>{% endif %}
                     </span>
                     <input type="text" class="form-control preset-edit-field" id="modelid-edit-{{ preset.id }}"
-                           value="{{ preset.model_id }}" placeholder="(デフォルト)" style="display:none">
+                           value="{{ preset.model_id }}" placeholder="(デフォルト)" style="display:none"
+                           autocomplete="off">
                 </td>
                 <td>
                     <span class="preset-display" id="thinking-display-{{ preset.id }}">
@@ -186,6 +189,58 @@
 </style>
 
 <script>
+// OpenRouterモデル一覧キャッシュ
+let _openrouterModels = null;
+
+async function loadOpenRouterModels() {
+    if (_openrouterModels) return _openrouterModels;
+    try {
+        const resp = await fetch('/ui/providers/openrouter/models');
+        const data = await resp.json();
+        _openrouterModels = data.models || [];
+    } catch (e) {
+        _openrouterModels = [];
+    }
+    return _openrouterModels;
+}
+
+function fillDatalist(models) {
+    const dl = document.getElementById('openrouter-models-list');
+    dl.innerHTML = '';
+    models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.label = m.name !== m.id ? `${m.name}` : '';
+        dl.appendChild(opt);
+    });
+}
+
+async function onProviderChange(provider, modelInputId) {
+    const modelInput = document.getElementById(modelInputId);
+    if (provider === 'openrouter') {
+        modelInput.setAttribute('list', 'openrouter-models-list');
+        modelInput.placeholder = '選択または入力 (例: openai/gpt-4o)';
+        const models = await loadOpenRouterModels();
+        fillDatalist(models);
+    } else {
+        modelInput.removeAttribute('list');
+        modelInput.placeholder = modelInputId === 'new-model-id'
+            ? '例: gemini-2.0-flash'
+            : '(デフォルト)';
+    }
+}
+
+// 新規フォームのプロバイダー変更
+document.getElementById('new-provider').addEventListener('change', function() {
+    onProviderChange(this.value, 'new-model-id');
+});
+
+// 初期状態チェック（ページロード時に openrouter が選択済みの場合）
+(function() {
+    const sel = document.getElementById('new-provider');
+    if (sel.value === 'openrouter') onProviderChange('openrouter', 'new-model-id');
+})();
+
 function startEdit(id) {
     ['name', 'provider', 'modelid', 'thinking'].forEach(field => {
         document.getElementById(`${field}-display-${id}`).style.display = 'none';
@@ -194,6 +249,13 @@ function startEdit(id) {
     document.getElementById(`edit-btn-${id}`).style.display = 'none';
     document.getElementById(`edit-form-${id}`).style.display = 'inline-flex';
     document.getElementById(`edit-form-${id}`).style.gap = '6px';
+
+    // 編集開始時にプロバイダーが openrouter ならdatalistを適用
+    const provSel = document.getElementById(`provider-edit-${id}`);
+    onProviderChange(provSel.value, `modelid-edit-${id}`);
+    provSel.addEventListener('change', function() {
+        onProviderChange(this.value, `modelid-edit-${id}`);
+    });
 }
 
 function cancelEdit(id) {
@@ -203,6 +265,8 @@ function cancelEdit(id) {
     });
     document.getElementById(`edit-btn-${id}`).style.display = '';
     document.getElementById(`edit-form-${id}`).style.display = 'none';
+    // datalist解除
+    document.getElementById(`modelid-edit-${id}`).removeAttribute('list');
 }
 
 function submitEdit(id) {

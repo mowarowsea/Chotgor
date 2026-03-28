@@ -4,8 +4,9 @@ import base64
 import uuid
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from backend.services.memory.migration_service import migrate_embeddings
@@ -382,3 +383,35 @@ async def save_settings(
             return RedirectResponse(url="/ui/settings?saved=1&migration_error=1", status_code=303)
 
     return RedirectResponse(url="/ui/settings?saved=1", status_code=303)
+
+
+# --- Provider helpers ---
+
+@router.get("/providers/openrouter/models")
+async def get_openrouter_models(request: Request):
+    """OpenRouter から利用可能なモデル一覧を取得して返す。
+
+    設定済みの openrouter_api_key を使い OpenRouter API を呼び出す。
+    APIキー未設定の場合は空リストを返す。
+    """
+    api_key = request.app.state.sqlite.get_setting("openrouter_api_key", "")
+    if not api_key:
+        return JSONResponse({"models": []})
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        models = [
+            {"id": m["id"], "name": m.get("name", m["id"])}
+            for m in data.get("data", [])
+        ]
+        models.sort(key=lambda m: m["id"])
+        return JSONResponse({"models": models})
+    except Exception as e:
+        return JSONResponse({"models": [], "error": str(e)})
