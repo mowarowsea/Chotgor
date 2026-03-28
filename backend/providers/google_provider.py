@@ -68,6 +68,34 @@ class GoogleProvider(BaseLLMProvider):
         except Exception:
             return []
 
+    @classmethod
+    async def list_embedding_models(cls, settings: dict) -> list[dict]:
+        """Google Generative Language API から Embedding モデル一覧を取得して返す。
+
+        embedContent をサポートするモデルのみ返す。
+        """
+        import httpx
+        api_key = settings.get("google_api_key", "")
+        if not api_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    params={"key": api_key},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            models = []
+            for m in data.get("models", []):
+                if "embedContent" not in m.get("supportedGenerationMethods", []):
+                    continue
+                model_id = m["name"].removeprefix("models/")
+                models.append({"id": model_id, "name": m.get("displayName", model_id)})
+            return sorted(models, key=lambda m: m["id"])
+        except Exception:
+            return []
+
     def _build_contents(self, system_prompt: str, messages: list[dict]):
         """Google Gemini 用の contents リストを構築する内部ヘルパー。
 

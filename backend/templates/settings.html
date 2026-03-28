@@ -141,7 +141,10 @@
             <input type="text" id="embedding_model" name="embedding_model"
                    class="form-control"
                    value="{{ settings.get('embedding_model', '') }}"
-                   placeholder="gemini-embedding-2-preview">
+                   placeholder="gemini-embedding-2-preview"
+                   autocomplete="off"
+                   list="embedding-models-list">
+            <datalist id="embedding-models-list"></datalist>
             <p class="form-hint">推奨: <code>gemini-embedding-2-preview</code>（高精度）/ <code>text-embedding-004</code>（安定版）</p>
         </div>
 
@@ -152,10 +155,33 @@
         {% endif %}
 
         <script>
+        async function loadEmbeddingModels(provider) {
+            const dl = document.getElementById('embedding-models-list');
+            dl.innerHTML = '';
+            if (provider === 'default') return;
+            try {
+                const resp = await fetch(`/ui/providers/${provider}/embedding-models`);
+                const data = await resp.json();
+                (data.models || []).forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    if (m.name && m.name !== m.id) opt.label = m.name;
+                    dl.appendChild(opt);
+                });
+            } catch (e) { /* 取得失敗時はdatalistを空のまま */ }
+        }
+
         function updateEmbeddingUI(provider) {
             document.getElementById('embedding_model_group').style.display =
                 provider === 'default' ? 'none' : '';
+            loadEmbeddingModels(provider);
         }
+
+        // ページロード時に現在のプロバイダーのモデルを先読み
+        (function() {
+            const sel = document.getElementById('embedding_provider');
+            if (sel.value && sel.value !== 'default') loadEmbeddingModels(sel.value);
+        })();
         </script>
 
         <div class="form-actions">

@@ -126,6 +126,15 @@ class BaseLLMProvider:
         """
         return []
 
+    @classmethod
+    async def list_embedding_models(cls, settings: dict) -> list[dict]:
+        """利用可能なEmbeddingモデル一覧を [{id, name}] 形式で返す。
+
+        APIキー未設定・取得不可の場合は空リストを返す。
+        Embeddingをサポートするプロバイダーのみオーバーライドすること。
+        """
+        return []
+
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """LLMから応答テキストを生成する（一括返却）。
 

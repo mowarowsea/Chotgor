@@ -400,3 +400,19 @@ async def get_provider_models(request: Request, provider_id: str):
     settings = request.app.state.sqlite.get_all_settings()
     models = await cls.list_models(settings)
     return JSONResponse({"models": models})
+
+
+@router.get("/providers/{provider_id}/embedding-models")
+async def get_provider_embedding_models(request: Request, provider_id: str):
+    """指定プロバイダーの利用可能な Embedding モデル一覧を取得して返す。
+
+    各プロバイダーの list_embedding_models() を呼び出す。
+    APIキー未設定・取得不可の場合は空リストを返す。
+    """
+    from backend.providers.registry import PROVIDER_REGISTRY
+    cls = PROVIDER_REGISTRY.get(provider_id)
+    if cls is None:
+        return JSONResponse({"models": []})
+    settings = request.app.state.sqlite.get_all_settings()
+    models = await cls.list_embedding_models(settings)
+    return JSONResponse({"models": models})
