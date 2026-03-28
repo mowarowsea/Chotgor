@@ -79,6 +79,13 @@
            ) }}
 
         {{ masked_api_key_input(
+               "openrouter_api_key",
+               "OpenRouter API Key",
+               "provider: openrouter — 多数のモデルにアクセス（モデルIDは provider/model 形式）",
+               "sk-or-... (leave blank to keep current)"
+           ) }}
+
+        {{ masked_api_key_input(
                "tavily_api_key",
                "Tavily API Key",
                "Optional — enables web_search tool",

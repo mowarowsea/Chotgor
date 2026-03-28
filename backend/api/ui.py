@@ -313,6 +313,7 @@ async def save_settings(
     openai_api_key: str = Form(""),
     xai_api_key: str = Form(""),
     google_api_key: str = Form(""),
+    openrouter_api_key: str = Form(""),
     tavily_api_key: str = Form(""),
     chronicle_time: str = Form("03:00"),
     enable_time_awareness: Optional[str] = Form(None),
@@ -335,6 +336,7 @@ async def save_settings(
         ("openai_api_key", openai_api_key),
         ("xai_api_key", xai_api_key),
         ("google_api_key", google_api_key),
+        ("openrouter_api_key", openrouter_api_key),
         ("tavily_api_key", tavily_api_key),
     ]:
         if value and set(value) != {"●"}:

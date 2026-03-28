@@ -21,6 +21,7 @@ from backend.providers.claude_cli_provider import ClaudeCliProvider
 from backend.providers.google_provider import GoogleProvider
 from backend.providers.ollama_provider import OllamaProvider
 from backend.providers.openai_provider import OpenAIProvider
+from backend.providers.openrouter_provider import OpenRouterProvider
 from backend.providers.xai_provider import XAIProvider
 
 PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
@@ -29,6 +30,7 @@ PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
     OpenAIProvider.PROVIDER_ID: OpenAIProvider,
     XAIProvider.PROVIDER_ID: XAIProvider,
     GoogleProvider.PROVIDER_ID: GoogleProvider,
+    OpenRouterProvider.PROVIDER_ID: OpenRouterProvider,
     OllamaProvider.PROVIDER_ID: OllamaProvider,
 }
 
@@ -39,11 +41,12 @@ PROVIDER_LABELS: dict[str, str] = {
     "openai": "OpenAI",
     "xai": "xAI / Grok",
     "google": "Google Gemini",
+    "openrouter": "OpenRouter",
     "ollama": "Ollama (ローカル)",
 }
 
 # Display order in the UI
-PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "ollama"]
+PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "openrouter", "ollama"]
 
 
 def get_default_model(provider_id: str) -> str:
