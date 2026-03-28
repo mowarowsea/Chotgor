@@ -2,18 +2,18 @@
 
 import pytest
 
-from backend.core.providers.anthropic_provider import AnthropicProvider
-from backend.core.providers.claude_cli_provider import (
+from backend.providers.anthropic_provider import AnthropicProvider
+from backend.providers.claude_cli_provider import (
     ClaudeCliProvider,
     invoke_claude_cli,
     _parse_stream_json,
     _clean_env,
 )
-from backend.core.providers.google_provider import GoogleProvider
-from backend.core.providers.ollama_provider import OllamaProvider
-from backend.core.providers.openai_provider import OpenAIProvider
-from backend.core.providers.xai_provider import XAIProvider
-from backend.core.providers.registry import (
+from backend.providers.google_provider import GoogleProvider
+from backend.providers.ollama_provider import OllamaProvider
+from backend.providers.openai_provider import OpenAIProvider
+from backend.providers.xai_provider import XAIProvider
+from backend.providers.registry import (
     PROVIDER_LABELS,
     PROVIDER_ORDER,
     PROVIDER_REGISTRY,

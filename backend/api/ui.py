@@ -8,8 +8,8 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from ..core.embedding_migration_service import migrate_embeddings
-from ..core.providers.registry import (
+from backend.services.memory.migration_service import migrate_embeddings
+from backend.providers.registry import (
     PROVIDER_LABELS,
     PROVIDER_ORDER,
 )
@@ -166,8 +166,8 @@ async def update_character(request: Request, character_id: str):
 
 @router.post("/characters/{character_id}/delete")
 async def delete_character(request: Request, character_id: str):
-    request.app.state.chroma.delete_all_memories(character_id)
-    request.app.state.sqlite.delete_character(character_id)
+    """キャラクターと全記憶を削除する。ChromaDB・SQLite の順に削除する。"""
+    request.app.state.memory_manager.delete_character_with_memories(character_id)
     return RedirectResponse(url="/ui/", status_code=303)
 
 
@@ -352,12 +352,20 @@ async def save_settings(
         # APIキー保存後の最新値を使用する
         current_google_key = store.get_setting("google_api_key", "")
         try:
-            await migrate_embeddings(
-                request.app,
+            state = request.app.state
+            new_chroma, new_memory_manager, new_chat_service = await migrate_embeddings(
+                sqlite=state.sqlite,
+                old_chroma=state.chroma,
+                chroma_db_path=state.chroma_db_path,
+                drift_manager=state.drift_manager,
                 new_provider=embedding_provider,
                 new_model=embedding_model,
                 new_api_key=current_google_key,
             )
+            # マイグレーション後に app.state を新しいインスタンスで更新する
+            state.chroma = new_chroma
+            state.memory_manager = new_memory_manager
+            state.chat_service = new_chat_service
         except Exception:
             return RedirectResponse(url="/ui/settings?saved=1&migration_error=1", status_code=303)
 

@@ -1,9 +1,9 @@
-"""Tests for backend.core.web_fetch — URL detection and fetching."""
+"""Tests for backend.lib.web_fetch — URL detection and fetching."""
 
 import pytest
 import pytest_asyncio
 
-from backend.core.web_fetch import find_urls, fetch_urls
+from backend.lib.web_fetch import find_urls, fetch_urls
 
 
 class TestFindUrls:
@@ -60,7 +60,7 @@ class TestFetchUrls:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         monkeypatch.setattr(
-            "backend.core.web_fetch.httpx.AsyncClient",
+            "backend.lib.web_fetch.httpx.AsyncClient",
             lambda **kwargs: mock_client,
         )
 
@@ -85,7 +85,7 @@ class TestFetchUrls:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         monkeypatch.setattr(
-            "backend.core.web_fetch.httpx.AsyncClient",
+            "backend.lib.web_fetch.httpx.AsyncClient",
             lambda **kwargs: mock_client,
         )
 
@@ -107,7 +107,7 @@ class TestFetchUrls:
         )
 
         monkeypatch.setattr(
-            "backend.core.web_fetch.httpx.AsyncClient",
+            "backend.lib.web_fetch.httpx.AsyncClient",
             lambda **kwargs: mock_client,
         )
 

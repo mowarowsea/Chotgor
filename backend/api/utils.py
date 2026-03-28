@@ -7,8 +7,8 @@ session_to_dict / message_to_dict / char_to_dict を一元管理し、各エン�
 from datetime import datetime
 from typing import Optional
 
-from ..core.chat.content import build_1on1_history, build_message_content
-from ..core.memory.format import format_recalled_memories
+from backend.services.chat.content import build_1on1_history, build_message_content
+from backend.services.memory.format import format_recalled_memories
 
 __all__ = [
     "build_message_content",

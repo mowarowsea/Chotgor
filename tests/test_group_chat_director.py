@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.core.group_chat.director import (
+from backend.services.group_chat.director import (
     _build_director_messages,
     _parse_director_response,
     decide_next_speakers,
@@ -222,7 +222,7 @@ class TestDecideNextSpeakers:
         history = self._make_history([("user", "こんにちは")])
 
         with patch(
-            "backend.core.group_chat.director.create_provider",
+            "backend.services.group_chat.director.create_provider",
             return_value=self._make_provider_mock("[はる]"),
         ):
             result = await decide_next_speakers(
@@ -248,7 +248,7 @@ class TestDecideNextSpeakers:
         history = self._make_history([("user", "みんな聞いてる？")])
 
         with patch(
-            "backend.core.group_chat.director.create_provider",
+            "backend.services.group_chat.director.create_provider",
             return_value=self._make_provider_mock("[はる, Chotgor君]"),
         ):
             result = await decide_next_speakers(
@@ -270,7 +270,7 @@ class TestDecideNextSpeakers:
         history = self._make_history([("user", "ありがとう")])
 
         with patch(
-            "backend.core.group_chat.director.create_provider",
+            "backend.services.group_chat.director.create_provider",
             return_value=self._make_provider_mock("[]"),
         ):
             result = await decide_next_speakers(
@@ -298,7 +298,7 @@ class TestDecideNextSpeakers:
         mock_provider.generate = AsyncMock(side_effect=Exception("Connection refused"))
 
         with patch(
-            "backend.core.group_chat.director.create_provider",
+            "backend.services.group_chat.director.create_provider",
             return_value=mock_provider,
         ):
             result = await decide_next_speakers(
@@ -323,7 +323,7 @@ class TestDecideNextSpeakers:
         mock_provider.generate = AsyncMock(side_effect=asyncio.TimeoutError())
 
         with patch(
-            "backend.core.group_chat.director.create_provider",
+            "backend.services.group_chat.director.create_provider",
             return_value=mock_provider,
         ):
             result = await decide_next_speakers(
@@ -349,7 +349,7 @@ class TestDecideNextSpeakers:
         history = self._make_history([("user", "こんにちは")])
 
         with patch(
-            "backend.core.group_chat.director.create_provider",
+            "backend.services.group_chat.director.create_provider",
             return_value=self._make_provider_mock("[幻のキャラクター]"),
         ):
             result = await decide_next_speakers(
@@ -379,7 +379,7 @@ class TestDecideNextSpeakers:
         history[1].character_name = "はる"
 
         with patch(
-            "backend.core.group_chat.director.create_provider",
+            "backend.services.group_chat.director.create_provider",
             return_value=self._make_provider_mock("[Chotgor君]"),
         ):
             result = await decide_next_speakers(

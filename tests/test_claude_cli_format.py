@@ -2,7 +2,7 @@
 
 import pytest
 
-from backend.core.providers.claude_cli_provider import _format_conversation
+from backend.providers.claude_cli_provider import _format_conversation
 
 
 class TestFormatConversation:

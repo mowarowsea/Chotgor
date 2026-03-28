@@ -1,7 +1,7 @@
 import pytest
 import os
 import tempfile
-from backend.core.memory.sqlite_store import SQLiteStore
+from backend.repositories.sqlite.store import SQLiteStore
 
 @pytest.fixture
 def sqlite_store():

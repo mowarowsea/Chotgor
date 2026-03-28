@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..core.memory.chronicle import run_chronicle
+from backend.batch.chronicle_job import run_chronicle
 
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 
@@ -44,7 +44,7 @@ async def delete_memory(request: Request, character_id: str, memory_id: str):
 @router.post("/{character_id}/{memory_id}/restore", status_code=200)
 async def restore_memory(request: Request, character_id: str, memory_id: str):
     """Restore a soft-deleted memory."""
-    ok = request.app.state.sqlite.restore_memory(memory_id)
+    ok = request.app.state.memory_manager.restore_memory(memory_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Memory not found")
     return {"status": "restored"}

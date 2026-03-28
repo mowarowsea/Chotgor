@@ -2,9 +2,9 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from backend.core.memory.sqlite_store import Memory
-from backend.core.memory.manager import MemoryManager
-from backend.core.memory.forget import run_forget_process
+from backend.repositories.sqlite.store import Memory
+from backend.services.memory.manager import MemoryManager
+from backend.batch.forget_job import run_forget_process
 
 @pytest.fixture
 def memory_manager(sqlite_store):
@@ -146,13 +146,14 @@ async def test_forget_default_keeps_all_when_no_delete(sqlite_store):
     char_id = "char-keep-all"
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2", "m3"])
 
-    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="何も手放しません。")):
+    with patch("backend.batch.forget_job._call_llm_for_forget", new=AsyncMock(return_value="何も手放しません。")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
             character_system_prompt="You are TestChar.",
             memory_manager=manager,
             sqlite=sqlite_store,
+            settings={},
             threshold=1.0,
         )
 
@@ -174,13 +175,14 @@ async def test_forget_deletes_only_explicitly_listed(sqlite_store):
     char_id = "char-partial-delete"
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2", "m3"])
 
-    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: m2]")):
+    with patch("backend.batch.forget_job._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: m2]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
             character_system_prompt="You are TestChar.",
             memory_manager=manager,
             sqlite=sqlite_store,
+            settings={},
             threshold=1.0,
         )
 
@@ -201,13 +203,14 @@ async def test_forget_delete_none_keeps_all(sqlite_store):
     char_id = "char-delete-none"
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
 
-    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: NONE]")):
+    with patch("backend.batch.forget_job._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: NONE]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
             character_system_prompt="You are TestChar.",
             memory_manager=manager,
             sqlite=sqlite_store,
+            settings={},
             threshold=1.0,
         )
 
@@ -222,13 +225,14 @@ async def test_forget_parse_failure_keeps_all(sqlite_store):
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
 
     garbled = "うーん、どれも大切かな... KEEP m1 DELETE maybe m2??"
-    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value=garbled)):
+    with patch("backend.batch.forget_job._call_llm_for_forget", new=AsyncMock(return_value=garbled)):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
             character_system_prompt="You are TestChar.",
             memory_manager=manager,
             sqlite=sqlite_store,
+            settings={},
             threshold=1.0,
         )
 
@@ -250,13 +254,14 @@ async def test_forget_kept_memories_have_updated_last_accessed_at(sqlite_store):
 
     old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
 
-    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: NONE]")):
+    with patch("backend.batch.forget_job._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: NONE]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
             character_system_prompt="You are TestChar.",
             memory_manager=manager,
             sqlite=sqlite_store,
+            settings={},
             threshold=1.0,
         )
 
@@ -280,13 +285,14 @@ async def test_forget_deleted_memories_do_not_update_last_accessed_at(sqlite_sto
 
     old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
 
-    with patch("backend.core.memory.forget._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: m1]")):
+    with patch("backend.batch.forget_job._call_llm_for_forget", new=AsyncMock(return_value="[DELETE: m1]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
             character_system_prompt="You are TestChar.",
             memory_manager=manager,
             sqlite=sqlite_store,
+            settings={},
             threshold=1.0,
         )
 

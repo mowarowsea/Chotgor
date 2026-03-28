@@ -13,10 +13,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core.chat.indexer import get_participant_char_ids, index_message_sync
-from ..core.group_chat.service import run_group_turn
-from .resource_resolver import parse_model_id, require_character, require_preset
-from .utils import message_to_dict, session_to_dict
+from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
+from backend.services.group_chat.service import run_group_turn
+from backend.api.resource_resolver import parse_model_id, require_character, require_preset
+from backend.api.utils import message_to_dict, session_to_dict
 
 router = APIRouter(prefix="/api/group", tags=["group_chat"])
 

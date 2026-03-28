@@ -1,4 +1,4 @@
-"""backend.core.memory.inscriber モジュールのユニットテスト。
+"""backend.character_actions.inscriber モジュールのユニットテスト。
 
 [INSCRIBE_MEMORY:category|impact|content] マーカーの抽出・除去・書き込みを検証する。
 Inscriber クラスのタグ方式（inscribe_memory_from_text）と
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from backend.core.memory.inscriber import (
+from backend.character_actions.inscriber import (
     _extract,
     Inscriber,
     INSCRIBE_MEMORY_SCHEMA,

@@ -5,7 +5,7 @@ write_memoryのupsertロジック（Issue #50）を中心にテストする。
 """
 from unittest.mock import MagicMock, patch
 import pytest
-from backend.core.memory.manager import MemoryManager
+from backend.services.memory.manager import MemoryManager
 
 @pytest.fixture
 def mock_chroma():
@@ -22,7 +22,7 @@ def mock_chroma():
 @pytest.fixture
 def manager(sqlite_store, mock_chroma):
     """MemoryManagerのフィクスチャ。"""
-    import backend.core.memory.manager
+    import backend.services.memory.manager
     return MemoryManager(sqlite=sqlite_store, chroma=mock_chroma)
 
 

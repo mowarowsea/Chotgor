@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from backend.core.memory.drift_manager import DriftManager
+from backend.services.memory.drift_manager import DriftManager
 
 
 # --- TestSessionDriftCRUD ---

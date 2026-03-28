@@ -6,8 +6,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from .schemas import CharacterCreate, CharacterUpdate
-from .utils import char_to_dict
+from backend.api.schemas import CharacterCreate, CharacterUpdate
+from backend.api.utils import char_to_dict
 
 router = APIRouter(prefix="/api/characters", tags=["characters"])
 
@@ -67,8 +67,7 @@ async def get_character_image(request: Request, character_id: str):
 
 @router.delete("/{character_id}", status_code=204)
 async def delete_character(request: Request, character_id: str):
-    # Also clean up ChromaDB memories
-    request.app.state.chroma.delete_all_memories(character_id)
-    ok = request.app.state.sqlite.delete_character(character_id)
+    """キャラクターと全記憶を削除する。ChromaDB・SQLite の順に削除する。"""
+    ok = request.app.state.memory_manager.delete_character_with_memories(character_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Character not found")

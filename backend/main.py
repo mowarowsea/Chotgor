@@ -12,17 +12,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .adapters.openai import router as openai_router
-from .api import characters, memories, chat as chat_module, chat_images as chat_images_module, chat_drifts as chat_drifts_module, group_chat as group_chat_module
-from .api import ui as ui_module
-from .core.chat.service import ChatService
-from .core.log_context import setup_logging
-from .core.memory.chroma_store import ChromaStore
-from .core.memory.chronicle import run_pending_chronicles
-from .core.memory.drift_manager import DriftManager
-from .core.memory.forget import run_pending_forget
-from .core.memory.manager import MemoryManager
-from .core.memory.sqlite_store import SQLiteStore
+from backend.adapters.openai import router as openai_router
+from backend.api import characters, memories, chat as chat_module, chat_images as chat_images_module, chat_drifts as chat_drifts_module, group_chat as group_chat_module
+from backend.api import ui as ui_module
+from backend.services.chat.service import ChatService
+from backend.lib.log_context import setup_logging
+from backend.repositories.chroma.store import ChromaStore
+from backend.batch.chronicle_job import run_pending_chronicles
+from backend.services.memory.drift_manager import DriftManager
+from backend.batch.forget_job import run_pending_forget
+from backend.services.memory.manager import MemoryManager
+from backend.repositories.sqlite.store import SQLiteStore
 
 load_dotenv()
 

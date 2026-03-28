@@ -1,4 +1,4 @@
-"""backend.core.memory.carver モジュールのユニットテスト。
+"""backend.character_actions.carver モジュールのユニットテスト。
 
 [CARVE_NARRATIVE:mode|content] マーカーの抽出・除去・inner_narrative への彫り込みを検証する。
 Carver クラスのタグ方式（carve_narrative_from_text）と
@@ -8,7 +8,7 @@ Carver クラスのタグ方式（carve_narrative_from_text）と
 import pytest
 from unittest.mock import MagicMock
 
-from backend.core.memory.carver import (
+from backend.character_actions.carver import (
     Carver,
     CARVE_NARRATIVE_SCHEMA,
     CARVE_NARRATIVE_TAG_GUIDE,
@@ -219,7 +219,7 @@ class TestToolExecutorCarveNarrative:
 
     def test_carve_narrative_append_calls_sqlite_update(self, sqlite_store, char_id):
         """carve_narrative ツールが sqlite_store.update_character を呼び出すこと。"""
-        from backend.core.tools import ToolExecutor
+        from backend.character_actions.executor import ToolExecutor
 
         mm = MagicMock()
         mm.sqlite = sqlite_store
@@ -240,7 +240,7 @@ class TestToolExecutorCarveNarrative:
 
     def test_carve_narrative_empty_content_returns_error(self, sqlite_store, char_id):
         """content が空の場合、エラーメッセージを返すこと。"""
-        from backend.core.tools import ToolExecutor
+        from backend.character_actions.executor import ToolExecutor
 
         mm = MagicMock()
         mm.sqlite = sqlite_store

@@ -17,30 +17,16 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..core.chat.indexer import get_participant_char_ids, index_message_sync
-from ..core.chat.models import ChatRequest, Message
-from ..core.debug_logger import logger
-from ..core.log_context import new_message_id
-from ..core.time_awareness import compute_time_awareness
-from .resource_resolver import parse_model_id, require_character, require_preset, require_model_config
-from .utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
+from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
+from backend.services.chat.models import ChatRequest, Message
+from backend.lib.debug_logger import logger
+from backend.lib.log_context import new_message_id
+from backend.lib.time_awareness import compute_time_awareness
+from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
+from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
+from backend.character_actions.exiter import build_exit_message
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-
-def _build_exit_message(char_name: str, reason: str) -> str:
-    """退席通知テキストを生成する。
-
-    Args:
-        char_name: 退席するキャラクター名。
-        reason: 退席理由。空文字列の場合は理由なし。
-
-    Returns:
-        「{char_name}は退席しました。[理由: {reason}]」形式のテキスト。
-    """
-    if reason:
-        return f"{char_name}は退席しました。理由: {reason}"
-    return f"{char_name}は退席しました。"
 
 
 def _build_all_exited_message(exited_chars: list[dict]) -> str:
@@ -52,7 +38,7 @@ def _build_all_exited_message(exited_chars: list[dict]) -> str:
     Returns:
         各退席者の退席メッセージを改行で連結したテキスト。
     """
-    lines = [_build_exit_message(e["char_name"], e.get("reason", "")) for e in exited_chars]
+    lines = [build_exit_message(e["char_name"], e.get("reason", "")) for e in exited_chars]
     lines.append("（チャットを再開するには新しいセッションを作成してください）")
     return "\n".join(lines)
 
@@ -166,6 +152,8 @@ async def _build_chat_request(
         model=preset.model_id,
         messages=messages,
         character_system_prompt=character.system_prompt_block1,
+        self_history=character.self_history,
+        relationship_state=character.relationship_state,
         inner_narrative=character.inner_narrative,
         provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",

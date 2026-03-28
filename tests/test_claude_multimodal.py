@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from backend.core.providers.claude_cli_provider import ClaudeCliProvider, _format_conversation
+from backend.providers.claude_cli_provider import ClaudeCliProvider, _format_conversation
 
 @pytest.mark.asyncio
 async def test_claude_cli_provider_image_note():
@@ -15,7 +15,7 @@ async def test_claude_cli_provider_image_note():
         }
     ]
     
-    with patch("backend.core.providers.claude_cli_provider._run_claude") as mock_run:
+    with patch("backend.providers.claude_cli_provider._run_claude") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=b'{"type":"assistant","message":{"content":[{"type":"text","text":"I see text"}]}}')
         
         # We want to check if the generated system_prompt contains the note.

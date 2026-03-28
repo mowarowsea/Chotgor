@@ -1,4 +1,4 @@
-"""backend.core.chat.switcher モジュールのユニットテスト。
+"""backend.character_actions.switcher モジュールのユニットテスト。
 
 Switcher クラスの タグ方式（switch_from_text）・ツール呼び出し方式（switch_angle）
 の両方を網羅的に検証する。
@@ -13,7 +13,7 @@ Switcher クラスの タグ方式（switch_from_text）・ツール呼び出し
 
 import pytest
 
-from backend.core.chat.switcher import Switcher
+from backend.character_actions.switcher import Switcher
 
 
 class TestSwitcherFromTextBasic:

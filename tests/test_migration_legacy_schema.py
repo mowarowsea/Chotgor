@@ -16,7 +16,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from backend.core.memory.sqlite_store import SQLiteStore
+from backend.repositories.sqlite.store import SQLiteStore
 
 
 # ---------------------------------------------------------------------------

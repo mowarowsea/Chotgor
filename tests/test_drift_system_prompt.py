@@ -1,10 +1,10 @@
-"""backend.core.system_prompt の active_drifts 対応テスト。
+"""backend.services.chat.request_builder の active_drifts 対応テスト。
 
 test_system_prompt.py と同じスタイルで、SELF_DRIFT ブロックの
 挿入・非挿入・内容・位置を検証する独立ファイル。
 """
 
-from backend.core.system_prompt import build_system_prompt, CHOTGOR_SELF_DRIFT_GUIDE
+from backend.services.chat.request_builder import build_system_prompt, CHOTGOR_SELF_DRIFT_GUIDE
 
 
 def test_no_active_drifts_does_not_include_self_drift_block():

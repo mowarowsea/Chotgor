@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from backend.core.group_chat.context import format_group_history_for_character
+from backend.services.group_chat.context import format_group_history_for_character
 
 
 def _msg(role: str, content: str, character_name: str | None = None):

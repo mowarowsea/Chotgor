@@ -20,10 +20,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.core.chat.models import ChatRequest, Message
-from backend.core.chat.service import ChatService
-from backend.core.system_prompt import _build_switch_angle_block, build_system_prompt
-from backend.core.tools import ANTHROPIC_TOOLS, OPENAI_TOOLS, ToolCall, ToolExecutor, ToolTurnResult
+from backend.services.chat.models import ChatRequest, Message
+from backend.services.chat.service import ChatService
+from backend.services.chat.request_builder import _build_switch_angle_block, build_system_prompt
+from backend.character_actions.executor import ANTHROPIC_TOOLS, OPENAI_TOOLS, ToolCall, ToolExecutor, ToolTurnResult
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ class TestGenerateWithToolsSwitchBreak:
 
     def _make_provider(self, turn_results):
         """指定した ToolTurnResult を順に返すモックプロバイダーを生成するヘルパー。"""
-        from backend.core.providers.base import BaseLLMProvider
+        from backend.providers.base import BaseLLMProvider
 
         class MockProvider(BaseLLMProvider):
             SUPPORTS_TOOLS = True
@@ -394,15 +394,15 @@ class TestChatServiceExecuteWithSwitch:
                 return second_provider
             return first_provider
 
-        monkeypatch.setattr("backend.core.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.core.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.core.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
         mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-        monkeypatch.setattr("backend.core.chat.service.Inscriber", lambda *_: mock_inscriber)
-        monkeypatch.setattr("backend.core.chat.service.Carver", lambda *_: mock_carver)
+        monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
+        monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
         service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
@@ -442,15 +442,15 @@ class TestChatServiceExecuteWithSwitch:
                 return second_provider
             return FirstProvider()
 
-        monkeypatch.setattr("backend.core.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.core.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.core.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
         mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-        monkeypatch.setattr("backend.core.chat.service.Inscriber", lambda *_: mock_inscriber)
-        monkeypatch.setattr("backend.core.chat.service.Carver", lambda *_: mock_carver)
+        monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
+        monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
         service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
@@ -466,15 +466,15 @@ class TestChatServiceExecuteWithSwitch:
         provider.SUPPORTS_TOOLS = False
         provider.generate = AsyncMock(return_value="本文[SWITCH_ANGLE:unknown|何か]")
 
-        monkeypatch.setattr("backend.core.chat.service.create_provider", lambda *a, **kw: provider)
-        monkeypatch.setattr("backend.core.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.core.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat.service.create_provider", lambda *a, **kw: provider)
+        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
         mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-        monkeypatch.setattr("backend.core.chat.service.Inscriber", lambda *_: mock_inscriber)
-        monkeypatch.setattr("backend.core.chat.service.Carver", lambda *_: mock_carver)
+        monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
+        monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
         service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
@@ -522,15 +522,15 @@ class TestChatServiceExecuteStreamWithSwitch:
                 return second_provider
             return first_provider
 
-        monkeypatch.setattr("backend.core.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.core.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.core.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
         mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-        monkeypatch.setattr("backend.core.chat.service.Inscriber", lambda *_: mock_inscriber)
-        monkeypatch.setattr("backend.core.chat.service.Carver", lambda *_: mock_carver)
+        monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
+        monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
         service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
         request = _make_request(
@@ -579,15 +579,15 @@ class TestChatServiceExecuteStreamWithSwitch:
                 return second_provider
             return first_provider
 
-        monkeypatch.setattr("backend.core.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.core.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.core.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
         mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-        monkeypatch.setattr("backend.core.chat.service.Inscriber", lambda *_: mock_inscriber)
-        monkeypatch.setattr("backend.core.chat.service.Carver", lambda *_: mock_carver)
+        monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
+        monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
         service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
@@ -621,15 +621,15 @@ class TestChatServiceExecuteStreamWithSwitch:
 
         provider.generate_stream_typed = typed_stream
 
-        monkeypatch.setattr("backend.core.chat.service.create_provider", lambda *a, **kw: provider)
-        monkeypatch.setattr("backend.core.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.core.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat.service.create_provider", lambda *a, **kw: provider)
+        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
         mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-        monkeypatch.setattr("backend.core.chat.service.Inscriber", lambda *_: mock_inscriber)
-        monkeypatch.setattr("backend.core.chat.service.Carver", lambda *_: mock_carver)
+        monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
+        monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
         service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
         # available_presets が空 = switch 無効

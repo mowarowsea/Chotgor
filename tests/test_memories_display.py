@@ -13,8 +13,8 @@ from backend.adapters.openai.router import (
     _format_memories_display,
     _sse_chunk_reasoning,
 )
-from backend.core.chat.models import ChatRequest, Message
-from backend.core.chat.service import ChatService
+from backend.services.chat.models import ChatRequest, Message
+from backend.services.chat.service import ChatService
 
 
 # ---------------------------------------------------------------------------
@@ -187,11 +187,11 @@ async def test_execute_stream_yields_memories_first():
     service = ChatService(memory_manager=memory_manager)
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
+        patch("backend.services.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -213,11 +213,11 @@ async def test_execute_stream_no_memories_chunk_when_empty():
     service = ChatService(memory_manager=memory_manager)
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
+        patch("backend.services.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -246,11 +246,11 @@ async def test_execute_stream_yields_text_last():
     provider.generate_stream_typed = _typed_with_thinking
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -279,11 +279,11 @@ async def test_execute_stream_thinking_chunks_yielded():
     provider.generate_stream_typed = _typed
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.core.chat.service.Carver", return_value=_mock_carver_passthrough()),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
+        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -327,11 +327,11 @@ async def test_execute_stream_text_is_cleaned_by_inscribe_memory_from_text():
     mock_carver.carve_narrative_from_text.side_effect = lambda text: text
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.Inscriber", return_value=mock_inscriber),
-        patch("backend.core.chat.service.Carver", return_value=mock_carver),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
+        patch("backend.services.chat.service.Carver", return_value=mock_carver),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -359,9 +359,9 @@ async def test_execute_stream_provider_error_yields_error_text():
     provider.generate_stream_typed = _failing_stream
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -391,9 +391,9 @@ async def test_execute_stream_with_tools_yields_text():
     fake_provider.generate_with_tools = AsyncMock(return_value="ツール経由の返答")
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -419,9 +419,9 @@ async def test_execute_stream_with_tools_error_yields_error_text():
     fake_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("tools boom"))
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         chunks = await _collect_stream(service, request)
 

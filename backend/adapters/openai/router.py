@@ -11,14 +11,16 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from ...api.resource_resolver import parse_model_id, resolve_character, resolve_preset, require_model_config
-from ...core.chat.models import ChatRequest, Message
-from ...core.chat.service import extract_text_content
-from ...core.debug_logger import logger
-from ...core.log_context import new_message_id
-from ...core.providers.registry import PROVIDER_LABELS
-from ...core.time_awareness import compute_time_awareness
-from .schemas import OAIChatRequest
+from backend.api.resource_resolver import parse_model_id, resolve_character, resolve_preset, require_model_config
+from backend.services.chat.models import ChatRequest, Message
+from backend.services.chat.service import extract_text_content
+from backend.lib.debug_logger import logger
+from backend.lib.log_context import new_message_id
+from backend.providers.registry import PROVIDER_LABELS
+from backend.lib.time_awareness import compute_time_awareness
+from backend.adapters.openai.schemas import OAIChatRequest
+from backend.services.memory.format import format_recalled_memories
+from backend.character_actions.exiter import build_exit_message
 
 router = APIRouter()
 
@@ -66,7 +68,6 @@ def _sse_chunk_reasoning(text: str) -> str:
 
 def _format_memories_display(recalled: list) -> str:
     """想起した記憶リストを思考ブロック内表示用テキストにフォーマットする。"""
-    from ...core.memory.format import format_recalled_memories
     return format_recalled_memories(recalled)
 
 
@@ -159,7 +160,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
                 exclude_session_id=session_id,
             )
             if prev_session_id:
-                from ...core.chat.content import build_1on1_history
+                from backend.services.chat.content import build_1on1_history
                 afterglow_raw = state.sqlite.get_recent_turns(prev_session_id, n_turns=5)
                 uploads_dir = getattr(state, "uploads_dir", "")
                 afterglow_msgs = build_1on1_history(afterglow_raw, state.sqlite, uploads_dir)
@@ -210,12 +211,10 @@ async def chat_completions(request: Request, body: OAIChatRequest):
                         yield _sse_chunk(content)
                 elif chunk_type == "session_exit":
                     # 退席メッセージをアシスタントテキストとして送信する
-                    char_name = content.get("char_name", "")
-                    reason = content.get("reason", "")
-                    if reason:
-                        sys_text = f"{char_name}は退席しました。理由: {reason}"
-                    else:
-                        sys_text = f"{char_name}は退席しました。"
+                    sys_text = build_exit_message(
+                        content.get("char_name", ""),
+                        content.get("reason", ""),
+                    )
                     yield _sse_chunk(sys_text)
             yield "data: [DONE]\n\n"
 

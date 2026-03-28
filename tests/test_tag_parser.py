@@ -1,10 +1,10 @@
-"""backend.core.tag_parser モジュールのユニットテスト。
+"""backend.lib.tag_parser モジュールのユニットテスト。
 
 parse_tags() の文字単位パーサーを網羅的に検証する。
 特に正規表現ベースの旧実装では対処できなかったエッジケースを重点的にテストする。
 """
 
-from backend.core.tag_parser import StreamingTagStripper, TagMatch, parse_tags
+from backend.lib.tag_parser import StreamingTagStripper, TagMatch, parse_tags
 
 
 # ─── 基本動作 ──────────────────────────────────────────────────────────────────

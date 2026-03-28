@@ -1,4 +1,4 @@
-"""backend.core.chat.service と backend.core.chat.models のテスト。
+"""backend.services.chat.service と backend.services.chat.models のテスト。
 
 ChatService のフロー全体を検証する:
 - SUPPORTS_TOOLS=False パス: Inscriber.inscribe_memory_from_text / Carver.carve_narrative_from_text 経由
@@ -8,8 +8,8 @@ ChatService のフロー全体を検証する:
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.core.chat.models import ChatRequest, Message
-from backend.core.chat.service import ChatService, extract_text_content
+from backend.services.chat.models import ChatRequest, Message
+from backend.services.chat.service import ChatService, extract_text_content
 
 
 # --- extract_text_content (moved from test_llm_service_multimodal) ---
@@ -96,11 +96,11 @@ async def test_chat_service_execute_returns_text():
     mock_carver.carve_narrative_from_text.side_effect = lambda text: text
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.Inscriber", return_value=mock_inscriber),
-        patch("backend.core.chat.service.Carver", return_value=mock_carver),
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
+        patch("backend.services.chat.service.Carver", return_value=mock_carver),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -127,9 +127,9 @@ async def test_chat_service_execute_provider_error_returns_error_string():
     fake_provider.generate = AsyncMock(side_effect=RuntimeError("oops"))
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -162,9 +162,9 @@ async def test_chat_service_execute_with_tools_returns_text():
     fake_provider.generate_with_tools = AsyncMock(return_value="Hi via tools!")
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -193,9 +193,9 @@ async def test_chat_service_execute_with_tools_error_returns_error_string():
     fake_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("tools oops"))
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -217,8 +217,8 @@ def _make_tool_provider(turn_results: list):
     Returns:
         BaseLLMProvider サブクラスのインスタンス。
     """
-    from backend.core.providers.base import BaseLLMProvider
-    from backend.core.tools import ToolTurnResult
+    from backend.providers.base import BaseLLMProvider
+    from backend.character_actions.executor import ToolTurnResult
 
     class FakeToolProvider(BaseLLMProvider):
         """テスト用ツール対応プロバイダー。"""
@@ -248,7 +248,7 @@ async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
     サービス → generate_with_tools → ToolExecutor → inscribe_memory → memory_manager という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
     """
-    from backend.core.tools import ToolCall, ToolTurnResult
+    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -269,9 +269,9 @@ async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
     ])
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -290,7 +290,7 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
     サービス → generate_with_tools → ToolExecutor → carve_narrative → Carver → sqlite という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
     """
-    from backend.core.tools import ToolCall, ToolTurnResult
+    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -314,9 +314,9 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
     ])
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -330,7 +330,7 @@ async def test_execute_with_tools_calls_drift_manager():
     """SUPPORTS_TOOLS=True のプロバイダーが drift ツールを呼び出したとき、
     drift_manager.add_drift が実際に呼ばれること。
     """
-    from backend.core.tools import ToolCall, ToolTurnResult
+    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -352,9 +352,9 @@ async def test_execute_with_tools_calls_drift_manager():
     ])
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         result = await service.execute(request)
@@ -368,7 +368,7 @@ async def test_execute_with_tools_calls_drift_reset():
     """SUPPORTS_TOOLS=True のプロバイダーが drift_reset ツールを呼び出したとき、
     drift_manager.reset_drifts が実際に呼ばれること。
     """
-    from backend.core.tools import ToolCall, ToolTurnResult
+    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -390,9 +390,9 @@ async def test_execute_with_tools_calls_drift_reset():
     ])
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.create_provider", return_value=provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
         result = await service.execute(request)
@@ -429,12 +429,12 @@ async def test_execute_without_tools_does_not_use_tool_executor():
     mock_carver.carve_narrative_from_text.side_effect = lambda text: text
 
     with (
-        patch("backend.core.chat.service.create_provider", return_value=fake_provider),
-        patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-        patch("backend.core.chat.service.find_urls", return_value=[]),
-        patch("backend.core.chat.service.Inscriber", return_value=mock_inscriber),
-        patch("backend.core.chat.service.Carver", return_value=mock_carver),
-        patch("backend.core.chat.service.ToolExecutor") as mock_tool_executor_cls,
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+        patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
+        patch("backend.services.chat.service.Carver", return_value=mock_carver),
+        patch("backend.services.chat.service.ToolExecutor") as mock_tool_executor_cls,
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)

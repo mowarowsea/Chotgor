@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.core.memory.chronicle import run_chronicle, _parse_chronicle_response
-from backend.core.memory.forget import run_forget_process, _call_llm_for_forget
+from backend.batch.chronicle_job import run_chronicle, _parse_chronicle_response
+from backend.batch.forget_job import run_forget_process, _call_llm_for_forget
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ from backend.core.memory.forget import run_forget_process, _call_llm_for_forget
 def memory_manager(sqlite_store):
     """テスト用 MemoryManager（ChromaDB はモック）。"""
     from unittest.mock import MagicMock
-    from backend.core.memory.manager import MemoryManager
+    from backend.services.memory.manager import MemoryManager
     chroma = MagicMock()
     chroma.add_memory = MagicMock()
     chroma.delete_memory = MagicMock()
@@ -163,7 +163,7 @@ async def test_run_chronicle_no_update_when_llm_returns_no_update(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=no_update_response)
 
-    with patch("backend.core.memory.chronicle.create_provider", return_value=mock_provider):
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
         result = await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
@@ -195,7 +195,7 @@ async def test_run_chronicle_updates_fields_when_llm_requests_update(sqlite_stor
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=update_response)
 
-    with patch("backend.core.memory.chronicle.create_provider", return_value=mock_provider):
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
         result = await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
@@ -223,7 +223,7 @@ async def test_run_chronicle_uses_ghost_model_preset(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=no_update_response)
 
-    with patch("backend.core.memory.chronicle.create_provider", return_value=mock_provider) as mock_cp:
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider) as mock_cp:
         await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
@@ -245,14 +245,14 @@ async def test_run_chronicle_uses_ghost_model_preset(sqlite_store):
 async def test_call_llm_for_forget_no_ghost_model(sqlite_store):
     """ghost_model が None の場合に RuntimeError を送出することを確認する。"""
     with pytest.raises(RuntimeError, match="ghost_model"):
-        await _call_llm_for_forget("sys", "mem_text", None, sqlite_store)
+        await _call_llm_for_forget("sys", "mem_text", None, sqlite_store, {})
 
 
 @pytest.mark.asyncio
 async def test_call_llm_for_forget_unknown_preset(sqlite_store):
     """存在しないプリセット ID の場合に RuntimeError を送出することを確認する。"""
     with pytest.raises(RuntimeError, match="プリセット"):
-        await _call_llm_for_forget("sys", "mem_text", "nonexistent-id", sqlite_store)
+        await _call_llm_for_forget("sys", "mem_text", "nonexistent-id", sqlite_store, {})
 
 
 @pytest.mark.asyncio
@@ -264,13 +264,14 @@ async def test_call_llm_for_forget_uses_ghost_model_preset(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value="[KEEP: NONE]")
 
-    with patch("backend.core.memory.forget.create_provider", return_value=mock_provider) as mock_cp:
-        result = await _call_llm_for_forget("sys_prompt", "candidates text", preset_id, sqlite_store)
+    settings = sqlite_store.get_all_settings()
+    with patch("backend.batch.forget_job.create_provider", return_value=mock_provider) as mock_cp:
+        result = await _call_llm_for_forget("sys_prompt", "candidates text", preset_id, sqlite_store, settings)
 
     assert result == "[KEEP: NONE]"
     mock_cp.assert_called_once_with(
         "anthropic", "claude-3-5-haiku-latest",
-        sqlite_store.get_all_settings(),
+        settings,
         thinking_level="default",
     )
 
@@ -296,7 +297,7 @@ async def test_run_forget_process_error_when_no_ghost_model(sqlite_store, memory
         identity_importance=0.01,
     )
     with sqlite_store.get_session() as session:
-        from backend.core.memory.sqlite_store import Memory
+        from backend.repositories.sqlite.store import Memory
         m = session.query(Memory).filter_by(character_id=char_id).first()
         m.created_at = datetime.now() - timedelta(days=180)
         m.last_accessed_at = datetime.now() - timedelta(days=180)
@@ -308,6 +309,7 @@ async def test_run_forget_process_error_when_no_ghost_model(sqlite_store, memory
         character_system_prompt="You are TestChar.",
         memory_manager=memory_manager,
         sqlite=sqlite_store,
+        settings={},
         threshold=10.0,
         ghost_model=None,
     )

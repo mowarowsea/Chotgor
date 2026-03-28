@@ -1,9 +1,9 @@
-"""backend.core.system_prompt モジュールのテスト。
+"""backend.services.chat.request_builder モジュールのテスト。
 
 build_system_prompt() が各ブロックを正しく構築・配置することを検証する。
 """
 
-from backend.core.system_prompt import build_system_prompt
+from backend.services.chat.request_builder import build_system_prompt
 
 
 def test_build_system_prompt_basic():

@@ -306,7 +306,7 @@ class TestStreamMessage:
         memory_manager.recall_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("backend.core.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
+            mp.setattr("backend.lib.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
             client = TestClient(_make_app(sqlite, chat_service, memory_manager))
             res = client.post(
                 f"/api/chat/sessions/{sid}/messages/stream",
@@ -343,7 +343,7 @@ class TestStreamMessage:
         memory_manager.recall_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("backend.core.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
+            mp.setattr("backend.lib.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
             client = TestClient(_make_app(sqlite, chat_service, memory_manager))
             res = client.post(
                 f"/api/chat/sessions/{sid}/messages/stream",
@@ -429,7 +429,7 @@ class TestStreamMessage:
         memory_manager.recall_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("backend.core.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
+            mp.setattr("backend.lib.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
             client = TestClient(_make_app(sqlite, chat_service, memory_manager))
             client.post(
                 f"/api/chat/sessions/{sid}/messages/stream",

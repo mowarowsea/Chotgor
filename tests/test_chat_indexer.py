@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from backend.core.chat.indexer import get_participant_char_ids, index_message_sync
+from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 
 
 # ---------------------------------------------------------------------------

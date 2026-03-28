@@ -13,10 +13,10 @@ import pytest
 from unittest.mock import MagicMock
 from datetime import datetime
 
-from backend.core.chat.recaller import Recaller
-from backend.core.tag_parser import StreamingTagStripper
-from backend.core.memory.manager import MemoryManager
-from backend.core.system_prompt import build_system_prompt
+from backend.character_actions.recaller import Recaller
+from backend.lib.tag_parser import StreamingTagStripper
+from backend.services.memory.manager import MemoryManager
+from backend.services.chat.request_builder import build_system_prompt
 
 
 # ─── Recaller ─────────────────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ class TestFormatPowerRecallTurn:
 
     def test_記憶ヒットがターンに含まれる(self):
         """memories のコンテンツが Chotgor ターンに含まれること。"""
-        from backend.core.chat.recaller import format_power_recall_turn
+        from backend.character_actions.recaller import format_power_recall_turn
         results = {
             "memories": [
                 {"content": "コーヒーが好き", "distance": 0.1, "metadata": {"category": "user"}}
@@ -225,7 +225,7 @@ class TestFormatPowerRecallTurn:
 
     def test_チャットヒットのコンテキストがターンに含まれる(self):
         """chat_turns のコンテキストメッセージが Chotgor ターンに含まれること。"""
-        from backend.core.chat.recaller import format_power_recall_turn
+        from backend.character_actions.recaller import format_power_recall_turn
         results = {
             "memories": [],
             "chat_turns": [
@@ -248,14 +248,14 @@ class TestFormatPowerRecallTurn:
 
     def test_結果なしでも正常に動作する(self):
         """memories と chat_turns が空でも例外が発生しないこと。"""
-        from backend.core.chat.recaller import format_power_recall_turn
+        from backend.character_actions.recaller import format_power_recall_turn
         turn = format_power_recall_turn({"memories": [], "chat_turns": []}, "何か")
         assert "POWER_RECALL COMPLETE" in turn
         assert "見つかりませんでした" in turn
 
     def test_再検索禁止メッセージが含まれる(self):
         """生成されたターンに再検索禁止の指示が含まれること。"""
-        from backend.core.chat.recaller import format_power_recall_turn
+        from backend.character_actions.recaller import format_power_recall_turn
         turn = format_power_recall_turn({}, "クエリ")
         assert "禁止" in turn
 
@@ -273,7 +273,7 @@ class TestChatServicePowerRecallLoop:
 
     def _make_base_request(self, power_recalled=None):
         """テスト用 ChatRequest を生成する。"""
-        from backend.core.chat.models import ChatRequest, Message
+        from backend.services.chat.models import ChatRequest, Message
         return ChatRequest(
             character_id="char-1",
             character_name="はる",
@@ -310,17 +310,17 @@ class TestChatServicePowerRecallLoop:
         ループ防止条件（request.power_recalled が非空）が初回は適用されないことを確認する。
         """
         from unittest.mock import patch, AsyncMock
-        from backend.core.chat.service import ChatService
+        from backend.services.chat.service import ChatService
 
         mm = self._make_memory_manager()
         request = self._make_base_request(power_recalled={})
         provider = self._make_stream_provider("思い出してみる\n[POWER_RECALL:前に話した内容|3]")
 
         with (
-            patch("backend.core.chat.service.create_provider", return_value=provider),
-            patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-            patch("backend.core.chat.service.find_urls", return_value=[]),
-            patch("backend.core.chat.service.asyncio.to_thread", new=AsyncMock(
+            patch("backend.services.chat.service.create_provider", return_value=provider),
+            patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+            patch("backend.services.chat.service.find_urls", return_value=[]),
+            patch("backend.services.chat.service.asyncio.to_thread", new=AsyncMock(
                 return_value={"memories": [], "chat_turns": []}
             )),
         ):
@@ -345,10 +345,10 @@ class TestChatServicePowerRecallLoop:
         さらなる再呼び出しは発生しない。
         """
         from unittest.mock import patch, AsyncMock
-        from backend.core.chat.service import ChatService
-        from backend.core.memory.inscriber import Inscriber
-        from backend.core.memory.carver import Carver
-        from backend.core.chat.exiter import Exiter
+        from backend.services.chat.service import ChatService
+        from backend.character_actions.inscriber import Inscriber
+        from backend.character_actions.carver import Carver
+        from backend.character_actions.exiter import Exiter
 
         mm = self._make_memory_manager()
         # power_recalled が非空 = 再呼び出し中
@@ -363,11 +363,11 @@ class TestChatServicePowerRecallLoop:
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
 
         with (
-            patch("backend.core.chat.service.create_provider", return_value=provider),
-            patch("backend.core.chat.service.build_system_prompt", return_value="sys"),
-            patch("backend.core.chat.service.find_urls", return_value=[]),
-            patch("backend.core.chat.service.Inscriber", return_value=mock_inscriber),
-            patch("backend.core.chat.service.Carver", return_value=mock_carver),
+            patch("backend.services.chat.service.create_provider", return_value=provider),
+            patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+            patch("backend.services.chat.service.find_urls", return_value=[]),
+            patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
+            patch("backend.services.chat.service.Carver", return_value=mock_carver),
         ):
             service = ChatService(memory_manager=mm)
             events = [e async for e in service.execute_stream(request)]

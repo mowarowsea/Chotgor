@@ -8,7 +8,7 @@ from datetime import timedelta
 
 import pytest
 
-from backend.core.utils import format_time_delta
+from backend.lib.utils import format_time_delta
 
 
 # --- 数分以内（60秒未満かつm=0になるケース） ---
