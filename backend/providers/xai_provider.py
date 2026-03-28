@@ -38,3 +38,7 @@ class XAIProvider(OpenAIProvider):
     @classmethod
     def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "XAIProvider":
         return cls(api_key=settings.get("xai_api_key", ""), model=model, thinking_level=thinking_level)
+
+    # list_models は OpenAIProvider の実装をそのまま使う。
+    # cls._API_SETTINGS_KEY == "xai_api_key"、cls.BASE_URL == "https://api.x.ai/v1" が
+    # 自動的に参照されるため、オーバーライド不要。

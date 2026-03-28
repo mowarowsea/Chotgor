@@ -39,6 +39,35 @@ class GoogleProvider(BaseLLMProvider):
     def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "GoogleProvider":
         return cls(api_key=settings.get("google_api_key", ""), model=model, thinking_level=thinking_level)
 
+    @classmethod
+    async def list_models(cls, settings: dict) -> list[dict]:
+        """Google Generative Language API からモデル一覧を取得して返す。
+
+        generateContent をサポートするモデルのみ返す。
+        """
+        import httpx
+        api_key = settings.get("google_api_key", "")
+        if not api_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    params={"key": api_key},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            models = []
+            for m in data.get("models", []):
+                if "generateContent" not in m.get("supportedGenerationMethods", []):
+                    continue
+                # "models/gemini-2.0-flash" → "gemini-2.0-flash"
+                model_id = m["name"].removeprefix("models/")
+                models.append({"id": model_id, "name": m.get("displayName", model_id)})
+            return sorted(models, key=lambda m: m["id"])
+        except Exception:
+            return []
+
     def _build_contents(self, system_prompt: str, messages: list[dict]):
         """Google Gemini 用の contents リストを構築する内部ヘルパー。
 

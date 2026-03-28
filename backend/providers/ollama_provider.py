@@ -40,6 +40,23 @@ class OllamaProvider(BaseLLMProvider):
         timeout = int(settings.get("ollama_timeout", 60))
         return cls(base_url=base_url, model=model, timeout=timeout)
 
+    @classmethod
+    async def list_models(cls, settings: dict) -> list[dict]:
+        """ローカルOllamaサーバーからモデル一覧を取得して返す。"""
+        import httpx
+        base_url = settings.get("ollama_base_url", "http://localhost:11434").rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"{base_url}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+            return sorted(
+                [{"id": m["name"], "name": m["name"]} for m in data.get("models", [])],
+                key=lambda m: m["id"],
+            )
+        except Exception:
+            return []
+
     def _call_chat(self, prompt: str) -> str:
         """Ollama /api/chat エンドポイントを同期呼び出しして応答テキストを返す。
 

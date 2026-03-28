@@ -39,6 +39,29 @@ class OpenRouterProvider(OpenAIProvider):
     def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "OpenRouterProvider":
         return cls(api_key=settings.get("openrouter_api_key", ""), model=model, thinking_level=thinking_level)
 
+    @classmethod
+    async def list_models(cls, settings: dict) -> list[dict]:
+        """OpenRouter API からモデル一覧を取得して返す。"""
+        import httpx
+        api_key = settings.get("openrouter_api_key", "")
+        if not api_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{_OPENROUTER_BASE_URL}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            models = [
+                {"id": m["id"], "name": m.get("name", m["id"])}
+                for m in data.get("data", [])
+            ]
+            return sorted(models, key=lambda m: m["id"])
+        except Exception:
+            return []
+
     def _make_openai_client(self):
         """OpenRouterヘッダーを付加したOpenAIクライアントを返す。"""
         from openai import OpenAI

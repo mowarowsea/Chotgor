@@ -59,6 +59,29 @@ class AnthropicProvider(BaseLLMProvider):
     def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "AnthropicProvider":
         return cls(api_key=settings.get("anthropic_api_key", ""), model=model, thinking_level=thinking_level)
 
+    @classmethod
+    async def list_models(cls, settings: dict) -> list[dict]:
+        """Anthropic API からモデル一覧を取得して返す。"""
+        import httpx
+        api_key = settings.get("anthropic_api_key", "")
+        if not api_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            models = [
+                {"id": m["id"], "name": m.get("display_name", m["id"])}
+                for m in data.get("data", [])
+            ]
+            return sorted(models, key=lambda m: m["id"])
+        except Exception:
+            return []
+
     @_api_guard("anthropic")
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """Anthropic APIから応答テキストを一括生成する。"""

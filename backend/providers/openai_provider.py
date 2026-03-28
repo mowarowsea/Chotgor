@@ -40,6 +40,37 @@ class OpenAIProvider(BaseLLMProvider):
     def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "OpenAIProvider":
         return cls(api_key=settings.get("openai_api_key", ""), model=model, thinking_level=thinking_level)
 
+    @classmethod
+    async def list_models(cls, settings: dict) -> list[dict]:
+        """OpenAI API からチャット向けモデル一覧を取得して返す。"""
+        import httpx
+        api_key = settings.get(cls._API_SETTINGS_KEY, "")
+        base_url = getattr(cls, "BASE_URL", "https://api.openai.com/v1")
+        if not api_key:
+            return []
+        # チャット向けでないモデルを除外するキーワード
+        _EXCLUDE = (
+            "embedding", "whisper", "tts", "dall-e", "moderation",
+            "text-similarity", "text-search", "babbage", "davinci",
+            "ada", "curie", "instruct",
+        )
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            models = [
+                {"id": m["id"], "name": m.get("name", m["id"])}
+                for m in data.get("data", [])
+                if not any(kw in m["id"] for kw in _EXCLUDE)
+            ]
+            return sorted(models, key=lambda m: m["id"])
+        except Exception:
+            return []
+
     def _reasoning_effort(self) -> Optional[str]:
         """thinking_level に対応する reasoning_effort 文字列を返す。"""
         return self._REASONING_MAP.get(self.thinking_level)
