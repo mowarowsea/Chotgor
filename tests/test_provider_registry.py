@@ -29,7 +29,7 @@ from backend.providers.registry import (
 class TestProviderRegistry:
     def test_all_expected_providers_registered(self):
         assert set(PROVIDER_REGISTRY.keys()) == {
-            "claude_cli", "anthropic", "openai", "xai", "google", "ollama"
+            "claude_cli", "anthropic", "openai", "xai", "google", "ollama", "openrouter"
         }
 
     def test_provider_classes_are_correct(self):
