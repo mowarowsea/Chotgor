@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.batch.chronicle_job import run_chronicle, _parse_chronicle_response
+from backend.batch.chronicle_job import run_chronicle, run_pending_chronicles, _parse_chronicle_response
 from backend.batch.forget_job import run_forget_process, _call_llm_for_forget
 
 
@@ -316,3 +316,277 @@ async def test_run_forget_process_error_when_no_ghost_model(sqlite_store, memory
 
     assert result["status"] == "error"
     assert "ghost_model" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# chronicled_at フラグ — ユーティリティ
+# ---------------------------------------------------------------------------
+
+def _setup_char_with_messages(sqlite_store, char_name: str = "Alice", n_messages: int = 2):
+    """テスト用キャラクター・セッション・メッセージを一括作成するヘルパー。
+
+    Returns:
+        (char_id, session_id, message_ids, preset_id) のタプル。
+    """
+    preset_id = str(uuid.uuid4())
+    char_id = str(uuid.uuid4())
+    sqlite_store.create_model_preset(preset_id, "TestPreset", "google", "gemini-2.0-flash")
+    sqlite_store.create_character(char_id, char_name, ghost_model=preset_id)
+
+    session_id = str(uuid.uuid4())
+    sqlite_store.create_chat_session(session_id=session_id, model_id=f"{char_name}@default")
+
+    message_ids = []
+    for i in range(n_messages):
+        mid = str(uuid.uuid4())
+        role = "user" if i % 2 == 0 else "character"
+        sqlite_store.create_chat_message(
+            message_id=mid,
+            session_id=session_id,
+            role=role,
+            content=f"メッセージ {i}",
+            character_name=char_name if role == "character" else None,
+        )
+        message_ids.append(mid)
+
+    return char_id, session_id, message_ids, preset_id
+
+
+_NO_UPDATE_RESPONSE = (
+    '{"self_history": {"update": false, "text": null},'
+    ' "relationship_state": {"update": false, "text": null}}'
+)
+
+
+# ---------------------------------------------------------------------------
+# get_unchronicled_messages_for_character のテスト
+# ---------------------------------------------------------------------------
+
+def test_get_unchronicled_returns_new_messages(sqlite_store):
+    """新規メッセージ（chronicled_at IS NULL）がすべて返されることを確認する。"""
+    _, _, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=3)
+
+    messages = sqlite_store.get_unchronicled_messages_for_character("Alice")
+
+    assert {m.id for m in messages} == set(message_ids)
+
+
+def test_get_unchronicled_excludes_already_chronicled(sqlite_store):
+    """chronicled_at が設定済みのメッセージは除外されることを確認する。"""
+    _, _, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=3)
+    sqlite_store.mark_messages_as_chronicled([message_ids[0]])
+
+    messages = sqlite_store.get_unchronicled_messages_for_character("Alice")
+
+    ids = {m.id for m in messages}
+    assert message_ids[0] not in ids
+    assert message_ids[1] in ids
+    assert message_ids[2] in ids
+
+
+def test_get_unchronicled_excludes_system_messages(sqlite_store):
+    """is_system_message=True のメッセージは chronicled_at が NULL でも除外されることを確認する。"""
+    _, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=1)
+    sys_mid = str(uuid.uuid4())
+    sqlite_store.create_chat_message(
+        message_id=sys_mid,
+        session_id=session_id,
+        role="character",
+        content="退席しました",
+        is_system_message=True,
+    )
+
+    messages = sqlite_store.get_unchronicled_messages_for_character("Alice")
+
+    assert all(m.id != sys_mid for m in messages)
+
+
+def test_get_unchronicled_returns_empty_when_all_chronicled(sqlite_store):
+    """全メッセージが chronicled_at 設定済みの場合は空リストを返すことを確認する。"""
+    _, _, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    sqlite_store.mark_messages_as_chronicled(message_ids)
+
+    messages = sqlite_store.get_unchronicled_messages_for_character("Alice")
+
+    assert messages == []
+
+
+def test_get_unchronicled_filters_by_character(sqlite_store):
+    """別キャラクターのメッセージは返されないことを確認する。"""
+    _, _, alice_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    _setup_char_with_messages(sqlite_store, "Bob", n_messages=2)
+
+    alice_messages = sqlite_store.get_unchronicled_messages_for_character("Alice")
+
+    assert {m.id for m in alice_messages} == set(alice_ids)
+
+
+# ---------------------------------------------------------------------------
+# mark_messages_as_chronicled のテスト
+# ---------------------------------------------------------------------------
+
+def test_mark_messages_as_chronicled_sets_timestamp(sqlite_store):
+    """mark 後に chronicled_at が非 NULL のタイムスタンプになることを確認する。"""
+    _, session_id, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    sqlite_store.mark_messages_as_chronicled(message_ids)
+
+    msgs = sqlite_store.list_chat_messages(session_id)
+    for msg in msgs:
+        assert msg.chronicled_at is not None
+
+
+def test_mark_messages_as_chronicled_empty_list_is_noop(sqlite_store):
+    """空リストを渡してもエラーが発生しないことを確認する。"""
+    sqlite_store.mark_messages_as_chronicled([])  # 例外が出なければ OK
+
+
+def test_mark_messages_as_chronicled_is_idempotent(sqlite_store):
+    """同じメッセージを2回 mark しても問題ないことを確認する。"""
+    _, session_id, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=1)
+    sqlite_store.mark_messages_as_chronicled(message_ids)
+    sqlite_store.mark_messages_as_chronicled(message_ids)  # 2回目も例外が出なければ OK
+
+    msgs = sqlite_store.list_chat_messages(session_id)
+    assert all(m.chronicled_at is not None for m in msgs)
+
+
+# ---------------------------------------------------------------------------
+# run_chronicle: chronicled_at フラグの更新挙動テスト
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_chronicle_marks_messages_on_success(sqlite_store):
+    """chronicle 成功後、処理対象メッセージの chronicled_at が設定されることを確認する。"""
+    char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
+
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+
+    assert result["status"] == "success"
+    msgs = sqlite_store.list_chat_messages(session_id)
+    assert all(m.chronicled_at is not None for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_run_chronicle_does_not_mark_messages_on_llm_error(sqlite_store):
+    """LLM 呼び出し失敗時は chronicled_at が NULL のままであることを確認する。"""
+    char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(side_effect=Exception("network error"))
+
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+
+    assert result["status"] == "error"
+    msgs = sqlite_store.list_chat_messages(session_id)
+    assert all(m.chronicled_at is None for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_run_chronicle_does_not_mark_messages_on_json_parse_failure(sqlite_store):
+    """JSON パース失敗時は chronicled_at が NULL のままであることを確認する。"""
+    char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(return_value="これはJSONではありません")
+
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+
+    assert result["status"] == "error"
+    msgs = sqlite_store.list_chat_messages(session_id)
+    assert all(m.chronicled_at is None for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_run_chronicle_marks_even_when_no_field_updates(sqlite_store):
+    """LLM が update: false を返した場合でも chronicled_at はセットされることを確認する。"""
+    char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=1)
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
+
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+
+    assert result["status"] == "success"
+    assert result["updated_fields"] == []
+    msgs = sqlite_store.list_chat_messages(session_id)
+    assert all(m.chronicled_at is not None for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_run_chronicle_only_processes_unchronicled_messages(sqlite_store):
+    """既に chronicled_at が設定済みのメッセージは LLM への入力に含まれないことを確認する。"""
+    char_id, _, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=3)
+    # message_ids[0] を処理済みにする
+    sqlite_store.mark_messages_as_chronicled([message_ids[0]])
+
+    captured_prompt: list[str] = []
+
+    async def fake_generate(sys_prompt, messages):
+        captured_prompt.append(messages[0]["content"])
+        return _NO_UPDATE_RESPONSE
+
+    mock_provider = AsyncMock()
+    mock_provider.generate = fake_generate
+
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+        await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+
+    assert len(captured_prompt) == 1
+    assert "メッセージ 0" not in captured_prompt[0]
+    assert "メッセージ 1" in captured_prompt[0]
+    assert "メッセージ 2" in captured_prompt[0]
+
+
+@pytest.mark.asyncio
+async def test_run_chronicle_all_chronicled_still_calls_llm(sqlite_store):
+    """未処理メッセージがなくても LLM は呼ばれ（空会話として反芻）、success を返すことを確認する。"""
+    char_id, _, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    sqlite_store.mark_messages_as_chronicled(message_ids)
+
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
+
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+
+    assert result["status"] == "success"
+    mock_provider.generate.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# run_pending_chronicles: スケジューラー経由のフラグベース処理テスト
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_pending_chronicles_marks_unchronicled_messages(sqlite_store):
+    """run_pending_chronicles 実行後、全未処理メッセージの chronicled_at が設定されることを確認する。"""
+    _, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
+
+    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+        await run_pending_chronicles(sqlite=sqlite_store)
+
+    msgs = sqlite_store.list_chat_messages(session_id)
+    assert all(m.chronicled_at is not None for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_run_pending_chronicles_skips_chars_without_ghost_model(sqlite_store):
+    """ghost_model 未設定のキャラクターはスキップされ、エラーにならないことを確認する。"""
+    char_id = str(uuid.uuid4())
+    sqlite_store.create_character(char_id, "NoGhost")
+    session_id = str(uuid.uuid4())
+    sqlite_store.create_chat_session(session_id=session_id, model_id="NoGhost@default")
+    sqlite_store.create_chat_message(
+        message_id=str(uuid.uuid4()), session_id=session_id, role="user", content="hello"
+    )
+
+    # ghost_model なしのキャラクターのみの場合、例外なく完了すればよい
+    await run_pending_chronicles(sqlite=sqlite_store)  # 例外が出なければ OK
+
+    msgs = sqlite_store.list_chat_messages(session_id)
+    assert all(m.chronicled_at is None for m in msgs)
