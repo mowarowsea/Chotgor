@@ -18,9 +18,15 @@ _OPENROUTER_DEFAULT_HEADERS = {
 
 
 class OpenRouterProvider(OpenAIProvider):
-    """OpenRouter — OpenAI互換APIで多様なモデルにアクセスするプロバイダー。"""
+    """OpenRouter — OpenAI互換APIで多様なモデルにアクセスするプロバイダー。
+
+    OpenRouter はモデルによってtool use非対応のものがあるため、
+    タグベース処理（SUPPORTS_TOOLS=False）を使用する。
+    """
 
     PROVIDER_ID = "openrouter"
+    # OpenRouterはモデルによりtool use非対応のものがあるため、タグベース処理を使用する
+    SUPPORTS_TOOLS = False
     DEFAULT_MODEL = "openai/gpt-4o"
     _API_SETTINGS_KEY = "openrouter_api_key"
 

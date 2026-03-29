@@ -36,11 +36,14 @@ def _derive_session_id(character_id: str, messages: list) -> str:
 
 
 def _available_providers(settings: dict) -> set[str]:
-    """APIキーが設定済みのプロバイダーを返す (claude_cli は常に含む)。"""
+    """APIキーが設定済みのプロバイダーを返す (claude_cli は常に含む)。
+    settings の全キーを走査し `{provider}_api_key` 形式のものを自動検出するため、
+    新プロバイダー追加時もこの関数の変更は不要。
+    """
     result = {"claude_cli"}
-    for p in ("anthropic", "openai", "xai", "google"):
-        if settings.get(f"{p}_api_key"):
-            result.add(p)
+    for key, value in settings.items():
+        if key.endswith("_api_key") and value:
+            result.add(key.removesuffix("_api_key"))
     return result
 
 
