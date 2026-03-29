@@ -1,6 +1,5 @@
 """Memory management REST API."""
 
-from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -54,22 +53,20 @@ async def restore_memory(request: Request, character_id: str, memory_id: str):
 async def trigger_chronicle(
     request: Request,
     character_id: str,
-    target_date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to yesterday)"),
+    target_date: Optional[str] = Query(None, description="YYYY-MM-DD — 省略時は chronicled_at IS NULL のメッセージ全件を対象とする"),
 ):
     """指定キャラクターの chronicle 処理を手動実行する。
 
     self_history / relationship_state の更新をキャラクター自身に判断させる。
+    target_date を省略した場合、未処理（chronicled_at IS NULL）のメッセージをすべて対象とする。
     """
     char = request.app.state.sqlite.get_character(character_id)
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    if target_date is None:
-        target_date = (datetime.now() - timedelta(days=1)).date().isoformat()
-
     result = await run_chronicle(
         character_id=character_id,
-        target_date=target_date,
         sqlite=request.app.state.sqlite,
+        target_date=target_date,
     )
     return result

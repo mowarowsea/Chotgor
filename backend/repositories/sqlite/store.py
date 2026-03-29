@@ -84,6 +84,8 @@ class ChatMessage(Base):
     preset_name = Column(String, nullable=True)     # メッセージ送信時に使用したプリセット名
     # システムメッセージフラグ: 1=退席通知などのシステムメッセージ。NULLまたは0=通常メッセージ。
     is_system_message = Column(Integer, nullable=True)
+    # クロニクル処理日時: NULL=未処理、タイムスタンプあり=処理済み
+    chronicled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -285,6 +287,8 @@ class SQLiteStore(
                 "ALTER TABLE chat_sessions ADD COLUMN afterglow_session_id TEXT",
                 "ALTER TABLE chat_sessions ADD COLUMN exited_chars TEXT",
                 "ALTER TABLE chat_messages ADD COLUMN is_system_message INTEGER",
+                "ALTER TABLE chat_messages ADD COLUMN chronicled_at TIMESTAMP",
+                "UPDATE chat_messages SET chronicled_at = created_at WHERE chronicled_at IS NULL",
             ]:
                 try:
                     conn.execute(text(stmt))
