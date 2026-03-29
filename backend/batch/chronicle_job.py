@@ -116,20 +116,20 @@ def _parse_chronicle_response(response_text: str) -> dict:
 
 async def run_chronicle(
     character_id: str,
-    target_date: str,   # "YYYY-MM-DD"
     sqlite: SQLiteStore,
+    target_date: str | None = None,   # "YYYY-MM-DD" — 省略時は chronicled_at IS NULL で選択
     settings: dict | None = None,
 ) -> dict:
-    """指定日の chronicle 処理を実行する。
+    """chronicle 処理を実行する。
 
-    キャラクターの GhostModel に当日の会話を渡し、
+    キャラクターの GhostModel に会話を渡し、
     self_history / relationship_state の更新要否をキャラクター自身に判断させる。
     更新が必要なフィールドのみ SQLite に書き込む。
 
     Args:
         character_id: キャラクターの UUID。
-        target_date: 処理対象日 "YYYY-MM-DD"。
         sqlite: SQLiteStore インスタンス。
+        target_date: 処理対象日 "YYYY-MM-DD"。省略時は chronicled_at IS NULL のメッセージを対象とする。
         settings: グローバル設定辞書。省略時は SQLite から取得する。
 
     Returns:
@@ -149,11 +149,14 @@ async def run_chronicle(
     if preset is None:
         return {"status": "error", "error": f"ghost_model '{char.ghost_model}' が見つかりません"}
 
-    target_dt = datetime.fromisoformat(target_date)
-    date_start = target_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    date_end = date_start + timedelta(days=1)
+    if target_date is not None:
+        target_dt = datetime.fromisoformat(target_date)
+        date_start = target_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        date_end = date_start + timedelta(days=1)
+        messages = sqlite.get_messages_for_character_on_date(char.name, date_start, date_end)
+    else:
+        messages = sqlite.get_unchronicled_messages_for_character(char.name)
 
-    messages = sqlite.get_messages_for_character_on_date(char.name, date_start, date_end)
     conversation_text = _format_conversation(messages)
 
     prompt_text = _PROMPT_TEMPLATE.format(
@@ -171,7 +174,7 @@ async def run_chronicle(
             thinking_level=preset.thinking_level or "default",
         )
         llm_messages = [{"role": "user", "content": prompt_text}]
-        logger.debug("LLM呼び出し char=%s date=%s", char_label, target_date)
+        logger.debug("LLM呼び出し char=%s target_date=%s", char_label, target_date or "unchronicled")
         response_text = await provider.generate(char.system_prompt_block1, llm_messages)
     except Exception as e:
         logger.exception("エラー char=%s", char_label)
@@ -195,20 +198,23 @@ async def run_chronicle(
     if updates:
         sqlite.update_character(character_id, **updates)
 
+    if messages:
+        sqlite.mark_messages_as_chronicled([m.id for m in messages])
+
     logger.info("完了 char=%s updated=%s", char_label, list(updates.keys()) or "なし")
     return {"status": "success", "updated_fields": list(updates.keys())}
 
 
 async def run_pending_chronicles(sqlite: SQLiteStore) -> None:
-    """全キャラクターに対して昨日分の chronicle を実行する。
+    """全キャラクターに対して chronicle を実行する。
 
     _chronicle_scheduler から呼び出される。
+    chronicled_at IS NULL のメッセージが対象。
     ghost_model が設定されていないキャラクターはスキップする。
     各キャラクター処理時に message_id をセットしてログを追跡可能にする。
     """
     characters = sqlite.list_characters()
     targets = [c for c in characters if c.ghost_model]
-    yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
     settings = sqlite.get_all_settings()
 
     logger.info("開始 対象=%d キャラ", len(targets))
@@ -218,7 +224,6 @@ async def run_pending_chronicles(sqlite: SQLiteStore) -> None:
         try:
             await run_chronicle(
                 character_id=char.id,
-                target_date=yesterday,
                 sqlite=sqlite,
                 settings=settings,
             )

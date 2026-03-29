@@ -209,6 +209,46 @@ class ChatStoreMixin:
                 .all()
             )
 
+    def get_unchronicled_messages_for_character(self, character_name: str) -> list:
+        """chronicle 用: chronicled_at が NULL のメッセージを時系列で返す（スケジューラー用）。
+
+        Args:
+            character_name: キャラクター名。
+
+        Returns:
+            未処理メッセージ一覧（時系列昇順）。is_system_message=1 は除外。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ChatMessage, ChatSession
+            return (
+                session.query(ChatMessage)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                .filter(
+                    ChatSession.model_id.like(f"{character_name}@%"),
+                    ChatMessage.chronicled_at == None,  # noqa: E711
+                    (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0),  # noqa: E711
+                )
+                .order_by(ChatMessage.created_at.asc())
+                .all()
+            )
+
+    def mark_messages_as_chronicled(self, message_ids: list[str]) -> None:
+        """指定IDのメッセージの chronicled_at を現在日時にセットする。
+
+        Args:
+            message_ids: 処理済みにするメッセージ ID のリスト。
+        """
+        if not message_ids:
+            return
+        from datetime import datetime as dt
+        now = dt.utcnow()
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ChatMessage
+            session.query(ChatMessage).filter(
+                ChatMessage.id.in_(message_ids)
+            ).update({"chronicled_at": now}, synchronize_session=False)
+            session.commit()
+
     def delete_chat_messages_from(self, session_id: str, message_id: str) -> bool:
         """指定メッセージ以降（自身を含む）をすべて削除する。"""
         with self.get_session() as session:
