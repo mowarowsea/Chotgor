@@ -23,7 +23,7 @@ from backend.lib.debug_logger import logger
 from backend.lib.log_context import new_message_id
 from backend.lib.time_awareness import compute_time_awareness
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
-from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
+from backend.api.utils import build_1on1_history, build_available_presets, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 from backend.character_actions.exiter import build_exit_message
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -124,26 +124,7 @@ async def _build_chat_request(
     messages = build_1on1_history(history_messages, state.sqlite, state.uploads_dir)
     messages.append(Message(role="user", content=user_content))
 
-    # switch_angle 用プリセット一覧を構築する
-    enabled_providers = character.enabled_providers or {}
-    available_presets = []
-    if character.switch_angle_enabled and len(enabled_providers) > 1:
-        all_presets = state.sqlite.list_model_presets()
-        for p in all_presets:
-            if p.id == preset.id:
-                continue
-            cfg = enabled_providers.get(p.id)
-            if cfg is None:
-                continue
-            available_presets.append({
-                "preset_id": p.id,
-                "preset_name": p.name,
-                "provider": p.provider,
-                "model_id": p.model_id,
-                "additional_instructions": cfg.get("additional_instructions", ""),
-                "thinking_level": p.thinking_level or "default",
-                "when_to_switch": cfg.get("when_to_switch", ""),
-            })
+    available_presets = build_available_presets(character, preset, state.sqlite)
 
     return ChatRequest(
         character_id=character.id,
@@ -427,12 +408,6 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                         accumulated_reasoning += content
                         data = json.dumps({"type": "reasoning", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
-                elif chunk_type == "clear":
-                    # switch_angle 発動: 第1プロバイダーのテキストを破棄してフロントをクリアする
-                    full_text = ""
-                    accumulated_reasoning = ""
-                    data = json.dumps({"type": "clear"}, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
                 elif chunk_type == "text":
                     full_text += content
                     if content:

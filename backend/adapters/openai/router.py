@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from backend.api.resource_resolver import parse_model_id, resolve_character, resolve_preset, require_model_config
+from backend.api.utils import build_available_presets
 from backend.services.chat.models import ChatRequest, Message
 from backend.services.chat.service import extract_text_content
 from backend.lib.debug_logger import logger
@@ -152,6 +153,8 @@ async def chat_completions(request: Request, body: OAIChatRequest):
     messages = [Message(role=m.role, content=m.content) for m in body.messages]
     session_id = _derive_session_id(character.id, messages)
 
+    available_presets = build_available_presets(character, preset, state.sqlite)
+
     # Afterglow（感情継続機構）: 新規会話かつ afterglow_default が ON の場合、
     # 同キャラの直近5ターンをメッセージ先頭に注入する。
     # OpenWebUI は全履歴を毎回送信するため、user メッセージが1件のみのときを新規会話と判定する。
@@ -188,6 +191,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         session_id=session_id,
         current_preset_name=preset.name,
         current_preset_id=preset.id,
+        available_presets=available_presets,
     )
 
     chat_service = state.chat_service

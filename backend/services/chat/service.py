@@ -103,19 +103,34 @@ class ChatService:
     def _extract_switch_info(
         self, tool_executor: "ToolExecutor | None", clean_text: str, has_angle_presets: bool
     ) -> tuple[str, tuple[str, str] | None]:
-        """switch_angle リクエストを tool_executor またはタグから抽出する。"""
-        if tool_executor is not None:
-            return clean_text, tool_executor.switch_request
+        """switch_angle リクエストを tool_executor またはタグから抽出する。
+
+        available_presets が空のとき両方式とも無視する。
+        SUPPORTS_TOOLS プロバイダーは常に switch_angle ツールを LLM に渡すため、
+        presets が未設定でも LLM が誤呼び出しする可能性があり、ここでガードする。
+        """
         if not has_angle_presets:
             return clean_text, None
+        if tool_executor is not None:
+            return clean_text, tool_executor.switch_request
         switcher = Switcher()
         clean_text = switcher.switch_from_text(clean_text)
         return clean_text, switcher.switch_request
 
     def _build_switched_request(
-        self, original: ChatRequest, preset_name: str, self_instruction: str
+        self, original: ChatRequest, preset_name: str, self_instruction: str,
+        first_response_text: str = "",
     ) -> ChatRequest | None:
-        """switch_angle 後の再ディスパッチ用 ChatRequest を構築する。"""
+        """switch_angle 後の再ディスパッチ用 ChatRequest を構築する。
+
+        Args:
+            original: 元のリクエスト。
+            preset_name: 切り替え先プリセット名。
+            self_instruction: 切り替え後モデルへの自己指針。
+            first_response_text: 第1プロバイダーが生成したテキスト。
+                空でなければ assistant ターンとして messages に追加し、
+                第2プロバイダーが会話の流れを引き継げるようにする。
+        """
         preset = next(
             (p for p in original.available_presets if p.get("preset_name") == preset_name),
             None,
@@ -134,6 +149,11 @@ class ChatService:
             except Exception:
                 pass
 
+        # 第1プロバイダーの応答を assistant ターンとして追加し、第2プロバイダーへ文脈を引き継ぐ
+        new_messages = list(original.messages)
+        if first_response_text:
+            new_messages.append(Message(role="assistant", content=first_response_text))
+
         return replace(
             original,
             provider=preset["provider"],
@@ -144,6 +164,7 @@ class ChatService:
             current_preset_id=preset.get("preset_id", ""),
             active_drifts=[self_instruction] if self_instruction else [],
             available_presets=[],
+            messages=new_messages,
         )
 
     async def _prepare_context(self, request: ChatRequest) -> _Context:
@@ -281,7 +302,7 @@ class ChatService:
             tool_executor, clean_text, bool(request.available_presets)
         )
         if switch_info:
-            switched = self._build_switched_request(request, *switch_info)
+            switched = self._build_switched_request(request, *switch_info, first_response_text=clean_text)
             if switched is not None:
                 return await self.execute(switched)
 
@@ -402,10 +423,12 @@ class ChatService:
             tool_executor, clean_text, bool(request.available_presets)
         )
         if switch_info:
-            switched = self._build_switched_request(request, *switch_info)
+            switched = self._build_switched_request(request, *switch_info, first_response_text=clean_text)
             if switched is not None:
-                # 第1プロバイダーの表示をクリアしてから第2プロバイダーをストリームする
-                yield ("clear", None)
+                # SUPPORTS_TOOLS 方式: 第1プロバイダーのテキストはまだUIに流れていないため先にyieldする。
+                # タグ方式: text_already_streamed=True のためすでにUIに流れている（何もしない）。
+                if not text_already_streamed and clean_text:
+                    yield ("text", clean_text)
                 async for event in self.execute_stream(switched):
                     yield event
                 yield ("angle_switched", f"{request.character_name}@{switch_info[0]}")

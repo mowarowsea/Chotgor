@@ -18,6 +18,7 @@ __all__ = [
     "char_to_dict",
     "format_memories_for_sse",
     "fmt_dt",
+    "build_available_presets",
 ]
 
 
@@ -103,3 +104,39 @@ def message_to_dict(m) -> dict:
 def format_memories_for_sse(recalled: list) -> str:
     """想起した記憶リストをSSE送信用のテキストにフォーマットする。"""
     return format_recalled_memories(recalled)
+
+
+def build_available_presets(character, current_preset, sqlite) -> list[dict]:
+    """switch_angle 用の切り替え候補プリセット一覧を構築する。
+
+    switch_angle_enabled が OFF または有効プロバイダーが1件以下の場合は空リストを返す。
+    current_preset 自身はリストから除外する。
+
+    Args:
+        character: Character ORM オブジェクト。
+        current_preset: 現在使用中の LLMModelPreset ORM オブジェクト。
+        sqlite: SQLiteStore インスタンス。
+
+    Returns:
+        各プリセットの設定を格納した dict のリスト。
+    """
+    enabled_providers = character.enabled_providers or {}
+    if not getattr(character, "switch_angle_enabled", 0) or len(enabled_providers) <= 1:
+        return []
+    result = []
+    for p in sqlite.list_model_presets():
+        if p.id == current_preset.id:
+            continue
+        cfg = enabled_providers.get(p.id)
+        if cfg is None:
+            continue
+        result.append({
+            "preset_id": p.id,
+            "preset_name": p.name,
+            "provider": p.provider,
+            "model_id": p.model_id,
+            "additional_instructions": cfg.get("additional_instructions", ""),
+            "thinking_level": p.thinking_level or "default",
+            "when_to_switch": cfg.get("when_to_switch", ""),
+        })
+    return result

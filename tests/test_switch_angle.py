@@ -262,6 +262,20 @@ class TestExtractSwitchInfo:
         assert switch_info is None
         assert "[SWITCH_ANGLE:" in clean_text
 
+    def test_tool_executor_returns_none_when_no_presets(self):
+        """SUPPORTS_TOOLS=True 方式: has_angle_presets=False のとき switch_request があっても None を返す。
+
+        Bug Fix: SUPPORTS_TOOLS プロバイダーは available_presets が空でも switch_angle ツールを
+        LLM に渡し続けるため、LLM が誤呼び出しした場合に switch を黙って無視するガードが必要。
+        """
+        service = self._make_service()
+        executor = _make_executor()
+        executor.execute("switch_angle", {"preset_name": "fastModel", "self_instruction": "軽く"})
+        # switch_request は設定されているが has_angle_presets=False → None を返すべき
+        clean_text, switch_info = service._extract_switch_info(executor, "some text", False)
+        assert switch_info is None
+        assert clean_text == "some text"
+
 
 # ---------------------------------------------------------------------------
 # ChatService._build_switched_request テスト
@@ -361,14 +375,30 @@ class TestBuildSwitchedRequest:
         dm.reset_drifts.assert_called_once()
         dm.add_drift.assert_not_called()
 
-    def test_original_messages_preserved(self):
-        """切り替え後も元のメッセージリストが保持される。"""
+    def test_original_messages_preserved_when_no_first_response(self):
+        """first_response_text が空のとき元のメッセージリストがそのまま引き継がれる。"""
         service = self._make_service()
         msgs = [Message(role="user", content="テスト")]
         request = _make_request(messages=msgs, available_presets=_SAMPLE_PRESETS)
-        switched = service._build_switched_request(request, "fastModel", "軽く")
+        switched = service._build_switched_request(request, "fastModel", "軽く", first_response_text="")
         assert switched is not None
         assert switched.messages == msgs
+
+    def test_first_response_text_appended_to_messages(self):
+        """first_response_text が指定された場合、assistant ターンとして messages の末尾に追加される。
+
+        第1プロバイダーの応答を第2プロバイダーに会話文脈として引き継ぐための仕組み。
+        """
+        service = self._make_service()
+        msgs = [Message(role="user", content="テスト")]
+        request = _make_request(messages=msgs, available_presets=_SAMPLE_PRESETS)
+        switched = service._build_switched_request(
+            request, "fastModel", "軽く", first_response_text="第1プロバイダーの返答"
+        )
+        assert switched is not None
+        assert len(switched.messages) == 2
+        assert switched.messages[-1].role == "assistant"
+        assert switched.messages[-1].content == "第1プロバイダーの返答"
 
 
 # ---------------------------------------------------------------------------
@@ -380,14 +410,25 @@ class TestChatServiceExecuteWithSwitch:
 
     @pytest.mark.asyncio
     async def test_execute_switch_via_tag_redispatches(self, monkeypatch):
-        """タグ方式: [SWITCH_ANGLE:...] が応答に含まれる場合、新プロバイダーで再ディスパッチされる。"""
+        """タグ方式: [SWITCH_ANGLE:...] が応答に含まれる場合、新プロバイダーで再ディスパッチされる。
+
+        第1プロバイダーの応答テキスト（タグ除去済み）が第2プロバイダーへの messages に
+        assistant ターンとして追加されることを検証する。
+        """
         first_provider = AsyncMock()
         first_provider.SUPPORTS_TOOLS = False
         first_provider.generate = AsyncMock(return_value="本文[SWITCH_ANGLE:fastModel|軽く]")
 
+        second_captured_messages = []
+
+        async def second_generate(system_prompt, messages):
+            """第2プロバイダーに渡された messages を記録する。"""
+            second_captured_messages.extend(messages)
+            return "軽い応答"
+
         second_provider = AsyncMock()
         second_provider.SUPPORTS_TOOLS = False
-        second_provider.generate = AsyncMock(return_value="軽い応答")
+        second_provider.generate = second_generate
 
         def fake_create_provider(provider_id, model, settings, **kwargs):
             if provider_id == "google":
@@ -412,8 +453,9 @@ class TestChatServiceExecuteWithSwitch:
         assert result == "軽い応答"
         # 最初のプロバイダー（anthropic）は1回呼ばれる
         first_provider.generate.assert_called_once()
-        # 新プロバイダー（google）も1回呼ばれる
-        second_provider.generate.assert_called_once()
+        # 第2プロバイダーに渡された messages に第1プロバイダーの応答が assistant ターンとして含まれる
+        assistant_msgs = [m for m in second_captured_messages if isinstance(m, dict) and m.get("role") == "assistant"]
+        assert any("本文" in (m.get("content") or "") for m in assistant_msgs)
 
     @pytest.mark.asyncio
     async def test_execute_switch_via_tool_use_redispatches(self, monkeypatch):
@@ -554,10 +596,12 @@ class TestChatServiceExecuteStreamWithSwitch:
     async def test_execute_stream_switch_text_from_second_provider(self, monkeypatch):
         """switch 後のテキストは新プロバイダーからのものである。
 
-        switch_angle 発動前の第1プロバイダーのテキストもストリームされる（途中まで表示）。
-        switch 検知後は ("clear", None) イベントが yield され、第2プロバイダーのテキストが続く。
-        clear より後の text イベントには第2プロバイダーのテキストのみが含まれる。
+        switch_angle 発動前の第1プロバイダーのテキストはそのまま UI に残り（clear しない）、
+        第2プロバイダーのテキストが連続してストリームされる。
+        第1プロバイダーの応答は assistant ターンとして第2プロバイダーへの messages に追加される。
         """
+        second_captured_messages = []
+
         first_provider = MagicMock()
         first_provider.SUPPORTS_TOOLS = False
 
@@ -570,6 +614,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         second_provider.SUPPORTS_TOOLS = False
 
         async def typed_stream_second(sp, msgs):
+            second_captured_messages.extend(msgs)
             yield ("text", "軽い応答テキスト")
 
         second_provider.generate_stream_typed = typed_stream_second
@@ -597,18 +642,58 @@ class TestChatServiceExecuteStreamWithSwitch:
             events.append(event)
 
         event_types = [e[0] for e in events]
+        all_texts = [e[1] for e in events if e[0] == "text"]
 
-        # clear イベントが yield される
-        assert "clear" in event_types
+        # clear は yield されない（第1プロバイダーのテキストを消さない）
+        assert "clear" not in event_types
 
-        # clear より前に第1プロバイダーのテキストが含まれる
-        clear_idx = next(i for i, e in enumerate(events) if e[0] == "clear")
-        before_clear_texts = [e[1] for e in events[:clear_idx] if e[0] == "text"]
-        assert any("最初の応答" in t for t in before_clear_texts)
+        # 第1プロバイダーのテキストが含まれる（[SWITCH_ANGLE:...] タグは除去済み）
+        assert any("最初の応答" in t for t in all_texts)
 
-        # clear より後に第2プロバイダーのテキストが含まれる
-        after_clear_texts = [e[1] for e in events[clear_idx:] if e[0] == "text"]
-        assert any("軽い応答テキスト" in t for t in after_clear_texts)
+        # 第2プロバイダーのテキストも連続してストリームされる
+        assert any("軽い応答テキスト" in t for t in all_texts)
+
+        # 第2プロバイダーに渡された messages に第1プロバイダーの応答が assistant ターンとして含まれる
+        assistant_msgs = [m for m in second_captured_messages if isinstance(m, dict) and m.get("role") == "assistant"]
+        assert any("最初の応答" in (m.get("content") or "") for m in assistant_msgs)
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_tools_no_switch_when_presets_empty(self, monkeypatch):
+        """SUPPORTS_TOOLS=True で available_presets が空のとき、switch_angle ツール呼び出しを無視する。
+
+        Bug Fix: SUPPORTS_TOOLS プロバイダーは available_presets が空でも switch_angle ツールを
+        LLM に渡すため、LLM が誤呼び出しした場合でも switch / clear を発生させてはならない。
+        第1プロバイダーの応答テキストがそのまま返り、angle_switched も clear も yield されない。
+        """
+        provider = MagicMock()
+        provider.SUPPORTS_TOOLS = True
+
+        async def mock_generate_with_tools(sys, msgs, tool_executor):
+            # LLM が switch_angle を誤呼び出しする状況をシミュレートする
+            tool_executor.execute("switch_angle", {"preset_name": "fastModel", "self_instruction": "軽く"})
+            return "プロバイダーからの応答"
+
+        provider.generate_with_tools = mock_generate_with_tools
+
+        monkeypatch.setattr("backend.services.chat.service.create_provider", lambda *a, **kw: provider)
+        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+
+        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        # available_presets が空 = switch 無効
+        request = _make_request(available_presets=[])
+
+        events = []
+        async for event in service.execute_stream(request):
+            events.append(event)
+
+        event_types = [e[0] for e in events]
+        # switch は発生しない
+        assert "angle_switched" not in event_types
+        assert "clear" not in event_types
+        # 第1プロバイダーのテキストがそのまま返る
+        text_events = [e[1] for e in events if e[0] == "text"]
+        assert any("プロバイダーからの応答" in t for t in text_events)
 
     @pytest.mark.asyncio
     async def test_execute_stream_no_switch_when_presets_empty(self, monkeypatch):
@@ -642,9 +727,11 @@ class TestChatServiceExecuteStreamWithSwitch:
         event_types = [e[0] for e in events]
         # angle_switched は yield されない
         assert "angle_switched" not in event_types
-        # タグはスキャンされないのでテキストにそのまま含まれる
+        # clear も yield されない
+        assert "clear" not in event_types
+        # StreamingTagStripper が [SWITCH_ANGLE:] を除去するためテキストにタグは含まれない
         text_events = [e[1] for e in events if e[0] == "text"]
-        assert any("[SWITCH_ANGLE:" in t for t in text_events)
+        assert not any("[SWITCH_ANGLE:" in t for t in text_events)
 
 
 # ---------------------------------------------------------------------------
