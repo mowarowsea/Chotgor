@@ -1,7 +1,6 @@
 /**
  * メッセージ入力フォーム共通コンポーネント。
- * テキスト入力（auto-grow）、Shift+Enter での送信、画像添付、添付プレビュー機能を提供する。
- * ファイル添付ボタンと送信ボタンはテキストエリア内下部に配置する。
+ * テキスト入力（auto-grow）、Ctrl+Enter での送信、画像添付、添付プレビュー機能を提供する。
  * セッション別に入力下書きを localStorage にキャッシュし、セッション切り替え後も復元する。
  */
 import { useRef, useState, useEffect } from "react";
@@ -13,17 +12,15 @@ interface Props {
     sending: boolean;
     /** メッセージ送信コールバック。添付された File 配列を含む。 */
     onSend: (content: string, files: File[]) => void;
-    /** プレースホルダー文字列（デフォルト: "メッセージを入力… (Ctrl+Enter で送信)"） */
+    /** プレースホルダー文字列 */
     placeholder?: string;
     /** 画像添付を許可するかどうか（デフォルト: true） */
     allowImages?: boolean;
-    /** ユーザターンスキップコールバック。指定時は送信ボタン隣にスキップボタンを表示する。 */
+    /** ユーザターンスキップコールバック。指定時はスキップボタンを表示する。 */
     onSkip?: () => void;
 }
 
-/**
- * ユーザのメッセージ入力を受け付けるコンポーネント。
- */
+/** ユーザのメッセージ入力を受け付けるコンポーネント。 */
 export default function MessageInput({
     sessionId,
     sending,
@@ -39,8 +36,6 @@ export default function MessageInput({
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     /**
      * restoreエフェクト実行直後のsaveエフェクトをスキップするフラグ。
-     * restoreがinputを上書きする前にsaveが空文字でdraftを削除するのを防ぐ。
-     * React StrictModeの二重実行にも対応するためrefで管理する。
      */
     const skipNextSaveRef = useRef(false);
 
@@ -54,10 +49,8 @@ export default function MessageInput({
     useEffect(() => {
         if (!sessionId) return;
         const saved = localStorage.getItem(`draft:${sessionId}`) ?? "";
-        // 直後のsaveエフェクトが空inputでdraftを削除しないようスキップフラグを立てる
         skipNextSaveRef.current = true;
         setInput(saved);
-        // 高さの復元は DOM 更新後に行う
         requestAnimationFrame(() => {
             if (textareaRef.current) {
                 adjustHeight(textareaRef.current);
@@ -68,7 +61,6 @@ export default function MessageInput({
     /** input が変化したとき、下書きを localStorage に保存する。 */
     useEffect(() => {
         if (!sessionId) return;
-        // restoreエフェクトの直後はスキップ（古いinputでdraftを上書きするのを防ぐ）
         if (skipNextSaveRef.current) {
             skipNextSaveRef.current = false;
             return;
@@ -89,7 +81,6 @@ export default function MessageInput({
         setInput("");
         setPendingFiles([]);
         if (sessionId) localStorage.removeItem(`draft:${sessionId}`);
-        // 高さをリセット
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
         }
@@ -102,7 +93,6 @@ export default function MessageInput({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        // Ctrl+Enter で送信、Enter のみは改行
         if (e.key === "Enter" && e.ctrlKey) {
             e.preventDefault();
             handleSubmit(e as unknown as React.FormEvent);
@@ -113,7 +103,6 @@ export default function MessageInput({
         const selected = Array.from(e.target.files ?? []);
         if (selected.length === 0) return;
         setPendingFiles((prev) => [...prev, ...selected]);
-        // 同じファイルを再選択できるように value をリセットする
         e.target.value = "";
     };
 
@@ -124,7 +113,8 @@ export default function MessageInput({
     return (
         <form
             onSubmit={handleSubmit}
-            className="border-t border-zinc-800 px-3 sm:px-6 py-3 sm:py-4 flex flex-col gap-2"
+            className="px-4 sm:px-8 py-3 sm:py-4 flex flex-col gap-2"
+            style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
         >
             {/* 添付画像サムネイルプレビュー */}
             {allowImages && pendingFiles.length > 0 && (
@@ -134,12 +124,13 @@ export default function MessageInput({
                             <img
                                 src={URL.createObjectURL(file)}
                                 alt={file.name}
-                                className="w-16 h-16 object-cover rounded-lg border border-zinc-700"
+                                className="w-14 h-14 object-cover rounded-lg"
+                                style={{ border: "1px solid rgba(255,255,255,0.12)" }}
                             />
                             <button
                                 type="button"
                                 onClick={() => removePendingFile(idx)}
-                                className="absolute -top-1 -right-1 w-4 h-4 bg-zinc-600 hover:bg-zinc-500 rounded-full text-[10px] text-white flex items-center justify-center leading-none"
+                                className="absolute -top-1 -right-1 w-4 h-4 bg-ch-s3 hover:bg-ch-s2 rounded-full text-[10px] text-ch-t2 flex items-center justify-center leading-none"
                             >
                                 ✕
                             </button>
@@ -158,8 +149,20 @@ export default function MessageInput({
                     placeholder={placeholder}
                     rows={1}
                     disabled={sending}
-                    className="w-full bg-zinc-800 text-zinc-100 placeholder-zinc-500 rounded-xl px-4 pt-3 pb-10 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 overflow-y-auto"
-                    style={{ minHeight: "52px", maxHeight: "240px" }}
+                    className="w-full bg-ch-s1 text-ch-t1 placeholder-ch-t4 rounded-xl px-4 pt-3 pb-9 text-sm resize-none focus:outline-none disabled:opacity-40 overflow-y-auto"
+                    style={{
+                        minHeight: "50px",
+                        maxHeight: "240px",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                    }}
+                    onFocus={(e) => {
+                        e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+                        e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255,255,255,0.03)";
+                    }}
+                    onBlur={(e) => {
+                        e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+                        e.currentTarget.style.boxShadow = "none";
+                    }}
                 />
 
                 {/* テキストエリア内下部のオーバーレイツールバー */}
@@ -180,10 +183,9 @@ export default function MessageInput({
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={sending}
                                 title="画像を添付"
-                                className="text-zinc-500 hover:text-zinc-300 disabled:opacity-40 transition-colors p-1.5 rounded-lg hover:bg-zinc-700 shrink-0"
+                                className="text-ch-t3 hover:text-ch-t2 disabled:opacity-30 transition-colors p-1 rounded shrink-0"
                             >
-                                {/* Heroicons: paper-clip */}
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={18} height={18}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
                                 </svg>
                             </button>
@@ -197,15 +199,18 @@ export default function MessageInput({
                                 type="button"
                                 onClick={onSkip}
                                 disabled={sending}
-                                className="text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 disabled:opacity-40 rounded-lg px-3 py-1 transition-colors"
+                                className="text-xs text-ch-t3 hover:text-ch-t2 disabled:opacity-30 rounded px-2 py-0.5 transition-colors"
+                                style={{ border: "1px solid rgba(255,255,255,0.10)" }}
                             >
                                 スキップ
                             </button>
                         )}
+                        {/* 送信ボタン — 緑アクセントを使う唯一の構造UI */}
                         <button
                             type="submit"
                             disabled={!input.trim() || sending}
-                            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg px-3 py-1 text-xs font-medium transition-colors"
+                            className="text-ch-accent-t bg-ch-accent-dim rounded px-3 py-0.5 text-xs font-medium transition-colors disabled:opacity-25"
+                            style={{ border: "1px solid rgba(77,140,103,0.35)" }}
                         >
                             送信
                         </button>

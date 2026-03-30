@@ -4,7 +4,6 @@
 {#
   masked_api_key_input: APIキー入力フィールドの共通マクロ。
   既存値はマスク表示（●連打）し、フォーカス時にクリアして入力可能にする。
-  フィールド名・ラベル・ヒント・プレースホルダーを引数で受け取る。
 #}
 {% macro masked_api_key_input(key, label, hint, placeholder, not_configured_msg="Not configured.") %}
 <div class="form-group">
@@ -27,22 +26,23 @@
 
 {% block content %}
 <div class="page-header">
-    <h1>Global Settings</h1>
+    <h1>Settings</h1>
 </div>
 
 {% if request.query_params.get("saved") %}
-<div class="alert alert-success">Settings saved successfully.</div>
+<div class="alert alert-success">Settings saved.</div>
 {% endif %}
 {% if request.query_params.get("migration_error") %}
-<div class="alert alert-danger">Embeddingの再インデックスに失敗しました。APIキーとモデルIDを確認して再保存してください。記憶はSQLiteに保全されています。</div>
+<div class="alert alert-danger">Embedding の再インデックスに失敗しました。APIキーとモデルIDを確認して再保存してください。記憶は SQLite に保全されています。</div>
 {% endif %}
 
 <div class="form-card">
     <form method="post" action="/ui/settings">
+
+        <!-- ユーザ名 -->
         <div class="form-group">
-            <label for="user_name">
-                ユーザ名
-                <span class="label-hint">チャット画面に表示されるあなたの名前</span>
+            <label for="user_name">ユーザ名
+                <span class="label-hint">チャット画面に表示される名前</span>
             </label>
             <input type="text" id="user_name" name="user_name"
                    class="form-control"
@@ -50,79 +50,85 @@
                    placeholder="ユーザ">
         </div>
 
+        <hr>
+
+        <!-- API キー群 -->
         {{ masked_api_key_input(
                "anthropic_api_key",
                "Anthropic API Key",
-               "provider: anthropic — Claude models via direct API",
-               "sk-ant-... (leave blank to keep current)"
+               "provider: anthropic — Claude models",
+               "sk-ant-… (leave blank to keep current)"
            ) }}
 
         {{ masked_api_key_input(
                "openai_api_key",
                "OpenAI API Key",
                "provider: openai — GPT models",
-               "sk-... (leave blank to keep current)"
+               "sk-… (leave blank to keep current)"
            ) }}
 
         {{ masked_api_key_input(
                "xai_api_key",
                "xAI API Key",
                "provider: xai — Grok models",
-               "xai-... (leave blank to keep current)"
+               "xai-… (leave blank to keep current)"
            ) }}
 
         {{ masked_api_key_input(
                "google_api_key",
                "Google API Key",
                "provider: google — Gemini models",
-               "AIza... (leave blank to keep current)"
+               "AIza… (leave blank to keep current)"
            ) }}
 
         {{ masked_api_key_input(
                "openrouter_api_key",
                "OpenRouter API Key",
-               "provider: openrouter — 多数のモデルにアクセス（モデルIDは provider/model 形式）",
-               "sk-or-... (leave blank to keep current)"
+               "provider: openrouter — モデルID は provider/model 形式",
+               "sk-or-… (leave blank to keep current)"
            ) }}
 
         {{ masked_api_key_input(
                "tavily_api_key",
                "Tavily API Key",
-               "Optional — enables web_search tool",
-               "tvly-... (leave blank to keep current)",
+               "Optional — web_search ツールを有効化",
+               "tvly-… (leave blank to keep current)",
                "Not configured. Web search will be disabled."
            ) }}
 
+        <hr>
+
+        <!-- Chronicle Time -->
         <div class="form-group">
-            <label for="chronicle_time">
-                Chronicle Time
+            <label for="chronicle_time">Chronicle Time
                 <span class="label-hint">毎日この時刻に self_history / relationship_state を更新します</span>
             </label>
             <input type="time" id="chronicle_time" name="chronicle_time"
                    value="{{ settings.get('chronicle_time', '03:00') }}"
-                   class="form-control">
+                   class="form-control" style="width:auto">
         </div>
 
+        <!-- 時間認識 -->
         <div class="form-group">
-            <label>
+            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
                 <input type="checkbox" id="enable_time_awareness" name="enable_time_awareness" value="true"
                        {% if settings.get('enable_time_awareness', 'true') == 'true' %}checked{% endif %}>
                 日時と経過時間の連携を有効にする
             </label>
-            <p class="form-hint" style="margin-top: 5px;">現在時刻や、前回の会話からの経過時間をキャラクターに伝えます。</p>
+            <p class="form-hint" style="margin-top:4px">現在時刻と前回の会話からの経過時間をキャラクターに伝えます。</p>
         </div>
 
-        <hr style="margin: 24px 0; border-color: var(--border-color, #ddd);">
+        <hr>
 
+        <!-- Embedding Model -->
         <div class="form-group">
-            <label for="embedding_provider">
-                Embedding Model
+            <label for="embedding_provider">Embedding Model
                 <span class="label-hint">記憶のベクトル化に使用するモデル</span>
             </label>
             <select id="embedding_provider" name="embedding_provider" class="form-control"
                     onchange="updateEmbeddingUI(this.value)">
                 <option value="default" {% if settings.get('embedding_provider', 'default') == 'default' %}selected{% endif %}>
-                    Default (ChromaDB組み込み / all-MiniLM-L6-v2)
+                    Default (ChromaDB 組み込み / all-MiniLM-L6-v2)
                 </option>
                 <option value="google"
                         {% if settings.get('embedding_provider') == 'google' %}selected{% endif %}
@@ -134,8 +140,7 @@
 
         <div class="form-group" id="embedding_model_group"
              style="{% if settings.get('embedding_provider', 'default') == 'default' %}display:none{% endif %}">
-            <label for="embedding_model">
-                Embedding Model ID
+            <label for="embedding_model">Embedding Model ID
                 <span class="label-hint">空欄の場合は gemini-embedding-2-preview を使用</span>
             </label>
             <input type="text" id="embedding_model" name="embedding_model"
@@ -149,40 +154,10 @@
         </div>
 
         {% if settings.get('embedding_provider', 'default') != 'default' %}
-        <div class="alert alert-warning" style="margin-bottom: 16px;">
-            現在 Google Gemini Embedding を使用中です。モデルを変更すると全キャラクターの記憶が再インデックスされます（時間がかかる場合があります）。
+        <div class="alert alert-warning">
+            現在 Google Gemini Embedding を使用中です。モデルを変更すると全キャラクターの記憶が再インデックスされます。
         </div>
         {% endif %}
-
-        <script>
-        async function loadEmbeddingModels(provider) {
-            const dl = document.getElementById('embedding-models-list');
-            dl.innerHTML = '';
-            if (provider === 'default') return;
-            try {
-                const resp = await fetch(`/ui/providers/${provider}/embedding-models`);
-                const data = await resp.json();
-                (data.models || []).forEach(m => {
-                    const opt = document.createElement('option');
-                    opt.value = m.id;
-                    if (m.name && m.name !== m.id) opt.label = m.name;
-                    dl.appendChild(opt);
-                });
-            } catch (e) { /* 取得失敗時はdatalistを空のまま */ }
-        }
-
-        function updateEmbeddingUI(provider) {
-            document.getElementById('embedding_model_group').style.display =
-                provider === 'default' ? 'none' : '';
-            loadEmbeddingModels(provider);
-        }
-
-        // ページロード時に現在のプロバイダーのモデルを先読み
-        (function() {
-            const sel = document.getElementById('embedding_provider');
-            if (sel.value && sel.value !== 'default') loadEmbeddingModels(sel.value);
-        })();
-        </script>
 
         <div class="form-actions">
             <button type="submit" class="btn btn-primary">Save Settings</button>
@@ -190,9 +165,41 @@
     </form>
 
     <div class="info-box">
-        <strong>OpenWebUI Connection</strong><br>
-        Set OpenAI API Base URL to: <code>http://localhost:8000/v1</code><br>
-        API Key: <code>chotgor-local</code> (any value works)
+        <strong>OpenWebUI 接続先</strong><br>
+        OpenAI API Base URL: <code>http://localhost:8000/v1</code><br>
+        API Key: <code>chotgor-local</code>（任意の値で可）
     </div>
 </div>
+
+<script>
+/** Google Embeddingモデル一覧をdatalistに流し込む。 */
+async function loadEmbeddingModels(provider) {
+    const dl = document.getElementById('embedding-models-list');
+    dl.innerHTML = '';
+    if (provider === 'default') return;
+    try {
+        const resp = await fetch(`/ui/providers/${provider}/embedding-models`);
+        const data = await resp.json();
+        (data.models || []).forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.id;
+            if (m.name && m.name !== m.id) opt.label = m.name;
+            dl.appendChild(opt);
+        });
+    } catch (e) { /* 取得失敗時はdatalistを空のまま */ }
+}
+
+/** Embedding プロバイダー変更時にモデルフィールドの表示を切り替える。 */
+function updateEmbeddingUI(provider) {
+    document.getElementById('embedding_model_group').style.display =
+        provider === 'default' ? 'none' : '';
+    loadEmbeddingModels(provider);
+}
+
+// ページロード時に現在のプロバイダーのモデルを先読み
+(function() {
+    const sel = document.getElementById('embedding_provider');
+    if (sel.value && sel.value !== 'default') loadEmbeddingModels(sel.value);
+})();
+</script>
 {% endblock %}

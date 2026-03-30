@@ -4,20 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Chotgor{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <!-- Inter フォント（可変フォント） -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap">
+    <!-- css_version はサーバ起動時に注入されるキャッシュバスティング用タイムスタンプ -->
+    <link rel="stylesheet" href="/static/style.css?v={{ css_version }}">
     {% block head %}{% endblock %}
 </head>
 <body>
     <nav class="navbar">
         <div class="nav-brand">
-            <a href="/ui/">&#10024; Chotgor</a>
+            <a href="/ui/">Chotgor</a>
         </div>
         <div class="nav-links">
             <a href="/ui/" class="nav-link">Dashboard</a>
-            <a href="/ui/characters/new" class="nav-link">+ New Character</a>
+            <a href="/ui/characters/new" class="nav-link">+ New</a>
             <a href="/ui/model-presets" class="nav-link">Models</a>
             <a href="/ui/settings" class="nav-link">Settings</a>
-            <a href="/docs" class="nav-link" target="_blank">API Docs</a>
+            <a href="/docs" class="nav-link" target="_blank">API</a>
         </div>
     </nav>
 
@@ -26,7 +31,7 @@
     </main>
 
     <footer class="footer">
-        <p>Chotgor &mdash; AI Character Memory System</p>
+        Chotgor
     </footer>
 </body>
 </html>

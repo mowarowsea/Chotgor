@@ -3,7 +3,7 @@
 
 {% block content %}
 <div class="page-header">
-    <h1>Memories: {{ character.name }}</h1>
+    <h1>{{ character.name }} — Memories</h1>
     <a href="/ui/characters/{{ character.id }}" class="btn btn-secondary">Edit Character</a>
 </div>
 
@@ -19,10 +19,10 @@
             <input type="checkbox" name="deleted_only" value="true"
                    {% if deleted_only %}checked{% endif %}
                    onchange="this.form.submit()">
-            Show deleted only
+            Deleted only
         </label>
     </form>
-    <span class="memory-count">{{ memories|length }} memories</span>
+    <span class="memory-count">{{ memories|length }}</span>
 </div>
 
 {% if memories %}
@@ -30,21 +30,23 @@
     {% for mem in memories %}
     <div class="memory-card {% if mem.deleted_at %}memory-deleted{% endif %}">
         <div class="memory-header">
-            <span class="memory-category badge badge-{{ mem.category }}">{{ mem.category }}</span>
-            <span class="memory-date">{{ mem.created_at[:10] if mem.created_at else "unknown" }}</span>
+            <span class="badge badge-{{ mem.category }}">{{ mem.category }}</span>
             {% if mem.deleted_at %}
             <span class="badge badge-deleted">deleted</span>
             {% endif %}
+            <span class="memory-date">{{ mem.created_at[:10] if mem.created_at else "—" }}</span>
         </div>
         <div class="memory-content">{{ mem.content }}</div>
         <div class="memory-meta">
-            <span title="Contextual">C: {{ "%.1f"|format(mem.contextual_importance) }}</span>
-            <span title="Semantic">S: {{ "%.1f"|format(mem.semantic_importance) }}</span>
-            <span title="Identity">I: {{ "%.1f"|format(mem.identity_importance) }}</span>
-            <span title="User">U: {{ "%.1f"|format(mem.user_importance) }}</span>
-            <span>Access: {{ mem.access_count }}</span>
+            <span title="Contextual">C {{ "%.1f"|format(mem.contextual_importance) }}</span>
+            <span title="Semantic">S {{ "%.1f"|format(mem.semantic_importance) }}</span>
+            <span title="Identity">I {{ "%.1f"|format(mem.identity_importance) }}</span>
+            <span title="User">U {{ "%.1f"|format(mem.user_importance) }}</span>
+            <span>access {{ mem.access_count }}</span>
             {% if mem.source_preset_id %}
-            <span class="memory-preset" title="作成プリセット: {{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}">&#x1F4CC; {{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}</span>
+            <span class="memory-preset" title="{{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}">
+                &#x1F4CC; {{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}
+            </span>
             {% endif %}
         </div>
         <div class="memory-actions">
@@ -59,7 +61,7 @@
 </div>
 {% else %}
 <div class="empty-state">
-    <p>No memories yet. Start chatting with this character to build memories.</p>
+    <p>No memories yet.</p>
 </div>
 {% endif %}
 {% endblock %}

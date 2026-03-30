@@ -48,7 +48,7 @@ export default function Sidebar({
   selectedModel,
   onModelChange,
   isOpen,
-  onToggle,
+  onToggle: _onToggle,
   onSelectSession,
   onNewChat,
   onNewGroupChat,
@@ -120,15 +120,11 @@ export default function Sidebar({
   /** 最大自動ターン数 */
   const [maxAutoTurns, setMaxAutoTurns] = useState(3);
 
-  /** 新規チャットを作成する。パネルが開いているときはその設定を使い、閉じているときはデフォルト値で直接作成する。 */
+  /** 新規チャットを作成する。 */
   const handleNewChat = () => {
     if (!selectedModel) return;
-    if (newChatPanelOpen) {
-      onNewChat(selectedModel, afterglowEnabled);
-      setNewChatPanelOpen(false);
-    } else {
-      onNewChat(selectedModel, afterglowEnabled);
-    }
+    onNewChat(selectedModel, afterglowEnabled);
+    setNewChatPanelOpen(false);
   };
 
   /** グループチャット参加者の選択をトグルする */
@@ -169,6 +165,10 @@ export default function Sidebar({
     setConfirmDeleteId(null);
   };
 
+  /* ── accent button style ── */
+  const btnAccent = "w-full bg-ch-accent-dim border border-ch-accent/30 text-ch-accent-t text-xs font-medium rounded px-3 py-1.5 transition-colors hover:bg-ch-accent/20 hover:border-ch-accent/50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-between";
+  const btnGhost  = "w-full bg-transparent border border-ch-s3 text-ch-t3 text-xs font-medium rounded px-3 py-1.5 transition-colors hover:border-ch-s3 hover:text-ch-t2 flex items-center justify-between";
+
   return (
     /*
      * モバイル: fixed でオーバーレイ表示。isOpen に応じて translateX でスライドイン/アウト。
@@ -176,23 +176,39 @@ export default function Sidebar({
      */
     <aside
       className={`
-        flex flex-col bg-zinc-900 border-r border-zinc-800 h-full w-64 shrink-0
+        flex flex-col bg-ch-s1 h-full w-56 shrink-0
         fixed left-0 top-0 z-30
         sm:relative sm:z-auto
         transition-transform duration-200 ease-in-out
         ${isOpen ? "translate-x-0" : "-translate-x-full sm:hidden"}
       `}
+      style={{ borderRight: "1px solid rgba(255,255,255,0.09)" }}
     >
       {/* ヘッダー */}
-      <div className="p-4 border-b border-zinc-800">
-        <h1 className="text-lg font-bold text-zinc-100 mb-3">Chotgor</h1>
+      <div className="px-4 pt-4 pb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.09)" }}>
+        {/* ブランド */}
+        <div className="mb-3">
+          <span
+            className="text-ch-accent-t text-xs font-semibold tracking-widest uppercase"
+            style={{ textShadow: "0 0 20px rgba(106,168,130,0.35)", letterSpacing: "0.22em" }}
+          >
+            Chotgor
+          </span>
+        </div>
 
         {/* モデル選択 */}
         <select
           value={selectedModel}
           onChange={(e) => onModelChange(e.target.value)}
           disabled={isGroupSession}
-          className="w-full bg-zinc-800 text-zinc-100 text-sm rounded px-2 py-1.5 mb-2 border border-zinc-700 focus:outline-none focus:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 mb-2 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed appearance-none"
+          style={{
+            border: "1px solid rgba(255,255,255,0.16)",
+            backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234a5e55'/%3E%3C/svg%3E\")",
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "right 0.5rem center",
+            paddingRight: "1.75rem",
+          }}
         >
           {models.length === 0 && (
             <option value="">モデルなし</option>
@@ -208,37 +224,35 @@ export default function Sidebar({
         <button
           onClick={() => setNewChatPanelOpen((o) => !o)}
           disabled={!selectedModel}
-          className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded px-3 py-1.5 transition-colors flex items-center justify-between"
+          className={btnAccent}
         >
           <span>+ 新規チャット</span>
-          <span className="text-xs">{newChatPanelOpen ? "▲" : "▼"}</span>
+          <span className="text-[10px] opacity-60">{newChatPanelOpen ? "▲" : "▼"}</span>
         </button>
 
         {/* 新規チャット作成パネル（Afterglow設定） */}
         {newChatPanelOpen && (
-          <div className="mt-1 space-y-2 border border-zinc-700 rounded-lg p-3 bg-zinc-800/50">
-            {/* Afterglow チェックボックス */}
+          <div className="mt-1 space-y-2 rounded p-2.5" style={{ border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,10,0.7)" }}>
             <label className="flex items-start gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={afterglowEnabled}
                 onChange={(e) => setAfterglowEnabled(e.target.checked)}
-                className="accent-indigo-500 mt-0.5 shrink-0"
+                className="mt-0.5 shrink-0 accent-ch-accent"
               />
-              <span className="text-zinc-300 text-xs leading-snug">
+              <span className="text-ch-t2 text-xs leading-snug">
                 前回の流れを引き継ぐ
-                <span className="block text-zinc-500 text-xs mt-0.5">
-                  直近5ターンの会話をこのチャットの前置きとして引き継ぎます
+                <span className="block text-ch-t3 text-xs mt-0.5">
+                  直近5ターンの会話を前置きとして引き継ぎます
                 </span>
               </span>
             </label>
-            {/* 作成ボタン */}
             <button
               onClick={handleNewChat}
               disabled={!selectedModel}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded px-3 py-1.5 transition-colors"
+              className={btnAccent}
             >
-              チャット開始
+              <span>チャット開始</span>
             </button>
           </div>
         )}
@@ -246,45 +260,46 @@ export default function Sidebar({
         {/* グループチャット作成ボタン */}
         <button
           onClick={() => setGroupPanelOpen((o) => !o)}
-          className="w-full bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-sm font-medium rounded px-3 py-1.5 transition-colors mt-1 flex items-center justify-center gap-1"
+          className={`${btnGhost} mt-1.5`}
         >
-          <span>👥</span>
-          <span>グループチャット</span>
-          <span className="ml-auto text-xs">{groupPanelOpen ? "▲" : "▼"}</span>
+          <span className="flex items-center gap-1.5">
+            <span className="text-ch-t3 text-xs">👥</span>
+            <span>グループチャット</span>
+          </span>
+          <span className="text-[10px] opacity-60">{groupPanelOpen ? "▲" : "▼"}</span>
         </button>
 
         {/* グループチャット作成パネル */}
         {groupPanelOpen && (
-          <div className="mt-2 space-y-2 border border-zinc-700 rounded-lg p-3 bg-zinc-800/50">
-            {/* 参加者選択 */}
-            <p className="text-zinc-400 text-xs font-medium">参加者を選択（2名以上）</p>
-            <div className="space-y-1 max-h-36 overflow-y-auto">
+          <div className="mt-1 space-y-2.5 rounded p-2.5" style={{ border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,10,0.7)" }}>
+            <p className="text-ch-t3 text-xs">参加者を選択（2名以上）</p>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
               {models.length === 0 && (
-                <p className="text-zinc-500 text-xs">モデルがありません</p>
+                <p className="text-ch-t4 text-xs">モデルがありません</p>
               )}
               {models.map((m) => (
-                <label key={m.id} className="flex items-center gap-2 cursor-pointer group/check">
+                <label key={m.id} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={groupSelected.has(m.id)}
                     onChange={() => toggleGroupModel(m.id)}
-                    className="accent-indigo-500"
+                    className="accent-ch-accent"
                   />
-                  <span className="text-zinc-300 text-xs truncate group/check-hover:text-zinc-100">
+                  <span className="text-ch-t2 text-xs truncate">
                     {charNameOf(m.id)}
-                    <span className="text-zinc-500 ml-1">@{presetNameOf(m.id)}</span>
+                    <span className="text-ch-t3 ml-1">@{presetNameOf(m.id)}</span>
                   </span>
                 </label>
               ))}
             </div>
 
-            {/* 司会役キャラクター選択 */}
             <div>
-              <p className="text-zinc-400 text-xs font-medium mb-1">司会役</p>
+              <p className="text-ch-t3 text-xs mb-1">司会役</p>
               <select
                 value={directorModelId}
                 onChange={(e) => setDirectorModelId(e.target.value)}
-                className="w-full bg-zinc-700 text-zinc-100 text-xs rounded px-2 py-1.5 border border-zinc-600 focus:outline-none focus:border-zinc-400"
+                className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 focus:outline-none appearance-none"
+                style={{ border: "1px solid rgba(255,255,255,0.16)" }}
               >
                 <option value="">司会役を選択...</option>
                 {models.map((m) => (
@@ -295,11 +310,10 @@ export default function Sidebar({
               </select>
             </div>
 
-            {/* 最大自動ターン数 */}
             <div>
-              <p className="text-zinc-400 text-xs font-medium mb-1">
-                最大自動ターン数: <span className="text-zinc-200">{maxAutoTurns}</span>
-                {maxAutoTurns >= 5 && <span className="text-amber-400 ml-1">⚠ API消費増</span>}
+              <p className="text-ch-t3 text-xs mb-1">
+                最大自動ターン数: <span className="text-ch-t1">{maxAutoTurns}</span>
+                {maxAutoTurns >= 5 && <span className="text-amber-600 ml-1 text-[10px]">⚠ API消費増</span>}
               </p>
               <input
                 type="range"
@@ -307,50 +321,57 @@ export default function Sidebar({
                 max={10}
                 value={maxAutoTurns}
                 onChange={(e) => setMaxAutoTurns(Number(e.target.value))}
-                className="w-full accent-indigo-500"
+                className="w-full accent-ch-accent"
               />
             </div>
 
-            {/* 作成ボタン */}
             <button
               onClick={handleCreateGroup}
               disabled={groupSelected.size < 2 || !directorModelId}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded px-3 py-1.5 transition-colors"
+              className={btnAccent}
             >
-              {groupSelected.size < 2
-                ? "2名以上選択してください"
-                : !directorModelId
-                ? "司会役を選択してください"
-                : `グループチャット開始 (${groupSelected.size}名)`}
+              <span>
+                {groupSelected.size < 2
+                  ? "2名以上選択してください"
+                  : !directorModelId
+                  ? "司会役を選択してください"
+                  : `グループ開始 (${groupSelected.size}名)`}
+              </span>
             </button>
           </div>
         )}
       </div>
 
       {/* セッション一覧 */}
-      <nav className="flex-1 overflow-y-auto py-2">
+      <nav className="flex-1 overflow-y-auto py-1">
         {sessions.length === 0 && (
-          <p className="text-zinc-500 text-sm text-center mt-8">チャット履歴なし</p>
+          <p className="text-ch-t4 text-xs text-center mt-8">チャット履歴なし</p>
         )}
         {sessions.map((s) => (
           <div
             key={s.id}
             onClick={() => onSelectSession(s.id)}
-            className={`group relative flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-colors ${
+            className={`group relative flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors ${
               s.id === activeSessionId
-                ? "bg-zinc-700 text-zinc-100"
-                : "hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100"
+                ? "bg-ch-s2 text-ch-t1"
+                : "text-ch-t3 hover:bg-ch-s1 hover:text-ch-t2"
             }`}
           >
-            {/* グループチャットにはアイコンを付与する */}
+            {/* グループチャットアイコン */}
             {s.session_type === "group" && (
-              <span className="text-xs shrink-0">👥</span>
+              <span className="text-[11px] shrink-0 opacity-50">👥</span>
             )}
+            {/* アクティブインジケーター */}
+            {s.id === activeSessionId && (
+              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-full bg-ch-accent-t" />
+            )}
+
             {/* セッションタイトル（ダブルクリックでインライン編集） */}
             {editingSessionId === s.id ? (
               <input
                 ref={editInputRef}
-                className="flex-1 bg-zinc-600 text-zinc-100 text-sm rounded px-1 outline-none min-w-0"
+                className="flex-1 bg-ch-s3 text-ch-t1 text-xs rounded px-1.5 outline-none min-w-0"
+                style={{ border: "1px solid rgba(255,255,255,0.25)" }}
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
                 onBlur={() => handleTitleEditCommit(s.id)}
@@ -359,7 +380,7 @@ export default function Sidebar({
               />
             ) : (
               <span
-                className="flex-1 truncate text-sm"
+                className="flex-1 truncate text-xs"
                 onDoubleClick={(e) => handleTitleDoubleClick(e, s.id, s.title)}
               >
                 {s.title}
@@ -368,16 +389,16 @@ export default function Sidebar({
 
             {/* 削除ボタン（hover時表示） */}
             {confirmDeleteId === s.id ? (
-              <span className="flex gap-1 text-xs">
+              <span className="flex gap-1 text-[11px]">
                 <button
                   onClick={(e) => handleConfirmDelete(e, s.id)}
-                  className="text-red-400 hover:text-red-300"
+                  className="text-red-500 hover:text-red-400"
                 >
                   削除
                 </button>
                 <button
                   onClick={handleCancelDelete}
-                  className="text-zinc-400 hover:text-zinc-300"
+                  className="text-ch-t3 hover:text-ch-t2"
                 >
                   ✕
                 </button>
@@ -385,9 +406,9 @@ export default function Sidebar({
             ) : (
               <button
                 onClick={(e) => handleDeleteClick(e, s.id)}
-                className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-xs transition-opacity"
+                className="opacity-0 group-hover:opacity-100 text-ch-t4 hover:text-red-500 text-xs transition-opacity"
               >
-                🗑
+                ✕
               </button>
             )}
           </div>

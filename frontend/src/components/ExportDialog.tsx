@@ -73,24 +73,34 @@ export default function ExportDialog({
     }
   };
 
+  /** テキストエリアの共通スタイル */
+  const textareaStyle = {
+    border: "1px solid rgba(255,255,255,0.16)",
+    outline: "none",
+  };
+
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col"
+        className="bg-ch-s1 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col"
+        style={{ border: "1px solid rgba(255,255,255,0.16)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ヘッダー */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-700 shrink-0">
-          <h2 className="text-zinc-100 font-semibold text-sm">会話をエクスポート</h2>
+        <div
+          className="flex items-center justify-between px-5 py-4 shrink-0"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.09)" }}
+        >
+          <h2 className="text-ch-t1 font-medium text-sm">会話をエクスポート</h2>
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-200 transition-colors"
+            className="text-ch-t3 hover:text-ch-t2 transition-colors"
             aria-label="閉じる"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width={18} height={18}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width={16} height={16}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
           </button>
@@ -104,9 +114,10 @@ export default function ExportDialog({
                 type="checkbox"
                 checked={includeReasoning}
                 onChange={(e) => setIncludeReasoning(e.target.checked)}
-                className="rounded border-zinc-600 bg-zinc-800 accent-indigo-500 w-4 h-4"
+                className="rounded w-4 h-4"
+                style={{ accentColor: "#4d8c67" }}
               />
-              <span className="text-zinc-300 text-sm">Reasoning を含む</span>
+              <span className="text-ch-t2 text-sm">Reasoning を含む</span>
             </label>
             <div className="flex gap-5">
               {(["clipboard", "file"] as const).map((dest) => (
@@ -117,9 +128,10 @@ export default function ExportDialog({
                     value={dest}
                     checked={destination === dest}
                     onChange={() => setDestination(dest)}
-                    className="accent-indigo-500 w-4 h-4"
+                    className="w-4 h-4"
+                    style={{ accentColor: "#4d8c67" }}
                   />
-                  <span className="text-zinc-300 text-sm">
+                  <span className="text-ch-t2 text-sm">
                     {dest === "clipboard" ? "クリップボード" : "ファイル (.md)"}
                   </span>
                 </label>
@@ -128,17 +140,17 @@ export default function ExportDialog({
           </div>
 
           {/* フォーマットカスタマイズ（折りたたみ） */}
-          <div className="border border-zinc-700 rounded-xl overflow-hidden">
+          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.12)" }}>
             <button
-              className="w-full flex items-center gap-2 px-4 py-2.5 text-zinc-400 hover:bg-zinc-800/60 transition-colors text-left text-xs"
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-ch-t3 hover:text-ch-t2 hover:bg-ch-s2/60 transition-colors text-left text-xs"
               onClick={() => setFormatOpen((o) => !o)}
             >
-              <span className="text-[10px]">{formatOpen ? "▼" : "▶"}</span>
+              <span className="text-[10px] opacity-60">{formatOpen ? "▼" : "▶"}</span>
               <span>フォーマットをカスタマイズ</span>
             </button>
             {formatOpen && (
-              <div className="px-4 py-3 border-t border-zinc-700 space-y-3">
-                <p className="text-zinc-500 text-xs leading-relaxed">
+              <div className="px-4 py-3 space-y-3" style={{ borderTop: "1px solid rgba(255,255,255,0.09)" }}>
+                <p className="text-ch-t3 text-xs leading-relaxed">
                   使用できる変数:{" "}
                   {[
                     "{character_name}",
@@ -149,35 +161,42 @@ export default function ExportDialog({
                   ].map((v) => (
                     <code
                       key={v}
-                      className="bg-zinc-700 text-zinc-300 rounded px-1 py-0.5 font-mono text-[0.8em] mr-1"
+                      className="bg-ch-s3 text-ch-accent-t rounded px-1 py-0.5 font-mono text-[0.8em] mr-1"
                     >
                       {v}
                     </code>
                   ))}
                 </p>
                 <div className="space-y-1">
-                  <label className="text-zinc-400 text-xs block">キャラクターターン</label>
+                  <label className="text-ch-t3 text-xs block">キャラクターターン</label>
                   <textarea
                     value={format.characterTemplate}
                     onChange={(e) => updateFormat({ characterTemplate: e.target.value })}
                     rows={5}
                     spellCheck={false}
-                    className="w-full bg-zinc-800 text-zinc-200 text-xs font-mono rounded-lg px-3 py-2 resize-y focus:outline-none focus:ring-1 focus:ring-indigo-500 border border-zinc-700"
+                    className="w-full bg-ch-bg text-ch-t1 text-xs font-mono rounded-lg px-3 py-2 resize-y focus:outline-none"
+                    style={textareaStyle}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.35)"; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.16)"; }}
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-zinc-400 text-xs block">ユーザーターン</label>
+                  <label className="text-ch-t3 text-xs block">ユーザーターン</label>
                   <textarea
                     value={format.userTemplate}
                     onChange={(e) => updateFormat({ userTemplate: e.target.value })}
                     rows={3}
                     spellCheck={false}
-                    className="w-full bg-zinc-800 text-zinc-200 text-xs font-mono rounded-lg px-3 py-2 resize-y focus:outline-none focus:ring-1 focus:ring-indigo-500 border border-zinc-700"
+                    className="w-full bg-ch-bg text-ch-t1 text-xs font-mono rounded-lg px-3 py-2 resize-y focus:outline-none"
+                    style={textareaStyle}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.35)"; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.16)"; }}
                   />
                 </div>
                 <button
                   onClick={resetFormat}
-                  className="text-zinc-500 hover:text-zinc-300 text-xs hover:bg-zinc-800 px-2 py-1 rounded transition-colors"
+                  className="text-ch-t3 hover:text-ch-t2 text-xs px-2 py-1 rounded transition-colors"
+                  style={{ border: "1px solid rgba(255,255,255,0.12)" }}
                 >
                   デフォルトに戻す
                 </button>
@@ -187,27 +206,37 @@ export default function ExportDialog({
 
           {/* プレビュー */}
           <div className="space-y-1.5">
-            <p className="text-zinc-500 text-xs">
+            <p className="text-ch-t3 text-xs">
               プレビュー（先頭 {Math.min(3, messages.length)} 件）
             </p>
-            <pre className="bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-zinc-300 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
+            <pre
+              className="bg-ch-bg rounded-xl px-4 py-3 text-ch-t2 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed"
+              style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+            >
               {previewText || "（メッセージなし）"}
             </pre>
           </div>
         </div>
 
         {/* フッター */}
-        <div className="px-5 py-4 border-t border-zinc-700 flex justify-end gap-2 shrink-0">
+        <div
+          className="px-5 py-4 flex justify-end gap-2 shrink-0"
+          style={{ borderTop: "1px solid rgba(255,255,255,0.09)" }}
+        >
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-200 text-sm px-4 py-2 rounded-lg hover:bg-zinc-800 transition-colors"
+            className="text-ch-t3 hover:text-ch-t2 text-sm px-4 py-2 rounded-lg transition-colors"
           >
             キャンセル
           </button>
           <button
             onClick={handleExport}
             disabled={messages.length === 0 || copied}
-            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+            className="text-ch-accent-t text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-30"
+            style={{
+              background: "rgba(22,22,22,0.9)",
+              border: "1px solid rgba(255,255,255,0.32)",
+            }}
           >
             {copied ? (
               <>

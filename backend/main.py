@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -79,6 +80,8 @@ async def lifespan(app: FastAPI):
     from fastapi.templating import Jinja2Templates
 
     ui_module.templates = Jinja2Templates(directory=TEMPLATES_DIR)
+    # CSS キャッシュバスティング：サーバ起動時のタイムスタンプを全テンプレートに注入
+    ui_module.templates.env.globals["css_version"] = str(int(time.time()))
 
     _log.info("Chotgor backend 起動 sqlite=%s", SQLITE_DB_PATH)
 

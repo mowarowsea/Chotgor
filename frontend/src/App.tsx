@@ -490,11 +490,11 @@ export default function App() {
 
   return (
     /* h-[100dvh]: モバイルブラウザのアドレスバーを除いた実際の表示領域に合わせる */
-    <div className="flex h-[100dvh] overflow-hidden bg-zinc-950 text-zinc-100 relative">
+    <div className="flex h-[100dvh] overflow-hidden bg-ch-bg text-ch-t1 relative">
       {/* モバイル時: サイドバー背後のオーバーレイ。タップで閉じる。 */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-20 bg-black/50 sm:hidden"
+          className="fixed inset-0 z-20 bg-black/60 sm:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -516,78 +516,77 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
-        {/* トップバー: ハンバーガートグルボタン。スクロール方向に応じて表示/非表示を切り替える。 */}
+        {/* トップバー: ハンバーガートグル + セッション情報。スクロール方向に応じて表示切り替え。 */}
         <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${headerVisible ? "max-h-20" : "max-h-0"}`}>
-        <div className="flex items-center gap-3 px-3 py-2.5 bg-zinc-900 border-b border-zinc-700">
-          <button
-            onClick={() => setSidebarOpen((o) => !o)}
-            className="text-zinc-100 p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
-            aria-label="サイドバーを開閉"
-          >
-            {/* ハンバーガーアイコン */}
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width={20} height={20}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-            </svg>
-          </button>
-          {/* セッション種別に応じてヘッダ内容を切り替える */}
-          {activeSessionId && isGroupSession ? (
-            /* グループチャット: 参加者名とキャラクターごとのDriftBadgeを表示 */
-            <div className="flex items-center gap-3 flex-wrap min-w-0">
-              <span className="text-zinc-400 text-sm shrink-0">👥</span>
-              {groupParticipants.map(({ charName, presetName, characterId }) => {
-                const charDrifts = drifts.filter((d) => d.character_id === characterId);
-                return (
-                  <div key={charName} className="flex items-center gap-1 shrink-0">
-                    <span className="text-zinc-100 text-sm font-semibold">{charName}@{presetName}</span>
-                    {charDrifts.length > 0 && characterId && (
-                      <DriftBadge
-                        drifts={charDrifts}
-                        sessionId={activeSessionId}
-                        characterId={characterId}
-                        onDriftsChange={() => refreshDrifts(activeSessionId)}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : activeSessionId && !isGroupSession ? (
-            /* 1on1チャット: キャラクター名（キャラ@プリセット形式）とDriftBadgeを表示 */
-            <div className="flex items-center gap-2">
-              <span className="text-zinc-100 text-sm font-semibold">{activeSession?.model_id ?? characterName}</span>
-              {activeCharacterId && (
-                <DriftBadge
-                  drifts={drifts}
-                  sessionId={activeSessionId}
-                  characterId={activeCharacterId}
-                  onDriftsChange={() => refreshDrifts(activeSessionId)}
-                />
-              )}
-            </div>
-          ) : !sidebarOpen ? (
-            <span className="text-zinc-100 text-sm font-semibold">Chotgor</span>
-          ) : null}
-          {/* エクスポートボタン（セッション選択中のみ表示） */}
-          {activeSessionId && messages.length > 0 && (
+          <div className="flex items-center gap-3 px-3 py-2 bg-ch-bg/95 backdrop-blur-sm" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
             <button
-              onClick={() => setExportDialogOpen(true)}
-              title="会話をエクスポート"
-              className="ml-auto text-zinc-400 hover:text-zinc-200 p-2 rounded-lg hover:bg-zinc-800 transition-colors"
-              aria-label="会話をエクスポート"
+              onClick={() => setSidebarOpen((o) => !o)}
+              className="text-ch-t3 p-1.5 rounded hover:text-ch-t1 transition-colors shrink-0"
+              aria-label="サイドバーを開閉"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={18} height={18}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
               </svg>
             </button>
-          )}
-        </div>
+
+            {/* セッション種別に応じてヘッダ内容を切り替える */}
+            {activeSessionId && isGroupSession ? (
+              <div className="flex items-center gap-3 flex-wrap min-w-0">
+                {groupParticipants.map(({ charName, presetName, characterId }) => {
+                  const charDrifts = drifts.filter((d) => d.character_id === characterId);
+                  return (
+                    <div key={charName} className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-ch-t1 text-sm font-medium">{charName}</span>
+                      <span className="text-ch-t3 text-xs">@{presetName}</span>
+                      {charDrifts.length > 0 && characterId && (
+                        <DriftBadge
+                          drifts={charDrifts}
+                          sessionId={activeSessionId}
+                          characterId={characterId}
+                          onDriftsChange={() => refreshDrifts(activeSessionId)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : activeSessionId && !isGroupSession ? (
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-ch-t1 text-sm font-medium truncate">{activeSession?.model_id ?? characterName}</span>
+                {activeCharacterId && (
+                  <DriftBadge
+                    drifts={drifts}
+                    sessionId={activeSessionId}
+                    characterId={activeCharacterId}
+                    onDriftsChange={() => refreshDrifts(activeSessionId)}
+                  />
+                )}
+              </div>
+            ) : !sidebarOpen ? (
+              <span className="text-ch-t2 text-sm tracking-widest uppercase" style={{ letterSpacing: "0.2em", fontSize: "0.7rem" }}>Chotgor</span>
+            ) : null}
+
+            {/* エクスポートボタン */}
+            {activeSessionId && messages.length > 0 && (
+              <button
+                onClick={() => setExportDialogOpen(true)}
+                title="会話をエクスポート"
+                className="ml-auto text-ch-t3 hover:text-ch-t2 p-1.5 rounded transition-colors"
+                aria-label="会話をエクスポート"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* エラーバナー */}
         {error && (
-          <div className="bg-red-900/60 text-red-200 text-sm px-4 py-2 flex justify-between items-center shrink-0">
+          <div className="bg-red-950/50 text-red-300 text-xs px-4 py-2 flex justify-between items-center shrink-0" style={{ borderBottom: "1px solid rgba(220,60,60,0.15)" }}>
             <span>{error}</span>
-            <button onClick={() => setError(null)} className="text-red-300 hover:text-red-100">✕</button>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-200 ml-4">✕</button>
           </div>
         )}
 
@@ -625,7 +624,7 @@ export default function App() {
             characterIdMap={characterIdMap}
           />
         ) : (
-          <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm px-4 text-center">
+          <div className="flex-1 flex items-center justify-center text-ch-t3 text-sm px-4 text-center">
             <p>左のサイドバーからチャットを選択するか、新規チャットを作成してください</p>
           </div>
         )}

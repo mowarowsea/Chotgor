@@ -3,20 +3,19 @@
 
 {% block content %}
 <div class="page-header">
-    <h1>モデル設定</h1>
+    <h1>Models</h1>
 </div>
 
-<!-- 追加フォーム -->
+<!-- 新規追加フォーム -->
 <div class="form-card">
-    <h2 style="margin-top:0; font-size:1.1rem;">新規モデルを登録</h2>
     <form method="post" action="/ui/model-presets/new">
         <div class="preset-form-row">
-            <div class="form-group" style="flex:2; margin-bottom:0">
+            <div class="form-group" style="flex:2;margin-bottom:0">
                 <label for="new-name">表示名</label>
                 <input type="text" id="new-name" name="name" class="form-control"
                        placeholder="例: Google-Gemini3Flash" required>
             </div>
-            <div class="form-group" style="flex:1.5; margin-bottom:0">
+            <div class="form-group" style="flex:1.5;margin-bottom:0">
                 <label for="new-provider">プロバイダー</label>
                 <select id="new-provider" name="provider" class="form-control" required>
                     <option value="">-- 選択 --</option>
@@ -25,16 +24,16 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group" style="flex:2; margin-bottom:0">
+            <div class="form-group" style="flex:2;margin-bottom:0">
                 <label for="new-model-id">モデルID
-                    <span class="label-hint">空欄 = プロバイダーデフォルト</span>
+                    <span class="label-hint">空欄 = デフォルト</span>
                 </label>
                 <input type="text" id="new-model-id" name="model_id" class="form-control"
                        placeholder="例: gemini-2.0-flash"
                        autocomplete="off">
                 <datalist id="provider-models-list"></datalist>
             </div>
-            <div class="form-group" style="flex:1.2; margin-bottom:0">
+            <div class="form-group" style="flex:1.2;margin-bottom:0">
                 <label for="new-thinking-level">思考レベル</label>
                 <select id="new-thinking-level" name="thinking_level" class="form-control">
                     <option value="default">Default</option>
@@ -43,7 +42,7 @@
                     <option value="high">High</option>
                 </select>
             </div>
-            <div style="padding-top:22px; flex-shrink:0">
+            <div style="padding-top:22px;flex-shrink:0">
                 <button type="submit" class="btn btn-primary">追加</button>
             </div>
         </div>
@@ -51,10 +50,9 @@
 </div>
 
 <!-- 登録済みモデル一覧 -->
-<div class="form-card">
-    <h2 style="margin-top:0; font-size:1.1rem;">登録済みモデル</h2>
-
+<div class="form-card" style="margin-top:1rem">
     {% if presets %}
+    <div class="preset-table-wrap">
     <table class="preset-table">
         <thead>
             <tr>
@@ -104,94 +102,46 @@
                         {% endfor %}
                     </select>
                 </td>
-                <td class="preset-actions">
-                    <button type="button" class="btn btn-secondary btn-sm"
-                            onclick="startEdit('{{ preset.id }}')" id="edit-btn-{{ preset.id }}">
-                        編集
-                    </button>
-                    <form method="post" action="/ui/model-presets/{{ preset.id }}/edit"
-                          id="edit-form-{{ preset.id }}" style="display:none">
-                        <input type="hidden" name="name" id="edit-name-{{ preset.id }}">
-                        <input type="hidden" name="provider" id="edit-provider-{{ preset.id }}">
-                        <input type="hidden" name="model_id" id="edit-modelid-{{ preset.id }}">
-                        <input type="hidden" name="thinking_level" id="edit-thinking-{{ preset.id }}">
-                        <button type="button" class="btn btn-primary btn-sm"
-                                onclick="submitEdit('{{ preset.id }}')">保存</button>
+                <td>
+                    <!-- td の display は変えず、内側の div に flex を当てる -->
+                    <div class="preset-actions">
                         <button type="button" class="btn btn-secondary btn-sm"
-                                onclick="cancelEdit('{{ preset.id }}')">キャンセル</button>
-                    </form>
-                    <form method="post" action="/ui/model-presets/{{ preset.id }}/delete"
-                          style="display:inline"
-                          onsubmit="return confirm('{{ preset.name }} を削除しますか？')">
-                        <button type="submit" class="btn btn-danger btn-sm">削除</button>
-                    </form>
+                                onclick="startEdit('{{ preset.id }}')" id="edit-btn-{{ preset.id }}">
+                            編集
+                        </button>
+                        <form method="post" action="/ui/model-presets/{{ preset.id }}/edit"
+                              id="edit-form-{{ preset.id }}" style="display:none">
+                            <input type="hidden" name="name" id="edit-name-{{ preset.id }}">
+                            <input type="hidden" name="provider" id="edit-provider-{{ preset.id }}">
+                            <input type="hidden" name="model_id" id="edit-modelid-{{ preset.id }}">
+                            <input type="hidden" name="thinking_level" id="edit-thinking-{{ preset.id }}">
+                            <button type="button" class="btn btn-primary btn-sm"
+                                    onclick="submitEdit('{{ preset.id }}')">保存</button>
+                            <button type="button" class="btn btn-secondary btn-sm"
+                                    onclick="cancelEdit('{{ preset.id }}')">キャンセル</button>
+                        </form>
+                        <form method="post" action="/ui/model-presets/{{ preset.id }}/delete"
+                              style="display:contents"
+                              onsubmit="return confirm('{{ preset.name }} を削除しますか？')">
+                            <button type="submit" class="btn btn-danger btn-sm">削除</button>
+                        </form>
+                    </div>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <p class="form-hint">登録されているモデルがありません。上のフォームから追加してください。</p>
     {% endif %}
 </div>
 
-<style>
-.preset-form-row {
-    display: flex;
-    gap: 12px;
-    align-items: flex-end;
-    flex-wrap: wrap;
-}
-.preset-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.95rem;
-}
-.preset-table th,
-.preset-table td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color, #eee);
-    text-align: left;
-    vertical-align: middle;
-}
-.preset-table th {
-    background: var(--surface-alt, #f8f8f8);
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: var(--text-muted, #666);
-}
-.preset-actions {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    white-space: nowrap;
-}
-.btn-sm {
-    padding: 4px 10px;
-    font-size: 0.82rem;
-}
-.btn-danger {
-    background: #c0392b;
-    color: #fff;
-    border: none;
-}
-.btn-danger:hover {
-    background: #922b21;
-}
-.text-muted {
-    color: var(--text-muted, #aaa);
-    font-style: italic;
-}
-.preset-edit-field {
-    width: 100%;
-    min-width: 80px;
-}
-</style>
-
 <script>
-// プロバイダーごとのモデル一覧キャッシュ
+/** プロバイダーごとのモデル一覧キャッシュ。 */
 const _modelCache = {};
 
+/** プロバイダーのモデル一覧を取得する。キャッシュがあればそれを返す。 */
 async function loadModels(provider) {
     if (_modelCache[provider] !== undefined) return _modelCache[provider];
     try {
@@ -204,6 +154,7 @@ async function loadModels(provider) {
     return _modelCache[provider];
 }
 
+/** datalist にモデル一覧を流し込む。 */
 function fillDatalist(models) {
     const dl = document.getElementById('provider-models-list');
     dl.innerHTML = '';
@@ -215,6 +166,7 @@ function fillDatalist(models) {
     });
 }
 
+/** プロバイダー変更時にモデル候補を更新する。 */
 async function onProviderChange(provider, modelInputId) {
     const modelInput = document.getElementById(modelInputId);
     const models = await loadModels(provider);
@@ -224,7 +176,6 @@ async function onProviderChange(provider, modelInputId) {
     } else {
         modelInput.removeAttribute('list');
     }
-    // プロバイダーに合わせてプレースホルダーを更新
     const defaults = {
         anthropic: 'claude-sonnet-4-6',
         openai: 'gpt-4o',
@@ -234,9 +185,7 @@ async function onProviderChange(provider, modelInputId) {
         ollama: 'qwen2.5:latest',
     };
     const fallback = modelInputId === 'new-model-id' ? '例: gpt-4o' : '(デフォルト)';
-    modelInput.placeholder = defaults[provider]
-        ? `例: ${defaults[provider]}`
-        : fallback;
+    modelInput.placeholder = defaults[provider] ? `例: ${defaults[provider]}` : fallback;
 }
 
 // 新規フォームのプロバイダー変更
@@ -250,6 +199,7 @@ document.getElementById('new-provider').addEventListener('change', function() {
     if (sel.value) onProviderChange(sel.value, 'new-model-id');
 })();
 
+/** 行を編集モードに切り替える。 */
 function startEdit(id) {
     ['name', 'provider', 'modelid', 'thinking'].forEach(field => {
         document.getElementById(`${field}-display-${id}`).style.display = 'none';
@@ -257,7 +207,7 @@ function startEdit(id) {
     });
     document.getElementById(`edit-btn-${id}`).style.display = 'none';
     document.getElementById(`edit-form-${id}`).style.display = 'inline-flex';
-    document.getElementById(`edit-form-${id}`).style.gap = '6px';
+    document.getElementById(`edit-form-${id}`).style.gap = '4px';
 
     const provSel = document.getElementById(`provider-edit-${id}`);
     onProviderChange(provSel.value, `modelid-edit-${id}`);
@@ -266,6 +216,7 @@ function startEdit(id) {
     });
 }
 
+/** 編集モードをキャンセルして表示モードに戻す。 */
 function cancelEdit(id) {
     ['name', 'provider', 'modelid', 'thinking'].forEach(field => {
         document.getElementById(`${field}-display-${id}`).style.display = '';
@@ -276,6 +227,7 @@ function cancelEdit(id) {
     document.getElementById(`modelid-edit-${id}`).removeAttribute('list');
 }
 
+/** 編集内容を hidden フィールドにコピーしてフォームを送信する。 */
 function submitEdit(id) {
     document.getElementById(`edit-name-${id}`).value =
         document.getElementById(`name-edit-${id}`).value;

@@ -4,37 +4,39 @@
 {% block content %}
 <div class="page-header">
     <h1>Characters</h1>
-    <a href="/ui/characters/new" class="btn btn-primary">+ New Character</a>
+    <a href="/ui/characters/new" class="btn btn-primary">+ New</a>
 </div>
 
 {% if characters %}
 <div class="card-grid">
     {% for char in characters %}
     <div class="card">
-        <div class="card-header">
-            {% if char.image_data %}
-            <img src="{{ char.image_data }}" class="card-avatar" alt="{{ char.name }}">
-            {% else %}
-            <div class="card-avatar-placeholder">{{ char.name[0] }}</div>
-            {% endif %}
-            <div>
-                <h2 class="card-title">{{ char.name }}</h2>
-                <span class="badge">{{ char.id[:8] }}...</span>
+        <!-- ヘッダー+ボディ全体をEdit画面へのリンクにする -->
+        <a href="/ui/characters/{{ char.id }}" class="card-link">
+            <div class="card-header">
+                {% if char.image_data %}
+                <img src="{{ char.image_data }}" class="card-avatar" alt="{{ char.name }}">
+                {% else %}
+                <div class="card-avatar-placeholder">{{ char.name[0] }}</div>
+                {% endif %}
+                <div style="min-width:0">
+                    <h2 class="card-title">{{ char.name }}</h2>
+                    <span class="badge" style="margin-top:0.2rem">{{ char.id[:8] }}</span>
+                </div>
             </div>
-        </div>
-        <div class="card-body">
-            {% if char.system_prompt_block1 %}
-            <p class="card-preview">{{ char.system_prompt_block1[:120] }}{% if char.system_prompt_block1|length > 120 %}...{% endif %}</p>
-            {% else %}
-            <p class="text-muted">No character definition yet.</p>
-            {% endif %}
-        </div>
+            <div class="card-body">
+                {% if char.system_prompt_block1 %}
+                <p class="card-preview">{{ char.system_prompt_block1[:110] }}{% if char.system_prompt_block1|length > 110 %}…{% endif %}</p>
+                {% else %}
+                <p class="card-preview" style="color:var(--t4)">No character definition yet.</p>
+                {% endif %}
+            </div>
+        </a>
         <div class="card-footer">
-            <a href="/ui/characters/{{ char.id }}" class="btn btn-secondary">Edit</a>
-            <a href="/ui/memories/{{ char.id }}" class="btn btn-secondary">Memories</a>
+            <a href="/ui/memories/{{ char.id }}" class="btn btn-secondary btn-sm">Memories</a>
             <form method="post" action="/ui/characters/{{ char.id }}/delete" class="inline-form"
-                  onsubmit="return confirm('Delete {{ char.name }}? This cannot be undone.')">
-                <button type="submit" class="btn btn-danger">Delete</button>
+                  onsubmit="return confirm('Delete {{ char.name }}?')" style="margin-left:auto">
+                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
             </form>
         </div>
     </div>
@@ -46,32 +48,4 @@
     <a href="/ui/characters/new" class="btn btn-primary">Create your first character</a>
 </div>
 {% endif %}
-
-<style>
-.card-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-.card-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    object-fit: cover;
-    flex-shrink: 0;
-}
-.card-avatar-placeholder {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: var(--accent, #6c8ebf);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    font-weight: bold;
-    flex-shrink: 0;
-}
-</style>
 {% endblock %}
