@@ -21,6 +21,9 @@ class CharacterStoreMixin:
         image_data: Optional[str] = None,
         switch_angle_enabled: bool = False,
         afterglow_default: int = 0,
+        self_reflection_mode: str = "disabled",
+        self_reflection_preset_id: Optional[str] = None,
+        self_reflection_n_turns: int = 5,
     ):
         """キャラクターを新規作成する。
 
@@ -28,6 +31,9 @@ class CharacterStoreMixin:
             afterglow_default: Afterglow（感情継続機構）の新規チャット作成時デフォルト値。1=ON, 0=OFF。
             self_history: chronicle で更新されるキャラクターの歴史・経緯。
             relationship_state: chronicle で更新されるユーザ・他キャラとの現在の関係。
+            self_reflection_mode: 自己参照ループの動作モード。disabled/local_trigger/always。
+            self_reflection_preset_id: 契機判断モデルプリセットID（local_trigger 時に使用）。
+            self_reflection_n_turns: 自己参照に使う直近ターン数。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Character
@@ -44,6 +50,9 @@ class CharacterStoreMixin:
                 image_data=image_data,
                 switch_angle_enabled=1 if switch_angle_enabled else 0,
                 afterglow_default=afterglow_default,
+                self_reflection_mode=self_reflection_mode,
+                self_reflection_preset_id=self_reflection_preset_id,
+                self_reflection_n_turns=self_reflection_n_turns,
             )
             session.add(char)
             session.commit()

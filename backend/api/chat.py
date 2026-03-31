@@ -146,6 +146,9 @@ async def _build_chat_request(
         available_presets=available_presets,
         current_preset_name=preset.name,
         current_preset_id=preset.id,
+        self_reflection_mode=character.self_reflection_mode,
+        self_reflection_preset_id=character.self_reflection_preset_id or "",
+        self_reflection_n_turns=character.self_reflection_n_turns,
     )
 
 

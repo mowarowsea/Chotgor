@@ -20,6 +20,24 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 MAX_IMAGE_BYTES = 2 * 1024 * 1024  # 2MB
 
 
+def _extract_self_reflection_params(form) -> tuple:
+    """フォームから自己参照ループパラメータを抽出する。
+
+    create_character・update_character の両方で使用する。
+
+    Args:
+        form: FastAPI のフォームデータ。
+
+    Returns:
+        (self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns) のタプル。
+    """
+    return (
+        form.get("self_reflection_mode") or "disabled",
+        form.get("self_reflection_preset_id") or None,
+        int(form.get("self_reflection_n_turns") or 5),
+    )
+
+
 def _build_enabled_providers(form) -> dict:
     """フォームから enabled_providers 辞書を構築する。
 
@@ -113,6 +131,9 @@ async def create_character(request: Request):
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = bool(form.get("switch_angle_enabled"))
     afterglow_default = 1 if form.get("afterglow_default") else 0
+    self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns = (
+        _extract_self_reflection_params(form)
+    )
 
     request.app.state.sqlite.create_character(
         character_id=char_id,
@@ -123,6 +144,9 @@ async def create_character(request: Request):
         image_data=image_data,
         switch_angle_enabled=switch_angle_enabled,
         afterglow_default=afterglow_default,
+        self_reflection_mode=self_reflection_mode,
+        self_reflection_preset_id=self_reflection_preset_id,
+        self_reflection_n_turns=self_reflection_n_turns,
     )
     return RedirectResponse(url="/ui/", status_code=303)
 
@@ -154,6 +178,9 @@ async def update_character(request: Request, character_id: str):
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
     afterglow_default = 1 if form.get("afterglow_default") else 0
+    self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns = (
+        _extract_self_reflection_params(form)
+    )
 
     update_kwargs: dict = dict(
         name=(form.get("name") or "").strip(),
@@ -162,6 +189,9 @@ async def update_character(request: Request, character_id: str):
         ghost_model=ghost_model,
         switch_angle_enabled=switch_angle_enabled,
         afterglow_default=afterglow_default,
+        self_reflection_mode=self_reflection_mode,
+        self_reflection_preset_id=self_reflection_preset_id,
+        self_reflection_n_turns=self_reflection_n_turns,
     )
     new_image = await _read_image_data(form)
     if new_image:

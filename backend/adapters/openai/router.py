@@ -192,6 +192,9 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         current_preset_name=preset.name,
         current_preset_id=preset.id,
         available_presets=available_presets,
+        self_reflection_mode=character.self_reflection_mode,
+        self_reflection_preset_id=character.self_reflection_preset_id or "",
+        self_reflection_n_turns=character.self_reflection_n_turns,
     )
 
     chat_service = state.chat_service

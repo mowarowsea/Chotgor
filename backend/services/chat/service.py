@@ -41,6 +41,7 @@ from backend.character_actions.drifter import Drifter
 from backend.character_actions.exiter import Exiter
 from backend.services.chat.models import ChatRequest, Message
 from backend.character_actions.recaller import Recaller, format_power_recall_turn
+from backend.character_actions.reflector import SelfReflector
 from backend.character_actions.switcher import Switcher
 
 
@@ -433,6 +434,26 @@ class ChatService:
                     yield event
                 yield ("angle_switched", f"{request.character_name}@{switch_info[0]}")
                 return
+
+        # 自己参照ループ: ストリーム完了後にバックグラウンドタスクとして起動する。
+        # ユーザーへの応答は既に完了しているため、SSE接続をブロックしない。
+        if request.self_reflection_mode != "disabled" and request.session_id:
+            # キャラクター応答を末尾に追加して渡す。ウィンドウ切り出しは reflector 内で行う。
+            reflection_messages = [*ctx.messages, {"role": "assistant", "content": clean_text}]
+            reflector = SelfReflector(self.memory_manager, self.drift_manager)
+            asyncio.create_task(
+                reflector.run(
+                    request_mode=request.self_reflection_mode,
+                    trigger_preset_id=request.self_reflection_preset_id,
+                    n_turns=request.self_reflection_n_turns,
+                    public_provider=ctx.provider_impl,
+                    settings=request.settings,
+                    messages=reflection_messages,
+                    character_id=request.character_id,
+                    session_id=request.session_id,
+                    current_preset_id=request.current_preset_id,
+                )
+            )
 
         logger.log_front_output(clean_text)
         self._log_debug("CHAT stream", request, ctx.messages, clean_text)

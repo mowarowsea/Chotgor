@@ -48,3 +48,7 @@ class ChatRequest:
     # 再呼び出し時に Chotgor ユーザーターン（messages）として注入される。
     # 非空時はループ防止フラグとしても機能する。
     power_recalled: dict = field(default_factory=dict)
+    # 自己参照ループ設定（キャラクターごとに保持）
+    self_reflection_mode: str = "disabled"       # disabled/local_trigger/always
+    self_reflection_preset_id: str = ""          # 契機判断モデルプリセットID
+    self_reflection_n_turns: int = 5             # 自己参照に使う直近ターン数

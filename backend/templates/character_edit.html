@@ -185,15 +185,71 @@
             <select id="ghost_model" name="ghost_model" class="form-control">
                 <option value="">(未設定)</option>
                 {% for preset in model_presets %}
-                {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}
                 <option value="{{ preset.id }}"
                     {% if character and character.ghost_model == preset.id %}selected{% endif %}>
                     {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
                 </option>
-                {% endif %}
                 {% endfor %}
             </select>
         </div>
+
+        <!-- 自己参照ループ -->
+        <div class="form-group">
+            <label>Self Reflection
+                <span class="label-hint">返答生成後に自己参照ループを実行するかどうか</span>
+            </label>
+            <select id="self_reflection_mode" name="self_reflection_mode" class="form-control"
+                onchange="toggleSelfReflectionOptions(this.value)">
+                <option value="disabled"
+                    {% if not character or character.self_reflection_mode == 'disabled' %}selected{% endif %}>
+                    Disabled
+                </option>
+                <option value="local_trigger"
+                    {% if character and character.self_reflection_mode == 'local_trigger' %}selected{% endif %}>
+                    Local Trigger（Ollamaで契機判断 → パブリックLLMで自己参照）
+                </option>
+                <option value="always"
+                    {% if character and character.self_reflection_mode == 'always' %}selected{% endif %}>
+                    Always（毎ターン パブリックLLMで自己参照）
+                </option>
+            </select>
+        </div>
+
+        <div id="self_reflection_options"
+            style="{% if not character or character.self_reflection_mode == 'disabled' %}display:none{% endif %}">
+            <div class="form-group" id="self_reflection_preset_group"
+                style="{% if not character or character.self_reflection_mode != 'local_trigger' %}display:none{% endif %}">
+                <label for="self_reflection_preset_id">契機判断モデル
+                    <span class="label-hint">Ollama プリセットを選択（Local Trigger 時）</span>
+                </label>
+                <select id="self_reflection_preset_id" name="self_reflection_preset_id" class="form-control">
+                    <option value="">(未設定)</option>
+                    {% for preset in model_presets %}
+                    <option value="{{ preset.id }}"
+                        {% if character and character.self_reflection_preset_id == preset.id %}selected{% endif %}>
+                        {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="self_reflection_n_turns">直近Nターン
+                    <span class="label-hint">自己参照に使う会話ターン数</span>
+                </label>
+                <input type="number" id="self_reflection_n_turns" name="self_reflection_n_turns"
+                    class="form-control" min="1" max="20"
+                    value="{{ character.self_reflection_n_turns if character else 5 }}">
+            </div>
+        </div>
+
+        <script>
+        function toggleSelfReflectionOptions(mode) {
+            var opts = document.getElementById('self_reflection_options');
+            var presetGroup = document.getElementById('self_reflection_preset_group');
+            opts.style.display = (mode === 'disabled') ? 'none' : '';
+            presetGroup.style.display = (mode === 'local_trigger') ? '' : 'none';
+        }
+        </script>
 
         <div class="form-actions">
             <button type="submit" class="btn btn-primary">

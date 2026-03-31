@@ -117,6 +117,10 @@ class Character(Base):
     switch_angle_enabled = Column(Integer, nullable=False, default=0)  # 1=ON, 0=OFF
     # Afterglow（感情継続機構）: 新規チャット作成時のデフォルト値。1=ON, 0=OFF
     afterglow_default = Column(Integer, nullable=False, default=0)
+    # 自己参照ループ設定
+    self_reflection_mode = Column(String, nullable=False, default="disabled")  # disabled/local_trigger/always
+    self_reflection_preset_id = Column(String, nullable=True)   # 契機判断モデルプリセットID（local_trigger 時）
+    self_reflection_n_turns = Column(Integer, nullable=False, default=5)  # 自己参照に使う直近Nターン数
     # キャラクター自己更新フィールド: chronicle 処理で更新される
     self_history = Column(Text, nullable=False, default="")       # これまでの経緯と現在の状態
     relationship_state = Column(Text, nullable=False, default="") # ユーザ・他キャラとの関係
@@ -215,6 +219,9 @@ class SQLiteStore(
                 "ALTER TABLE characters ADD COLUMN afterglow_default INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE characters ADD COLUMN self_history TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE characters ADD COLUMN relationship_state TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE characters ADD COLUMN self_reflection_mode TEXT NOT NULL DEFAULT 'disabled'",
+                "ALTER TABLE characters ADD COLUMN self_reflection_preset_id TEXT",
+                "ALTER TABLE characters ADD COLUMN self_reflection_n_turns INTEGER NOT NULL DEFAULT 5",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -247,6 +254,9 @@ class SQLiteStore(
                             afterglow_default INTEGER NOT NULL DEFAULT 0,
                             self_history TEXT NOT NULL DEFAULT '',
                             relationship_state TEXT NOT NULL DEFAULT '',
+                            self_reflection_mode TEXT NOT NULL DEFAULT 'disabled',
+                            self_reflection_preset_id TEXT,
+                            self_reflection_n_turns INTEGER NOT NULL DEFAULT 5,
                             created_at DATETIME,
                             updated_at DATETIME
                         )
