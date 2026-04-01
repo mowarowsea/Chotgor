@@ -60,6 +60,18 @@ def create_provider(provider_id: str, model: str, settings: dict, **kwargs) -> B
 
     Falls back to ClaudeCliProvider for unknown provider IDs.
     Extra **kwargs (e.g. character_name) are forwarded to from_config().
+
+    Args:
+        provider_id: プロバイダーID（"google", "ollama" 等）。
+        model: モデルID。
+        settings: グローバル設定 dict。
+        preset_name: デバッグログのファイル名に使用するプリセット名（kwargs 経由）。
+                     省略時はログに PROVIDER_ID が使われる。
+        **kwargs: from_config() に転送する追加引数。
     """
+    preset_name: str = kwargs.pop("preset_name", "")
     cls = PROVIDER_REGISTRY.get(provider_id, ClaudeCliProvider)
-    return cls.from_config(model=model, settings=settings, **kwargs)
+    instance = cls.from_config(model=model, settings=settings, **kwargs)
+    if preset_name:
+        instance.preset_name = preset_name
+    return instance

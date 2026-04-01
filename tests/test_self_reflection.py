@@ -3,14 +3,15 @@
 自己参照ループ（SelfReflector）の動作を検証する。
 対象クラス・関数:
     SelfReflector.run()              — エントリポイント。モード・設定に応じて処理を振り分ける
-    SelfReflector._detect_trigger()  — Ollama契機判断（YES/NO応答の解析を含む）
+    SelfReflector._detect_trigger()  — 登録済みプリセットによる契機判断（YES/NO応答の解析を含む）
     SelfReflector._run_reflection()  — パブリックLLMへの自己参照コール＋タグ処理
     _format_conversation()           — メッセージリストを整形する内部ユーティリティ
 
 テスト方針:
     - LLMプロバイダーは asyncio coroutine を返す AsyncMock で差し替える
     - SQLite操作は実際の一時DBを使い、Carver/Drifterの副作用もあわせて検証する
-    - エラー系（Ollama接続失敗・空応答・preset未発見）がサイレントにskipされることを確認する
+    - エラー系（接続失敗・空応答・preset未発見）がサイレントにskipされることを確認する
+    - 契機判断プリセットは任意のプロバイダー（Ollama・Google等）を使用できることを検証する
 """
 
 import asyncio
@@ -38,7 +39,7 @@ def char_id(sqlite_store):
 
 @pytest.fixture
 def trigger_preset_id(sqlite_store):
-    """テスト用Ollamaモデルプリセットを作成し、そのIDを返すフィクスチャ。"""
+    """テスト用モデルプリセット（Ollama）を作成し、そのIDを返すフィクスチャ。"""
     import uuid
     pid = str(uuid.uuid4())
     sqlite_store.create_model_preset(
@@ -46,6 +47,23 @@ def trigger_preset_id(sqlite_store):
         name="Test-Ollama",
         provider="ollama",
         model_id="qwen2.5:3b",
+    )
+    return pid
+
+
+@pytest.fixture
+def google_trigger_preset_id(sqlite_store):
+    """テスト用モデルプリセット（Google）を作成し、そのIDを返すフィクスチャ。
+
+    Ollamaに限らず任意プロバイダーを契機判断に使えることの検証用。
+    """
+    import uuid
+    pid = str(uuid.uuid4())
+    sqlite_store.create_model_preset(
+        preset_id=pid,
+        name="Test-Google",
+        provider="google",
+        model_id="gemini-2.0-flash",
     )
     return pid
 
@@ -331,7 +349,17 @@ class TestDetectTrigger:
     """SelfReflector._detect_trigger() のYES/NO解析を検証する。"""
 
     def _run_detect(self, reflector, response_text, trigger_preset_id, settings=None):
-        """_detect_trigger() を同期的に実行するヘルパー。"""
+        """_detect_trigger() を同期的に実行するヘルパー。
+
+        Args:
+            reflector: テスト対象の SelfReflector インスタンス。
+            response_text: モック契機判断プロバイダーが返すテキスト。
+            trigger_preset_id: 使用するプリセットID。
+            settings: グローバル設定 dict（省略時は空 dict）。
+
+        Returns:
+            _detect_trigger() の戻り値（True / False）。
+        """
         with patch("backend.character_actions.reflector.create_provider") as mock_create:
             provider = _make_provider(response_text)
             mock_create.return_value = provider
@@ -344,7 +372,7 @@ class TestDetectTrigger:
             )
 
     def test_yes_response_returns_true(self, reflector, sqlite_store, trigger_preset_id):
-        """Ollama が「YES」を返したとき True になること。"""
+        """契機判断プロバイダーが「YES」を返したとき True になること。"""
         reflector.memory_manager.sqlite = sqlite_store
         result = self._run_detect(reflector, "YES", trigger_preset_id)
         assert result is True
@@ -356,13 +384,13 @@ class TestDetectTrigger:
         assert result is True
 
     def test_no_response_returns_false(self, reflector, sqlite_store, trigger_preset_id):
-        """Ollama が「NO」を返したとき False になること。"""
+        """契機判断プロバイダーが「NO」を返したとき False になること。"""
         reflector.memory_manager.sqlite = sqlite_store
         result = self._run_detect(reflector, "NO", trigger_preset_id)
         assert result is False
 
     def test_empty_response_returns_false(self, reflector, sqlite_store, trigger_preset_id):
-        """Ollama が空文字を返したとき False になること（NOT YES）。"""
+        """契機判断プロバイダーが空文字を返したとき False になること（NOT YES）。"""
         reflector.memory_manager.sqlite = sqlite_store
         result = self._run_detect(reflector, "", trigger_preset_id)
         assert result is False
@@ -379,12 +407,12 @@ class TestDetectTrigger:
         )
         assert result is False
 
-    def test_ollama_connection_error_returns_false(self, reflector, sqlite_store, trigger_preset_id):
-        """Ollamaへの接続が失敗したとき False を返すこと（例外を送出しない）。"""
+    def test_trigger_connection_error_returns_false(self, reflector, sqlite_store, trigger_preset_id):
+        """契機判断プロバイダーへの接続が失敗したとき False を返すこと（例外を送出しない）。"""
         reflector.memory_manager.sqlite = sqlite_store
         with patch("backend.character_actions.reflector.create_provider") as mock_create:
             provider = MagicMock()
-            provider.generate = AsyncMock(side_effect=ConnectionError("Ollama unreachable"))
+            provider.generate = AsyncMock(side_effect=ConnectionError("provider unreachable"))
             mock_create.return_value = provider
             result = asyncio.run(
                 reflector._detect_trigger(
@@ -395,15 +423,52 @@ class TestDetectTrigger:
             )
         assert result is False
 
+    def test_non_ollama_preset_uses_correct_provider(
+        self, reflector, sqlite_store, google_trigger_preset_id
+    ):
+        """GoogleプリセットのIDを渡したとき、create_provider が "google" で呼ばれること。
+
+        Ollamaにハードコードされていたバグのリグレッションテストとして機能する。
+        """
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch("backend.character_actions.reflector.create_provider") as mock_create:
+            mock_create.return_value = _make_provider("NO")
+            asyncio.run(
+                reflector._detect_trigger(
+                    trigger_preset_id=google_trigger_preset_id,
+                    settings={},
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                )
+            )
+        called_provider_id = mock_create.call_args[0][0]
+        assert called_provider_id == "google"
+
+    def test_ollama_preset_uses_ollama_provider(
+        self, reflector, sqlite_store, trigger_preset_id
+    ):
+        """OllamaプリセットのIDを渡したとき、create_provider が "ollama" で呼ばれること。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch("backend.character_actions.reflector.create_provider") as mock_create:
+            mock_create.return_value = _make_provider("NO")
+            asyncio.run(
+                reflector._detect_trigger(
+                    trigger_preset_id=trigger_preset_id,
+                    settings={},
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                )
+            )
+        called_provider_id = mock_create.call_args[0][0]
+        assert called_provider_id == "ollama"
+
 
 # ─── SelfReflector.run() — local_trigger モード ──────────────────────────────
 
 
 class TestSelfReflectorLocalTrigger:
-    """self_reflection_mode が local_trigger のとき、Ollama契機判断の結果で分岐することを検証する。"""
+    """self_reflection_mode が local_trigger のとき、契機判断の結果で分岐することを検証する。"""
 
     def test_local_trigger_yes_calls_public_provider(self, reflector, sqlite_store, trigger_preset_id):
-        """local_trigger + Ollama=YES のとき、パブリックLLMが呼ばれること。"""
+        """local_trigger + 契機判断=YES のとき、パブリックLLMが呼ばれること。"""
         reflector.memory_manager.sqlite = sqlite_store
         public_provider = _make_provider("")
 
@@ -425,7 +490,7 @@ class TestSelfReflectorLocalTrigger:
         public_provider.generate.assert_called_once()
 
     def test_local_trigger_no_skips_public_provider(self, reflector, sqlite_store, trigger_preset_id):
-        """local_trigger + Ollama=NO のとき、パブリックLLMが呼ばれないこと。"""
+        """local_trigger + 契機判断=NO のとき、パブリックLLMが呼ばれないこと。"""
         reflector.memory_manager.sqlite = sqlite_store
         public_provider = _make_provider("")
 
@@ -468,7 +533,7 @@ class TestSelfReflectorLocalTrigger:
         public_provider.generate.assert_not_called()
 
     def test_local_trigger_yes_applies_tags_to_db(self, reflector, sqlite_store, char_id, trigger_preset_id):
-        """local_trigger + Ollama=YES で返されたタグがDBに反映されること。"""
+        """local_trigger + 契機判断=YES で返されたタグがDBに反映されること。"""
         reflector.memory_manager.sqlite = sqlite_store
         public_provider = _make_provider("[CARVE_NARRATIVE:append|契機判断後の気づき]")
 

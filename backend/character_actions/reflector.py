@@ -1,12 +1,12 @@
 """自己参照ループ — 返答生成後にキャラクターが自己観察・内省を行う機構。
 
-Ollama（ローカルLLM）を契機判断フィルターとして使い、
+登録済みプリセット（任意のプロバイダー）を契機判断フィルターとして使い、
 必要なターンのみパブリックLLMへ2次コールして自己参照を実行する。
 
 動作モード:
     disabled       : 自己参照なし（デフォルト）
-    local_trigger  : Ollamaで契機判断 → YESのときのみパブリックLLMで自己参照
-    always         : 毎ターンパブリックLLMで自己参照（Ollama不要・コスト大）
+    local_trigger  : プリセットで契機判断 → YESのときのみパブリックLLMで自己参照
+    always         : 毎ターンパブリックLLMで自己参照（コスト大）
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from backend.providers.registry import create_provider
+from backend.lib.log_context import current_log_feature
 
 if TYPE_CHECKING:
     from backend.providers.base import BaseLLMProvider
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-# Ollama向け契機判断プロンプト。
+# 契機判断プロンプト。
 # 誤検知はパブリックLLMが最終判断するため感度は高めに設定する。
 _TRIGGER_PROMPT_TEMPLATE = """\
 以下の会話を読んで判断してください。
@@ -99,40 +100,50 @@ class SelfReflector:
         settings: dict,
         conversation_window: list[dict],
     ) -> bool:
-        """Ollamaに契機判断を問い合わせ、自己参照すべきか否かを返す。
+        """登録済みプリセットに契機判断を問い合わせ、自己参照すべきか否かを返す。
 
         Args:
-            trigger_preset_id: 使用するOllamaモデルプリセットID。
-            settings: グローバル設定 dict（ollama_base_url 等を含む）。
+            trigger_preset_id: 使用するモデルプリセットID（任意のプロバイダー）。
+            settings: グローバル設定 dict。
             conversation_window: 直近Nターンのメッセージリスト。
 
         Returns:
-            自己参照すべきであれば True。Ollama接続エラー等の場合も False。
+            自己参照すべきであれば True。接続エラー等の場合も False。
         """
-        # プリセットIDからモデル名を解決する
+        # プリセットIDからプロバイダー・モデル名を解決する
         preset = self.memory_manager.sqlite.get_model_preset(trigger_preset_id)
         if preset is None:
             _log.warning("自己参照: 契機判断プリセット未発見 preset_id=%s", trigger_preset_id)
             return False
 
         try:
-            ollama_provider = create_provider("ollama", preset.model_id or "", settings)
+            current_log_feature.set("trigger")
+            trigger_provider = create_provider(
+                preset.provider, preset.model_id or "", settings,
+                preset_name=preset.name,
+            )
         except Exception as e:
-            _log.warning("自己参照: Ollamaプロバイダー生成失敗 preset=%s error=%s", trigger_preset_id, e)
+            _log.warning(
+                "自己参照: 契機判断プロバイダー生成失敗 preset=%s provider=%s error=%s",
+                trigger_preset_id, preset.provider, e,
+            )
             return False
 
         conversation_text = _format_conversation(conversation_window)
         prompt = _TRIGGER_PROMPT_TEMPLATE.format(conversation=conversation_text)
 
         try:
-            response = await ollama_provider.generate("", [{"role": "user", "content": prompt}])
+            response = await trigger_provider.generate("", [{"role": "user", "content": prompt}])
         except Exception as e:
-            _log.warning("自己参照: Ollama契機判断失敗 error=%s", e)
+            _log.warning("自己参照: 契機判断失敗 provider=%s error=%s", preset.provider, e)
             return False
 
         result = response.strip().upper()
         triggered = result.startswith("YES")
-        _log.info("自己参照: 契機判断結果=%s raw=%.30s", "YES" if triggered else "NO", response)
+        _log.info(
+            "自己参照: 契機判断結果=%s provider=%s raw=%.30s",
+            "YES" if triggered else "NO", preset.provider, response,
+        )
         return triggered
 
     async def _run_reflection(
@@ -160,6 +171,7 @@ class SelfReflector:
 
         messages = [{"role": "user", "content": _format_conversation(conversation_window)}]
 
+        current_log_feature.set("reflection")
         try:
             reflection_text = await public_provider.generate(_REFLECTION_SYSTEM, messages)
         except Exception as e:
@@ -198,7 +210,7 @@ class SelfReflector:
 
         Args:
             request_mode: 動作モード（disabled / local_trigger / always）。
-            trigger_preset_id: Ollama契機判断プリセットID（local_trigger 時に使用）。
+            trigger_preset_id: 契機判断プリセットID（local_trigger 時に使用、任意プロバイダー可）。
             n_turns: 自己参照に使う直近ターン数。
             public_provider: 自己参照コールに使うプロバイダー（メイン会話と同じもの）。
             settings: グローバル設定 dict。

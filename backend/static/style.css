@@ -369,6 +369,13 @@ select.form-control {
   line-height: 1.55;
 }
 
+.form-error {
+  font-size: 0.73rem;
+  color: var(--danger, #e05555);
+  margin-top: 0.3rem;
+  line-height: 1.55;
+}
+
 .form-actions {
   display: flex;
   gap: 0.45rem;

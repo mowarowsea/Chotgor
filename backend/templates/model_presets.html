@@ -14,6 +14,7 @@
                 <label for="new-name">表示名</label>
                 <input type="text" id="new-name" name="name" class="form-control"
                        placeholder="例: Google-Gemini3Flash" required>
+                <div id="new-name-error" class="form-error" style="display:none"></div>
             </div>
             <div class="form-group" style="flex:1.5;margin-bottom:0">
                 <label for="new-provider">プロバイダー</label>
@@ -43,7 +44,7 @@
                 </select>
             </div>
             <div style="padding-top:22px;flex-shrink:0">
-                <button type="submit" class="btn btn-primary">追加</button>
+                <button type="button" class="btn btn-primary" onclick="submitNew()">追加</button>
             </div>
         </div>
     </form>
@@ -70,6 +71,7 @@
                     <span class="preset-display" id="name-display-{{ preset.id }}">{{ preset.name }}</span>
                     <input type="text" class="form-control preset-edit-field" id="name-edit-{{ preset.id }}"
                            value="{{ preset.name }}" style="display:none">
+                    <div id="name-edit-error-{{ preset.id }}" class="form-error" style="display:none"></div>
                 </td>
                 <td>
                     <span class="preset-display" id="provider-display-{{ preset.id }}">
@@ -138,6 +140,36 @@
 </div>
 
 <script>
+/**
+ * プリセット名として使用不可な文字のパターン。
+ * ファイル名に使えない記号（半角・全角）と制御文字を禁止する。
+ */
+const PRESET_NAME_INVALID_CHARS = /[/\\. :*?"<>|\x00-\x1f／＼．　：＊？"＜＞｜]/;
+
+/**
+ * プリセット名を検証し、不正な文字が含まれていれば errorEl にメッセージを表示して false を返す。
+ * @param {string} name - 検証対象のプリセット名
+ * @param {HTMLElement} errorEl - エラーメッセージを表示する要素
+ * @returns {boolean} 有効なら true
+ */
+function validatePresetName(name, errorEl) {
+    if (PRESET_NAME_INVALID_CHARS.test(name)) {
+        errorEl.textContent = '使用できない文字が含まれています: / \\ . スペース : * ? " < > | およびこれらの全角文字';
+        errorEl.style.display = '';
+        return false;
+    }
+    errorEl.style.display = 'none';
+    return true;
+}
+
+/** 新規追加フォームを検証してから送信する。 */
+function submitNew() {
+    const nameInput = document.getElementById('new-name');
+    const errorEl = document.getElementById('new-name-error');
+    if (!validatePresetName(nameInput.value.trim(), errorEl)) return;
+    nameInput.closest('form').submit();
+}
+
 /** プロバイダーごとのモデル一覧キャッシュ。 */
 const _modelCache = {};
 
@@ -227,10 +259,13 @@ function cancelEdit(id) {
     document.getElementById(`modelid-edit-${id}`).removeAttribute('list');
 }
 
-/** 編集内容を hidden フィールドにコピーしてフォームを送信する。 */
+/** 編集内容を検証してから hidden フィールドにコピーしてフォームを送信する。 */
 function submitEdit(id) {
-    document.getElementById(`edit-name-${id}`).value =
-        document.getElementById(`name-edit-${id}`).value;
+    const nameInput = document.getElementById(`name-edit-${id}`);
+    const errorEl = document.getElementById(`name-edit-error-${id}`);
+    if (!validatePresetName(nameInput.value.trim(), errorEl)) return;
+
+    document.getElementById(`edit-name-${id}`).value = nameInput.value;
     document.getElementById(`edit-provider-${id}`).value =
         document.getElementById(`provider-edit-${id}`).value;
     document.getElementById(`edit-modelid-${id}`).value =

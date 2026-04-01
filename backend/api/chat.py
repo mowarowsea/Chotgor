@@ -426,8 +426,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             return
 
         clean_text = full_text
-        logger.log_front_output(clean_text)
-
+        # log_front_output は service.py 内で呼び出し済みのため、ここでは不要
         used_char_name, used_preset_name = effective_model_id.rsplit("@", 1) if "@" in effective_model_id else (effective_model_id, None)
 
         char_msg_id = str(uuid.uuid4())

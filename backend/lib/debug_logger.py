@@ -26,9 +26,18 @@ class ChotgorLogger:
 
     @staticmethod
     def _json_serializer(obj: Any) -> Any:
-        """json.dumps で扱えない型を変換するデフォルトシリアライザ。"""
+        """json.dumps で扱えない型を変換するデフォルトシリアライザ。
+
+        model_dump() が dict を返す Pydantic モデルはそのまま展開する。
+        model_dump() が dict 以外を返す場合（MagicMock等）は str() にフォールバックして
+        json.dumps の default コールバックが無限ループするのを防ぐ。
+        """
         if hasattr(obj, "model_dump"):
-            return obj.model_dump()
+            result = obj.model_dump()
+            if isinstance(result, dict):
+                return result
+            # model_dump() が dict 以外を返した（MagicMock 等） → str にフォールバック
+            return str(obj)
         if hasattr(obj, "__dict__"):
             return obj.__dict__
         return str(obj)
@@ -51,19 +60,21 @@ class ChotgorLogger:
         raw = json.dumps(data, ensure_ascii=False, indent=2, default=serializer)
         return self._unescape_text(raw)
 
-    def _write_log(self, prefix: str, content: str) -> None:
+    def _write_log(self, label: str, content: str) -> None:
         """デバッグログをファイルに書き出す。CHOTGOR_DEBUG=1 の時のみ有効。
 
-        出力先: debug/{message_id}/{prefix}.log
-        message_id は ContextVar（current_message_id）から取得する。
+        出力先: debug/{message_id}/{NN}_{label}.log
+        NN はリクエスト内の通し番号（時系列順）。
+        message_id / 通し番号は ContextVar から取得する。
         """
         if not self.is_debug_enabled():
             return
-        from .log_context import current_message_id
+        from .log_context import current_message_id, next_log_index
         msg_id = current_message_id.get()
+        idx = next_log_index()
         folder = os.path.join(self.DEBUG_DIR, msg_id)
         os.makedirs(folder, exist_ok=True)
-        filename = f"{prefix}.log"
+        filename = f"{idx:02d}_{label}.log"
         filepath = os.path.join(folder, filename)
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
@@ -73,35 +84,49 @@ class ChotgorLogger:
     def log_front_input(self, data: Any) -> None:
         """フロント(OpenWebUI)からの入力リクエストを記録する。
 
-        ファイル: 01_FrontInput.log
+        ファイル: {NN}_FrontInput.log
         """
-        self._write_log("01_FrontInput", self._format_json(data))
+        self._write_log("FrontInput", self._format_json(data))
 
     def log_front_output(self, text: str) -> None:
         """フロントへ連携する最終的な出力テキストを記録する。
 
-        ファイル: 04_FrontOutput.log
+        ファイル: {NN}_FrontOutput.log
         """
-        self._write_log("04_FrontOutput", self._unescape_text(text))
+        self._write_log("FrontOutput", self._unescape_text(text))
 
-    def log_provider_request(self, provider: str, params: Any) -> None:
+    def log_provider_request(self, preset_name: str, params: Any) -> None:
         """プロバイダーAPIへ送るリクエストパラメータを記録する。
 
-        ファイル: 02_Request_{provider}.log
-        """
-        self._write_log(f"02_Request_{provider}", self._format_json(params))
+        ファイル: {NN}_{feature}_Request_{preset_name}.log
+        feature は current_log_feature ContextVar から取得する。
 
-    def log_provider_response(self, provider: str, data: Any) -> None:
+        Args:
+            preset_name: プリセット名（またはプロバイダーID）。
+            params: リクエストパラメータ。
+        """
+        from .log_context import current_log_feature
+        feature = current_log_feature.get()
+        self._write_log(f"{feature}_Request_{preset_name}", self._format_json(params))
+
+    def log_provider_response(self, preset_name: str, data: Any) -> None:
         """プロバイダーAPIからの生レスポンスを記録する。
 
         テキストの場合はそのまま、それ以外はJSON整形して出力。
-        ファイル: 03_Response_{provider}.log
+        ファイル: {NN}_{feature}_Response_{preset_name}.log
+        feature は current_log_feature ContextVar から取得する。
+
+        Args:
+            preset_name: プリセット名（またはプロバイダーID）。
+            data: レスポンスデータ。
         """
+        from .log_context import current_log_feature
+        feature = current_log_feature.get()
         if isinstance(data, str):
             content = self._unescape_text(data)
         else:
             content = self._format_json(data, default=str)
-        self._write_log(f"03_Response_{provider}", content)
+        self._write_log(f"{feature}_Response_{preset_name}", content)
 
     # --- コンソールログメソッド ---
 

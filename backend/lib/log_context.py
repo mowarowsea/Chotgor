@@ -13,18 +13,39 @@ from contextvars import ContextVar
 # リクエスト識別子（チャット1回ごと、chronicle/forgetキャラごとにセット）
 current_message_id: ContextVar[str] = ContextVar("current_message_id", default="--------")
 
+# 現在のLLM呼び出し機能名（chat / power_recall / trigger / reflection / forget / chronicle / group_chat）
+current_log_feature: ContextVar[str] = ContextVar("current_log_feature", default="chat")
+
+# デバッグログファイルの通し番号（リクエストごとに new_message_id() でリセット）
+_log_call_counter: ContextVar[int] = ContextVar("_log_call_counter", default=0)
+
 
 def new_message_id() -> str:
     """ログ追跡用の短縮IDを生成して current_message_id にセットして返す。
 
     チャットリクエスト開始時・chronicle/forget の各キャラ処理開始時に呼び出す。
+    デバッグログの通し番号もここでリセットする。
 
     Returns:
         生成した8文字の16進数ID。
     """
     msg_id = _uuid_mod.uuid4().hex[:8]
     current_message_id.set(msg_id)
+    _log_call_counter.set(0)
     return msg_id
+
+
+def next_log_index() -> int:
+    """デバッグログファイルの通し番号を1増やして返す。
+
+    _write_log() から呼び出すことで、リクエスト内の全ログが時系列順に並ぶ。
+
+    Returns:
+        インクリメント後の番号（1始まり）。
+    """
+    n = _log_call_counter.get() + 1
+    _log_call_counter.set(n)
+    return n
 
 
 class _ChotgorFormatter(logging.Formatter):

@@ -234,6 +234,7 @@ async def test_run_chronicle_uses_ghost_model_preset(sqlite_store):
         "anthropic", "claude-3-5-haiku-latest",
         sqlite_store.get_all_settings(),
         thinking_level="default",
+        preset_name="TestPreset",
     )
 
 
@@ -273,6 +274,7 @@ async def test_call_llm_for_forget_uses_ghost_model_preset(sqlite_store):
         "anthropic", "claude-3-5-haiku-latest",
         settings,
         thinking_level="default",
+        preset_name="TestPreset",
     )
 
 

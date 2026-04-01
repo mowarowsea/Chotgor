@@ -14,7 +14,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from backend.lib.log_context import new_message_id
+from backend.lib.log_context import current_log_feature, new_message_id
 from backend.providers.registry import create_provider
 from backend.repositories.sqlite.store import SQLiteStore
 
@@ -171,9 +171,11 @@ async def run_chronicle(
     try:
         if settings is None:
             settings = sqlite.get_all_settings()
+        current_log_feature.set("chronicle")
         provider = create_provider(
             preset.provider, preset.model_id, settings,
             thinking_level=preset.thinking_level or "default",
+            preset_name=preset.name,
         )
         llm_messages = [{"role": "user", "content": prompt_text}]
         logger.debug("LLM呼び出し char=%s target_date=%s", char_label, target_date or "unchronicled")

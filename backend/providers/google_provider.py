@@ -147,11 +147,44 @@ class GoogleProvider(BaseLLMProvider):
                 )
         return contents, supports_system_instruction
 
+    def _build_generate_config(self, system_prompt: str, supports_system_instruction: bool):
+        """generate 系メソッド共通の GenerateContentConfig を構築する。
+
+        ContextVar のカウンターが正しく機能するよう、config 構築と
+        _log_request 呼び出しは必ず asyncio コンテキスト（スレッド外）で行う。
+
+        Args:
+            system_prompt: システムプロンプト文字列。
+            supports_system_instruction: system_instruction に対応するモデルか否か。
+
+        Returns:
+            構築済みの GenerateContentConfig オブジェクト。
+        """
+        from google.genai import types
+
+        config_kwargs: dict = {
+            "max_output_tokens": 4096,
+            "safety_settings": [
+                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+            ],
+        }
+        if supports_system_instruction:
+            config_kwargs["system_instruction"] = system_prompt
+        if self.thinking_level != "default":
+            budget = _THINKING_BUDGET[self.thinking_level]
+            # include_thoughts=True がないと思考ブロックが返ってこない
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=budget, include_thoughts=True
+            )
+        return types.GenerateContentConfig(**config_kwargs)
+
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """Google Gemini APIから応答テキストを一括生成する。"""
         try:
             from google import genai
-            from google.genai import types
         except ImportError:
             return (
                 "[Error: google-genai パッケージがインストールされていません。"
@@ -164,37 +197,23 @@ class GoogleProvider(BaseLLMProvider):
         client = genai.Client(api_key=self.api_key)
         contents, supports_system_instruction = self._build_contents(system_prompt, messages)
 
+        # _log_request / _log_response は ContextVar カウンターを使うため
+        # asyncio コンテキスト（スレッド外）で呼び出す
+        config = self._build_generate_config(system_prompt, supports_system_instruction)
+        self._log_request({"model": self.model, "contents": contents, "config": config})
+
         def run():
-            """同期APIを実行して応答テキストを返す内部関数。"""
-            config_kwargs = {
-                "max_output_tokens": 4096,
-                "safety_settings": [
-                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                ],
-            }
-            if supports_system_instruction:
-                config_kwargs["system_instruction"] = system_prompt
-            if self.thinking_level != "default":
-                budget = _THINKING_BUDGET[self.thinking_level]
-                # include_thoughts=True がないと思考ブロックが返ってこない
-                config_kwargs["thinking_config"] = types.ThinkingConfig(
-                    thinking_budget=budget, include_thoughts=True
-                )
-            config = types.GenerateContentConfig(**config_kwargs)
-            self._log_request({"model": self.model, "contents": contents, "config": config})
-            response = client.models.generate_content(
+            """同期APIを実行して応答オブジェクトを返す内部関数。"""
+            return client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=config,
             )
-            self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
-            return response.text
 
         try:
-            return await asyncio.to_thread(run)
+            response = await asyncio.to_thread(run)
+            self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
+            return response.text
         except Exception as e:
             return f"[Google API error: {e}]"
 
@@ -202,7 +221,6 @@ class GoogleProvider(BaseLLMProvider):
         """Google Gemini APIからテキストチャンクをストリーミングで取得する。"""
         try:
             from google import genai
-            from google.genai import types
         except ImportError:
             yield "[Error: google-genai パッケージがインストールされていません]"
             return
@@ -218,28 +236,17 @@ class GoogleProvider(BaseLLMProvider):
         client = genai.Client(api_key=self.api_key)
         contents, supports_system_instruction = self._build_contents(system_prompt, messages)
 
+        # _log_request は asyncio コンテキストで呼び出す（スレッドに入る前）
+        config = self._build_generate_config(system_prompt, supports_system_instruction)
+        self._log_request({"model": self.model, "contents": contents, "config": config})
+
+        # 累積テキストをスレッド外に渡すためのコンテナ
+        result_holder: list[str] = []
+
         def run():
             """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
             accumulated = []
             try:
-                config_kwargs = {
-                    "max_output_tokens": 4096,
-                    "safety_settings": [
-                        types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                    ],
-                }
-                if supports_system_instruction:
-                    config_kwargs["system_instruction"] = system_prompt
-                if self.thinking_level != "default":
-                    budget = _THINKING_BUDGET[self.thinking_level]
-                    config_kwargs["thinking_config"] = types.ThinkingConfig(
-                        thinking_budget=budget, include_thoughts=True
-                    )
-                config = types.GenerateContentConfig(**config_kwargs)
-                self._log_request({"model": self.model, "contents": contents, "config": config})
                 for chunk in client.models.generate_content_stream(
                     model=self.model, contents=contents, config=config
                 ):
@@ -249,19 +256,29 @@ class GoogleProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                self._log_response("".join(accumulated))
+                # 累積テキストを asyncio 側に渡す（None の前にセットされることが保証される）
+                result_holder.append("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
 
+        # エラーは None sentinel を受け取るまでドレインしてから yield する
+        # （result_holder への書き込みが None の前に実行されることを保証するため）
+        error_item: RuntimeError | None = None
         while True:
             item = await queue.get()
             if item is None:
                 break
             if isinstance(item, RuntimeError):
-                yield f"[Google API error: {item}]"
-                break
-            yield item
+                error_item = item
+            else:
+                yield item
+
+        # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
+        self._log_response(result_holder[0] if result_holder else "")
+
+        if error_item is not None:
+            yield f"[Google API error: {error_item}]"
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """Google Gemini APIから思考ブロックを含む型付きチャンクをストリーミングで取得する。
@@ -275,7 +292,6 @@ class GoogleProvider(BaseLLMProvider):
         """
         try:
             from google import genai
-            from google.genai import types
         except ImportError:
             yield ("text", "[Error: google-genai パッケージがインストールされていません]")
             return
@@ -291,6 +307,13 @@ class GoogleProvider(BaseLLMProvider):
         client = genai.Client(api_key=self.api_key)
         contents, supports_system_instruction = self._build_contents(system_prompt, messages)
 
+        # _log_request は asyncio コンテキストで呼び出す（スレッドに入る前）
+        config = self._build_generate_config(system_prompt, supports_system_instruction)
+        self._log_request({"model": self.model, "contents": contents, "config": config})
+
+        # 累積テキストをスレッド外に渡すためのコンテナ
+        result_holder: list[str] = []
+
         def run():
             """同期SDKストリーミングを走査し、思考ブロックと通常テキストを区別してキューへ送信する。
 
@@ -299,25 +322,6 @@ class GoogleProvider(BaseLLMProvider):
             """
             accumulated = []
             try:
-                config_kwargs: dict = {
-                    "max_output_tokens": 4096,
-                    "safety_settings": [
-                        types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                    ],
-                }
-                if supports_system_instruction:
-                    config_kwargs["system_instruction"] = system_prompt
-                if self.thinking_level != "default":
-                    budget = _THINKING_BUDGET[self.thinking_level]
-                    config_kwargs["thinking_config"] = types.ThinkingConfig(
-                        thinking_budget=budget, include_thoughts=True
-                    )
-                config = types.GenerateContentConfig(**config_kwargs)
-                self._log_request({"model": self.model, "contents": contents, "config": config})
-
                 for chunk in client.models.generate_content_stream(
                     model=self.model, contents=contents, config=config
                 ):
@@ -343,19 +347,29 @@ class GoogleProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                self._log_response("".join(accumulated))
+                # 累積テキストを asyncio 側に渡す（None の前にセットされることが保証される）
+                result_holder.append("".join(accumulated))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
 
+        # エラーは None sentinel を受け取るまでドレインしてから yield する
+        # （result_holder への書き込みが None の前に実行されることを保証するため）
+        error_item: RuntimeError | None = None
         while True:
             item = await queue.get()
             if item is None:
                 break
             if isinstance(item, RuntimeError):
-                yield ("text", f"[Google API error: {item}]")
-                break
-            yield item
+                error_item = item
+            else:
+                yield item
+
+        # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
+        self._log_response(result_holder[0] if result_holder else "")
+
+        if error_item is not None:
+            yield ("text", f"[Google API error: {error_item}]")
 
     async def _tool_turn(self, system_prompt: str, messages: list) -> ToolTurnResult:
         """Google Gemini APIを1ターン呼び出し、テキストと正規化ツール呼び出しを返す。
@@ -407,55 +421,60 @@ class GoogleProvider(BaseLLMProvider):
             for t in OPENAI_TOOLS
         ]
 
-        def run() -> ToolTurnResult:
-            """同期APIを呼び出してToolTurnResultを返す内部関数。"""
-            config_kwargs: dict = {
-                "max_output_tokens": 4096,
-                "safety_settings": [
-                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                ],
-                "tools": [types.Tool(function_declarations=function_declarations)],
-            }
-            if supports_system_instruction:
-                config_kwargs["system_instruction"] = system_prompt
+        # tool-use 用の config（thinking_level は使わない）
+        config_kwargs: dict = {
+            "max_output_tokens": 4096,
+            "safety_settings": [
+                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+            ],
+            "tools": [types.Tool(function_declarations=function_declarations)],
+        }
+        if supports_system_instruction:
+            config_kwargs["system_instruction"] = system_prompt
+        config = types.GenerateContentConfig(**config_kwargs)
 
-            config = types.GenerateContentConfig(**config_kwargs)
-            self._log_request({"model": self.model, "contents": contents, "config": config})
-            response = client.models.generate_content(
+        # _log_request は asyncio コンテキストで呼び出す（スレッドに入る前）
+        self._log_request({"model": self.model, "contents": contents, "config": config})
+
+        def run():
+            """同期APIを呼び出してレスポンスオブジェクトを返す内部関数。"""
+            return client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=config,
             )
-            self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
-
-            text = ""
-            tool_calls: list[ToolCall] = []
-            for candidate in (response.candidates or []):
-                if not candidate.content:
-                    continue
-                for part in (candidate.content.parts or []):
-                    if part.text:
-                        text += part.text
-                    elif getattr(part, "function_call", None):
-                        fc = part.function_call
-                        # プロバイダー固有のIDがないため連番で生成する
-                        call_id = f"call_{len(tool_calls)}_{fc.name}"
-                        tool_calls.append(ToolCall(
-                            id=call_id,
-                            name=fc.name,
-                            input=dict(fc.args) if fc.args else {},
-                        ))
-
-            # _raw に (contents, response) を格納し _extend_messages_with_results で利用する
-            return ToolTurnResult(text=text, tool_calls=tool_calls, _raw=(contents, response))
 
         try:
-            return await asyncio.to_thread(run)
+            response = await asyncio.to_thread(run)
         except Exception as e:
             return ToolTurnResult(text=f"[Google API error: {e}]", tool_calls=[])
+
+        # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
+        self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
+
+        text = ""
+        tool_calls: list[ToolCall] = []
+        for candidate in (response.candidates or []):
+            if not candidate.content:
+                continue
+            for part in (candidate.content.parts or []):
+                if part.text:
+                    text += part.text
+                elif getattr(part, "function_call", None):
+                    fc = part.function_call
+                    # プロバイダー固有のIDがないため連番で生成する
+                    call_id = f"call_{len(tool_calls)}_{fc.name}"
+                    tool_calls.append(ToolCall(
+                        id=call_id,
+                        name=fc.name,
+                        input=dict(fc.args) if fc.args else {},
+                    ))
+
+        # _raw に (contents, response) を格納し _extend_messages_with_results で利用する
+        return ToolTurnResult(text=text, tool_calls=tool_calls, _raw=(contents, response))
 
     def _extend_messages_with_results(
         self,

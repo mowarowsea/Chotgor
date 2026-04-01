@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Optional
 
-from backend.lib.log_context import new_message_id
+from backend.lib.log_context import current_log_feature, new_message_id
 from backend.providers.registry import create_provider
 from backend.services.memory.manager import MemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
@@ -178,7 +178,12 @@ async def _call_llm_for_forget(
         raise RuntimeError(f"ghost_model に指定されたプリセット '{ghost_model}' が見つかりません。")
 
     messages = [{"role": "user", "content": memory_text}]
-    provider = create_provider(preset.provider, preset.model_id, settings, thinking_level=preset.thinking_level or "default")
+    current_log_feature.set("forget")
+    provider = create_provider(
+        preset.provider, preset.model_id, settings,
+        thinking_level=preset.thinking_level or "default",
+        preset_name=preset.name,
+    )
     result = await provider.generate(system_prompt, messages)
 
     text = result.strip() or "(No kept ids)"

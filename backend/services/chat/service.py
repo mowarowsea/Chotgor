@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from backend.character_actions.executor import ToolExecutor
 
 from backend.lib.debug_logger import logger
+from backend.lib.log_context import current_log_feature
 from backend.services.memory.drift_manager import DriftManager
 from backend.character_actions.carver import Carver
 from backend.character_actions.inscriber import Inscriber
@@ -221,8 +222,13 @@ class ChatService:
                     pass
 
         # --- プロバイダーを決定（use_tools フラグに使用） ---
+        # PowerRecall 再帰呼び出し中は power_recalled が非空
+        feature = "power_recall" if request.power_recalled else "chat"
+        current_log_feature.set(feature)
         provider_impl = create_provider(
-            request.provider, request.model, request.settings, thinking_level=request.thinking_level
+            request.provider, request.model, request.settings,
+            thinking_level=request.thinking_level,
+            preset_name=request.current_preset_name or "",
         )
 
         # --- システムプロンプト構築 ---
@@ -435,6 +441,12 @@ class ChatService:
                 yield ("angle_switched", f"{request.character_name}@{switch_info[0]}")
                 return
 
+        # FrontOutput は reflector タスク起動より前にログする。
+        # asyncio.create_task はコンテキストをコピーするため、
+        # FrontOutput のカウンターインクリメントが反映された状態で reflector を起動する。
+        logger.log_front_output(clean_text)
+        self._log_debug("CHAT stream", request, ctx.messages, clean_text)
+
         # 自己参照ループ: ストリーム完了後にバックグラウンドタスクとして起動する。
         # ユーザーへの応答は既に完了しているため、SSE接続をブロックしない。
         if request.self_reflection_mode != "disabled" and request.session_id:
@@ -454,9 +466,6 @@ class ChatService:
                     current_preset_id=request.current_preset_id,
                 )
             )
-
-        logger.log_front_output(clean_text)
-        self._log_debug("CHAT stream", request, ctx.messages, clean_text)
 
         if clean_text and not text_already_streamed:
             yield ("text", clean_text)

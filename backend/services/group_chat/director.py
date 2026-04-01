@@ -7,6 +7,7 @@
 import logging
 import re
 
+from backend.lib.log_context import current_log_feature
 from backend.providers.registry import create_provider
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,8 @@ async def decide_next_speakers(
         logger.warning("プリセット未発見 director=%s preset_id=%s", director_char_name, director_preset_id)
         return None
 
-    provider = create_provider(preset.provider, preset.model_id, settings)
+    current_log_feature.set("group_chat")
+    provider = create_provider(preset.provider, preset.model_id, settings, preset_name=preset.name)
 
     try:
         raw = await provider.generate(

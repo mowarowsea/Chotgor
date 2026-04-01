@@ -100,17 +100,22 @@ class BaseLLMProvider:
     # サブクラスで上書きすることで、継承先でも正しいキー名のエラーが出る。
     _API_SETTINGS_KEY: str = "api_key"
 
+    # デバッグログのファイル名に使用するプリセット名。
+    # create_provider() 経由でインスタンス生成後に設定される。
+    # 未設定の場合は PROVIDER_ID にフォールバックする。
+    preset_name: str = ""
+
     def _log_request(self, params: Any) -> None:
         """プロバイダーAPIへのリクエストパラメータをデバッグログに記録する。"""
         if not self.PROVIDER_ID:
             raise ValueError(f"{self.__class__.__name__} が PROVIDER_ID を設定していません")
-        logger.log_provider_request(self.PROVIDER_ID, params)
+        logger.log_provider_request(self.preset_name or self.PROVIDER_ID, params)
 
     def _log_response(self, data: Any) -> None:
         """プロバイダーAPIからのレスポンスをデバッグログに記録する。"""
         if not self.PROVIDER_ID:
             raise ValueError(f"{self.__class__.__name__} が PROVIDER_ID を設定していません")
-        logger.log_provider_response(self.PROVIDER_ID, data)
+        logger.log_provider_response(self.preset_name or self.PROVIDER_ID, data)
 
     @classmethod
     def from_config(cls, model: str, settings: dict, **kwargs) -> "BaseLLMProvider":
