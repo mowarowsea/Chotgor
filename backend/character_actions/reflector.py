@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from backend.providers.registry import create_provider
 from backend.lib.log_context import current_log_feature
+from backend.lib.character_context import build_character_context
 
 if TYPE_CHECKING:
     from backend.providers.base import BaseLLMProvider
@@ -24,12 +25,12 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-# 契機判断プロンプト。
-# 誤検知はパブリックLLMが最終判断するため感度は高めに設定する。
-_TRIGGER_PROMPT_TEMPLATE = """\
+# 契機判断のユーザーメッセージ。
+# system_prompt にキャラクター設定を渡し、「あなたにとって」という問いかけにする。
+_TRIGGER_USER_TEMPLATE = """\
 以下の会話を読んで判断してください。
 
-キャラクターが「自己参照」すべき重要な瞬間があるかを判定します。
+あなたが「自己参照」すべき重要な瞬間があるかを判定します。
 「自己参照」とは：自分自身の気づき・感情の変化・価値観の変容・成長などを記録する行為です。
 
 少しでもそのような兆しがあればYESとしてください（誤検知歓迎）。
@@ -40,16 +41,19 @@ _TRIGGER_PROMPT_TEMPLATE = """\
 {conversation}
 """
 
-# パブリックLLM向け自己参照プロンプト。
-# キャラクタープロンプトは注入しない（内容の判断はキャラクター自身に委ねる）。
-_REFLECTION_SYSTEM = """\
-以下の会話を読み、自己参照が必要な気づきや変化があればタグのみで出力してください。
+# パブリックLLM向け自己参照のユーザーメッセージ。
+# system_prompt にキャラクター設定を渡し、「あなたにとって」という問いかけにする。
+_REFLECTION_USER_TEMPLATE = """\
+以下の会話を読み、あなたとして自己参照が必要な気づきや変化があればタグのみで出力してください。
 
 使えるタグ:
 [CARVE_NARRATIVE:append|内容] — 自己の認識・成長・変容を inner_narrative に刻む
 [DRIFT:内容]                   — 一時的な感情・状態の変化を記録する
 
 内省が不要な場合は何も出力しないこと。説明文は一切不要。タグのみ出力してください。
+
+[会話]
+{conversation}
 """
 
 
@@ -99,13 +103,24 @@ class SelfReflector:
         trigger_preset_id: str,
         settings: dict,
         conversation_window: list[dict],
+        character_system_prompt: str = "",
+        inner_narrative: str = "",
+        self_history: str = "",
+        relationship_state: str = "",
     ) -> bool:
         """登録済みプリセットに契機判断を問い合わせ、自己参照すべきか否かを返す。
+
+        キャラクター設定を先頭に添えることで、
+        「このキャラクターにとって自己参照が必要か」という文脈で判断させる。
 
         Args:
             trigger_preset_id: 使用するモデルプリセットID（任意のプロバイダー）。
             settings: グローバル設定 dict。
             conversation_window: 直近Nターンのメッセージリスト。
+            character_system_prompt: キャラクター基本設定テキスト。
+            inner_narrative: キャラクターが自己記述した inner_narrative。
+            self_history: キャラクターの歴史・経緯。
+            relationship_state: ユーザ・他キャラとの現在の関係。
 
         Returns:
             自己参照すべきであれば True。接続エラー等の場合も False。
@@ -129,11 +144,15 @@ class SelfReflector:
             )
             return False
 
+        # キャラクター設定をシステムプロンプトに、問いかけをユーザーメッセージに分離する
+        system_prompt = build_character_context(
+            character_system_prompt, inner_narrative, self_history, relationship_state,
+        )
         conversation_text = _format_conversation(conversation_window)
-        prompt = _TRIGGER_PROMPT_TEMPLATE.format(conversation=conversation_text)
+        user_message = _TRIGGER_USER_TEMPLATE.format(conversation=conversation_text)
 
         try:
-            response = await trigger_provider.generate("", [{"role": "user", "content": prompt}])
+            response = await trigger_provider.generate(system_prompt, [{"role": "user", "content": user_message}])
         except Exception as e:
             _log.warning("自己参照: 契機判断失敗 provider=%s error=%s", preset.provider, e)
             return False
@@ -153,8 +172,16 @@ class SelfReflector:
         character_id: str,
         session_id: str,
         current_preset_id: str,
+        character_system_prompt: str = "",
+        inner_narrative: str = "",
+        self_history: str = "",
+        relationship_state: str = "",
     ) -> None:
         """パブリックLLMに自己参照コールし、タグを解析してDBに反映する。
+
+        キャラクター設定（character_system_prompt / inner_narrative / self_history /
+        relationship_state）をシステムプロンプトに組み込んで「キャラクターに聞いた」
+        体で呼び出す。
 
         生成されたテキストから [CARVE_NARRATIVE:...] / [DRIFT:...] タグを抽出し、
         Carver / Drifter を通じてDBに書き込む。
@@ -165,15 +192,25 @@ class SelfReflector:
             character_id: 自己参照を行うキャラクターID。
             session_id: 現在のセッションID（DRIFT操作に必要）。
             current_preset_id: 記憶作成時の出所プリセットID。
+            character_system_prompt: キャラクター基本設定テキスト。
+            inner_narrative: キャラクターが自己記述した inner_narrative。
+            self_history: キャラクターの歴史・経緯。
+            relationship_state: ユーザ・他キャラとの現在の関係。
         """
         from backend.character_actions.carver import Carver
         from backend.character_actions.drifter import Drifter
 
-        messages = [{"role": "user", "content": _format_conversation(conversation_window)}]
+        # キャラクター設定をシステムプロンプトに、問いかけをユーザーメッセージに分離する
+        system_prompt = build_character_context(
+            character_system_prompt, inner_narrative, self_history, relationship_state,
+        )
+        conversation_text = _format_conversation(conversation_window)
+        user_message = _REFLECTION_USER_TEMPLATE.format(conversation=conversation_text)
+        messages = [{"role": "user", "content": user_message}]
 
         current_log_feature.set("reflection")
         try:
-            reflection_text = await public_provider.generate(_REFLECTION_SYSTEM, messages)
+            reflection_text = await public_provider.generate(system_prompt, messages)
         except Exception as e:
             _log.warning("自己参照: パブリックLLMコール失敗 char=%s error=%s", character_id, e)
             return
@@ -203,6 +240,10 @@ class SelfReflector:
         character_id: str,
         session_id: str,
         current_preset_id: str,
+        character_system_prompt: str = "",
+        inner_narrative: str = "",
+        self_history: str = "",
+        relationship_state: str = "",
     ) -> None:
         """自己参照ループを実行する。
 
@@ -218,6 +259,10 @@ class SelfReflector:
             character_id: 自己参照を行うキャラクターID。
             session_id: 現在のセッションID。
             current_preset_id: 記憶作成時の出所プリセットID。
+            character_system_prompt: キャラクター基本設定テキスト。
+            inner_narrative: キャラクターが自己記述した inner_narrative。
+            self_history: キャラクターの歴史・経緯。
+            relationship_state: ユーザ・他キャラとの現在の関係。
         """
         if request_mode == "disabled":
             return
@@ -232,7 +277,13 @@ class SelfReflector:
             if not trigger_preset_id:
                 _log.warning("自己参照: local_trigger だが self_reflection_preset_id 未設定 char=%s", character_id)
                 return
-            triggered = await self._detect_trigger(trigger_preset_id, settings, window)
+            triggered = await self._detect_trigger(
+                trigger_preset_id, settings, window,
+                character_system_prompt=character_system_prompt,
+                inner_narrative=inner_narrative,
+                self_history=self_history,
+                relationship_state=relationship_state,
+            )
             if not triggered:
                 return
 
@@ -243,4 +294,8 @@ class SelfReflector:
             character_id=character_id,
             session_id=session_id,
             current_preset_id=current_preset_id,
+            character_system_prompt=character_system_prompt,
+            inner_narrative=inner_narrative,
+            self_history=self_history,
+            relationship_state=relationship_state,
         )

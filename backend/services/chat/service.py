@@ -464,6 +464,10 @@ class ChatService:
                     character_id=request.character_id,
                     session_id=request.session_id,
                     current_preset_id=request.current_preset_id,
+                    character_system_prompt=request.character_system_prompt,
+                    inner_narrative=request.inner_narrative,
+                    self_history=request.self_history,
+                    relationship_state=request.relationship_state,
                 )
             )
 
