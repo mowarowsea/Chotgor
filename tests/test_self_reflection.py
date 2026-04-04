@@ -1,20 +1,25 @@
 """backend.character_actions.reflector モジュールのユニットテスト。
 
 自己参照ループ（SelfReflector）の動作を検証する。
+
 対象クラス・関数:
     SelfReflector.run()              — エントリポイント。モード・設定に応じて処理を振り分ける
-    SelfReflector._detect_trigger()  — 登録済みプリセットによる契機判断（YES/NO応答の解析を含む）
-    SelfReflector._run_reflection()  — パブリックLLMへの自己参照コール＋タグ処理
+    SelfReflector._detect_trigger()  — 中立プロバイダーによる契機判断（YES/NO応答の解析を含む）
+    SelfReflector._run_reflection()  — ask_character() 経由の自己参照コール＋タグ処理
     _format_conversation()           — メッセージリストを整形する内部ユーティリティ
 
 テスト方針:
-    - LLMプロバイダーは asyncio coroutine を返す AsyncMock で差し替える
-    - SQLite操作は実際の一時DBを使い、Carver/Drifterの副作用もあわせて検証する
-    - エラー系（接続失敗・空応答・preset未発見）がサイレントにskipされることを確認する
-    - 契機判断プリセットは任意のプロバイダー（Ollama・Google等）を使用できることを検証する
+    - LLMプロバイダーは AsyncMock で差し替える
+    - _run_reflection() は内部で ask_character() を呼ぶため、これを patch して検証する
+    - _detect_trigger() は create_provider() を直接呼ぶため、これを patch して検証する
+    - SQLite は conftest.py の sqlite_store フィクスチャで実際の一時DBを使用する
+    - エラー系（接続失敗・空応答・preset未発見・キャラ未発見）がサイレントにスキップされることを確認する
+    - 契機判断のプロンプト構造: キャラクター設定がユーザーメッセージに入ること・
+      システムプロンプトが中立の判断依頼であることを確認する
 """
 
 import asyncio
+import uuid
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,7 +32,7 @@ from backend.character_actions.reflector import SelfReflector, _format_conversat
 
 @pytest.fixture
 def char_id(sqlite_store):
-    """テスト用キャラクターを SQLite に作成し、その ID を返すフィクスチャ。"""
+    """テスト用キャラクターをSQLiteに作成し、そのIDを返すフィクスチャ。"""
     cid = "reflector-test-char"
     sqlite_store.create_character(
         character_id=cid,
@@ -39,8 +44,7 @@ def char_id(sqlite_store):
 
 @pytest.fixture
 def trigger_preset_id(sqlite_store):
-    """テスト用モデルプリセット（Ollama）を作成し、そのIDを返すフィクスチャ。"""
-    import uuid
+    """テスト用モデルプリセット（Ollama）をSQLiteに作成し、そのIDを返すフィクスチャ。"""
     pid = str(uuid.uuid4())
     sqlite_store.create_model_preset(
         preset_id=pid,
@@ -52,12 +56,27 @@ def trigger_preset_id(sqlite_store):
 
 
 @pytest.fixture
+def reflection_preset_id(sqlite_store):
+    """テスト用モデルプリセット（Anthropic）をSQLiteに作成し、そのIDを返すフィクスチャ。
+
+    _run_reflection() で ask_character() に渡す preset_id として使用する。
+    """
+    pid = str(uuid.uuid4())
+    sqlite_store.create_model_preset(
+        preset_id=pid,
+        name="Test-Anthropic",
+        provider="anthropic",
+        model_id="claude-3-haiku-20240307",
+    )
+    return pid
+
+
+@pytest.fixture
 def google_trigger_preset_id(sqlite_store):
-    """テスト用モデルプリセット（Google）を作成し、そのIDを返すフィクスチャ。
+    """テスト用モデルプリセット（Google）をSQLiteに作成し、そのIDを返すフィクスチャ。
 
     Ollamaに限らず任意プロバイダーを契機判断に使えることの検証用。
     """
-    import uuid
     pid = str(uuid.uuid4())
     sqlite_store.create_model_preset(
         preset_id=pid,
@@ -88,7 +107,7 @@ def reflector(memory_manager, drift_manager):
     return SelfReflector(memory_manager=memory_manager, drift_manager=drift_manager)
 
 
-def _make_provider(response_text: str = ""):
+def _make_provider(response_text: str = "") -> MagicMock:
     """指定テキストを返す非同期 generate() を持つモックプロバイダーを生成する。
 
     Args:
@@ -163,33 +182,30 @@ class TestFormatConversation:
 class TestSelfReflectorDisabled:
     """self_reflection_mode が disabled のとき、LLMコールが一切発生しないことを検証する。"""
 
-    def test_disabled_mode_does_not_call_provider(self, reflector):
-        """disabled モードではパブリックLLMプロバイダーが呼ばれないこと。"""
-        provider = _make_provider()
-        asyncio.run(
-            reflector.run(
-                request_mode="disabled",
-                trigger_preset_id="",
-                n_turns=5,
-                public_provider=provider,
-                settings={},
-                messages=[{"role": "user", "content": "テスト"}],
-                character_id="char-1",
-                session_id="sess-1",
-                current_preset_id="",
+    def test_disabled_mode_skips_ask_character(self, reflector):
+        """disabled モードでは ask_character() が呼ばれないこと。"""
+        with patch("backend.character_actions.reflector.SelfReflector._run_reflection") as mock_run:
+            asyncio.run(
+                reflector.run(
+                    request_mode="disabled",
+                    trigger_preset_id="",
+                    n_turns=5,
+                    settings={},
+                    messages=[{"role": "user", "content": "テスト"}],
+                    character_id="char-1",
+                    session_id="sess-1",
+                    current_preset_id="",
+                )
             )
-        )
-        provider.generate.assert_not_called()
+        mock_run.assert_not_called()
 
     def test_disabled_mode_returns_none(self, reflector):
         """disabled モードは None を返すこと（副作用なし）。"""
-        provider = _make_provider()
         result = asyncio.run(
             reflector.run(
                 request_mode="disabled",
                 trigger_preset_id="",
                 n_turns=5,
-                public_provider=provider,
                 settings={},
                 messages=[],
                 character_id="char-1",
@@ -204,157 +220,164 @@ class TestSelfReflectorDisabled:
 
 
 class TestSelfReflectorAlways:
-    """self_reflection_mode が always のとき、Ollama不要でパブリックLLMが呼ばれることを検証する。"""
+    """self_reflection_mode が always のとき、ask_character() が必ず呼ばれることを検証する。"""
 
-    def test_always_mode_calls_public_provider(self, reflector):
-        """always モードではパブリックLLMが必ず呼ばれること。"""
-        provider = _make_provider(response_text="")
-        asyncio.run(
-            reflector.run(
-                request_mode="always",
-                trigger_preset_id="",
-                n_turns=5,
-                public_provider=provider,
-                settings={},
-                messages=[{"role": "user", "content": "テスト"}],
-                character_id="char-1",
-                session_id="sess-1",
-                current_preset_id="",
-            )
-        )
-        provider.generate.assert_called_once()
-
-    def test_always_mode_does_not_require_trigger_preset(self, reflector):
-        """always モードでは trigger_preset_id が空でも正常に動作すること。"""
-        provider = _make_provider(response_text="")
-        # 例外が送出されないこと
-        asyncio.run(
-            reflector.run(
-                request_mode="always",
-                trigger_preset_id="",  # 空でもOK
-                n_turns=5,
-                public_provider=provider,
-                settings={},
-                messages=[{"role": "user", "content": "テスト"}],
-                character_id="char-1",
-                session_id="sess-1",
-                current_preset_id="",
-            )
-        )
-
-    def test_always_mode_applies_carve_narrative_tag(self, reflector, sqlite_store, char_id):
-        """always モードで返されたCARVE_NARRATIVEタグが inner_narrative に反映されること。"""
+    def test_always_mode_calls_ask_character(self, reflector, sqlite_store, char_id, reflection_preset_id):
+        """always モードでは ask_character() が必ず呼ばれること。"""
         reflector.memory_manager.sqlite = sqlite_store
-        provider = _make_provider("[CARVE_NARRATIVE:append|自己参照による気づき]")
-
-        asyncio.run(
-            reflector.run(
-                request_mode="always",
-                trigger_preset_id="",
-                n_turns=5,
-                public_provider=provider,
-                settings={},
-                messages=[{"role": "user", "content": "テスト"}],
-                character_id=char_id,
-                session_id="sess-1",
-                current_preset_id="",
+        with patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value=""),
+        ) as mock_ask:
+            asyncio.run(
+                reflector.run(
+                    request_mode="always",
+                    trigger_preset_id="",
+                    n_turns=5,
+                    settings={},
+                    messages=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    current_preset_id=reflection_preset_id,
+                )
             )
-        )
+        mock_ask.assert_called_once()
 
+    def test_always_mode_does_not_require_trigger_preset(self, reflector, sqlite_store, char_id, reflection_preset_id):
+        """always モードでは trigger_preset_id が空でも正常に動作すること（例外なし）。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch("backend.character_actions.reflector.ask_character", new=AsyncMock(return_value="")):
+            asyncio.run(
+                reflector.run(
+                    request_mode="always",
+                    trigger_preset_id="",  # 空でもOK
+                    n_turns=5,
+                    settings={},
+                    messages=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    current_preset_id=reflection_preset_id,
+                )
+            )
+
+    def test_always_mode_applies_carve_narrative_tag(self, reflector, sqlite_store, char_id, reflection_preset_id):
+        """always モードで返された CARVE_NARRATIVE タグが inner_narrative に反映されること。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value="[CARVE_NARRATIVE:append|自己参照による気づき]"),
+        ):
+            asyncio.run(
+                reflector.run(
+                    request_mode="always",
+                    trigger_preset_id="",
+                    n_turns=5,
+                    settings={},
+                    messages=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    current_preset_id=reflection_preset_id,
+                )
+            )
         char = sqlite_store.get_character(char_id)
         assert "自己参照による気づき" in char.inner_narrative
 
-    def test_always_mode_applies_drift_tag(self, reflector, sqlite_store, char_id, drift_manager):
-        """always モードで返されたDRIFTタグが drift_manager に渡されること。"""
+    def test_always_mode_applies_drift_tag(
+        self, reflector, sqlite_store, char_id, reflection_preset_id, drift_manager
+    ):
+        """always モードで返された DRIFT タグが drift_manager に渡されること。"""
         reflector.memory_manager.sqlite = sqlite_store
         reflector.drift_manager = drift_manager
-        provider = _make_provider("[DRIFT:少しざわざわしている]")
-
-        asyncio.run(
-            reflector.run(
-                request_mode="always",
-                trigger_preset_id="",
-                n_turns=5,
-                public_provider=provider,
-                settings={},
-                messages=[{"role": "user", "content": "テスト"}],
-                character_id=char_id,
-                session_id="sess-1",
-                current_preset_id="",
+        with patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value="[DRIFT:少しざわざわしている]"),
+        ):
+            asyncio.run(
+                reflector.run(
+                    request_mode="always",
+                    trigger_preset_id="",
+                    n_turns=5,
+                    settings={},
+                    messages=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    current_preset_id=reflection_preset_id,
+                )
             )
-        )
-
         drift_manager.add_drift.assert_called_once()
-        call_kwargs = drift_manager.add_drift.call_args
-        assert "少しざわざわしている" in str(call_kwargs)
+        assert "少しざわざわしている" in str(drift_manager.add_drift.call_args)
 
-    def test_always_mode_empty_response_does_nothing(self, reflector, sqlite_store, char_id):
-        """always モードでパブリックLLMが空文字を返した場合、DB変更がないこと。"""
+    def test_always_mode_empty_response_does_nothing(self, reflector, sqlite_store, char_id, reflection_preset_id):
+        """always モードで ask_character() が空文字を返した場合、DB変更がないこと。"""
         reflector.memory_manager.sqlite = sqlite_store
-        provider = _make_provider("")  # 内省なし
-
-        asyncio.run(
-            reflector.run(
-                request_mode="always",
-                trigger_preset_id="",
-                n_turns=5,
-                public_provider=provider,
-                settings={},
-                messages=[{"role": "user", "content": "テスト"}],
-                character_id=char_id,
-                session_id="sess-1",
-                current_preset_id="",
+        with patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value=""),
+        ):
+            asyncio.run(
+                reflector.run(
+                    request_mode="always",
+                    trigger_preset_id="",
+                    n_turns=5,
+                    settings={},
+                    messages=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    current_preset_id=reflection_preset_id,
+                )
             )
-        )
-
         char = sqlite_store.get_character(char_id)
         assert char.inner_narrative == ""
 
-    def test_always_mode_n_turns_limits_window(self, reflector):
-        """always モードで n_turns=2 のとき、最新2ターンのみがLLMに渡されること。"""
-        provider = _make_provider("")
+    def test_always_mode_n_turns_limits_window(self, reflector, sqlite_store, char_id, reflection_preset_id):
+        """always モードで n_turns=2 のとき、最新2ターンのみが会話ウィンドウとして渡されること。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        captured_messages = []
+
+        async def capture_ask(**kwargs):
+            captured_messages.extend(kwargs.get("messages", []))
+            return ""
+
         messages = [
             {"role": "user", "content": "古い発言1"},
             {"role": "assistant", "content": "古い応答1"},
             {"role": "user", "content": "新しい発言"},
             {"role": "assistant", "content": "新しい応答"},
         ]
-
-        asyncio.run(
-            reflector.run(
-                request_mode="always",
-                trigger_preset_id="",
-                n_turns=2,  # 最新2ターンのみ
-                public_provider=provider,
-                settings={},
-                messages=messages,
-                character_id="char-1",
-                session_id="sess-1",
-                current_preset_id="",
+        with patch("backend.character_actions.reflector.ask_character", side_effect=capture_ask):
+            asyncio.run(
+                reflector.run(
+                    request_mode="always",
+                    trigger_preset_id="",
+                    n_turns=2,
+                    settings={},
+                    messages=messages,
+                    character_id=char_id,
+                    session_id="sess-1",
+                    current_preset_id=reflection_preset_id,
+                )
             )
-        )
-
-        # generate() に渡されたメッセージ (第2引数) を確認する
-        call_args = provider.generate.call_args
-        passed_messages = call_args[0][1]  # generate(system_prompt, messages)
-        user_content = passed_messages[0]["content"]
-        assert "古い発言1" not in user_content
-        assert "新しい発言" in user_content
+        # ask_character に渡された messages の content（会話テキストに変換済み）を確認する
+        assert len(captured_messages) == 1
+        content = captured_messages[0]["content"]
+        assert "古い発言1" not in content
+        assert "新しい発言" in content
 
 
 # ─── SelfReflector._detect_trigger() — 契機判断 ──────────────────────────────
 
 
 class TestDetectTrigger:
-    """SelfReflector._detect_trigger() のYES/NO解析を検証する。"""
+    """SelfReflector._detect_trigger() の YES/NO 解析とプロンプト構造を検証する。"""
 
-    def _run_detect(self, reflector, response_text, trigger_preset_id, settings=None):
+    def _run_detect(self, reflector, response_text, trigger_preset_id, character_id, settings=None):
         """_detect_trigger() を同期的に実行するヘルパー。
 
         Args:
             reflector: テスト対象の SelfReflector インスタンス。
             response_text: モック契機判断プロバイダーが返すテキスト。
             trigger_preset_id: 使用するプリセットID。
+            character_id: 対象キャラクターID。
             settings: グローバル設定 dict（省略時は空 dict）。
 
         Returns:
@@ -368,34 +391,35 @@ class TestDetectTrigger:
                     trigger_preset_id=trigger_preset_id,
                     settings=settings or {},
                     conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=character_id,
                 )
             )
 
-    def test_yes_response_returns_true(self, reflector, sqlite_store, trigger_preset_id):
+    def test_yes_response_returns_true(self, reflector, sqlite_store, char_id, trigger_preset_id):
         """契機判断プロバイダーが「YES」を返したとき True になること。"""
         reflector.memory_manager.sqlite = sqlite_store
-        result = self._run_detect(reflector, "YES", trigger_preset_id)
+        result = self._run_detect(reflector, "YES", trigger_preset_id, char_id)
         assert result is True
 
-    def test_yes_with_trailing_text_returns_true(self, reflector, sqlite_store, trigger_preset_id):
+    def test_yes_with_trailing_text_returns_true(self, reflector, sqlite_store, char_id, trigger_preset_id):
         """「YES\n理由テキスト」のようにYESで始まる応答も True になること。"""
         reflector.memory_manager.sqlite = sqlite_store
-        result = self._run_detect(reflector, "YES\n感情の変化が見られます", trigger_preset_id)
+        result = self._run_detect(reflector, "YES\n感情の変化が見られます", trigger_preset_id, char_id)
         assert result is True
 
-    def test_no_response_returns_false(self, reflector, sqlite_store, trigger_preset_id):
+    def test_no_response_returns_false(self, reflector, sqlite_store, char_id, trigger_preset_id):
         """契機判断プロバイダーが「NO」を返したとき False になること。"""
         reflector.memory_manager.sqlite = sqlite_store
-        result = self._run_detect(reflector, "NO", trigger_preset_id)
+        result = self._run_detect(reflector, "NO", trigger_preset_id, char_id)
         assert result is False
 
-    def test_empty_response_returns_false(self, reflector, sqlite_store, trigger_preset_id):
-        """契機判断プロバイダーが空文字を返したとき False になること（NOT YES）。"""
+    def test_empty_response_returns_false(self, reflector, sqlite_store, char_id, trigger_preset_id):
+        """契機判断プロバイダーが空文字を返したとき False になること。"""
         reflector.memory_manager.sqlite = sqlite_store
-        result = self._run_detect(reflector, "", trigger_preset_id)
+        result = self._run_detect(reflector, "", trigger_preset_id, char_id)
         assert result is False
 
-    def test_preset_not_found_returns_false(self, reflector, sqlite_store):
+    def test_preset_not_found_returns_false(self, reflector, sqlite_store, char_id):
         """存在しないプリセットIDを渡したとき False を返すこと（例外を送出しない）。"""
         reflector.memory_manager.sqlite = sqlite_store
         result = asyncio.run(
@@ -403,11 +427,25 @@ class TestDetectTrigger:
                 trigger_preset_id="nonexistent-preset-id",
                 settings={},
                 conversation_window=[{"role": "user", "content": "テスト"}],
+                character_id=char_id,
             )
         )
         assert result is False
 
-    def test_trigger_connection_error_returns_false(self, reflector, sqlite_store, trigger_preset_id):
+    def test_character_not_found_returns_false(self, reflector, sqlite_store, trigger_preset_id):
+        """存在しないキャラクターIDを渡したとき False を返すこと（例外を送出しない）。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        result = asyncio.run(
+            reflector._detect_trigger(
+                trigger_preset_id=trigger_preset_id,
+                settings={},
+                conversation_window=[{"role": "user", "content": "テスト"}],
+                character_id="nonexistent-char",
+            )
+        )
+        assert result is False
+
+    def test_trigger_connection_error_returns_false(self, reflector, sqlite_store, char_id, trigger_preset_id):
         """契機判断プロバイダーへの接続が失敗したとき False を返すこと（例外を送出しない）。"""
         reflector.memory_manager.sqlite = sqlite_store
         with patch("backend.character_actions.reflector.create_provider") as mock_create:
@@ -419,12 +457,73 @@ class TestDetectTrigger:
                     trigger_preset_id=trigger_preset_id,
                     settings={},
                     conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
                 )
             )
         assert result is False
 
+    def test_trigger_uses_neutral_system_prompt(self, reflector, sqlite_store, char_id, trigger_preset_id):
+        """契機判断のシステムプロンプトがキャラクター設定を含まない中立の文言であること。
+
+        キャラクター設定はユーザーメッセージ側に移動したため、
+        システムプロンプトはキャラクターの人物設定を持たないことを検証する。
+        """
+        reflector.memory_manager.sqlite = sqlite_store
+        captured = {}
+
+        def capture_generate(*args, **kwargs):
+            captured["system_prompt"] = args[0] if args else kwargs.get("system_prompt", "")
+            return AsyncMock(return_value="NO")()
+
+        with patch("backend.character_actions.reflector.create_provider") as mock_create:
+            provider = MagicMock()
+            provider.generate = capture_generate
+            mock_create.return_value = provider
+            asyncio.run(
+                reflector._detect_trigger(
+                    trigger_preset_id=trigger_preset_id,
+                    settings={},
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                )
+            )
+        # システムプロンプトはキャラクターの設定テキストを含まないこと
+        assert "テスト用設定" not in captured.get("system_prompt", "")
+
+    def test_trigger_user_message_contains_character_context(
+        self, reflector, sqlite_store, char_id, trigger_preset_id
+    ):
+        """契機判断のユーザーメッセージにキャラクター設定が含まれること。
+
+        キャラクター設定がシステムプロンプトではなくユーザーメッセージに
+        入力として渡されていることを検証する。
+        """
+        reflector.memory_manager.sqlite = sqlite_store
+        captured = {}
+
+        def capture_generate(system_prompt, messages, **kwargs):
+            captured["messages"] = messages
+            f = AsyncMock(return_value="NO")
+            return f()
+
+        with patch("backend.character_actions.reflector.create_provider") as mock_create:
+            provider = MagicMock()
+            provider.generate = capture_generate
+            mock_create.return_value = provider
+            asyncio.run(
+                reflector._detect_trigger(
+                    trigger_preset_id=trigger_preset_id,
+                    settings={},
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                )
+            )
+        user_content = captured.get("messages", [{}])[0].get("content", "")
+        # キャラクターの設定テキストがユーザーメッセージに含まれること
+        assert "テスト用設定" in user_content
+
     def test_non_ollama_preset_uses_correct_provider(
-        self, reflector, sqlite_store, google_trigger_preset_id
+        self, reflector, sqlite_store, char_id, google_trigger_preset_id
     ):
         """GoogleプリセットのIDを渡したとき、create_provider が "google" で呼ばれること。
 
@@ -438,13 +537,14 @@ class TestDetectTrigger:
                     trigger_preset_id=google_trigger_preset_id,
                     settings={},
                     conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
                 )
             )
         called_provider_id = mock_create.call_args[0][0]
         assert called_provider_id == "google"
 
     def test_ollama_preset_uses_ollama_provider(
-        self, reflector, sqlite_store, trigger_preset_id
+        self, reflector, sqlite_store, char_id, trigger_preset_id
     ):
         """OllamaプリセットのIDを渡したとき、create_provider が "ollama" で呼ばれること。"""
         reflector.memory_manager.sqlite = sqlite_store
@@ -455,6 +555,7 @@ class TestDetectTrigger:
                     trigger_preset_id=trigger_preset_id,
                     settings={},
                     conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
                 )
             )
         called_provider_id = mock_create.call_args[0][0]
@@ -467,83 +568,53 @@ class TestDetectTrigger:
 class TestSelfReflectorLocalTrigger:
     """self_reflection_mode が local_trigger のとき、契機判断の結果で分岐することを検証する。"""
 
-    def test_local_trigger_yes_calls_public_provider(self, reflector, sqlite_store, trigger_preset_id):
-        """local_trigger + 契機判断=YES のとき、パブリックLLMが呼ばれること。"""
+    def test_local_trigger_yes_calls_run_reflection(self, reflector, sqlite_store, char_id, trigger_preset_id):
+        """local_trigger + 契機判断=YES のとき、_run_reflection() が呼ばれること。"""
         reflector.memory_manager.sqlite = sqlite_store
-        public_provider = _make_provider("")
-
         with patch.object(reflector, "_detect_trigger", new=AsyncMock(return_value=True)):
-            asyncio.run(
-                reflector.run(
-                    request_mode="local_trigger",
-                    trigger_preset_id=trigger_preset_id,
-                    n_turns=5,
-                    public_provider=public_provider,
-                    settings={},
-                    messages=[{"role": "user", "content": "テスト"}],
-                    character_id="char-1",
-                    session_id="sess-1",
-                    current_preset_id="",
+            with patch.object(reflector, "_run_reflection", new=AsyncMock()) as mock_reflect:
+                asyncio.run(
+                    reflector.run(
+                        request_mode="local_trigger",
+                        trigger_preset_id=trigger_preset_id,
+                        n_turns=5,
+                        settings={},
+                        messages=[{"role": "user", "content": "テスト"}],
+                        character_id=char_id,
+                        session_id="sess-1",
+                        current_preset_id="preset-x",
+                    )
                 )
-            )
+        mock_reflect.assert_called_once()
 
-        public_provider.generate.assert_called_once()
-
-    def test_local_trigger_no_skips_public_provider(self, reflector, sqlite_store, trigger_preset_id):
-        """local_trigger + 契機判断=NO のとき、パブリックLLMが呼ばれないこと。"""
+    def test_local_trigger_no_skips_run_reflection(self, reflector, sqlite_store, char_id, trigger_preset_id):
+        """local_trigger + 契機判断=NO のとき、_run_reflection() が呼ばれないこと。"""
         reflector.memory_manager.sqlite = sqlite_store
-        public_provider = _make_provider("")
-
         with patch.object(reflector, "_detect_trigger", new=AsyncMock(return_value=False)):
-            asyncio.run(
-                reflector.run(
-                    request_mode="local_trigger",
-                    trigger_preset_id=trigger_preset_id,
-                    n_turns=5,
-                    public_provider=public_provider,
-                    settings={},
-                    messages=[{"role": "user", "content": "テスト"}],
-                    character_id="char-1",
-                    session_id="sess-1",
-                    current_preset_id="",
+            with patch.object(reflector, "_run_reflection", new=AsyncMock()) as mock_reflect:
+                asyncio.run(
+                    reflector.run(
+                        request_mode="local_trigger",
+                        trigger_preset_id=trigger_preset_id,
+                        n_turns=5,
+                        settings={},
+                        messages=[{"role": "user", "content": "テスト"}],
+                        character_id=char_id,
+                        session_id="sess-1",
+                        current_preset_id="preset-x",
+                    )
                 )
-            )
+        mock_reflect.assert_not_called()
 
-        public_provider.generate.assert_not_called()
-
-    def test_local_trigger_without_preset_id_skips_silently(self, reflector, sqlite_store):
+    def test_local_trigger_without_preset_id_skips_silently(self, reflector, sqlite_store, char_id):
         """local_trigger で trigger_preset_id が未設定のとき、黙ってスキップすること（例外なし）。"""
         reflector.memory_manager.sqlite = sqlite_store
-        public_provider = _make_provider("")
-
-        asyncio.run(
-            reflector.run(
-                request_mode="local_trigger",
-                trigger_preset_id="",  # 未設定
-                n_turns=5,
-                public_provider=public_provider,
-                settings={},
-                messages=[{"role": "user", "content": "テスト"}],
-                character_id="char-1",
-                session_id="sess-1",
-                current_preset_id="",
-            )
-        )
-
-        public_provider.generate.assert_not_called()
-
-    def test_local_trigger_yes_applies_tags_to_db(self, reflector, sqlite_store, char_id, trigger_preset_id):
-        """local_trigger + 契機判断=YES で返されたタグがDBに反映されること。"""
-        reflector.memory_manager.sqlite = sqlite_store
-        public_provider = _make_provider("[CARVE_NARRATIVE:append|契機判断後の気づき]")
-
-        with patch.object(reflector, "_detect_trigger", new=AsyncMock(return_value=True)):
+        with patch.object(reflector, "_run_reflection", new=AsyncMock()) as mock_reflect:
             asyncio.run(
                 reflector.run(
                     request_mode="local_trigger",
-                    trigger_preset_id=trigger_preset_id,
+                    trigger_preset_id="",  # 未設定
                     n_turns=5,
-                    public_provider=public_provider,
                     settings={},
                     messages=[{"role": "user", "content": "テスト"}],
                     character_id=char_id,
@@ -551,7 +622,30 @@ class TestSelfReflectorLocalTrigger:
                     current_preset_id="",
                 )
             )
+        mock_reflect.assert_not_called()
 
+    def test_local_trigger_yes_applies_tags_to_db(
+        self, reflector, sqlite_store, char_id, trigger_preset_id, reflection_preset_id
+    ):
+        """local_trigger + 契機判断=YES で返されたタグがDBに反映されること。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch.object(reflector, "_detect_trigger", new=AsyncMock(return_value=True)):
+            with patch(
+                "backend.character_actions.reflector.ask_character",
+                new=AsyncMock(return_value="[CARVE_NARRATIVE:append|契機判断後の気づき]"),
+            ):
+                asyncio.run(
+                    reflector.run(
+                        request_mode="local_trigger",
+                        trigger_preset_id=trigger_preset_id,
+                        n_turns=5,
+                        settings={},
+                        messages=[{"role": "user", "content": "テスト"}],
+                        character_id=char_id,
+                        session_id="sess-1",
+                        current_preset_id=reflection_preset_id,
+                    )
+                )
         char = sqlite_store.get_character(char_id)
         assert "契機判断後の気づき" in char.inner_narrative
 
@@ -560,43 +654,43 @@ class TestSelfReflectorLocalTrigger:
 
 
 class TestRunReflectionErrorHandling:
-    """_run_reflection() がLLM失敗時にサイレントにスキップすることを検証する。"""
+    """_run_reflection() が ask_character() 失敗時にサイレントにスキップすることを検証する。"""
 
-    def test_llm_failure_does_not_raise(self, reflector, sqlite_store, char_id):
-        """パブリックLLMコールが例外を送出しても _run_reflection() が例外を伝播しないこと。"""
+    def test_ask_character_none_does_not_crash(self, reflector, sqlite_store, char_id, reflection_preset_id):
+        """ask_character() が None を返しても _run_reflection() が例外を伝播しないこと。"""
         reflector.memory_manager.sqlite = sqlite_store
-        provider = MagicMock()
-        provider.generate = AsyncMock(side_effect=RuntimeError("LLM error"))
-
-        # 例外が送出されないこと
-        asyncio.run(
-            reflector._run_reflection(
-                public_provider=provider,
-                conversation_window=[{"role": "user", "content": "テスト"}],
-                character_id=char_id,
-                session_id="sess-1",
-                current_preset_id="",
+        with patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value=None),
+        ):
+            asyncio.run(
+                reflector._run_reflection(
+                    preset_id=reflection_preset_id,
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    settings={},
+                )
             )
-        )
-
         char = sqlite_store.get_character(char_id)
         assert char.inner_narrative == ""  # DB変更なし
 
-    def test_whitespace_only_response_does_nothing(self, reflector, sqlite_store, char_id):
-        """パブリックLLMが空白のみを返した場合、DB変更がないこと。"""
+    def test_whitespace_only_response_does_nothing(self, reflector, sqlite_store, char_id, reflection_preset_id):
+        """ask_character() が空白のみを返した場合、DB変更がないこと。"""
         reflector.memory_manager.sqlite = sqlite_store
-        provider = _make_provider("   \n  ")
-
-        asyncio.run(
-            reflector._run_reflection(
-                public_provider=provider,
-                conversation_window=[{"role": "user", "content": "テスト"}],
-                character_id=char_id,
-                session_id="sess-1",
-                current_preset_id="",
+        with patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value="   \n  "),
+        ):
+            asyncio.run(
+                reflector._run_reflection(
+                    preset_id=reflection_preset_id,
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    settings={},
+                )
             )
-        )
-
         char = sqlite_store.get_character(char_id)
         assert char.inner_narrative == ""
 
@@ -609,7 +703,6 @@ class TestSelfReflectionSchema:
 
     def test_new_character_has_disabled_mode_by_default(self, sqlite_store):
         """新規キャラクターの self_reflection_mode デフォルト値が 'disabled' であること。"""
-        import uuid
         cid = str(uuid.uuid4())
         sqlite_store.create_character(character_id=cid, name="デフォルトキャラ")
         char = sqlite_store.get_character(cid)
@@ -617,7 +710,6 @@ class TestSelfReflectionSchema:
 
     def test_new_character_has_null_preset_id_by_default(self, sqlite_store):
         """新規キャラクターの self_reflection_preset_id デフォルト値が None であること。"""
-        import uuid
         cid = str(uuid.uuid4())
         sqlite_store.create_character(character_id=cid, name="デフォルトキャラ2")
         char = sqlite_store.get_character(cid)
@@ -625,7 +717,6 @@ class TestSelfReflectionSchema:
 
     def test_new_character_has_n_turns_5_by_default(self, sqlite_store):
         """新規キャラクターの self_reflection_n_turns デフォルト値が 5 であること。"""
-        import uuid
         cid = str(uuid.uuid4())
         sqlite_store.create_character(character_id=cid, name="デフォルトキャラ3")
         char = sqlite_store.get_character(cid)
@@ -633,7 +724,6 @@ class TestSelfReflectionSchema:
 
     def test_create_character_with_local_trigger_mode(self, sqlite_store):
         """local_trigger モードで作成したキャラクターが正しくDBに保存されること。"""
-        import uuid
         cid = str(uuid.uuid4())
         sqlite_store.create_character(
             character_id=cid,

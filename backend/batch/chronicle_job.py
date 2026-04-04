@@ -15,8 +15,8 @@ import logging
 from datetime import datetime, timedelta
 
 from backend.lib.log_context import current_log_feature, new_message_id
-from backend.providers.registry import create_provider
 from backend.repositories.sqlite.store import SQLiteStore
+from backend.services.character_query import ask_character
 
 logger = logging.getLogger(__name__)
 
@@ -171,18 +171,21 @@ async def run_chronicle(
     try:
         if settings is None:
             settings = sqlite.get_all_settings()
-        current_log_feature.set("chronicle")
-        provider = create_provider(
-            preset.provider, preset.model_id, settings,
-            thinking_level=preset.thinking_level or "default",
-            preset_name=preset.name,
-        )
-        llm_messages = [{"role": "user", "content": prompt_text}]
         logger.debug("LLM呼び出し char=%s target_date=%s", char_label, target_date or "unchronicled")
-        response_text = await provider.generate(char.system_prompt_block1, llm_messages)
+        response_text = await ask_character(
+            character_id=character_id,
+            preset_id=char.ghost_model,
+            messages=[{"role": "user", "content": prompt_text}],
+            sqlite=sqlite,
+            settings=settings,
+            recall_query=None,
+            feature_label="chronicle",
+        )
     except Exception as e:
         logger.exception("エラー char=%s", char_label)
         return {"status": "error", "error": str(e)}
+    if response_text is None:
+        return {"status": "error", "error": "LLMからの応答が取得できませんでした"}
 
     parsed = _parse_chronicle_response(response_text)
     if not parsed:

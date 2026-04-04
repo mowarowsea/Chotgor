@@ -4,10 +4,10 @@ import logging
 import re
 from typing import Optional
 
-from backend.lib.log_context import current_log_feature, new_message_id
-from backend.providers.registry import create_provider
+from backend.lib.log_context import new_message_id
 from backend.services.memory.manager import MemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
+from backend.services.character_query import ask_character
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 async def run_forget_process(
     character_id: str,
     character_name: str,
-    character_system_prompt: str,
     memory_manager: MemoryManager,
     sqlite: SQLiteStore,
     settings: dict,
@@ -31,7 +30,6 @@ async def run_forget_process(
     Args:
         character_id: 処理対象キャラクターID。
         character_name: キャラクター名（ログ用）。
-        character_system_prompt: キャラクターのシステムプロンプト Block 1。
         memory_manager: MemoryManager インスタンス。
         sqlite: SQLiteStore インスタンス。
         settings: get_all_settings() の結果。run_pending_forget で1回だけ取得して渡す。
@@ -39,6 +37,10 @@ async def run_forget_process(
         ghost_model: 内省用モデルプリセットID。
     """
     char_label = f"{character_name}@GhostModel"
+
+    if not ghost_model:
+        logger.warning("ghost_model未設定 char=%s", char_label)
+        return {"status": "error", "error": "ghost_model が設定されていません。キャラクター設定で内省モデルを選択してください。"}
 
     candidates = memory_manager.get_forgotten_candidates(character_id, threshold=threshold, limit=50)
 
@@ -63,10 +65,8 @@ async def run_forget_process(
             f"- Content: {m.content}\n\n"
         )
 
-    system_prompt = (
-        f"{character_system_prompt}\n\n"
-        "---\n"
-        f"今は静かな時間です。\n"
+    forget_instruction = (
+        "今は静かな時間です。\n"
         "以下は、あなたがかつて経験・思考したものの、最近は全く思い出されておらず印象も薄れてきている「忘れかけている記憶」のリストです。\n"
         "これには日々のダイジェスト（要約）も含まれます。\n\n"
         "これらの記憶はまだ消えていません。しかし、このまま放置すると間もなく自然に忘却されます。\n"
@@ -75,15 +75,23 @@ async def run_forget_process(
         "手放したい記憶のIDを、以下のフォーマットで教えてください。\n\n"
         "`[DELETE: ID1, ID2, ID3...]`\n\n"
         "※何も手放さなくていい場合は、`[DELETE: NONE]` とだけ出力するか、何も出力しないでください。\n"
-        "※IDは正確に記載してください。"
+        "※IDは正確に記載してください。\n\n"
     )
+    user_content = forget_instruction + memory_text
 
     logger.debug("LLM呼び出し char=%s candidates=%d", char_label, len(candidates))
-    try:
-        response_text = await _call_llm_for_forget(system_prompt, memory_text, ghost_model, sqlite, settings)
-    except Exception as e:
-        logger.exception("エラー char=%s", char_label)
-        return {"status": "error", "error": str(e)}
+    response_text = await ask_character(
+        character_id=character_id,
+        preset_id=ghost_model,
+        messages=[{"role": "user", "content": user_content}],
+        sqlite=sqlite,
+        settings=settings,
+        recall_query=None,
+        feature_label="forget",
+    )
+    if response_text is None:
+        logger.warning("エラー char=%s reason=LLM応答なし", char_label)
+        return {"status": "error", "error": "LLMからの応答が取得できませんでした"}
 
     # Parse [DELETE: ...]
     deleted_ids = set()
@@ -138,7 +146,6 @@ async def run_pending_forget(sqlite: SQLiteStore, memory_manager: MemoryManager)
             await run_forget_process(
                 character_id=char.id,
                 character_name=char.name,
-                character_system_prompt=char.system_prompt_block1,
                 memory_manager=memory_manager,
                 sqlite=sqlite,
                 settings=settings,
@@ -151,40 +158,3 @@ async def run_pending_forget(sqlite: SQLiteStore, memory_manager: MemoryManager)
     logger.info("完了")
 
 
-async def _call_llm_for_forget(
-    system_prompt: str,
-    memory_text: str,
-    ghost_model: Optional[str],
-    sqlite: SQLiteStore,
-    settings: dict,
-) -> str:
-    """LLM に忘却判定を問い合わせる内部関数。
-
-    Args:
-        system_prompt: キャラクターのシステムプロンプト + 忘却判定指示。
-        memory_text: 忘れかけている記憶のリストテキスト。
-        ghost_model: 内省用モデルプリセットID。
-        sqlite: SQLiteStore インスタンス（プリセット取得に使用）。
-        settings: get_all_settings() の結果（run_pending_forget で1回取得済み）。
-
-    Returns:
-        LLM の生応答テキスト。
-    """
-    if not ghost_model:
-        raise RuntimeError("ghost_model が設定されていません。キャラクター設定で内省モデルを選択してください。")
-
-    preset = sqlite.get_model_preset(ghost_model)
-    if preset is None:
-        raise RuntimeError(f"ghost_model に指定されたプリセット '{ghost_model}' が見つかりません。")
-
-    messages = [{"role": "user", "content": memory_text}]
-    current_log_feature.set("forget")
-    provider = create_provider(
-        preset.provider, preset.model_id, settings,
-        thinking_level=preset.thinking_level or "default",
-        preset_name=preset.name,
-    )
-    result = await provider.generate(system_prompt, messages)
-
-    text = result.strip() or "(No kept ids)"
-    return text

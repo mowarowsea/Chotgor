@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from backend.batch.chronicle_job import run_chronicle, run_pending_chronicles, _parse_chronicle_response
-from backend.batch.forget_job import run_forget_process, _call_llm_for_forget
+from backend.batch.forget_job import run_forget_process
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +163,7 @@ async def test_run_chronicle_no_update_when_llm_returns_no_update(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=no_update_response)
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
@@ -195,7 +195,7 @@ async def test_run_chronicle_updates_fields_when_llm_requests_update(sqlite_stor
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=update_response)
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
@@ -223,7 +223,7 @@ async def test_run_chronicle_uses_ghost_model_preset(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=no_update_response)
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider) as mock_cp:
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider) as mock_cp:
         await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
@@ -233,46 +233,6 @@ async def test_run_chronicle_uses_ghost_model_preset(sqlite_store):
     mock_cp.assert_called_once_with(
         "anthropic", "claude-3-5-haiku-latest",
         sqlite_store.get_all_settings(),
-        thinking_level="default",
-        preset_name="TestPreset",
-    )
-
-
-# ---------------------------------------------------------------------------
-# _call_llm_for_forget: エラーケース
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_call_llm_for_forget_no_ghost_model(sqlite_store):
-    """ghost_model が None の場合に RuntimeError を送出することを確認する。"""
-    with pytest.raises(RuntimeError, match="ghost_model"):
-        await _call_llm_for_forget("sys", "mem_text", None, sqlite_store, {})
-
-
-@pytest.mark.asyncio
-async def test_call_llm_for_forget_unknown_preset(sqlite_store):
-    """存在しないプリセット ID の場合に RuntimeError を送出することを確認する。"""
-    with pytest.raises(RuntimeError, match="プリセット"):
-        await _call_llm_for_forget("sys", "mem_text", "nonexistent-id", sqlite_store, {})
-
-
-@pytest.mark.asyncio
-async def test_call_llm_for_forget_uses_ghost_model_preset(sqlite_store):
-    """_call_llm_for_forget が正しいプロバイダー・モデルで呼ばれることを確認する。"""
-    preset_id = str(uuid.uuid4())
-    sqlite_store.create_model_preset(preset_id, "TestPreset", "anthropic", "claude-3-5-haiku-latest")
-
-    mock_provider = AsyncMock()
-    mock_provider.generate = AsyncMock(return_value="[KEEP: NONE]")
-
-    settings = sqlite_store.get_all_settings()
-    with patch("backend.batch.forget_job.create_provider", return_value=mock_provider) as mock_cp:
-        result = await _call_llm_for_forget("sys_prompt", "candidates text", preset_id, sqlite_store, settings)
-
-    assert result == "[KEEP: NONE]"
-    mock_cp.assert_called_once_with(
-        "anthropic", "claude-3-5-haiku-latest",
-        settings,
         thinking_level="default",
         preset_name="TestPreset",
     )
@@ -308,7 +268,6 @@ async def test_run_forget_process_error_when_no_ghost_model(sqlite_store, memory
     result = await run_forget_process(
         character_id=char_id,
         character_name="TestChar",
-        character_system_prompt="You are TestChar.",
         memory_manager=memory_manager,
         sqlite=sqlite_store,
         settings={},
@@ -463,7 +422,7 @@ async def test_run_chronicle_marks_messages_on_success(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
 
     assert result["status"] == "success"
@@ -478,7 +437,7 @@ async def test_run_chronicle_does_not_mark_messages_on_llm_error(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(side_effect=Exception("network error"))
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
 
     assert result["status"] == "error"
@@ -493,7 +452,7 @@ async def test_run_chronicle_does_not_mark_messages_on_json_parse_failure(sqlite
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value="これはJSONではありません")
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
 
     assert result["status"] == "error"
@@ -508,7 +467,7 @@ async def test_run_chronicle_marks_even_when_no_field_updates(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
 
     assert result["status"] == "success"
@@ -533,7 +492,7 @@ async def test_run_chronicle_only_processes_unchronicled_messages(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = fake_generate
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         await run_chronicle(character_id=char_id, sqlite=sqlite_store)
 
     assert len(captured_prompt) == 1
@@ -551,7 +510,7 @@ async def test_run_chronicle_all_chronicled_still_calls_llm(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
 
     assert result["status"] == "success"
@@ -569,7 +528,7 @@ async def test_run_pending_chronicles_marks_unchronicled_messages(sqlite_store):
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
-    with patch("backend.batch.chronicle_job.create_provider", return_value=mock_provider):
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         await run_pending_chronicles(sqlite=sqlite_store)
 
     msgs = sqlite_store.list_chat_messages(session_id)
