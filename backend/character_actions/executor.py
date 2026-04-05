@@ -102,13 +102,15 @@ class ToolTurnResult:
     """1ターンのLLM呼び出し結果。
 
     Attributes:
-        text: このターンで生成されたテキスト（ツール呼び出し行は除く）。
+        text: このターンで生成されたテキスト（ツール呼び出し行・思考ブロックは除く）。
         tool_calls: 正規化されたツール呼び出しリスト。
+        thinking: 思考ブロックのテキスト（thought=True のパート）。空文字列は思考なし。
         _raw: プロバイダー固有の生レスポンスオブジェクト（次ターンのメッセージ構築に使用）。
     """
 
     text: str
     tool_calls: list[ToolCall]
+    thinking: str = field(default="")
     _raw: Any = field(default=None, repr=False)
 
 

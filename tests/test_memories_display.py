@@ -388,7 +388,7 @@ async def test_execute_stream_with_tools_yields_text():
 
     fake_provider = MagicMock()
     fake_provider.SUPPORTS_TOOLS = True
-    fake_provider.generate_with_tools = AsyncMock(return_value="ツール経由の返答")
+    fake_provider.generate_with_tools = AsyncMock(return_value=("ツール経由の返答", ""))
 
     with (
         patch("backend.services.chat.service.create_provider", return_value=fake_provider),

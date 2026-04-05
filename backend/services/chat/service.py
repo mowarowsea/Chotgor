@@ -285,7 +285,8 @@ class ChatService:
                 drift_manager=self.drift_manager,
             )
             try:
-                clean_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
+                # thinking は非ストリーミングパスでは捨てる（execute はテキスト返却のみ）
+                clean_text, _ = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
                 return f"[Error: {type(e).__name__}: {e}]"
@@ -348,11 +349,14 @@ class ChatService:
                 drift_manager=self.drift_manager,
             )
             try:
-                clean_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
+                clean_text, thinking_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
                 yield ("text", f"[Error: {type(e).__name__}: {e}]")
                 return
+            # 思考ブロックがあればテキスト本体より先にyieldする
+            if thinking_text:
+                yield ("thinking", thinking_text)
             # ツール方式: ToolExecutor から退席理由を取得する
             exit_reason = tool_executor.exit_reason
         else:

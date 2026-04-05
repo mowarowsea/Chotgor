@@ -15,6 +15,13 @@ import re
 from backend.character_actions.executor import OPENAI_TOOLS, ToolCall, ToolTurnResult
 from backend.providers.base import BaseLLMProvider
 
+try:
+    from google import genai  # type: ignore[import-untyped]
+    from google.genai import types  # type: ignore[import-untyped]
+    _GOOGLE_GENAI_AVAILABLE = True
+except ImportError:
+    _GOOGLE_GENAI_AVAILABLE = False
+
 DEFAULT_MODEL = "gemini-2.0-flash"
 
 _THINKING_BUDGET = {
@@ -96,29 +103,20 @@ class GoogleProvider(BaseLLMProvider):
         except Exception:
             return []
 
-    def _build_contents(self, system_prompt: str, messages: list[dict]):
+    def _build_contents(self, messages: list[dict]) -> list:
         """Google Gemini 用の contents リストを構築する内部ヘルパー。
 
-        Gemmaモデルはsystem_instructionをサポートしないため、
-        最初のユーザーターンの先頭にシステムプロンプトを挿入する。
+        Gemma4以降はGeminiと同等にsystem_instructionをサポートするため、
+        システムプロンプトの埋め込み処理は行わない。
         """
-        from google.genai import types
-
-        # Gemmaモデルはsystem_instructionを使えないのでフラグを立てる
-        supports_system_instruction = not self.model.lower().startswith("gemma")
         contents = []
-        system_injected = False
         for m in messages:
             role = m.get("role")
             content = m.get("content")
             parts = []
             # プレーンテキストの場合
             if isinstance(content, str):
-                text_to_add = content
-                if role == "user" and not supports_system_instruction and not system_injected and system_prompt:
-                    text_to_add = f"{system_prompt}\n\n---\n\n{text_to_add}"
-                    system_injected = True
-                parts.append(types.Part(text=text_to_add))
+                parts.append(types.Part(text=content))
             # リスト形式（マルチモーダル）の場合
             elif isinstance(content, list):
                 for item in content:
@@ -145,24 +143,23 @@ class GoogleProvider(BaseLLMProvider):
                 contents.append(
                     types.Content(role="model" if role == "assistant" else "user", parts=parts)
                 )
-        return contents, supports_system_instruction
+        return contents
 
-    def _build_generate_config(self, system_prompt: str, supports_system_instruction: bool):
-        """generate 系メソッド共通の GenerateContentConfig を構築する。
+    def _build_generate_config(self, system_prompt: str, tools=None):
+        """GenerateContentConfig を構築する共通ヘルパー。
 
         ContextVar のカウンターが正しく機能するよう、config 構築と
         _log_request 呼び出しは必ず asyncio コンテキスト（スレッド外）で行う。
 
         Args:
             system_prompt: システムプロンプト文字列。
-            supports_system_instruction: system_instruction に対応するモデルか否か。
+            tools: tool-use 用の Tool リスト。指定時は thinking_config を設定しない。
 
         Returns:
             構築済みの GenerateContentConfig オブジェクト。
         """
-        from google.genai import types
-
         config_kwargs: dict = {
+            "system_instruction": system_prompt,
             "max_output_tokens": 4096,
             "safety_settings": [
                 types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
@@ -171,9 +168,10 @@ class GoogleProvider(BaseLLMProvider):
                 types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
             ],
         }
-        if supports_system_instruction:
-            config_kwargs["system_instruction"] = system_prompt
-        if self.thinking_level != "default":
+        if tools is not None:
+            # tool-use 時は thinking_config と共存できないため排他
+            config_kwargs["tools"] = tools
+        elif self.thinking_level != "default":
             budget = _THINKING_BUDGET[self.thinking_level]
             # include_thoughts=True がないと思考ブロックが返ってこない
             config_kwargs["thinking_config"] = types.ThinkingConfig(
@@ -183,9 +181,7 @@ class GoogleProvider(BaseLLMProvider):
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """Google Gemini APIから応答テキストを一括生成する。"""
-        try:
-            from google import genai
-        except ImportError:
+        if not _GOOGLE_GENAI_AVAILABLE:
             return (
                 "[Error: google-genai パッケージがインストールされていません。"
                 "pip install google-genai を実行してください]"
@@ -195,11 +191,11 @@ class GoogleProvider(BaseLLMProvider):
             return "[Error: google_api_key が設定されていません。Settings ページで設定してください]"
 
         client = genai.Client(api_key=self.api_key)
-        contents, supports_system_instruction = self._build_contents(system_prompt, messages)
+        contents = self._build_contents(messages)
 
         # _log_request / _log_response は ContextVar カウンターを使うため
         # asyncio コンテキスト（スレッド外）で呼び出す
-        config = self._build_generate_config(system_prompt, supports_system_instruction)
+        config = self._build_generate_config(system_prompt)
         self._log_request({"model": self.model, "contents": contents, "config": config})
 
         def run():
@@ -213,72 +209,27 @@ class GoogleProvider(BaseLLMProvider):
         try:
             response = await asyncio.to_thread(run)
             self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
-            return response.text
+            # thought=True のパートは思考ブロック（Gemma4/Gemini共通）。回答テキストのみ結合して返す。
+            text_parts = []
+            for candidate in (response.candidates or []):
+                if not candidate.content:
+                    continue
+                for part in (candidate.content.parts or []):
+                    if part.text and getattr(part, "thought", None) is not True:
+                        text_parts.append(part.text)
+            return "".join(text_parts)
         except Exception as e:
             return f"[Google API error: {e}]"
 
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
-        """Google Gemini APIからテキストチャンクをストリーミングで取得する。"""
-        try:
-            from google import genai
-        except ImportError:
-            yield "[Error: google-genai パッケージがインストールされていません]"
-            return
+        """Google Gemini APIからテキストチャンクをストリーミングで取得する。
 
-        if not self.api_key:
-            yield "[Error: google_api_key が設定されていません。Settings ページで設定してください]"
-            return
-
-        import threading
-
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-        client = genai.Client(api_key=self.api_key)
-        contents, supports_system_instruction = self._build_contents(system_prompt, messages)
-
-        # _log_request は asyncio コンテキストで呼び出す（スレッドに入る前）
-        config = self._build_generate_config(system_prompt, supports_system_instruction)
-        self._log_request({"model": self.model, "contents": contents, "config": config})
-
-        # 累積テキストをスレッド外に渡すためのコンテナ
-        result_holder: list[str] = []
-
-        def run():
-            """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
-            accumulated = []
-            try:
-                for chunk in client.models.generate_content_stream(
-                    model=self.model, contents=contents, config=config
-                ):
-                    if chunk.text:
-                        accumulated.append(chunk.text)
-                        loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
-            except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
-            finally:
-                # 累積テキストを asyncio 側に渡す（None の前にセットされることが保証される）
-                result_holder.append("".join(accumulated))
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-
-        threading.Thread(target=run, daemon=True).start()
-
-        # エラーは None sentinel を受け取るまでドレインしてから yield する
-        # （result_holder への書き込みが None の前に実行されることを保証するため）
-        error_item: RuntimeError | None = None
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, RuntimeError):
-                error_item = item
-            else:
-                yield item
-
-        # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
-        self._log_response(result_holder[0] if result_holder else "")
-
-        if error_item is not None:
-            yield f"[Google API error: {error_item}]"
+        generate_stream_typed() を呼び出し、思考ブロック ("thinking", ...) を除いた
+        通常テキスト ("text", ...) のみ文字列としてyieldする。
+        """
+        async for chunk_type, text in self.generate_stream_typed(system_prompt, messages):
+            if chunk_type == "text":
+                yield text
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """Google Gemini APIから思考ブロックを含む型付きチャンクをストリーミングで取得する。
@@ -290,9 +241,7 @@ class GoogleProvider(BaseLLMProvider):
         Yields:
             tuple[str, str]: (type, content) 形式。
         """
-        try:
-            from google import genai
-        except ImportError:
+        if not _GOOGLE_GENAI_AVAILABLE:
             yield ("text", "[Error: google-genai パッケージがインストールされていません]")
             return
 
@@ -305,10 +254,10 @@ class GoogleProvider(BaseLLMProvider):
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
         client = genai.Client(api_key=self.api_key)
-        contents, supports_system_instruction = self._build_contents(system_prompt, messages)
+        contents = self._build_contents(messages)
 
         # _log_request は asyncio コンテキストで呼び出す（スレッドに入る前）
-        config = self._build_generate_config(system_prompt, supports_system_instruction)
+        config = self._build_generate_config(system_prompt)
         self._log_request({"model": self.model, "contents": contents, "config": config})
 
         # 累積テキストをスレッド外に渡すためのコンテナ
@@ -339,7 +288,9 @@ class GoogleProvider(BaseLLMProvider):
                         if not part.text:
                             continue
                         accumulated.append(part.text)
-                        if getattr(part, "thought", False):
+                        # thought=True が思考ブロック（Gemma4/Gemini共通）
+                        # thought=null/None/False はいずれも通常テキスト
+                        if getattr(part, "thought", None) is True:
                             loop.call_soon_threadsafe(queue.put_nowait, ("thinking", part.text))
                         else:
                             loop.call_soon_threadsafe(queue.put_nowait, ("text", part.text))
@@ -386,10 +337,7 @@ class GoogleProvider(BaseLLMProvider):
             テキスト・正規化ツール呼び出し・生レスポンスを含む ToolTurnResult。
             _raw には (contents, response) タプルを格納する。
         """
-        try:
-            from google import genai
-            from google.genai import types
-        except ImportError:
+        if not _GOOGLE_GENAI_AVAILABLE:
             return ToolTurnResult(
                 text="[Error: google-genai パッケージがインストールされていません]",
                 tool_calls=[],
@@ -406,9 +354,8 @@ class GoogleProvider(BaseLLMProvider):
         # 2ターン目以降は types.Content オブジェクトのリストが渡される
         if messages and hasattr(messages[0], "parts"):
             contents = messages
-            supports_system_instruction = not self.model.lower().startswith("gemma")
         else:
-            contents, supports_system_instruction = self._build_contents(system_prompt, messages)
+            contents = self._build_contents(messages)
 
         # OPENAI_TOOLS 形式の function["parameters"] は JSON Schema 形式であり
         # Gemini の function_declarations でもそのまま利用できる
@@ -421,20 +368,11 @@ class GoogleProvider(BaseLLMProvider):
             for t in OPENAI_TOOLS
         ]
 
-        # tool-use 用の config（thinking_level は使わない）
-        config_kwargs: dict = {
-            "max_output_tokens": 4096,
-            "safety_settings": [
-                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-            ],
-            "tools": [types.Tool(function_declarations=function_declarations)],
-        }
-        if supports_system_instruction:
-            config_kwargs["system_instruction"] = system_prompt
-        config = types.GenerateContentConfig(**config_kwargs)
+        # tools 指定時は thinking_config が除外される（_build_generate_config 内で排他制御）
+        config = self._build_generate_config(
+            system_prompt,
+            tools=[types.Tool(function_declarations=function_declarations)],
+        )
 
         # _log_request は asyncio コンテキストで呼び出す（スレッドに入る前）
         self._log_request({"model": self.model, "contents": contents, "config": config})
@@ -456,13 +394,18 @@ class GoogleProvider(BaseLLMProvider):
         self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
 
         text = ""
+        thinking = ""
         tool_calls: list[ToolCall] = []
         for candidate in (response.candidates or []):
             if not candidate.content:
                 continue
             for part in (candidate.content.parts or []):
                 if part.text:
-                    text += part.text
+                    if getattr(part, "thought", None) is True:
+                        # thought=True のパートは思考ブロックとして分離する
+                        thinking += part.text
+                    else:
+                        text += part.text
                 elif getattr(part, "function_call", None):
                     fc = part.function_call
                     # プロバイダー固有のIDがないため連番で生成する
@@ -474,7 +417,7 @@ class GoogleProvider(BaseLLMProvider):
                     ))
 
         # _raw に (contents, response) を格納し _extend_messages_with_results で利用する
-        return ToolTurnResult(text=text, tool_calls=tool_calls, _raw=(contents, response))
+        return ToolTurnResult(text=text, thinking=thinking, tool_calls=tool_calls, _raw=(contents, response))
 
     def _extend_messages_with_results(
         self,
@@ -498,8 +441,6 @@ class GoogleProvider(BaseLLMProvider):
         Returns:
             types.Content オブジェクトのリスト（次ターンの入力として使用）。
         """
-        from google.genai import types
-
         contents, response = turn_result._raw
         # モデルが返した Content（function_call パートを含む）を取り出す
         model_content = response.candidates[0].content

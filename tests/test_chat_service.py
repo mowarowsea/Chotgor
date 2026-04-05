@@ -159,7 +159,7 @@ async def test_chat_service_execute_with_tools_returns_text():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
-    fake_provider.generate_with_tools = AsyncMock(return_value="Hi via tools!")
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi via tools!", ""))
 
     with (
         patch("backend.services.chat.service.create_provider", return_value=fake_provider),

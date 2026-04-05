@@ -179,7 +179,7 @@ class BaseLLMProvider:
         system_prompt: str,
         messages: list[dict],
         tool_executor: "ToolExecutor",
-    ) -> str:
+    ) -> tuple[str, str]:
         """tool-use（function calling）を使って記憶・DRIFTを操作しながら生成する。
 
         SUPPORTS_TOOLS = True のプロバイダーは _tool_turn() と
@@ -197,14 +197,18 @@ class BaseLLMProvider:
             tool_executor: ツール呼び出しを実行するexecutorインスタンス。
 
         Returns:
-            キャラクターの最終応答テキスト（ツール呼び出し行は含まない）。
+            (text, thinking) のタプル。
+            text: キャラクターの最終応答テキスト（ツール呼び出し行は含まない）。
+            thinking: 思考ブロックのテキスト（空文字列は思考なし）。
         """
         api_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
         full_text = ""
+        full_thinking = ""
 
         while True:
             result = await self._tool_turn(system_prompt, api_messages)
             full_text += result.text
+            full_thinking += result.thinking
 
             if not result.tool_calls:
                 break
@@ -223,7 +227,7 @@ class BaseLLMProvider:
             # プロバイダー固有のフォーマットでメッセージリストを拡張する
             api_messages = self._extend_messages_with_results(api_messages, result, results)
 
-        return full_text
+        return full_text, full_thinking
 
     async def _tool_turn(
         self, system_prompt: str, messages: list[dict]

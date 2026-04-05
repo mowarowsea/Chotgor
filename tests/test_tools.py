@@ -620,8 +620,9 @@ class TestGenerateWithToolsLoop:
         ])
         executor = ToolExecutor("c", "s", MagicMock(), MagicMock())
 
-        result = asyncio.run(provider.generate_with_tools("sys", [], executor))
-        assert result == "こんにちは"
+        text, thinking = asyncio.run(provider.generate_with_tools("sys", [], executor))
+        assert text == "こんにちは"
+        assert thinking == ""
 
     def test_single_inscribe_memory_call_executes_and_continues(self):
         """1回の inscribe_memory 呼び出し → 実行 → 継続が正しく行われる。"""
@@ -635,8 +636,8 @@ class TestGenerateWithToolsLoop:
         ])
         executor = ToolExecutor("c", "s", mm, MagicMock())
 
-        result = asyncio.run(provider.generate_with_tools("sys", [], executor))
-        assert result == "完了した"
+        text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
+        assert text == "完了した"
         mm.write_memory.assert_called_once()
         assert len(provider._extend_calls) == 1
 
@@ -656,8 +657,8 @@ class TestGenerateWithToolsLoop:
         ])
         executor = ToolExecutor("c", "s", mm, None)
 
-        result = asyncio.run(provider.generate_with_tools("sys", [], executor))
-        assert result == "指針を彫り込んだ"
+        text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
+        assert text == "指針を彫り込んだ"
         mm.sqlite.update_character.assert_called_once()
 
     def test_multiple_tool_calls_in_sequence(self):
@@ -675,8 +676,8 @@ class TestGenerateWithToolsLoop:
         ])
         executor = ToolExecutor("c", "s", mm, dm)
 
-        result = asyncio.run(provider.generate_with_tools("sys", [], executor))
-        assert result == "終了"
+        text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
+        assert text == "終了"
         dm.add_drift.assert_called_once_with("s", "c", "穏やか")
         mm.write_memory.assert_called_once()
         assert len(provider._extend_calls) == 2
@@ -692,5 +693,5 @@ class TestGenerateWithToolsLoop:
         ])
         executor = ToolExecutor("c", "s", MagicMock(), MagicMock())
 
-        result = asyncio.run(provider.generate_with_tools("sys", [], executor))
-        assert result == "前半後半"
+        text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
+        assert text == "前半後半"

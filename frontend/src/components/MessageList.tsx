@@ -206,7 +206,7 @@ export default function MessageList({
                             <span className={`text-xs font-medium ${color.text}`}>{streamCharName}</span>
                         </div>
                         {/* コンテンツ */}
-                        <div className="pl-[72px] space-y-1">
+                        <div className="pl-[12px] space-y-1">
                             {streamingReasoning && (
                                 <ThinkingBlock content={streamingReasoning} streaming />
                             )}
@@ -231,7 +231,7 @@ export default function MessageList({
                             <CharacterAvatar characterName={charName} imageUrl={getCharImageUrl(charName)} bgClass={color.bg} />
                             <span className={`text-xs font-medium ${color.text}`}>{charName}</span>
                         </div>
-                        <div className="pl-[72px]">
+                        <div className="pl-[12px]">
                             <span className="text-ch-t3 text-sm animate-pulse">…</span>
                         </div>
                     </div>

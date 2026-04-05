@@ -367,17 +367,21 @@ async def test_cli_generate_stream_typed_nonzero_exit():
 
 
 def _make_google_chunk(parts_spec: list[tuple[bool, str]]):
-    """Google Gemini の GenerateContentResponse チャンクに相当するモックオブジェクトを作成する。
+    """Google Gemini/Gemma4 の GenerateContentResponse チャンクに相当するモックオブジェクトを作成する。
+
+    実際のAPIレスポンスに合わせて、思考パートは part.thought=True、
+    通常テキストパートは part.thought=None とする（False ではなく None）。
 
     Args:
         parts_spec: (is_thought, text) のタプルリスト。
-            is_thought=True のとき part.thought == True になる。
+            is_thought=True のとき part.thought=True、False のとき part.thought=None になる。
     """
     parts = []
     for is_thought, text in parts_spec:
         part = MagicMock()
         part.text = text
-        part.thought = is_thought
+        # 実APIは思考ブロック=True、通常テキスト=None（Falseではない）
+        part.thought = True if is_thought else None
         parts.append(part)
 
     content = MagicMock()
@@ -398,16 +402,15 @@ from contextlib import contextmanager
 
 @contextmanager
 def _patch_google_module(mock_client):
-    """google.genai を sys.modules 経由でモックして mock_client を注入するコンテキストマネージャ。
+    """google.genai をモジュールレベルの名前空間でモックして mock_client を注入するコンテキストマネージャ。
 
-    GoogleProvider は関数内で `from google import genai` を遅延実行するため
-    sys.modules に直接注入する必要がある。
+    GoogleProvider はモジュールロード時に `from google import genai` を実行するため、
+    sys.modules パッチは効かない。backend.providers.google_provider の名前空間を
+    直接パッチして genai / types / _GOOGLE_GENAI_AVAILABLE を差し替える。
 
     また log_provider_request は _json_default で MagicMock の __dict__ を
     再帰的に展開しようとするため、合わせて no-op にパッチする。
     """
-    import sys
-
     mock_types = MagicMock()
     mock_types.ThinkingConfig = MagicMock(return_value=MagicMock())
     mock_types.GenerateContentConfig = MagicMock(return_value=MagicMock())
@@ -417,19 +420,12 @@ def _patch_google_module(mock_client):
 
     mock_genai = MagicMock()
     mock_genai.Client.return_value = mock_client
-    mock_genai.types = mock_types
-
-    mock_google = MagicMock()
-    mock_google.genai = mock_genai
 
     with (
-        patch.dict(sys.modules, {
-            "google": mock_google,
-            "google.genai": mock_genai,
-            "google.genai.types": mock_types,
-        }),
+        patch("backend.providers.google_provider._GOOGLE_GENAI_AVAILABLE", True),
+        patch("backend.providers.google_provider.genai", mock_genai),
+        patch("backend.providers.google_provider.types", mock_types),
         # MagicMock の __dict__ を再帰展開して無限ループするのを防ぐ
-        # log_provider_request は base.py の名前空間で呼ばれるためそちらをパッチ
         patch("backend.lib.debug_logger.ChotgorLogger.log_provider_request"),
     ):
         yield
@@ -562,7 +558,6 @@ async def test_google_generate_stream_typed_parts_fallback_to_chunk_text():
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_include_thoughts_set_when_thinking():
     """thinking_level != "default" のとき ThinkingConfig が include_thoughts=True で呼ばれること。"""
-    import sys
     from backend.providers.google_provider import GoogleProvider
 
     mock_client = MagicMock()
@@ -573,6 +568,7 @@ async def test_google_generate_stream_typed_include_thoughts_set_when_thinking()
     mock_types = MagicMock()
 
     def capture_thinking_config(**kwargs):
+        """ThinkingConfig の呼び出し引数を捕捉するスタブ。"""
         captured_thinking_config_kwargs.update(kwargs)
         return MagicMock()
 
@@ -584,18 +580,15 @@ async def test_google_generate_stream_typed_include_thoughts_set_when_thinking()
 
     mock_genai = MagicMock()
     mock_genai.Client.return_value = mock_client
-    mock_genai.types = mock_types
-
-    mock_google = MagicMock()
-    mock_google.genai = mock_genai
 
     provider = GoogleProvider(api_key="dummy", model="gemini-2.0-flash-thinking-exp", thinking_level="high")
 
-    with patch.dict(sys.modules, {
-        "google": mock_google,
-        "google.genai": mock_genai,
-        "google.genai.types": mock_types,
-    }):
+    with (
+        patch("backend.providers.google_provider._GOOGLE_GENAI_AVAILABLE", True),
+        patch("backend.providers.google_provider.genai", mock_genai),
+        patch("backend.providers.google_provider.types", mock_types),
+        patch("backend.lib.debug_logger.ChotgorLogger.log_provider_request"),
+    ):
         async for _ in provider.generate_stream_typed("sys", [{"role": "user", "content": "hi"}]):
             pass
 
@@ -606,13 +599,13 @@ async def test_google_generate_stream_typed_include_thoughts_set_when_thinking()
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_missing_api_key():
     """APIキー未設定のとき ("text", エラーメッセージ) をyieldして終了する。"""
-    import sys
     from backend.providers.google_provider import GoogleProvider
 
     provider = GoogleProvider(api_key="", model="gemini-2.0-flash")
 
-    mock_genai = MagicMock()
-    with patch.dict(sys.modules, {"google": MagicMock(genai=mock_genai), "google.genai": mock_genai}):
+    # api_key チェックは _GOOGLE_GENAI_AVAILABLE チェックの後に行われるため、
+    # _GOOGLE_GENAI_AVAILABLE=True にした上で api_key 未設定の経路を検証する。
+    with patch("backend.providers.google_provider._GOOGLE_GENAI_AVAILABLE", True):
         result = []
         async for item in provider.generate_stream_typed("sys", []):
             result.append(item)

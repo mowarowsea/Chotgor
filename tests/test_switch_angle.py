@@ -473,7 +473,7 @@ class TestChatServiceExecuteWithSwitch:
             async def generate_with_tools(self, system_prompt, messages, tool_executor):
                 call_log.append("first")
                 tool_executor.execute("switch_angle", {"preset_name": "fastModel", "self_instruction": "軽く"})
-                return ""
+                return "", ""
 
         second_provider = AsyncMock()
         second_provider.SUPPORTS_TOOLS = False
@@ -671,7 +671,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         async def mock_generate_with_tools(sys, msgs, tool_executor):
             # LLM が switch_angle を誤呼び出しする状況をシミュレートする
             tool_executor.execute("switch_angle", {"preset_name": "fastModel", "self_instruction": "軽く"})
-            return "プロバイダーからの応答"
+            return "プロバイダーからの応答", ""
 
         provider.generate_with_tools = mock_generate_with_tools
 
