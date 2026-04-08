@@ -189,14 +189,23 @@ class ChromaStore:
             try:
                 filtered_ids = collection.get(where=where, limit=n, include=[])["ids"]
                 filtered_count = len(filtered_ids)
-            except Exception:
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "ChromaDB pre-filter (get) 失敗 where=%s error=%s", where, e
+                )
                 filtered_count = 0
             if filtered_count == 0:
                 return []
             query_kwargs["n_results"] = min(n, filtered_count)
         try:
             results = collection.query(**query_kwargs)
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "ChromaDB query 失敗 where=%s n_results=%s error=%s",
+                where, query_kwargs.get("n_results"), e,
+            )
             return []
 
         memories = []

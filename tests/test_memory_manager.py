@@ -267,3 +267,95 @@ def test_recall_memory_increments_access_count(manager, sqlite_store, mock_chrom
 
     mem_after = sqlite_store.get_memory("mem-1")
     assert mem_after.access_count == count_before + 1
+
+
+# --- soft-delete 済み記憶の除外テスト ---
+
+def test_recall_memory_skips_soft_deleted(manager, sqlite_store, mock_chroma):
+    """recall_memory() は soft-delete 済みの記憶を想起結果から除外することを確認する。
+
+    ChromaDB が soft-delete 済みの memory_id を返した場合、
+    deleted_at が設定されているため reranking でスキップされ、
+    最終的な想起結果に含まれないことを検証する。
+    「忘れた記憶」がシステムプロンプトに混入しないことを保証する。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory("mem-deleted", char_id, "忘れたはずの記憶")
+    sqlite_store.soft_delete_memory("mem-deleted")
+
+    mock_chroma.recall_memory.return_value = [
+        {"id": "mem-deleted", "content": "忘れたはずの記憶", "distance": 0.05, "metadata": {"category": "general"}},
+    ]
+
+    results = manager.recall_memory(char_id, "テスト")
+
+    assert results == []
+
+
+def test_recall_memory_skips_record_not_in_sqlite(manager, sqlite_store, mock_chroma):
+    """recall_memory() は ChromaDB にあるが SQLite に存在しない記憶をスキップすることを確認する。
+
+    ChromaDB と SQLite の乖離（例: SQLite 側のみ削除された場合）が発生したとき、
+    session.get() が None を返す記憶は reranking でスキップされ、
+    最終結果に含まれないことを検証する。
+    """
+    char_id = "char-001"
+    # SQLite には登録しない（ChromaDB にだけある想定）
+    mock_chroma.recall_memory.return_value = [
+        {"id": "ghost-id", "content": "SQLiteにない記憶", "distance": 0.05, "metadata": {"category": "general"}},
+    ]
+
+    results = manager.recall_memory(char_id, "テスト")
+
+    assert results == []
+
+
+def test_recall_with_identity_excludes_soft_deleted_from_other(manager, sqlite_store, mock_chroma):
+    """recall_with_identity() の other 枠で soft-delete 済み記憶がスキップされることを確認する。
+
+    本事象の再現テスト: ChromaDB の non-identity 検索結果が全て soft-delete 済みだった場合、
+    スキップされて other=0 になることを検証する（identity 枠には影響しない）。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory("mem-identity", char_id, "私はエンジニアだ", memory_category="identity")
+    sqlite_store.create_memory("mem-ctx-deleted", char_id, "soft-delete済みの記憶", memory_category="contextual")
+    sqlite_store.soft_delete_memory("mem-ctx-deleted")
+
+    identity_mem = {"id": "mem-identity", "content": "私はエンジニアだ", "distance": 0.02, "metadata": {"category": "identity"}}
+    soft_deleted_mem = {"id": "mem-ctx-deleted", "content": "soft-delete済みの記憶", "distance": 0.05, "metadata": {"category": "contextual"}}
+    mock_chroma.recall_memory.side_effect = [[identity_mem], [soft_deleted_mem]]
+
+    identity_results, other_results = manager.recall_with_identity(char_id, "テスト")
+
+    # identity は正常に返る
+    assert len(identity_results) == 1
+    assert identity_results[0]["id"] == "mem-identity"
+    # soft-delete 済みは除外され other は空
+    assert other_results == []
+
+
+def test_recall_with_identity_both_sections_appear_when_valid_memories_exist(manager, sqlite_store, mock_chroma):
+    """recall_with_identity() が identity と other 両方に有効な記憶を返すことを確認する。
+
+    soft-delete 済み記憶が混在していても、有効な記憶だけが各セクションに入ることを検証する。
+    「はる」ケースの正常系: identity 枠と other 枠が両方揃うことで
+    システムプロンプトに ## Identity / ## Other Memories の両セクションが出ることを保証する。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory("mem-identity", char_id, "私はエンジニアだ", memory_category="identity")
+    sqlite_store.create_memory("mem-other-valid", char_id, "昨日コードを書いた", memory_category="contextual")
+    sqlite_store.create_memory("mem-other-deleted", char_id, "soft-delete済み", memory_category="contextual")
+    sqlite_store.soft_delete_memory("mem-other-deleted")
+
+    identity_mem = {"id": "mem-identity", "content": "私はエンジニアだ", "distance": 0.02, "metadata": {"category": "identity"}}
+    valid_other = {"id": "mem-other-valid", "content": "昨日コードを書いた", "distance": 0.1, "metadata": {"category": "contextual"}}
+    deleted_other = {"id": "mem-other-deleted", "content": "soft-delete済み", "distance": 0.05, "metadata": {"category": "contextual"}}
+    # ChromaDB は soft-delete 済みを先に返す（スコアが高い想定）が、スキップされて valid が残る
+    mock_chroma.recall_memory.side_effect = [[identity_mem], [deleted_other, valid_other]]
+
+    identity_results, other_results = manager.recall_with_identity(char_id, "テスト")
+
+    assert len(identity_results) == 1
+    assert identity_results[0]["id"] == "mem-identity"
+    assert len(other_results) == 1
+    assert other_results[0]["id"] == "mem-other-valid"

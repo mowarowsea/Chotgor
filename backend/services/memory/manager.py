@@ -172,10 +172,15 @@ class MemoryManager:
             mem_id = mem.get("id")
             if not mem_id:
                 continue
-                
+
             try:
                 m = self.sqlite.get_memory(mem_id)
                 if not m:
+                    logger.debug("recall_memory: ChromaDB にあるが SQLite に存在しない記憶をスキップ id=%s char=%s", mem_id, character_id)
+                    continue
+                # soft-delete 済み記憶はスキップ（ChromaDB から完全削除される前の過渡状態）
+                if m.deleted_at is not None:
+                    logger.debug("recall_memory: soft-delete 済み記憶をスキップ id=%s char=%s", mem_id, character_id)
                     continue
                     
                 # Calculate True Decayed Score
@@ -238,12 +243,22 @@ class MemoryManager:
             top_k=identity_top_k,
             where={"category": "identity"},
         )
+        logger.info(
+            "recall_with_identity: identity=%d char=%s query=%.40s",
+            len(identity_memories), character_id, query,
+        )
+
         other_memories = self.recall_memory(
             character_id=character_id,
             query=query,
             top_k=other_top_k,
             where={"category": {"$ne": "identity"}},
         )
+        logger.info(
+            "recall_with_identity: other=%d char=%s",
+            len(other_memories), character_id,
+        )
+
         return identity_memories, other_memories
 
     def power_recall(
