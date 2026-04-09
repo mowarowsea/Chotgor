@@ -53,6 +53,29 @@ def build_message_content(
     return parts if len(parts) > 1 else text
 
 
+def apply_context_window(history: list, max_chronicled: int = 10) -> list:
+    """chronicle済みメッセージ数を制限し、コンテキストウィンドウを圧縮する。
+
+    chronicle済み（chronicled_at が非NULL）のメッセージは末尾 max_chronicled 件のみ残す。
+    未chronicle（chronicled_at が NULL）のメッセージはセッション中の生きた文脈として全件保持する。
+    これにより、記憶に昇華済みの古い会話がトークンを圧迫するのを防ぐ。
+
+    Args:
+        history: ChatMessageオブジェクトのリスト（時系列順）。
+        max_chronicled: chronicle済みメッセージの保持上限件数（デフォルト: 10）。
+
+    Returns:
+        フィルタリング後のメッセージリスト（時系列順を保持）。
+    """
+    chronicled = [m for m in history if getattr(m, "chronicled_at", None) is not None]
+    unchronicled = [m for m in history if getattr(m, "chronicled_at", None) is None]
+    # max_chronicled=0 のとき -0 は 0 と等しく全件になるため > 0 で分岐する
+    trimmed_chronicled = chronicled[-max_chronicled:] if max_chronicled > 0 else []
+    # 時系列順を復元するため、元のリストから順に選別する
+    kept_ids = {id(m) for m in trimmed_chronicled} | {id(m) for m in unchronicled}
+    return [m for m in history if id(m) in kept_ids]
+
+
 def build_1on1_history(
     history: list,
     sqlite,

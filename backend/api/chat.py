@@ -24,6 +24,7 @@ from backend.lib.log_context import new_message_id
 from backend.lib.time_awareness import compute_time_awareness
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from backend.api.utils import build_1on1_history, build_available_presets, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
+from backend.services.chat.content import apply_context_window
 from backend.character_actions.exiter import build_exit_message
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -121,7 +122,15 @@ async def _build_chat_request(
     ta = compute_time_awareness(settings, character.id, state.sqlite, now)
     state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
 
-    messages = build_1on1_history(history_messages, state.sqlite, state.uploads_dir)
+    # chronicle済みメッセージの保持上限をグローバル設定から取得（デフォルト: 10件）
+    max_chronicled = int(settings.get("context_window_max_chronicled", 10))
+    windowed = apply_context_window(history_messages, max_chronicled=max_chronicled)
+    if len(windowed) < len(history_messages):
+        logger.log_warning(
+            "context_window",
+            f"全{len(history_messages)}件 → {len(windowed)}件に圧縮 (chronicle済み上限: {max_chronicled})",
+        )
+    messages = build_1on1_history(windowed, state.sqlite, state.uploads_dir)
     messages.append(Message(role="user", content=user_content))
 
     available_presets = build_available_presets(character, preset, state.sqlite)

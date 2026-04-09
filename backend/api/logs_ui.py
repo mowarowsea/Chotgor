@@ -33,6 +33,8 @@ _LOG_CHAR_RE = re.compile(r"\[([0-9a-f]{8})\].*?\bchar=(\S+)")
 _FILE_PATTERN = re.compile(r"^\d+_(.+?)_(Request|Response)_(.+)\.log$")
 # ファイル名パターン（機能名なし）: "02_Request_claude_cli.log"（旧形式）
 _FILE_PATTERN_NOFEATURE = re.compile(r"^\d+_(Request|Response)_(.+)\.log$")
+# 警告ファイルパターン: "03_Warning_context_window.log"
+_FILE_PATTERN_WARNING = re.compile(r"^\d+_Warning_(.+)\.log$")
 
 # タグとして認識する名前一覧
 _KNOWN_TAG_NAMES = [
@@ -280,6 +282,19 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
     # ソート: feature の辞書順（tool_map は挿入順なのでキー順に変換）
     tool_calls = list(tool_map.values())
 
+    # --- Warning ファイルを収集 ---
+    # log_warning() が書き出した {NN}_Warning_{tag}.log を読み込む。
+    warnings: list[dict] = []
+    for f in files:
+        m = _FILE_PATTERN_WARNING.match(f.name)
+        if m:
+            tag = m.group(1)
+            try:
+                msg = f.read_text(encoding="utf-8").strip()
+            except Exception:
+                msg = ""
+            warnings.append({"tag": tag, "message": msg, "file": f.name})
+
     # --- エラー判定 ---
     # いずれかの tool_call で Response が存在しない、または Response がエラー文字列の場合は警告扱い
     has_error = False
@@ -310,6 +325,7 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
         "user_message": user_message,
         "character_response": character_response,
         "tool_calls": tool_calls,
+        "warnings": warnings,
         "files": file_names,
         "has_error": has_error,
     }

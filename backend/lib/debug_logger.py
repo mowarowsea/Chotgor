@@ -131,15 +131,17 @@ class ChotgorLogger:
     # --- コンソールログメソッド ---
 
     def log_warning(self, tag: str, message: str) -> None:
-        """警告メッセージを標準 logging で出力する。
+        """警告メッセージを標準 logging とデバッグファイルの両方に出力する。
 
-        print() を使わず logging.warning() に変更。
+        コンソール: 常時 logging.warning() で出力。
+        ファイル: CHOTGOR_DEBUG=1 時のみ {NN}_Warning_{tag}.log に書き出す（ログ一覧UIで閲覧可能）。
 
         Args:
-            tag: ログタグ（例: "PowerRecall"）
+            tag: ログタグ（例: "context_window"）
             message: 警告メッセージ
         """
         _logging.getLogger("backend.core.debug_logger").warning("[%s] %s", tag, message)
+        self._write_log(f"Warning_{tag}", message)
 
 
 # モジュールレベルのシングルトン

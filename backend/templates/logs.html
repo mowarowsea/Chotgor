@@ -125,6 +125,27 @@
             </div>
             {% endif %}
 
+            <!-- 警告ノート（context_window 圧縮など） -->
+            {% if e.warnings %}
+            <div class="log-row">
+                <span class="log-label">警告</span>
+                <div class="log-tool-list">
+                    {% for w in e.warnings %}
+                    <div class="log-tool-block">
+                        <div class="log-tool-header">
+                            <span class="log-tool-tag" style="background:var(--warn,#b45309);color:#fff">{{ w.tag }}</span>
+                            <a href="/ui/logs/{{ e.message_id }}/raw/{{ w.file }}"
+                               target="_blank" class="log-file-link">詳細 ↗</a>
+                        </div>
+                        {% if w.message %}
+                        <div class="log-tag-preview">{{ w.message }}</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
             <!-- リクエストID / 生ファイル -->
             <div class="log-row">
                 <span class="log-label">ID / Files</span>

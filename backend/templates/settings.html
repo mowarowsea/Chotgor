@@ -98,6 +98,18 @@
 
         <hr>
 
+        <!-- コンテキストウィンドウ圧縮 -->
+        <div class="form-group">
+            <label for="context_window_max_chronicled">コンテキストウィンドウ（chronicle済みメッセージ上限）
+                <span class="label-hint">chronicle済みメッセージの保持件数。未chronicle分は常に全件保持。0 = chronicle済みを完全除外</span>
+            </label>
+            <input type="number" id="context_window_max_chronicled" name="context_window_max_chronicled"
+                   value="{{ settings.get('context_window_max_chronicled', '10') }}"
+                   min="0" max="200" class="form-control" style="width:120px">
+        </div>
+
+        <hr>
+
         <!-- Chronicle Time -->
         <div class="form-group">
             <label for="chronicle_time">Chronicle Time

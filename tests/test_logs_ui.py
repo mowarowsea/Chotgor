@@ -517,6 +517,68 @@ class TestParseEntry:
         entry = _parse_entry("statfail", folder, {})
         assert entry["dt"].year == 1970
 
+    def test_warnings_empty_when_no_warning_files(self, tmp_path):
+        """Warning ファイルがない場合、warnings は空リストであること。"""
+        folder = _make_debug_dir(tmp_path, "warn0")
+        _write_front_input(folder, "はる@ClaudeCode", "こんにちは")
+
+        entry = _parse_entry("warn0", folder, {})
+
+        assert entry["warnings"] == []
+
+    def test_warnings_parsed_from_warning_file(self, tmp_path):
+        """Warning_{tag}.log ファイルが存在する場合、warnings リストに内容が入ること。
+
+        log_warning("context_window", "全20件 → 12件に圧縮 ...") が書き出すファイルを再現する。
+        """
+        folder = _make_debug_dir(tmp_path, "warn1")
+        _write_front_input(folder, "はる@ClaudeCode", "こんにちは")
+        _write_response(
+            folder,
+            "03_Warning_context_window.log",
+            "全20件 → 12件に圧縮 (chronicle済み上限: 10)",
+        )
+
+        entry = _parse_entry("warn1", folder, {})
+
+        assert len(entry["warnings"]) == 1
+        w = entry["warnings"][0]
+        assert w["tag"] == "context_window"
+        assert "全20件" in w["message"]
+        assert w["file"] == "03_Warning_context_window.log"
+
+    def test_multiple_warning_files(self, tmp_path):
+        """複数の Warning ファイルがある場合、すべて warnings に含まれること。"""
+        folder = _make_debug_dir(tmp_path, "warn2")
+        _write_response(folder, "02_Warning_context_window.log", "圧縮メッセージA")
+        _write_response(folder, "03_Warning_other_tag.log", "別の警告B")
+
+        entry = _parse_entry("warn2", folder, {})
+
+        assert len(entry["warnings"]) == 2
+        tags = {w["tag"] for w in entry["warnings"]}
+        assert "context_window" in tags
+        assert "other_tag" in tags
+
+    def test_warning_file_read_error_skips_gracefully(self, tmp_path, monkeypatch):
+        """Warning ファイルの読み取りに失敗した場合、message が空文字で warnings に含まれること。"""
+        folder = _make_debug_dir(tmp_path, "warn3")
+        warn_file = folder / "02_Warning_context_window.log"
+        warn_file.write_text("圧縮メッセージ", encoding="utf-8")
+
+        original_read = Path.read_text
+
+        def raise_on_warning(self, *a, **kw):
+            if self == warn_file:
+                raise OSError("read error")
+            return original_read(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "read_text", raise_on_warning)
+        entry = _parse_entry("warn3", folder, {})
+
+        assert len(entry["warnings"]) == 1
+        assert entry["warnings"][0]["message"] == ""
+
 
 # ─── _load_entries ────────────────────────────────────────────────────────────
 
