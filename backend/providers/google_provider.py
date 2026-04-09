@@ -219,7 +219,9 @@ class GoogleProvider(BaseLLMProvider):
                         text_parts.append(part.text)
             return "".join(text_parts)
         except Exception as e:
-            return f"[Google API error: {e}]"
+            err = f"[Google API error: {e}]"
+            self._log_error(err)
+            return err
 
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
         """Google Gemini APIからテキストチャンクをストリーミングで取得する。
@@ -296,6 +298,9 @@ class GoogleProvider(BaseLLMProvider):
                             loop.call_soon_threadsafe(queue.put_nowait, ("text", part.text))
 
             except Exception as e:
+                # エラー文字列を accumulated に追加しておくことで、
+                # finally の _log_response でエラー内容も Response ファイルに記録される
+                accumulated.append(f"\n[Google API error: {e}]")
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
                 # 累積テキストを asyncio 側に渡す（None の前にセットされることが保証される）
@@ -388,7 +393,9 @@ class GoogleProvider(BaseLLMProvider):
         try:
             response = await asyncio.to_thread(run)
         except Exception as e:
-            return ToolTurnResult(text=f"[Google API error: {e}]", tool_calls=[])
+            err = f"[Google API error: {e}]"
+            self._log_error(err)
+            return ToolTurnResult(text=err, tool_calls=[])
 
         # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
         self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))

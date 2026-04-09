@@ -107,7 +107,9 @@ class OpenAIProvider(BaseLLMProvider):
         try:
             return await asyncio.to_thread(run)
         except Exception as e:
-            return f"[OpenAI API error: {e}]"
+            err = f"[OpenAI API error: {e}]"
+            self._log_error(err)
+            return err
 
     @_api_guard("openai")
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
@@ -144,6 +146,7 @@ class OpenAIProvider(BaseLLMProvider):
                         accumulated.append(content)
                         loop.call_soon_threadsafe(queue.put_nowait, content)
             except Exception as e:
+                accumulated.append(f"\n[OpenAI API error: {e}]")
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
                 self._log_response("".join(accumulated))
@@ -211,7 +214,9 @@ class OpenAIProvider(BaseLLMProvider):
         try:
             return await asyncio.to_thread(run)
         except Exception as e:
-            return ToolTurnResult(text=f"[OpenAI API error: {e}]", tool_calls=[])
+            err = f"[OpenAI API error: {e}]"
+            self._log_error(err)
+            return ToolTurnResult(text=err, tool_calls=[])
 
     def _extend_messages_with_results(
         self,

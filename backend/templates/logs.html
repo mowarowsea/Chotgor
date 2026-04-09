@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Logs &mdash; Chotgor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Logs</h1>
+    <span class="text-muted" style="font-size:0.82rem">{{ total }} requests</span>
+</div>
+
+{% if not debug_enabled %}
+<div class="alert alert-warning">
+    <strong>CHOTGOR_DEBUG=1</strong> が設定されていないため、リクエスト単位のデバッグログが記録されていません。<br>
+    環境変数 <code>CHOTGOR_DEBUG=1</code> を設定してサーバを再起動してください。
+</div>
+{% elif entries %}
+
+<div class="log-list">
+    {% for e in entries %}
+    <details class="log-entry">
+        <summary class="log-summary">
+            <span class="log-toggle-icon">&#9654;</span>
+            <span class="badge {% if e.has_error %}badge-deleted{% else %}badge-info{% endif %}">{% if e.has_error %}WARN{% else %}INFO{% endif %}</span>
+            <span class="log-dt">{{ e.dt_str }}</span>
+            {% if e.model_id %}
+            <span class="log-model">{{ e.character }}{% if e.preset %}<span class="text-muted">@{{ e.preset }}</span>{% endif %}</span>
+            {% else %}
+            {# モデルIDなし = chronicle / forget などシステム起動ツール #}
+            {% if e.tool_calls %}
+            <span class="log-model text-muted">[{{ e.tool_calls[0].feature or e.tool_calls[0].preset }}]</span>
+            {% else %}
+            <span class="log-model text-muted">[system]</span>
+            {% endif %}
+            {% endif %}
+            {% if e.character_response %}
+            <span class="log-preview">{{ e.character_response[:120] }}{% if e.character_response|length > 120 %}…{% endif %}</span>
+            {% elif e.user_message %}
+            <span class="log-preview text-muted">{{ e.user_message[:120] }}{% if e.user_message|length > 120 %}…{% endif %}</span>
+            {% endif %}
+        </summary>
+
+        <div class="log-detail">
+            <!-- 発信元 -->
+            <div class="log-row">
+                <span class="log-label">発信元</span>
+                <span>{{ e.source }}</span>
+            </div>
+
+            <!-- リクエスト内容 -->
+            {% if e.user_message %}
+            <div class="log-row">
+                <span class="log-label">リクエスト</span>
+                <div style="min-width:0">
+                    <div class="log-body-preview">{{ e.user_message[:800] }}{% if e.user_message|length > 800 %}…{% endif %}</div>
+                    {% if "01_FrontInput.log" in e.files %}
+                    <a href="/ui/logs/{{ e.message_id }}/raw/01_FrontInput.log"
+                       target="_blank" class="log-file-link">全文はこちら (JSON) ↗</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- レスポンス内容 -->
+            <div class="log-row">
+                <span class="log-label">レスポンス</span>
+                <div style="min-width:0">
+                    {% if e.character_response %}
+                    <div class="log-body-preview {% if e.has_error %}log-body-error{% endif %}">{{ e.character_response[:800] }}{% if e.character_response|length > 800 %}…{% endif %}</div>
+                    {% else %}
+                    <span class="text-muted">(なし)</span>
+                    {% endif %}
+                    {% for fname in e.files %}
+                    {% if "FrontOutput" in fname %}
+                    <a href="/ui/logs/{{ e.message_id }}/raw/{{ fname }}"
+                       target="_blank" class="log-file-link">全文はこちら ↗</a>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- ツール呼び出し -->
+            {% if e.tool_calls %}
+            <div class="log-row">
+                <span class="log-label">ツール</span>
+                <div class="log-tool-list">
+                    {% for tc in e.tool_calls %}
+                    <div class="log-tool-block">
+                        <!-- ツール名バッジ + ファイルリンク -->
+                        <div class="log-tool-header">
+                            <span class="log-tool-tag">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
+                            {% if tc.request_file %}
+                            <a href="/ui/logs/{{ e.message_id }}/raw/{{ tc.request_file }}"
+                               target="_blank" class="log-file-link">Request ↗</a>
+                            {% endif %}
+                            {% if tc.response_file %}
+                            <a href="/ui/logs/{{ e.message_id }}/raw/{{ tc.response_file }}"
+                               target="_blank" class="log-file-link">Response ↗</a>
+                            {% endif %}
+                        </div>
+
+                        <!-- タグ使用 -->
+                        {% if tc.tags %}
+                        <div class="log-tag-list">
+                            {% for tag in tc.tags %}
+                            <div class="log-tag-item">
+                                <span class="log-tag-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
+                                <!-- INSCRIBE_MEMORY: カテゴリ・重要度を追加表示 -->
+                                {% if tag.tag_name == "INSCRIBE_MEMORY" %}
+                                <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
+                                {% elif tag.tag_name == "CARVE_NARRATIVE" %}
+                                <span class="log-tag-meta">{{ tag.fields.モード }}</span>
+                                {% elif tag.tag_name == "SWITCH_ANGLE" %}
+                                <span class="log-tag-meta">→ {{ tag.fields.プリセット }}</span>
+                                {% endif %}
+                                <!-- 内容プレビュー -->
+                                {% if tag.preview %}
+                                <div class="log-tag-preview">{{ tag.preview[:200] }}{% if tag.preview|length > 200 %}…{% endif %}</div>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- リクエストID / 生ファイル -->
+            <div class="log-row">
+                <span class="log-label">ID / Files</span>
+                <div>
+                    <span style="font-family:var(--mono);font-size:0.75rem;color:var(--t3);margin-right:0.8rem">{{ e.message_id }}</span>
+                    {% for fname in e.files %}
+                    <a href="/ui/logs/{{ e.message_id }}/raw/{{ fname }}"
+                       target="_blank" class="log-raw-link" title="{{ fname }}">{{ fname }}</a>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </details>
+    {% endfor %}
+</div>
+
+<!-- ページネーション -->
+{% if total_pages > 1 %}
+<div class="log-pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" class="btn btn-secondary btn-sm">← Prev</a>
+    {% endif %}
+    <span>{{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" class="btn btn-secondary btn-sm">Next →</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="empty-state">
+    <p>ログがありません。</p>
+</div>
+{% endif %}
+{% endblock %}

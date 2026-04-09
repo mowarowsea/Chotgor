@@ -562,6 +562,256 @@ code {
 .text-muted  { color: var(--t2); }
 .text-danger { color: rgba(205, 88, 88, 0.9); }
 
+/* ── Log Viewer ──────────────────────────────────────────────── */
+
+/* ログ一覧リスト */
+.log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* 1リクエスト = 1 <details> 要素 */
+.log-entry {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
+}
+.log-entry[open] {
+  border-color: var(--border-2);
+}
+.log-entry[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+/* サマリ行（折り畳みヘッダ） */
+.log-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-size: 0.82rem;
+  min-width: 0;
+}
+.log-summary::-webkit-details-marker { display: none; }
+.log-summary::marker               { display: none; }
+
+/* 折り畳みアイコン */
+.log-toggle-icon {
+  color: var(--t3);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  transition: transform var(--dur) var(--ease);
+}
+details[open] .log-toggle-icon { transform: rotate(90deg); }
+
+/* 日時 */
+.log-dt {
+  color: var(--t2);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* キャラクター@プリセット */
+.log-model {
+  font-weight: 500;
+  color: var(--t1);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* レスポンスプレビュー */
+.log-preview {
+  color: var(--t2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+/* 詳細エリア */
+.log-detail {
+  padding: 0.9rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  font-size: 0.82rem;
+}
+
+/* 詳細行（ラベル + 値） */
+.log-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.4rem 0.8rem;
+  align-items: start;
+}
+
+.log-label {
+  color: var(--t3);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding-top: 0.1rem;
+}
+
+/* エラーレスポンスの強調 */
+.log-body-error {
+  border-color: var(--danger-bd) !important;
+  background: var(--danger-bg) !important;
+  color: rgba(205, 120, 120, 0.9);
+}
+
+/* リクエスト・レスポンス本文プレビュー */
+.log-body-preview {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 0.5rem 0.7rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 8rem;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  color: var(--t1);
+  font-family: var(--mono);
+}
+
+/* ツールタグ */
+.log-tool-tag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 99px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  background: var(--surface-3);
+  color: var(--t2);
+  border: 1px solid var(--border-2);
+}
+
+/* ページネーション */
+.log-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1.5rem 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--t2);
+}
+
+/* INFOバッジ */
+.badge-info { background: rgba(50,100,160,0.10); color: #70a0d4; border-color: rgba(50,100,160,0.20); }
+
+/* ファイルリンク（小さめ） */
+.log-file-link {
+  font-size: 0.75rem;
+  color: var(--accent-text);
+  text-decoration: none;
+  margin-top: 0.3rem;
+  display: inline-block;
+}
+.log-file-link:hover { text-decoration: underline; }
+
+/* 生ファイルリンク（ID行） */
+.log-raw-link {
+  font-size: 0.69rem;
+  color: var(--t3);
+  text-decoration: none;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-right: 0.2rem;
+  white-space: nowrap;
+}
+.log-raw-link:hover { color: var(--t2); border-color: var(--border-2); }
+
+/* ツール呼び出しリスト */
+.log-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* 1ツール呼び出しブロック */
+.log-tool-block {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 0.5rem 0.65rem;
+}
+
+/* ツールヘッダ（バッジ + リンク） */
+.log-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* タグ一覧 */
+.log-tag-list {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+/* 1タグ行 */
+.log-tag-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* タグ種別バッジ */
+.log-tag-badge {
+  display: inline-block;
+  padding: 0.06rem 0.4rem;
+  border-radius: 99px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+.tag-memory    { background: rgba(55,130,90,0.12);   color: var(--accent-text); border-color: rgba(55,130,90,0.25); }
+.tag-narrative { background: rgba(90,70,140,0.12);   color: #9888cc;            border-color: rgba(90,70,140,0.25); }
+.tag-drift     { background: rgba(50,110,140,0.12);  color: #60aac8;            border-color: rgba(50,110,140,0.25); }
+.tag-switch    { background: rgba(140,105,50,0.12);  color: #c4a050;            border-color: rgba(140,105,50,0.25); }
+.tag-recall    { background: rgba(120,60,160,0.12);  color: #a878cc;            border-color: rgba(120,60,160,0.25); }
+.tag-end       { background: rgba(140,50,50,0.12);   color: #c06868;            border-color: rgba(140,50,50,0.25); }
+.tag-unknown   { background: var(--surface-3); color: var(--t3); border-color: var(--border); }
+
+/* タグのメタ情報（カテゴリ、モード等） */
+.log-tag-meta {
+  font-size: 0.72rem;
+  color: var(--t2);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* タグ内容プレビュー */
+.log-tag-preview {
+  width: 100%;
+  font-size: 0.78rem;
+  color: var(--t1);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-top: 0.1rem;
+  padding-left: 0.2rem;
+  border-left: 2px solid var(--border-2);
+}
+
 hr {
   border: none;
   border-top: 1px solid var(--border);

@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.adapters.openai import router as openai_router
 from backend.api import characters, memories, chat as chat_module, chat_images as chat_images_module, chat_drifts as chat_drifts_module, group_chat as group_chat_module
 from backend.api import ui as ui_module
+from backend.api import logs_ui as logs_ui_module
 from backend.services.chat.service import ChatService
 from backend.lib.log_context import setup_logging
 from backend.repositories.chroma.store import ChromaStore
@@ -82,6 +83,9 @@ async def lifespan(app: FastAPI):
     ui_module.templates = Jinja2Templates(directory=TEMPLATES_DIR)
     # CSS キャッシュバスティング：サーバ起動時のタイムスタンプを全テンプレートに注入
     ui_module.templates.env.globals["css_version"] = str(int(time.time()))
+
+    # ログUIにも同じテンプレートインスタンスを共有する
+    logs_ui_module.templates = ui_module.templates
 
     _log.info("Chotgor backend 起動 sqlite=%s", SQLITE_DB_PATH)
 
@@ -164,6 +168,7 @@ app.include_router(chat_module.router)
 app.include_router(chat_images_module.router)
 app.include_router(chat_drifts_module.router)
 app.include_router(group_chat_module.router)
+app.include_router(logs_ui_module.router)
 
 
 @app.get("/health")

@@ -163,23 +163,29 @@ class ClaudeCliProvider(BaseLLMProvider):
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
                 out_msg = result.stdout.decode("utf-8", errors="replace")
-                return (
+                err = (
                     f"[Claude Code error (code {result.returncode})\n"
                     f"STDERR: {err_msg[:1000]}\nSTDOUT: {out_msg[:2000]}]"
                 )
+                self._log_error(err)
+                return err
 
             raw_stdout = result.stdout.decode("utf-8", errors="replace")
             self._log_response(raw_stdout)
             return _parse_stream_json(raw_stdout)
 
         except FileNotFoundError:
-            return (
+            err = (
                 "[Error: claude CLI が見つかりません。"
                 "Claude Code がインストール・認証済みか確認してください]"
             )
+            self._log_error(err)
+            return err
         except Exception as e:
             import traceback
-            return f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+            err = f"[Error: {type(e).__name__}: {e}\n{traceback.format_exc()}]"
+            self._log_error(err)
+            return err
         finally:
             for path in (sys_file.name, msg_file.name):
                 try:

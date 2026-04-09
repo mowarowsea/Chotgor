@@ -117,6 +117,18 @@ class BaseLLMProvider:
             raise ValueError(f"{self.__class__.__name__} が PROVIDER_ID を設定していません")
         logger.log_provider_response(self.preset_name or self.PROVIDER_ID, data)
 
+    def _log_error(self, error: str) -> None:
+        """プロバイダーAPIのエラーをレスポンスファイルとして記録する。
+
+        _log_request が呼ばれた後に例外が発生した場合、レスポンスファイルが
+        存在しないとログビューアでエラー判別ができない。
+        _log_response をエラー文字列で呼び出すことで対応する Response ファイルを作成する。
+
+        Args:
+            error: エラー内容の文字列（プロバイダーが返すエラーメッセージ）。
+        """
+        self._log_response(error)
+
     @classmethod
     def from_config(cls, model: str, settings: dict, **kwargs) -> "BaseLLMProvider":
         """ファクトリメソッド。サブクラスが各自の設定キーを使って初期化する。"""
