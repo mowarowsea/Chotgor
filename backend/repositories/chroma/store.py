@@ -96,7 +96,12 @@ class ChromaStore:
         get_or_create_collection が失敗した場合、データが存在しない空コレクションのみ
         削除して再作成する。データが残っているコレクションは削除しない（データ保護）。
         embeddingモデル変更による次元不一致エラーへの対応を想定している。
+
+        また、取得できたコレクションでも HNSW ファイルが存在しない（破損）場合は
+        強制削除して再作成する。これは migration 中断などで起きる稀な状態を自動修復する。
         """
+        import logging
+        logger = logging.getLogger(__name__)
         kwargs: dict = {
             "name": collection_name,
             "metadata": {"hnsw:space": "cosine"},
@@ -104,7 +109,21 @@ class ChromaStore:
         if self._embedding_fn is not None:
             kwargs["embedding_function"] = self._embedding_fn
         try:
-            return self.client.get_or_create_collection(**kwargs)
+            collection = self.client.get_or_create_collection(**kwargs)
+            # HNSW ファイルの整合性を確認（"Nothing found on disk" 等の破損を早期検出）
+            try:
+                collection.count()
+            except Exception as e:
+                logger.warning(
+                    "コレクション破損を検出（HNSWファイルなし）name=%s error=%s → 強制再作成",
+                    collection_name, e,
+                )
+                try:
+                    self.client.delete_collection(collection_name)
+                except Exception:
+                    pass
+                return self.client.get_or_create_collection(**kwargs)
+            return collection
         except Exception:
             # データが存在するコレクションは削除しない
             try:
@@ -365,8 +384,12 @@ class ChromaStore:
         Args:
             character_id: コレクションを削除するキャラクターID。
         """
+        import logging
         collection_name = f"char_{character_id.replace('-', '_')}"
         try:
             self.client.delete_collection(collection_name)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "delete_all_memories: コレクション削除失敗 char=%s name=%s error=%s",
+                character_id, collection_name, e,
+            )
