@@ -8,12 +8,14 @@
  *   ユーザーメッセージ     — 右寄せ、ニュートラルなフラット背景。
  *   ボーダー/サーフェス    — すべてニュートラルグレー。緑はキャラ名・アクセントのみ。
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { fetchLogEntry, fetchRawLog } from "../api";
+import type { LogEntry, LogToolCall } from "../api";
 
 // ---------------------------------------------------------------------------
 // ThinkingBlock
@@ -194,6 +196,343 @@ export function CharacterAvatar({
 }
 
 // ---------------------------------------------------------------------------
+// LogPanel（デバッグログ折りたたみ表示）
+// ---------------------------------------------------------------------------
+
+/** タグ種別 cls → Tailwindクラスのマッピング。 */
+const TAG_COLORS: Record<string, string> = {
+  "tag-memory":    "bg-violet-950/60 text-violet-300",
+  "tag-narrative": "bg-blue-950/60 text-blue-300",
+  "tag-drift":     "bg-amber-950/60 text-amber-300",
+  "tag-switch":    "bg-teal-950/60 text-teal-300",
+  "tag-recall":    "bg-rose-950/60 text-rose-300",
+  "tag-end":       "bg-ch-s3 text-ch-t2",
+  "tag-unknown":   "bg-ch-s3 text-ch-t3",
+};
+
+/**
+ * ToolCall 1件の表示。Request/Response ファイルリンクとタグバッジを表示する。
+ */
+function ToolCallRow({
+  tc,
+  logMessageId,
+  onOpenRaw,
+}: {
+  tc: LogToolCall;
+  logMessageId: string;
+  onOpenRaw: (filename: string) => void;
+}) {
+  const [tagExpanded, setTagExpanded] = useState(false);
+
+  return (
+    <div className="rounded px-2 py-1.5 text-[11px]" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+      {/* ヘッダー: feature / preset */}
+      <div className="flex items-center gap-1.5 mb-1 text-ch-t3">
+        {tc.feature && <span className="font-mono">{tc.feature}</span>}
+        {tc.feature && tc.preset && <span className="opacity-40">/</span>}
+        {tc.preset && <span className="font-mono">{tc.preset}</span>}
+        {tc.request_file && !tc.response_file && (
+          <span className="ml-auto text-red-400 text-[10px]">応答なし</span>
+        )}
+      </div>
+
+      {/* ファイルリンク */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {tc.request_file && (
+          <button
+            onClick={() => onOpenRaw(tc.request_file!)}
+            className="text-ch-t4 hover:text-ch-t2 underline underline-offset-2 text-[10px] transition-colors"
+          >
+            Request
+          </button>
+        )}
+        {tc.response_file && (
+          <button
+            onClick={() => onOpenRaw(tc.response_file!)}
+            className="text-ch-t4 hover:text-ch-t2 underline underline-offset-2 text-[10px] transition-colors"
+          >
+            Response
+          </button>
+        )}
+
+        {/* タグバッジ */}
+        {tc.tags.length > 0 && (
+          <div className="flex items-center gap-1 flex-wrap ml-auto">
+            {tc.tags.map((tag, i) => (
+              <button
+                key={i}
+                onClick={() => setTagExpanded((e) => !e)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-opacity hover:opacity-80 ${TAG_COLORS[tag.meta.cls] ?? TAG_COLORS["tag-unknown"]}`}
+              >
+                {tag.meta.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* タグ詳細（展開時） */}
+      {tagExpanded && tc.tags.length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          {tc.tags.map((tag, i) => (
+            <div key={i} className="rounded px-2 py-1 text-[10px]" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+              <div className="text-ch-t3 font-mono mb-0.5">{tag.tag_name}</div>
+              {Object.entries(tag.fields).map(([k, v]) => (
+                <div key={k} className="flex gap-1.5 text-ch-t3">
+                  <span className="text-ch-t4 shrink-0">{k}:</span>
+                  <span className="text-ch-t2 break-all">{v}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HighlightedJson（JSON整形＋フィールドハイライト）
+// ---------------------------------------------------------------------------
+
+/** ハイライト対象のキー名セット。 */
+const HIGHLIGHT_KEYS = new Set(["text", "content", "thought"]);
+/** JSON の key-value 行にマッチする正規表現（indent=2 前提）。 */
+const KV_LINE_RE = /^(\s*)"([^"]+)"(\s*:\s*)(.+)$/;
+
+/**
+ * JSON テキストのパースを試みる。
+ * debug_logger が生成する2種類の不正エスケープを段階的に前処理して再試行する。
+ *
+ * 試み1: そのままパース（正常ファイル）
+ * 試み2: \<LF>（バックスラッシュ+実改行）を JSON エスケープ \\n に戻す
+ *         → thought_signature フィールドなどで発生するパターン
+ * 試み3: 文字列値内の生改行（debug_logger が \\n → 実改行した結果）を \\n に戻す
+ *         → candidates.content.parts[].text など複数行テキストで発生するパターン
+ *         文字列トークン "..." 全体をマッチして内部の生改行だけをエスケープし直す。
+ */
+function tryParseJson(text: string): unknown | null {
+  try { return JSON.parse(text); } catch {}
+
+  // \<LF> を \\n に置換
+  const fixed1 = text.replace(/\\\n/g, "\\n");
+  try { return JSON.parse(fixed1); } catch {}
+
+  // 文字列トークン内の生改行を \\n に置換
+  // "(?:[^"\\]|\\.|\n)*" で quoted string 全体をキャプチャし、その中の生 \n だけを変換する
+  const fixed2 = fixed1.replace(/"(?:[^"\\]|\\.|\n)*"/g, (m) => m.replace(/\n/g, "\\n"));
+  try { return JSON.parse(fixed2); } catch {}
+
+  return null;
+}
+
+/**
+ * JSON を整形しつつ、HIGHLIGHT_KEYS に含まれるキーの文字列値を
+ * 緑マーカーでハイライトして表示するコンポーネント。
+ * パース失敗時はプレーンテキストにフォールバックする。
+ */
+function HighlightedJson({ raw }: { raw: string }) {
+  const preClass = "text-ch-t2 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed";
+
+  const parsed = tryParseJson(raw);
+  if (!parsed) {
+    return <pre className={preClass}>{raw}</pre>;
+  }
+
+  const pretty = JSON.stringify(parsed, null, 2);
+  const lines = pretty.split("\n");
+
+  return (
+    <pre className={preClass}>
+      {lines.map((line, i) => {
+        const m = KV_LINE_RE.exec(line);
+        if (m) {
+          const [, indent, key, sep, valuePart] = m;
+          if (HIGHLIGHT_KEYS.has(key)) {
+            const trailing = valuePart.endsWith(",") ? "," : "";
+            const stripped = trailing ? valuePart.slice(0, -1) : valuePart;
+            // 文字列値（長さ 2 超、null 文字列でない）のみハイライト
+            if (stripped.startsWith('"') && stripped !== '"null"' && stripped.length > 2) {
+              return (
+                <span key={i}>
+                  {indent}
+                  <span style={{ color: "#79c0ff" }}>"{key}"</span>
+                  {sep}
+                  <mark style={{ background: "#2a3820", color: "#a5d6a7", borderRadius: "3px", padding: "0 2px" }}>
+                    {stripped}
+                  </mark>
+                  {trailing}
+                  {"\n"}
+                </span>
+              );
+            }
+          }
+        }
+        return <span key={i}>{line}{"\n"}</span>;
+      })}
+    </pre>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RawLogModal
+// ---------------------------------------------------------------------------
+
+/**
+ * Raw ログファイルをオーバーレイモーダルで表示するコンポーネント。
+ * JSON ファイルは整形＋フィールドハイライト表示する。
+ */
+function RawLogModal({ messageId, filename, onClose }: { messageId: string; filename: string; onClose: () => void }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // マウント時にファイル内容を取得する
+  useEffect(() => {
+    fetchRawLog(messageId, filename)
+      .then(setContent)
+      .catch((e) => setContent(`Error: ${String(e)}`))
+      .finally(() => setLoading(false));
+  }, [messageId, filename]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
+      style={{ backdropFilter: "blur(8px)" }}
+      onClick={onClose}
+    >
+      <div
+        className="bg-ch-s1 rounded-lg w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden"
+        style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* ヘッダー */}
+        <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          <span className="text-ch-t3 text-xs font-mono truncate">{filename}</span>
+          <button onClick={onClose} className="text-ch-t3 hover:text-ch-t1 ml-4 text-sm">✕</button>
+        </div>
+        {/* コンテンツ */}
+        <div className="overflow-y-auto flex-1 p-4">
+          {loading ? (
+            <div className="text-ch-t4 text-xs animate-pulse">読み込み中...</div>
+          ) : (
+            <HighlightedJson raw={content ?? ""} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * デバッグログの折りたたみ表示コンポーネント。
+ * 初回展開時にログを取得する（遅延取得）。
+ */
+function LogPanel({ logMessageId }: { logMessageId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [entry, setEntry] = useState<LogEntry | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [rawModal, setRawModal] = useState<string | null>(null);
+
+  /** 展開時に初回ロードする。 */
+  const handleToggle = async () => {
+    if (!expanded && !entry && !loading) {
+      setLoading(true);
+      try {
+        const data = await fetchLogEntry(logMessageId);
+        setEntry(data);
+      } catch {
+        // ロード失敗時はエントリなしのまま表示する
+      } finally {
+        setLoading(false);
+      }
+    }
+    setExpanded((e) => !e);
+  };
+
+  /** ユニークなタグ cls を収集してバッジ用リストを返す。 */
+  const allTagCls = entry
+    ? [...new Set(entry.tool_calls.flatMap((tc) => tc.tags.map((t) => t.meta.cls)))]
+    : [];
+
+  return (
+    <div className="mt-1.5" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+      {/* トリガー行 */}
+      <button
+        onClick={handleToggle}
+        className="flex items-center gap-1.5 pt-1 text-[11px] text-ch-t4 hover:text-ch-t3 transition-colors w-full text-left"
+      >
+        <span className="text-[9px] opacity-50">{expanded ? "▼" : "▶"}</span>
+        <span>ログ</span>
+        {loading && <span className="animate-pulse text-[10px]">…</span>}
+        {entry?.has_error && (
+          <span className="text-red-400 text-[10px] font-medium">⚠ エラー</span>
+        )}
+        {!loading && allTagCls.map((cls, i) => (
+          <span key={i} className={`px-1 py-0.5 rounded text-[9px] ${TAG_COLORS[cls] ?? TAG_COLORS["tag-unknown"]}`}>
+            {entry?.tool_calls.flatMap((tc) => tc.tags).find((t) => t.meta.cls === cls)?.meta.label ?? cls}
+          </span>
+        ))}
+      </button>
+
+      {/* 展開コンテンツ */}
+      {expanded && (
+        <div className="pt-1.5 space-y-1.5">
+          {loading && (
+            <div className="text-ch-t4 text-[11px] animate-pulse px-1">読み込み中...</div>
+          )}
+          {!loading && !entry && (
+            <div className="text-ch-t4 text-[11px] px-1">ログを取得できませんでした</div>
+          )}
+          {entry && (
+            <>
+              {/* tool_calls */}
+              {entry.tool_calls.length > 0 && (
+                <div className="space-y-1">
+                  {entry.tool_calls.map((tc, i) => (
+                    <ToolCallRow
+                      key={i}
+                      tc={tc}
+                      logMessageId={logMessageId}
+                      onOpenRaw={(filename) => setRawModal(filename)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* warnings */}
+              {entry.warnings.length > 0 && (
+                <div className="space-y-0.5">
+                  {entry.warnings.map((w, i) => (
+                    <div key={i} className="text-amber-400 text-[10px] flex gap-1.5 items-start">
+                      <span className="shrink-0">⚠</span>
+                      <span className="break-all">{w.tag}: {w.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* tool_callsもwarningsもない場合 */}
+              {entry.tool_calls.length === 0 && entry.warnings.length === 0 && (
+                <div className="text-ch-t4 text-[11px] px-1">ツール呼び出しなし</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Raw ログモーダル */}
+      {rawModal && (
+        <RawLogModal
+          messageId={logMessageId}
+          filename={rawModal}
+          onClose={() => setRawModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CharacterBubble
 // ---------------------------------------------------------------------------
 
@@ -210,6 +549,7 @@ export function CharacterBubble({
   sending = false,
   onRegenerate,
   imageUrl,
+  logMessageId,
 }: {
   characterName: string;
   content: string;
@@ -219,6 +559,8 @@ export function CharacterBubble({
   sending?: boolean;
   onRegenerate?: () => void;
   imageUrl?: string;
+  /** デバッグログフォルダ名（8桁hex）。存在する場合はログ折りたたみを表示する。 */
+  logMessageId?: string;
 }) {
   return (
     <div className="group" data-testid="character-bubble">
@@ -248,6 +590,8 @@ export function CharacterBubble({
             )}
           </div>
         )}
+        {/* デバッグログ折りたたみ（CHOTGOR_DEBUG=1 時のみ logMessageId が渡される） */}
+        {logMessageId && <LogPanel logMessageId={logMessageId} />}
       </div>
     </div>
   );

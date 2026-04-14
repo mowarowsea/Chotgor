@@ -39,6 +39,8 @@ interface Props {
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** キャラクター名→IDのマップ。アバター画像の表示に使用する。 */
   characterIdMap?: Record<string, string>;
+  /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
+  msgLogIds?: Record<string, string>;
 }
 
 /** 1on1チャットのレイアウトコンポーネント。 */
@@ -55,6 +57,7 @@ export default function ChatView({
   onRetry,
   onHeaderVisibilityChange,
   characterIdMap,
+  msgLogIds,
 }: Props) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -69,6 +72,7 @@ export default function ChatView({
         onRetry={onRetry}
         onHeaderVisibilityChange={onHeaderVisibilityChange}
         characterIdMap={characterIdMap}
+        msgLogIds={msgLogIds}
       />
       <MessageInput
         sessionId={sessionId}

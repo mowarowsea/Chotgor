@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         "/api": "http://localhost:8000",
         "/v1": "http://localhost:8000",
+        "/ui": "http://localhost:8000",
       },
     },
   };

@@ -88,11 +88,11 @@
                         <div class="log-tool-header">
                             <span class="log-tool-tag">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
                             {% if tc.request_file %}
-                            <a href="/ui/logs/{{ e.message_id }}/raw/{{ tc.request_file }}"
+                            <a href="/ui/logs/{{ e.message_id }}/view/{{ tc.request_file }}"
                                target="_blank" class="log-file-link">Request ↗</a>
                             {% endif %}
                             {% if tc.response_file %}
-                            <a href="/ui/logs/{{ e.message_id }}/raw/{{ tc.response_file }}"
+                            <a href="/ui/logs/{{ e.message_id }}/view/{{ tc.response_file }}"
                                target="_blank" class="log-file-link">Response ↗</a>
                             {% endif %}
                         </div>

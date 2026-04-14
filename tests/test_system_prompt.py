@@ -23,10 +23,14 @@ def test_build_system_prompt_includes_chotgor_context():
 
 
 def test_build_system_prompt_chotgor_context_after_block1():
-    """【前提】ブロックは Block 1（キャラクター設定）の後に来ること。"""
+    """【前提】ブロックはキャラクター設定の直前（前）に挿入されること。
+
+    実装ではChotgor前提を Block 1 の先頭に置き、
+    その後にキャラクター固有の system_prompt_block1 が続く。
+    """
     char_prompt = "You are a cat."
     prompt = build_system_prompt(char_prompt)
-    assert prompt.index(char_prompt) < prompt.index("【前提】")
+    assert prompt.index("【前提】") < prompt.index(char_prompt)
 
 
 def test_build_system_prompt_time_disabled_by_default():

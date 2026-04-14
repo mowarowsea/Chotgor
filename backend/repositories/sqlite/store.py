@@ -86,6 +86,8 @@ class ChatMessage(Base):
     is_system_message = Column(Integer, nullable=True)
     # クロニクル処理日時: NULL=未処理、タイムスタンプあり=処理済み
     chronicled_at = Column(DateTime, nullable=True)
+    # デバッグログフォルダ名（8桁hex）。CHOTGOR_DEBUG=1 時のみ記録される。
+    log_message_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -299,6 +301,7 @@ class SQLiteStore(
                 "ALTER TABLE chat_messages ADD COLUMN is_system_message INTEGER",
                 "ALTER TABLE chat_messages ADD COLUMN chronicled_at TIMESTAMP",
                 "UPDATE chat_messages SET chronicled_at = created_at WHERE chronicled_at IS NULL",
+                "ALTER TABLE chat_messages ADD COLUMN log_message_id TEXT",
             ]:
                 try:
                     conn.execute(text(stmt))

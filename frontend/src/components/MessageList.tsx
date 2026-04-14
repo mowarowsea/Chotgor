@@ -50,6 +50,8 @@ interface Props {
     onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
     /** キャラクター名→IDのマップ。アバター画像URLの生成に使用する。 */
     characterIdMap?: Record<string, string>;
+    /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
+    msgLogIds?: Record<string, string>;
 }
 
 /**
@@ -69,6 +71,7 @@ export default function MessageList({
     onHeaderVisibilityChange,
     onRetry,
     characterIdMap = {},
+    msgLogIds = {},
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
     /** スクロール方向検知用: 直前のスクロール位置を記録する。 */
@@ -181,6 +184,7 @@ export default function MessageList({
                         nameColor={color.text}
                         sending={sending}
                         imageUrl={getCharImageUrl(charName)}
+                        logMessageId={msgLogIds[msg.id]}
                         onRegenerate={onRetry ? () => {
                             const precedingUser = [...messages]
                                 .slice(0, idx)

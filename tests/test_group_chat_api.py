@@ -66,7 +66,11 @@ def _fake_group_session(
 
 
 def _fake_message(mid=None, session_id="sid", role="user", content="hello", character_name=None):
-    """ChatMessage 風 MagicMock を返すヘルパー。"""
+    """ChatMessage 風 MagicMock を返すヘルパー。
+
+    message_to_dict() が参照するすべてのフィールドを明示的に設定することで、
+    未設定フィールドが MagicMock のまま JSON シリアライズに失敗するバグを防ぐ。
+    """
     m = MagicMock()
     m.id = mid or str(uuid.uuid4())
     m.session_id = session_id
@@ -76,6 +80,8 @@ def _fake_message(mid=None, session_id="sid", role="user", content="hello", char
     m.preset_name = None
     m.reasoning = None
     m.images = None
+    m.is_system_message = None
+    m.log_message_id = None
     m.created_at = datetime(2026, 3, 11, 12, 0, 0)
     return m
 

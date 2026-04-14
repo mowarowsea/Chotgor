@@ -107,6 +107,8 @@ export default function App() {
   const [groupReasoningMap, setGroupReasoningMap] = useState<Record<string, string>>({});
   /** グループチャットがユーザターン待ち状態かどうか。スキップボタンの表示制御に使用する。 */
   const [isGroupUserTurn, setIsGroupUserTurn] = useState(false);
+  /** char_msg_id → log_message_id（8桁hex）のマッピング。バブルのログ折りたたみに使用する。 */
+  const [msgLogIds, setMsgLogIds] = useState<Record<string, string>>({});
 
   /** 初期データ取得。URL ハッシュに対応するセッションがあれば自動選択する。 */
   useEffect(() => {
@@ -168,15 +170,20 @@ export default function App() {
         const last = detail.messages[detail.messages.length - 1];
         setIsGroupUserTurn(last.role !== "user");
       }
-      // DBに保存された reasoning をメッセージIDに紐付けて復元する
+      // DBに保存された reasoning と log_message_id をメッセージIDに紐付けて復元する
       const restored: Record<string, string> = {};
+      const restoredLogIds: Record<string, string> = {};
       for (const msg of detail.messages) {
         if (msg.reasoning) {
           restored[msg.id] = msg.reasoning;
         }
+        if (msg.log_message_id) {
+          restoredLogIds[msg.id] = msg.log_message_id;
+        }
       }
       setReasoningMap(restored);
       setGroupReasoningMap(restored);
+      setMsgLogIds(restoredLogIds);
     } catch (e) {
       setError(String(e));
     }
@@ -407,6 +414,13 @@ export default function App() {
               [event.character_message.id]: accumulatedReasoning,
             }));
           }
+          // デバッグログIDをバブルと紐付ける
+          if (event.log_message_id) {
+            setMsgLogIds((prev) => ({
+              ...prev,
+              [event.character_message.id]: event.log_message_id!,
+            }));
+          }
           setStreamingContent(null);
           setStreamingReasoning(null);
           setMessages((prev) => [
@@ -622,6 +636,7 @@ export default function App() {
             onRetry={handleRetry}
             onHeaderVisibilityChange={setHeaderVisible}
             characterIdMap={characterIdMap}
+            msgLogIds={msgLogIds}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-ch-t3 text-sm px-4 text-center">

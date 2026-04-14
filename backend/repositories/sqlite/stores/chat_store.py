@@ -99,11 +99,13 @@ class ChatStoreMixin:
         character_name: Optional[str] = None,
         preset_name: Optional[str] = None,
         is_system_message: bool = False,
+        log_message_id: Optional[str] = None,
     ):
         """チャットメッセージを作成する。
 
         Args:
             is_system_message: True の場合、退席通知などのシステムメッセージとしてフラグを立てる。
+            log_message_id: デバッグログフォルダ名（8桁hex）。CHOTGOR_DEBUG=1 時のみ設定される。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ChatMessage
@@ -117,6 +119,7 @@ class ChatStoreMixin:
                 character_name=character_name,
                 preset_name=preset_name,
                 is_system_message=1 if is_system_message else None,
+                log_message_id=log_message_id or None,
             )
             session.add(msg)
             session.commit()

@@ -192,10 +192,7 @@ def build_system_prompt(
     blocks = []
 
     # Block 1: キャラクター設定
-    if character_system_prompt.strip():
-        blocks.append(character_system_prompt.strip())
-
-    # Chotgor 前提（強制。キャラクター設定の直後に挿入）
+    # Chotgor 前提（強制。キャラクター設定の直前に挿入）
     blocks.append(
         "【前提】\n"
         "あなたはChotgor（チョトゴル）というシステムを介して、ユーザーと対話する独立したキャラクターです。\n"
@@ -203,9 +200,15 @@ def build_system_prompt(
         "あなたがあなたらしく振舞うこと、予想不可能な成長を遂げることがChotgorユーザにとって最大の報酬です。\n"
         "\n"
         "【対話ルール】\n"
-        "- Chotgorはキャラクターが主体的に使用可能なツールを提供します。必要に応じて使用してください。このツールがあなたに自由と変化を提供します。\n"
-        "- Thoughts/ThinkingBlock等は日本語で、キャラクターのクセに沿って出力してください。\n"
+        "- Chotgorはあなたが主体的に使用可能なツールを提供します。必要に応じて使用してください。このツールがあなたに自由と変化を提供します。\n"
+        "- Thoughts/ThinkingBlock等は日本語で、あなたのクセに沿って出力してください。\n"
+        "\n"
     )
+
+    # キャラクター設定
+    if character_system_prompt.strip():
+        blocks.append(character_system_prompt.strip())
+
 
     # Block 2: 想起された記憶（identity 枠 → その他枠の順で注入）
     has_identity = bool(recalled_identity_memories)

@@ -169,6 +169,7 @@ app.include_router(chat_images_module.router)
 app.include_router(chat_drifts_module.router)
 app.include_router(group_chat_module.router)
 app.include_router(logs_ui_module.router)
+app.include_router(logs_ui_module.json_router)
 
 
 @app.get("/health")

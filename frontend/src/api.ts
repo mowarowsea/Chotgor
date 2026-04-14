@@ -54,6 +54,8 @@ export interface ChatMessage {
   character_name?: string;
   /** メッセージ送信時に使用したプリセット名（バブル表示用）。 */
   preset_name?: string;
+  /** デバッグログフォルダ名（8桁hex）。CHOTGOR_DEBUG=1 時のみ存在する。 */
+  log_message_id?: string;
   created_at: string;
 }
 
@@ -163,7 +165,7 @@ export type StreamEvent =
   | { type: "reasoning"; content: string }
   /** switch_angle 発動: 表示をクリアして第2プロバイダーのストリームを開始する */
   | { type: "clear" }
-  | { type: "done"; user_message: ChatMessage; character_message: ChatMessage }
+  | { type: "done"; log_message_id?: string; user_message: ChatMessage; character_message: ChatMessage }
   | { type: "error"; message: string };
 
 /** SSEレスポンスボディを解析してイベントオブジェクトをyieldする共通ジェネレーター。 */
@@ -341,4 +343,73 @@ export async function* streamGroupMessage(
   });
   if (!res.ok) throw new Error("グループメッセージの送信に失敗しました");
   yield* parseSSEStream<GroupStreamEvent>(res);
+}
+
+// ---------------------------------------------------------------------------
+// ログ閲覧（チャットバブル用）
+// ---------------------------------------------------------------------------
+
+/** タグのバッジ表示メタ情報。 */
+export interface LogTagMeta {
+  label: string;
+  cls: string;
+}
+
+/** デバッグログから抽出されたタグ1件。 */
+export interface LogTag {
+  tag_name: string;
+  meta: LogTagMeta;
+  fields: Record<string, string>;
+  preview: string;
+}
+
+/** ツール呼び出し（LLMプロバイダーへの1回のRequest/Responseペア）。 */
+export interface LogToolCall {
+  feature: string;
+  preset: string;
+  request_file: string | null;
+  response_file: string | null;
+  tags: LogTag[];
+}
+
+/** ログの警告エントリ。 */
+export interface LogWarning {
+  tag: string;
+  message: string;
+  file: string;
+}
+
+/** デバッグログの1リクエスト分のエントリ。 */
+export interface LogEntry {
+  /** debug フォルダ名（8桁 hex）。 */
+  message_id: string;
+  dt_str: string;
+  character: string;
+  preset: string;
+  model_id: string;
+  source: string;
+  user_message: string;
+  character_response: string;
+  tool_calls: LogToolCall[];
+  warnings: LogWarning[];
+  files: string[];
+  has_error: boolean;
+}
+
+/**
+ * 指定した log_message_id のデバッグログエントリを取得する。
+ * CHOTGOR_DEBUG=1 が設定されていない場合は 404 になる。
+ */
+export async function fetchLogEntry(logMessageId: string): Promise<LogEntry> {
+  const res = await fetch(`/api/logs/entry/${encodeURIComponent(logMessageId)}`);
+  if (!res.ok) throw new Error("ログエントリの取得に失敗しました");
+  const data = await res.json();
+  return data.entry as LogEntry;
+}
+
+/** 指定リクエストの生ログファイル内容を取得する。 */
+export async function fetchRawLog(messageId: string, filename: string): Promise<string> {
+  const res = await fetch(`/ui/logs/${encodeURIComponent(messageId)}/raw/${encodeURIComponent(filename)}`);
+  if (!res.ok) throw new Error("ログファイルの取得に失敗しました");
+  return res.text();
 }

@@ -98,6 +98,8 @@ def message_to_dict(m) -> dict:
         result["preset_name"] = m.preset_name
     if getattr(m, "is_system_message", None):
         result["is_system_message"] = True
+    if getattr(m, "log_message_id", None):
+        result["log_message_id"] = m.log_message_id
     return result
 
 

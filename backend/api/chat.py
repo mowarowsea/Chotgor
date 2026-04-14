@@ -320,7 +320,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     キャラクターが [END_SESSION:...] タグまたは end_session ツールを使用した場合は
     退席状態をDBに保存し、SSEで session_exit イベントを送信する。
     """
-    new_message_id()
+    log_msg_id = new_message_id()
     logger.log_front_input(body.model_dump())
 
     state = request.app.state
@@ -447,6 +447,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             reasoning=accumulated_reasoning if accumulated_reasoning else None,
             character_name=used_char_name,
             preset_name=used_preset_name,
+            log_message_id=log_msg_id,
         )
         asyncio.create_task(asyncio.to_thread(
             index_message_sync, char_msg, _chat_char_ids, state.chroma, _chat_user_name
@@ -456,6 +457,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
         done_data = json.dumps({
             "type": "done",
+            "log_message_id": log_msg_id,
             "user_message": message_to_dict(user_msg),
             "character_message": message_to_dict(char_msg),
         }, ensure_ascii=False)
