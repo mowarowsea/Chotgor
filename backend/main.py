@@ -116,7 +116,7 @@ async def _chronicle_scheduler(app: FastAPI) -> None:
             _log.info("chronicle スケジューラー 起動 設定時刻=%s", chronicle_time_str)
             app.state.sqlite.set_setting("chronicle_last_run_date", today_str)
             try:
-                await run_pending_chronicles(app.state.sqlite)
+                await run_pending_chronicles(app.state.sqlite, chroma=app.state.chroma)
             except Exception:
                 _log.exception("chronicle スケジューラー 実行エラー")
 

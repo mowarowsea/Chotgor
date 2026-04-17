@@ -21,8 +21,6 @@ from backend.providers.registry import PROVIDER_LABELS
 from backend.lib.time_awareness import compute_time_awareness
 from backend.adapters.openai.schemas import OAIChatRequest
 from backend.services.memory.format import format_recalled_memories
-from backend.character_actions.exiter import build_exit_message
-
 router = APIRouter()
 
 
@@ -201,13 +199,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
 
     if body.stream:
         async def generate():
-            """型付きチャンクを OpenAI SSE 形式に変換して送信する。
-
-            session_exit チャンクを受けた場合は退席メッセージテキストを
-            通常の assistant メッセージとしてそのまま流す。
-            OpenWebUI はステートレスなため、セッション終了の永続化は行わない。
-            """
-            exit_reason_holder: list[str | None] = [None]  # クロージャで参照するためリストに格納
+            """型付きチャンクを OpenAI SSE 形式に変換して送信する。"""
             async for chunk_type, content in chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
                     display = _format_memories_display(content)
@@ -219,13 +211,6 @@ async def chat_completions(request: Request, body: OAIChatRequest):
                 elif chunk_type == "text":
                     if content:
                         yield _sse_chunk(content)
-                elif chunk_type == "session_exit":
-                    # 退席メッセージをアシスタントテキストとして送信する
-                    sys_text = build_exit_message(
-                        content.get("char_name", ""),
-                        content.get("reason", ""),
-                    )
-                    yield _sse_chunk(sys_text)
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(

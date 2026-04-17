@@ -6,8 +6,8 @@
     tool_call_to_tag_body() — ツール呼び出しを (tag_name, tag_body) に変換する
 
 テスト方針:
-    - 全 7 種の既知ツール（inscribe_memory / carve_narrative / drift / drift_reset /
-      switch_angle / end_session / power_recall）を個別に検証する
+    - 全 6 種の既知ツール（inscribe_memory / carve_narrative / drift / drift_reset /
+      switch_angle / power_recall）を個別に検証する（end_session は廃止済み）
     - 未知ツール名のフォールバック動作を確認する
     - 空引数辞書でも例外を送出しないことを確認する
     - tag_body フォーマットは _parse_tag_body() に渡せる形式であること
@@ -22,14 +22,13 @@ class TestToolToTagMapping:
     """TOOL_TO_TAG 定数の構造を検証するテストクラス。"""
 
     def test_all_expected_tools_present(self):
-        """全 7 種の既知ツールが TOOL_TO_TAG に登録されていること。"""
+        """全 6 種の既知ツールが TOOL_TO_TAG に登録されていること（end_session は廃止済み）。"""
         expected = {
             "inscribe_memory",
             "carve_narrative",
             "drift",
             "drift_reset",
             "switch_angle",
-            "end_session",
             "power_recall",
         }
         assert expected == set(TOOL_TO_TAG.keys())
@@ -197,25 +196,6 @@ class TestToolCallToTagBodySwitchAngle:
         tag_name, body = tool_call_to_tag_body("switch_angle", {})
         assert tag_name == "SWITCH_ANGLE"
         assert body == "|"
-
-
-class TestToolCallToTagBodyEndSession:
-    """end_session ツールの変換を検証するテストクラス。"""
-
-    def test_returns_correct_tag_name(self):
-        """tag_name が END_SESSION であること。"""
-        tag_name, _ = tool_call_to_tag_body("end_session", {"reason": "会話完了"})
-        assert tag_name == "END_SESSION"
-
-    def test_body_is_reason(self):
-        """body が reason の値であること。"""
-        _, body = tool_call_to_tag_body("end_session", {"reason": "さようなら"})
-        assert body == "さようなら"
-
-    def test_empty_reason(self):
-        """reason が省略されても空文字 body が返ること。"""
-        _, body = tool_call_to_tag_body("end_session", {})
-        assert body == ""
 
 
 class TestToolCallToTagBodyPowerRecall:

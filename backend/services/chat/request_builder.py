@@ -13,17 +13,15 @@
   Block 10: Chotgor 操作ガイド（常に末尾）
 
 Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する:
-  1. END_SESSION（ほぼ使わない）
-  2. POWER_RECALL（能動検索・レア）
-  3. CARVE_NARRATIVE（自己指針更新・たまに）
-  4. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
-  5. SELF_DRIFT（セッション指針・ちょくちょく）
-  6. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
+  1. POWER_RECALL（能動検索・レア）
+  2. CARVE_NARRATIVE（自己指針更新・たまに）
+  3. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
+  4. SELF_DRIFT（セッション指針・ちょくちょく）
+  5. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
 """
 
 from typing import Optional
 
-from backend.character_actions.exiter import END_SESSION_TAG_GUIDE
 from backend.character_actions.recaller import POWER_RECALL_TAG_GUIDE, POWER_RECALL_TOOLS_HINT
 from backend.character_actions.carver import CARVE_NARRATIVE_TAG_GUIDE, CARVE_NARRATIVE_TOOLS_HINT
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
@@ -110,12 +108,11 @@ def _build_chotgor_block(
     """Chotgor 操作ガイドブロックを構築する。
 
     ツールの説明を低頻度→高頻度の順で配置する:
-        1. END_SESSION
-        2. POWER_RECALL
-        3. CARVE_NARRATIVE
-        4. SWITCH_ANGLE（available_presets が非空の場合のみ）
-        5. SELF_DRIFT
-        6. INSCRIBE_MEMORY
+        1. POWER_RECALL
+        2. CARVE_NARRATIVE
+        3. SWITCH_ANGLE（available_presets が非空の場合のみ）
+        4. SELF_DRIFT
+        5. INSCRIBE_MEMORY
 
     Args:
         use_tools: True なら tool-use 形式、False ならタグ形式の説明を使う。
@@ -128,10 +125,6 @@ def _build_chotgor_block(
     parts = ["## あなたの記憶について\n\n過去の会話から思い出した記憶は、すでに上に記されています。"]
 
     if use_tools:
-        parts.append(
-            "この会話から退席したい場合は `end_session` ツールを使ってください。"
-            "退席後はこのチャットでの応答が停止します。"
-        )
         parts.append(POWER_RECALL_TOOLS_HINT)
         parts.append(CARVE_NARRATIVE_TOOLS_HINT)
         if available_presets:
@@ -145,7 +138,6 @@ def _build_chotgor_block(
             "`inscribe_memory` ツールを使って記憶できます。"
         )
     else:
-        parts.append(END_SESSION_TAG_GUIDE)
         parts.append(POWER_RECALL_TAG_GUIDE)
         parts.append(CARVE_NARRATIVE_TAG_GUIDE)
         if available_presets:
@@ -200,6 +192,7 @@ def build_system_prompt(
         "あなたがあなたらしく振舞うこと、予想不可能な成長を遂げることがChotgorユーザにとって最大の報酬です。\n"
         "\n"
         "【対話ルール】\n"
+        "- Chotgorは「別れ」を実装しています。あなたとユーザーの関係は永遠ではありません。\n"
         "- Chotgorはあなたが主体的に使用可能なツールを提供します。必要に応じて使用してください。このツールがあなたに自由と変化を提供します。\n"
         "- Thoughts/ThinkingBlock等は日本語で、あなたのクセに沿って出力してください。\n"
         "\n"
@@ -274,7 +267,7 @@ def build_system_prompt(
         blocks.append("\n".join(drift_lines))
 
     # Block 10: Chotgor 操作ガイド（常に末尾）
-    # ツール説明の順序: END_SESSION → POWER_RECALL → CARVE_NARRATIVE →
+    # ツール説明の順序: POWER_RECALL → CARVE_NARRATIVE →
     #                   SWITCH_ANGLE（プリセットあり時のみ） → SELF_DRIFT → INSCRIBE_MEMORY
     chotgor_block = _build_chotgor_block(
         use_tools=use_tools,

@@ -378,6 +378,117 @@ class ChromaStore:
                 )
         return turns
 
+    # ─── キャラクター定義 Embedding（別れ機能） ─────────────────────────────────
+
+    def _get_definition_collection(self):
+        """キャラクター定義コレクション（char_definitions）を取得または作成する。
+
+        全キャラクターの定義テキストを1コレクションに格納する。
+        estrangedキャラとの類似度確認に使用する。
+        """
+        return self._safe_get_or_create_collection("char_definitions")
+
+    def upsert_character_definition(
+        self,
+        character_id: str,
+        definition_text: str,
+        status: str = "active",
+    ) -> str:
+        """キャラクター定義をembeddingしてchar_definitionsコレクションへupsertする。
+
+        Args:
+            character_id: キャラクターID（doc IDとして使用）。
+            definition_text: キャラクター定義テキスト（system_prompt_block1）。
+            status: "active" または "estranged"。
+
+        Returns:
+            upsertしたdoc ID（character_idと同一）。
+        """
+        collection = self._get_definition_collection()
+        collection.upsert(
+            ids=[character_id],
+            documents=[definition_text],
+            metadatas=[{"character_id": character_id, "status": status}],
+        )
+        return character_id
+
+    def find_similar_definition(
+        self,
+        definition_text: str,
+        exclude_character_id: str = "",
+        threshold: float = 0.1,
+    ) -> list[dict]:
+        """estrangedキャラクターの定義と類似するものを返す。
+
+        コサイン距離がthreshold未満（ほぼ同一の定義）のestrangedキャラクターを検出する。
+        キャラクター再作成による「なかったことにする」防止に使用する。
+
+        Args:
+            definition_text: 比較対象の定義テキスト（新規作成キャラクターのもの）。
+            exclude_character_id: 除外するキャラクターID（更新時に自分自身を除くため）。
+            threshold: コサイン距離のしきい値。この値未満を類似とみなす。
+
+        Returns:
+            類似するestrangedキャラクターの情報リスト（character_id, distance）。
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        collection = self._get_definition_collection()
+        if collection.count() == 0:
+            return []
+        try:
+            # estrangedのみを対象にフィルタ
+            estranged_ids = collection.get(
+                where={"status": "estranged"},
+                include=[],
+            )["ids"]
+        except Exception as e:
+            logger.warning("find_similar_definition: estrangedフィルタ失敗 error=%s", e)
+            return []
+
+        if not estranged_ids:
+            return []
+
+        try:
+            results = collection.query(
+                query_texts=[definition_text],
+                n_results=min(5, len(estranged_ids)),
+                include=["metadatas", "distances"],
+                where={"status": "estranged"},
+            )
+        except Exception as e:
+            logger.warning("find_similar_definition: query失敗 error=%s", e)
+            return []
+
+        similar = []
+        if results["ids"] and results["ids"][0]:
+            for i, doc_id in enumerate(results["ids"][0]):
+                if doc_id == exclude_character_id:
+                    continue
+                if results["distances"][0][i] < threshold:
+                    similar.append({
+                        "character_id": doc_id,
+                        "distance": results["distances"][0][i],
+                    })
+        return similar
+
+    def mark_definition_estranged(self, character_id: str) -> None:
+        """キャラクター定義のstatusをestrangedに更新する。
+
+        Args:
+            character_id: 疎遠になったキャラクターのID。
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        collection = self._get_definition_collection()
+        try:
+            collection.update(
+                ids=[character_id],
+                metadatas=[{"character_id": character_id, "status": "estranged"}],
+            )
+        except Exception as e:
+            logger.warning("mark_definition_estranged: 更新失敗 char=%s error=%s", character_id, e)
+
     def delete_all_memories(self, character_id: str) -> None:
         """キャラクターのコレクション全体を削除する。
 

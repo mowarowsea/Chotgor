@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.batch.chronicle_job import run_chronicle
+from backend.lib.log_context import new_message_id
 
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 
@@ -64,6 +65,7 @@ async def trigger_chronicle(
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
 
+    new_message_id()
     result = await run_chronicle(
         character_id=character_id,
         sqlite=request.app.state.sqlite,

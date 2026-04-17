@@ -126,6 +126,10 @@ class Character(Base):
     # キャラクター自己更新フィールド: chronicle 処理で更新される
     self_history = Column(Text, nullable=False, default="")       # これまでの経緯と現在の状態
     relationship_state = Column(Text, nullable=False, default="") # ユーザ・他キャラとの関係
+    # 別れ機能フィールド
+    farewell_config = Column(JSON, nullable=True)  # chronicle で更新される感情閾値・退席設定JSON
+    relationship_status = Column(String, nullable=False, default="active")  # "active" | "estranged"
+    definition_embedding_id = Column(String, nullable=True)  # ChromaDB char_definitions コレクション内の doc ID
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -224,6 +228,9 @@ class SQLiteStore(
                 "ALTER TABLE characters ADD COLUMN self_reflection_mode TEXT NOT NULL DEFAULT 'disabled'",
                 "ALTER TABLE characters ADD COLUMN self_reflection_preset_id TEXT",
                 "ALTER TABLE characters ADD COLUMN self_reflection_n_turns INTEGER NOT NULL DEFAULT 5",
+                "ALTER TABLE characters ADD COLUMN farewell_config TEXT",
+                "ALTER TABLE characters ADD COLUMN relationship_status TEXT NOT NULL DEFAULT 'active'",
+                "ALTER TABLE characters ADD COLUMN definition_embedding_id TEXT",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -259,6 +266,9 @@ class SQLiteStore(
                             self_reflection_mode TEXT NOT NULL DEFAULT 'disabled',
                             self_reflection_preset_id TEXT,
                             self_reflection_n_turns INTEGER NOT NULL DEFAULT 5,
+                            farewell_config TEXT,
+                            relationship_status TEXT NOT NULL DEFAULT 'active',
+                            definition_embedding_id TEXT,
                             created_at DATETIME,
                             updated_at DATETIME
                         )

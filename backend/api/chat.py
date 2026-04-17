@@ -25,21 +25,47 @@ from backend.lib.time_awareness import compute_time_awareness
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from backend.api.utils import build_1on1_history, build_available_presets, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 from backend.services.chat.content import apply_context_window
-from backend.character_actions.exiter import build_exit_message
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+def _build_farewell_message(char_name: str, reason: str, farewell_type: str) -> str:
+    """退席タイプに応じた退席メッセージを生成する。
+
+    Args:
+        char_name: 退席したキャラクター名。
+        reason: 退席理由・補足テキスト（警告メッセージを含む場合あり）。
+        farewell_type: "negative" / "positive" / "neutral" のいずれか。
+
+    Returns:
+        退席メッセージテキスト。
+    """
+    if farewell_type == "negative":
+        base = f"{char_name}はこの会話を終わらせました。"
+    elif farewell_type == "positive":
+        base = f"{char_name}は満足して会話を終わらせました。"
+    else:
+        base = f"{char_name}は退席しました。"
+    if reason:
+        return f"{base}\n{reason}"
+    return base
 
 
 def _build_all_exited_message(exited_chars: list[dict]) -> str:
     """全員退席時の通知テキストを生成する。
 
     Args:
-        exited_chars: [{"char_name": str, "reason": str}] のリスト。
+        exited_chars: [{"char_name": str, "reason": str, "farewell_type": str}] のリスト。
 
     Returns:
         各退席者の退席メッセージを改行で連結したテキスト。
     """
-    lines = [build_exit_message(e["char_name"], e.get("reason", "")) for e in exited_chars]
+    lines = [
+        _build_farewell_message(
+            e["char_name"], e.get("reason", ""), e.get("farewell_type", "neutral")
+        )
+        for e in exited_chars
+    ]
     lines.append("（チャットを再開するには新しいセッションを作成してください）")
     return "\n".join(lines)
 
@@ -317,8 +343,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     """ユーザーメッセージを送信し、キャラクターの応答をSSEでストリーミング返却する。
 
     退席済みセッションへのリクエストは LLM をスキップし、退席者一覧のシステムメッセージを返す。
-    キャラクターが [END_SESSION:...] タグまたは end_session ツールを使用した場合は
-    退席状態をDBに保存し、SSEで session_exit イベントを送信する。
+    relationship_status が "estranged" のキャラクターへのリクエストは恒久的に拒否する。
+    別れの検出は FarewellDetector がバックグラウンドで行い、次リクエスト時に反映される。
     """
     log_msg_id = new_message_id()
     logger.log_front_input(body.model_dump())
@@ -331,8 +357,46 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
     effective_model_id = body.model_id or session.model_id
 
-    # 退席済みチェック: 1on1セッションでキャラクターが退席済みの場合はLLMをスキップする
     char_name_for_check = effective_model_id.split("@")[0] if "@" in effective_model_id else effective_model_id
+
+    # estranged チェック: relationship_status="estranged" のキャラクターへのリクエストをSSEで拒否する
+    char_for_estranged = state.sqlite.get_character_by_name(char_name_for_check)
+    if char_for_estranged and getattr(char_for_estranged, "relationship_status", "active") == "estranged":
+        estranged_text = f"{char_name_for_check}はあなたとの別れを決断しました。この関係は修復できません。"
+        user_msg_id_e = str(uuid.uuid4())
+        user_msg_e = state.sqlite.create_chat_message(
+            message_id=user_msg_id_e,
+            session_id=session_id,
+            role="user",
+            content=body.content,
+            images=body.image_ids or None,
+        )
+        sys_msg_id_e = str(uuid.uuid4())
+        sys_msg_e = state.sqlite.create_chat_message(
+            message_id=sys_msg_id_e,
+            session_id=session_id,
+            role="character",
+            content=estranged_text,
+            character_name=char_name_for_check,
+            is_system_message=True,
+        )
+
+        async def estranged_generator():
+            """estranged キャラクター向けSSEジェネレーター。"""
+            done_data = json.dumps({
+                "type": "done",
+                "user_message": message_to_dict(user_msg_e),
+                "character_message": message_to_dict(sys_msg_e),
+            }, ensure_ascii=False)
+            yield f"data: {done_data}\n\n"
+
+        return StreamingResponse(
+            estranged_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
+    # 退席済みチェック: 1on1セッションでキャラクターが退席済みの場合はLLMをスキップする
     exited_chars: list[dict] = getattr(session, "exited_chars", None) or []
     already_exited = any(e["char_name"] == char_name_for_check for e in exited_chars)
 
@@ -406,7 +470,6 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         nonlocal effective_model_id
         full_text = ""
         accumulated_reasoning = ""
-        session_exit_info: dict | None = None
         try:
             async for chunk_type, content in state.chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
@@ -427,8 +490,6 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "angle_switched":
                     effective_model_id = content
-                elif chunk_type == "session_exit":
-                    session_exit_info = content
         except Exception as e:
             err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
             yield f"data: {err_data}\n\n"
@@ -462,39 +523,6 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             "character_message": message_to_dict(char_msg),
         }, ensure_ascii=False)
         yield f"data: {done_data}\n\n"
-
-        # 退席要求があった場合: DBを更新してシステムメッセージを保存・通知する
-        if session_exit_info:
-            exit_char = session_exit_info["char_name"]
-            exit_reason = session_exit_info["reason"]
-
-            # exited_chars に追記する
-            current_session = state.sqlite.get_chat_session(session_id)
-            current_exited: list[dict] = getattr(current_session, "exited_chars", None) or []
-            if not any(e["char_name"] == exit_char for e in current_exited):
-                current_exited = current_exited + [{"char_name": exit_char, "reason": exit_reason}]
-            state.sqlite.update_chat_session(session_id, exited_chars=current_exited)
-
-            # 退席システムメッセージをDBに保存する
-            sys_text = _build_exit_message(exit_char, exit_reason)
-            sys_msg_id = str(uuid.uuid4())
-            sys_msg = state.sqlite.create_chat_message(
-                message_id=sys_msg_id,
-                session_id=session_id,
-                role="character",
-                content=sys_text,
-                character_name=exit_char,
-                is_system_message=True,
-            )
-
-            # フロントへ退席イベントと退席システムメッセージを通知する
-            exit_data = json.dumps({
-                "type": "session_exit",
-                "char_name": exit_char,
-                "reason": exit_reason,
-                "system_message": message_to_dict(sys_msg),
-            }, ensure_ascii=False)
-            yield f"data: {exit_data}\n\n"
 
     return StreamingResponse(
         sse_generator(),

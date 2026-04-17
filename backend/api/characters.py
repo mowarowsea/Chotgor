@@ -20,8 +20,32 @@ async def list_characters(request: Request):
 
 @router.post("/", status_code=201)
 async def create_character(request: Request, body: CharacterCreate):
+    """キャラクターを新規作成する。
+
+    estranged キャラクターと類似する定義の場合は HTTP 409 を返す。
+    作成後にキャラクター定義を ChromaDB に登録する。
+    """
+    state = request.app.state
+
+    # 類似 estranged キャラクターのチェック: 同一定義での再作成を防ぐ
+    if body.system_prompt_block1 and hasattr(state, "chroma") and state.chroma:
+        try:
+            similar = state.chroma.find_similar_definition(body.system_prompt_block1)
+            if similar:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "類似する定義を持つキャラクターが既に別れを決断しています。"
+                        "この定義ではキャラクターを作成できません。"
+                    ),
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # ChromaDB エラーは無視して作成を続行する
+
     char_id = str(uuid.uuid4())
-    char = request.app.state.sqlite.create_character(
+    char = state.sqlite.create_character(
         character_id=char_id,
         name=body.name,
         system_prompt_block1=body.system_prompt_block1,
@@ -29,6 +53,14 @@ async def create_character(request: Request, body: CharacterCreate):
         cleanup_config=body.cleanup_config,
         ghost_model=body.ghost_model,
     )
+
+    # キャラクター定義を ChromaDB に登録する（embedding 作成）
+    if body.system_prompt_block1 and hasattr(state, "chroma") and state.chroma:
+        try:
+            state.chroma.upsert_character_definition(char_id, body.system_prompt_block1)
+        except Exception:
+            pass  # embedding 失敗は致命的エラーではない
+
     return char_to_dict(char)
 
 
@@ -42,10 +74,23 @@ async def get_character(request: Request, character_id: str):
 
 @router.patch("/{character_id}")
 async def update_character(request: Request, character_id: str, body: CharacterUpdate):
+    """キャラクター情報を更新する。
+
+    system_prompt_block1 が変更された場合は ChromaDB の定義 embedding も更新する。
+    """
+    state = request.app.state
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    char = request.app.state.sqlite.update_character(character_id, **updates)
+    char = state.sqlite.update_character(character_id, **updates)
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
+
+    # system_prompt_block1 が更新された場合は定義 embedding を再登録する
+    if "system_prompt_block1" in updates and hasattr(state, "chroma") and state.chroma:
+        try:
+            state.chroma.upsert_character_definition(character_id, updates["system_prompt_block1"])
+        except Exception:
+            pass  # embedding 失敗は致命的エラーではない
+
     return char_to_dict(char)
 
 

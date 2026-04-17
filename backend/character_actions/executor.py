@@ -1,7 +1,7 @@
-"""Chotgor MCPツール定義 — 記憶・SELF_DRIFT・アングル切り替え・退席のツールスキーマとexecutor。
+"""Chotgor MCPツール定義 — 記憶・SELF_DRIFT・アングル切り替えのツールスキーマとexecutor。
 
 タグ方式（[INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] マーカー）に代わり、LLMのtool-use（function calling）で
-記憶・SELF_DRIFT・switch_angle・end_session を操作するための定義を提供する。
+記憶・SELF_DRIFT・switch_angle を操作するための定義を提供する。
 
 対応プロバイダー: Anthropic API、OpenAI API（xAI含む）
 非対応プロバイダー（Claude CLI、Ollama）は従来のマーカー方式にフォールバックする。
@@ -9,7 +9,8 @@
 各ツールのスキーマ・説明文は対応モジュールに定義する:
 - inscribe_memory: inscriber.py
 - carve_narrative: carver.py
-- end_session: exiter.py
+
+退席機能（end_session）は廃止。FarewellDetector によるシステム側判定に置き換えた。
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ if TYPE_CHECKING:
     from .memory.manager import MemoryManager
 
 from backend.character_actions.drifter import Drifter, DRIFT_SCHEMA, DRIFT_RESET_SCHEMA, DRIFT_TOOL_DESCRIPTION, DRIFT_RESET_TOOL_DESCRIPTION
-from backend.character_actions.exiter import Exiter, END_SESSION_SCHEMA, END_SESSION_TOOL_DESCRIPTION
 from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
 from backend.character_actions.switcher import Switcher, SWITCH_ANGLE_SCHEMA, SWITCH_ANGLE_TOOL_DESCRIPTION
 from backend.character_actions.carver import Carver, CARVE_NARRATIVE_SCHEMA, CARVE_NARRATIVE_TOOL_DESCRIPTION
@@ -55,11 +55,6 @@ ANTHROPIC_TOOLS: list[dict] = [
         "name": "switch_angle",
         "description": SWITCH_ANGLE_TOOL_DESCRIPTION,
         "input_schema": SWITCH_ANGLE_SCHEMA,
-    },
-    {
-        "name": "end_session",
-        "description": END_SESSION_TOOL_DESCRIPTION,
-        "input_schema": END_SESSION_SCHEMA,
     },
     {
         "name": "power_recall",
@@ -117,8 +112,8 @@ class ToolTurnResult:
 class ToolExecutor:
     """LLMからのツール呼び出しを実際に実行するクラス。
 
-    inscribe_memory / drift / drift_reset / carve_narrative / switch_angle / end_session の各ツールを受け取り、
-    Inscriber / Drifter / Carver / Switcher / Exiter を通じてDBへ反映する。
+    inscribe_memory / drift / drift_reset / carve_narrative / switch_angle の各ツールを受け取り、
+    Inscriber / Drifter / Carver / Switcher を通じてDBへ反映する。
 
     Attributes:
         character_id: 操作対象のキャラクターID。
@@ -129,7 +124,6 @@ class ToolExecutor:
         _drifter: SELF_DRIFT指針の適用を担う Drifter インスタンス。
         _carver: inner_narrative の彫り込みを担う Carver インスタンス。
         _switcher: アングル切り替えリクエストを記録する Switcher インスタンス。
-        _exiter: 退席リクエストを記録する Exiter インスタンス。
     """
 
     # クラスレベルロガー
@@ -151,23 +145,17 @@ class ToolExecutor:
         self._drifter = Drifter(session_id, character_id, drift_manager)
         self._carver = Carver(character_id, memory_manager.sqlite)
         self._switcher = Switcher()
-        self._exiter = Exiter()
 
     @property
     def switch_request(self) -> tuple[str, str] | None:
         """switch_angle が呼ばれた場合の切り替えリクエスト。generate_with_tools() ループが検知して即中断する。"""
         return self._switcher.switch_request
 
-    @property
-    def exit_reason(self) -> str | None:
-        """end_session が呼ばれた場合の退席理由。None = 退席要求なし。"""
-        return self._exiter.exit_reason
-
     def execute(self, tool_name: str, tool_input: dict) -> str:
         """ツール名と入力を受け取り実行して結果テキストを返す。
 
         Args:
-            tool_name: ツール名（"inscribe_memory" / "drift" / "drift_reset" / "carve_narrative" / "switch_angle" / "end_session"）。
+            tool_name: ツール名（"inscribe_memory" / "drift" / "drift_reset" / "carve_narrative" / "switch_angle"）。
             tool_input: ツールの入力パラメータ dict。
 
         Returns:
@@ -194,8 +182,6 @@ class ToolExecutor:
                 preset_name=str(tool_input.get("preset_name", "")),
                 self_instruction=str(tool_input.get("self_instruction", "")),
             )
-        if tool_name == "end_session":
-            return self._exiter.set_exit(reason=str(tool_input.get("reason", "")))
         if tool_name == "power_recall":
             return self._power_recall(
                 query=str(tool_input.get("query", "")),

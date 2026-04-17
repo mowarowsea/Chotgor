@@ -348,7 +348,6 @@ class TestChatServicePowerRecallLoop:
         from backend.services.chat.service import ChatService
         from backend.character_actions.inscriber import Inscriber
         from backend.character_actions.carver import Carver
-        from backend.character_actions.exiter import Exiter
 
         mm = self._make_memory_manager()
         # power_recalled が非空 = 再呼び出し中

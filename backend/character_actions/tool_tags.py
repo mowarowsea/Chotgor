@@ -12,7 +12,6 @@ TOOL_TO_TAG: dict[str, str] = {
     "drift":           "DRIFT",
     "drift_reset":     "DRIFT_RESET",
     "switch_angle":    "SWITCH_ANGLE",
-    "end_session":     "END_SESSION",
     "power_recall":    "POWER_RECALL",
 }
 
@@ -52,10 +51,6 @@ def tool_call_to_tag_body(tool_name: str, args: dict) -> tuple[str, str]:
     elif tag_name == "SWITCH_ANGLE":
         # [SWITCH_ANGLE:preset_name|self_instruction]
         body = f"{args.get('preset_name', '')}|{args.get('self_instruction', '')}"
-
-    elif tag_name == "END_SESSION":
-        # [END_SESSION:reason]（reason は省略可）
-        body = str(args.get("reason", ""))
 
     elif tag_name == "POWER_RECALL":
         # [POWER_RECALL:query|top_k]

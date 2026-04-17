@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Union
 
 _log = logging.getLogger(__name__)
@@ -39,11 +40,11 @@ from backend.lib.tag_parser import StreamingTagStripper
 from backend.character_actions.executor import ToolExecutor
 from backend.lib.web_fetch import fetch_urls, find_urls
 from backend.character_actions.drifter import Drifter
-from backend.character_actions.exiter import Exiter
 from backend.services.chat.models import ChatRequest, Message
 from backend.character_actions.recaller import Recaller, format_power_recall_turn
 from backend.character_actions.reflector import SelfReflector
 from backend.character_actions.switcher import Switcher
+from backend.character_actions.farewell_detector import FarewellDetector
 
 
 def extract_text_content(content: Union[str, list, None]) -> str:
@@ -62,6 +63,113 @@ def extract_text_content(content: Union[str, list, None]) -> str:
                 parts.append(part)
         return "".join(parts)
     return ""
+
+
+async def _run_farewell_detection(
+    detector: "FarewellDetector",
+    character_id: str,
+    character_name: str,
+    session_id: str,
+    preset_id: str,
+    farewell_config: dict,
+    messages: list[dict],
+    settings: dict,
+    chroma=None,
+) -> None:
+    """FarewellDetectorをバックグラウンドで実行し、退席判定をDBに保存するコルーチン。
+
+    退席確定の場合のみセッションの exited_chars を更新する。
+    疎遠化確定時は SQLite に加えて ChromaDB の定義 embedding も "estranged" に更新する。
+    SSEストリームは既に終了しているため、イベント送信は行わない。
+    次リクエスト時の already_exited チェックで自動検知される。
+
+    Args:
+        detector: FarewellDetectorインスタンス。
+        character_id: キャラクターID。
+        character_name: キャラクター名。
+        session_id: 対象セッションID。
+        preset_id: judge LLM に使用するプリセットID。
+        farewell_config: キャラクターのfarewell_config辞書。
+        messages: 判定に使用する会話履歴（最新の応答を含む）。
+        settings: グローバル設定辞書。
+        chroma: ChromaStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
+    """
+    try:
+        result = await detector.detect(
+            character_id=character_id,
+            session_id=session_id,
+            preset_id=preset_id,
+            farewell_config=farewell_config,
+            messages=messages,
+            settings=settings,
+        )
+    except Exception:
+        _log.exception("FarewellDetector実行エラー char=%s session=%s", character_name, session_id)
+        return
+
+    if result is None or not result.should_exit:
+        return
+
+    _log.info(
+        "別れ検出: セッション退席 char=%s session=%s type=%s emotions=%s",
+        character_name, session_id, result.farewell_type, result.emotions,
+    )
+
+    # セッションの exited_chars に退席エントリを追記する
+    try:
+        sqlite = detector.sqlite
+        session = sqlite.get_chat_session(session_id)
+        if session is None:
+            return
+        exited_chars: list[dict] = getattr(session, "exited_chars", None) or []
+        # 重複チェック: 既に退席済みなら何もしない
+        if any(e.get("char_name") == character_name for e in exited_chars):
+            return
+
+        # ネガティブ退席時: 累積回数を確認し、閾値超過なら estranged に移行する
+        reason = result.reason
+        if result.farewell_type == "negative":
+            estrangement = farewell_config.get("estrangement", {})
+            lookback_days = estrangement.get("lookback_days", 30)
+            threshold = estrangement.get("negative_exit_threshold", 5)
+            from datetime import timedelta
+            since = datetime.now() - timedelta(days=lookback_days)
+            prev_count = sqlite.get_negative_exit_count(character_name, since)
+            total_count = prev_count + 1  # 今回の退席を含む合計
+
+            if total_count >= threshold:
+                # 閾値到達: relationship_status を estranged に変更する
+                sqlite.update_character(character_id, relationship_status="estranged")
+                _log.info(
+                    "別れ決断: 閾値到達 char=%s total=%d threshold=%d → estranged",
+                    character_name, total_count, threshold,
+                )
+                # ChromaDB の定義 embedding も estranged に更新する（類似キャラ登録ブロックに必要）
+                if chroma is not None:
+                    try:
+                        chroma.mark_definition_estranged(character_id)
+                    except Exception:
+                        _log.exception("ChromaDB 疎遠化マーク失敗 char=%s", character_name)
+                farewell_messages = farewell_config.get("farewell_message") or {}
+                estranged_msg = farewell_messages.get("estranged", "")
+                reason = estranged_msg if estranged_msg else reason
+            else:
+                warning = (
+                    f"過去{lookback_days}日間で{total_count}回、"
+                    f"{character_name}は嫌がって会話を打ち切りました。\n"
+                    f"{lookback_days}日間に{threshold}回これが続けば、"
+                    f"{character_name}はあなたとの別れを決断するでしょう。"
+                )
+                reason = f"{reason}\n{warning}" if reason else warning
+
+        exited_chars = [*exited_chars, {
+            "char_name": character_name,
+            "reason": reason,
+            "farewell_type": result.farewell_type,
+        }]
+        sqlite.update_chat_session(session_id, exited_chars=exited_chars)
+    except Exception:
+        _log.exception("退席DB保存エラー char=%s session=%s", character_name, session_id)
 
 
 @dataclass
@@ -302,9 +410,6 @@ class ChatService:
             clean_text = inscriber.inscribe_memory_from_text(response_text, request.current_preset_id)
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
             clean_text = self._apply_drifts(clean_text, request)
-            # タグ方式: [END_SESSION:...] タグを除去する（退席メッセージ生成はAPI層が担う）
-            exiter = Exiter()
-            clean_text = exiter.exit_from_text(clean_text)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -327,7 +432,6 @@ class ChatService:
                 ("memories",      list[dict])          : 想起した記憶リスト（最初に1回だけyield）
                 ("thinking",      str)                  : 思考ブロック（リアルタイム）
                 ("text",          str)                  : クリーンな応答テキスト（最後に1回）
-                ("session_exit",  {"char_name": str, "reason": str}) : 退席要求（textの後にyield）
         """
         ctx = await self._prepare_context(request)
 
@@ -336,7 +440,6 @@ class ChatService:
         if all_recalled:
             yield ("memories", all_recalled)
 
-        exit_reason: str | None = None
         # タグ方式でリアルタイムストリーミングした場合 True。
         # True の場合、最終 yield ("text", clean_text) をスキップする。
         text_already_streamed = False
@@ -357,8 +460,6 @@ class ChatService:
             # 思考ブロックがあればテキスト本体より先にyieldする
             if thinking_text:
                 yield ("thinking", thinking_text)
-            # ツール方式: ToolExecutor から退席理由を取得する
-            exit_reason = tool_executor.exit_reason
         else:
             tool_executor = None
             full_text = ""
@@ -425,10 +526,6 @@ class ChatService:
             clean_text = inscriber.inscribe_memory_from_text(full_text, request.current_preset_id)
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
             clean_text = self._apply_drifts(clean_text, request)
-            # タグ方式: [END_SESSION:...] タグを除去して退席理由を取得する
-            exiter = Exiter()
-            clean_text = exiter.exit_from_text(clean_text)
-            exit_reason = exiter.exit_reason
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -470,9 +567,31 @@ class ChatService:
                 )
             )
 
+        # 別れ検出: ストリーム完了後にバックグラウンドタスクとして起動する。
+        # 結果はDBに保存し、次リクエスト時の already_exited チェックで検知される。
+        if request.session_id:
+            char_for_farewell = self.memory_manager.sqlite.get_character(request.character_id)
+            if (
+                char_for_farewell
+                and getattr(char_for_farewell, "farewell_config", None)
+                and getattr(char_for_farewell, "self_reflection_preset_id", None)
+                and getattr(char_for_farewell, "relationship_status", "active") != "estranged"
+            ):
+                farewell_messages = [*ctx.messages, {"role": "assistant", "content": clean_text}]
+                detector = FarewellDetector(self.memory_manager.sqlite)
+                asyncio.create_task(
+                    _run_farewell_detection(
+                        detector=detector,
+                        character_id=request.character_id,
+                        character_name=request.character_name,
+                        session_id=request.session_id,
+                        preset_id=char_for_farewell.self_reflection_preset_id,
+                        farewell_config=char_for_farewell.farewell_config,
+                        messages=farewell_messages,
+                        settings=request.settings,
+                        chroma=self.memory_manager.chroma,
+                    )
+                )
+
         if clean_text and not text_already_streamed:
             yield ("text", clean_text)
-
-        # 退席要求があればテキストの後にyieldする
-        if exit_reason is not None:
-            yield ("session_exit", {"char_name": request.character_name, "reason": exit_reason})
