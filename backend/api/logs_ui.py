@@ -192,8 +192,10 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
     function_calls: list[tuple[str, dict]] = []
 
     # Gemini形式: candidates[].content.parts[].function_call
-    for candidate in data.get("candidates", []):
-        for part in candidate.get("content", {}).get("parts", []):
+    # 注: promptFeedback でブロックされた場合など candidates が null で返ることがあるため
+    # `get(..., [])` のデフォルト値は効かず明示的に `or []` でフォールバックする。
+    for candidate in (data.get("candidates") or []):
+        for part in ((candidate.get("content") or {}).get("parts") or []):
             fc = part.get("function_call")
             if fc and isinstance(fc, dict) and "name" in fc:
                 function_calls.append((fc["name"], fc.get("args", {}) or {}))
@@ -206,9 +208,9 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
                 function_calls.append((block.get("name", ""), block.get("input", {}) or {}))
 
     # OpenAI形式: choices[].message.tool_calls[].function（arguments は JSON 文字列）
-    for choice in data.get("choices", []):
-        for tc in choice.get("message", {}).get("tool_calls", []):
-            fc = tc.get("function", {})
+    for choice in (data.get("choices") or []):
+        for tc in ((choice.get("message") or {}).get("tool_calls") or []):
+            fc = tc.get("function", {}) or {}
             try:
                 args = json.loads(fc.get("arguments", "{}"))
             except (json.JSONDecodeError, ValueError):
