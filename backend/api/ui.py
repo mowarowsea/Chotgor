@@ -347,6 +347,7 @@ async def save_settings(
     tavily_api_key: str = Form(""),
     chronicle_time: str = Form("03:00"),
     enable_time_awareness: Optional[str] = Form(None),
+    context_window_max_chronicled: int = Form(10),
     embedding_provider: str = Form("default"),
     embedding_model: str = Form(""),
 ):
@@ -379,7 +380,8 @@ async def save_settings(
     except Exception:
         pass
 
-    store.set_setting("enable_time_awareness", "true" if enable_time_awareness == "true" else "false")
+    store.set_setting("enable_time_awareness", bool(enable_time_awareness))
+    store.set_setting("context_window_max_chronicled", str(max(0, min(200, context_window_max_chronicled))))
 
     # embedding設定の保存
     store.set_setting("embedding_provider", embedding_provider)

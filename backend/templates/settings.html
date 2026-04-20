@@ -124,7 +124,7 @@
         <div class="form-group">
             <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
                 <input type="checkbox" id="enable_time_awareness" name="enable_time_awareness" value="true"
-                       {% if settings.get('enable_time_awareness', 'true') == 'true' %}checked{% endif %}>
+                       {% if settings.get('enable_time_awareness', True) %}checked{% endif %}>
                 日時と経過時間の連携を有効にする
             </label>
             <p class="form-hint" style="margin-top:4px">現在時刻と前回の会話からの経過時間をキャラクターに伝えます。</p>
