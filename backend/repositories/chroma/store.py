@@ -110,12 +110,17 @@ class ChromaStore:
             kwargs["embedding_function"] = self._embedding_fn
         try:
             collection = self.client.get_or_create_collection(**kwargs)
-            # HNSW ファイルの整合性を確認（"Nothing found on disk" 等の破損を早期検出）
+            # HNSW ファイルの整合性を確認。
+            # count() はSQLiteメタデータのみ読むためHNSW破損を検出できない。
+            # 件数が1件以上あるときはダミークエリで実際にHNSWが読めるかを確認する。
+            # link_lists.bin が0バイト等の破損ではcount()は成功するがquery()が失敗する。
             try:
-                collection.count()
+                n = collection.count()
+                if n > 0:
+                    collection.query(query_texts=["__health_check__"], n_results=1, include=[])
             except Exception as e:
                 logger.warning(
-                    "コレクション破損を検出（HNSWファイルなし）name=%s error=%s → 強制再作成",
+                    "コレクション破損を検出（HNSW読み取り不可）name=%s error=%s → 強制再作成",
                     collection_name, e,
                 )
                 try:
