@@ -77,6 +77,29 @@
                 </div>
             </div>
 
+            <!-- 思考ブロック（Reasoning） -->
+            {% if e.reasoning_text %}
+            <div class="log-row">
+                <span class="log-label">思考</span>
+                <div style="min-width:0">
+                    <details class="log-reasoning-block">
+                        <summary class="log-reasoning-summary">
+                            <span class="log-toggle-icon">&#9654;</span>
+                            想起した記憶・スケッチ
+                            <button class="log-translate-btn"
+                                    onclick="event.preventDefault();event.stopPropagation();translateReasoning(this, {{ e.reasoning_text | tojson }})">
+                                翻訳
+                            </button>
+                        </summary>
+                        <div class="log-reasoning-content">
+                            <pre class="log-body-preview" style="white-space:pre-wrap">{{ e.reasoning_text[:2000] }}{% if e.reasoning_text|length > 2000 %}…{% endif %}</pre>
+                        </div>
+                        <div class="log-translation-result" style="display:none"></div>
+                    </details>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- ツール呼び出し -->
             {% if e.tool_calls %}
             <div class="log-row">
@@ -180,4 +203,49 @@
     <p>ログがありません。</p>
 </div>
 {% endif %}
+
+<script>
+/**
+ * ログ一覧画面の思考ブロック翻訳ボタン処理。
+ * ボタンクリック時に /api/translate を呼び出し、結果を details 内に表示する。
+ *
+ * @param {HTMLElement} btn - クリックされた翻訳ボタン要素。
+ * @param {string} text - 翻訳するテキスト。
+ */
+async function translateReasoning(btn, text) {
+    const details = btn.closest('details.log-reasoning-block');
+    const resultDiv = details ? details.querySelector('.log-translation-result') : null;
+    if (!resultDiv) return;
+
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+        const res = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `APIサービスエラー(${res.status})`);
+        }
+        const data = await res.json();
+        resultDiv.innerHTML = '<hr style="border-color:rgba(255,255,255,0.1);margin:0.5rem 0">'
+            + '<span style="font-size:0.7rem;color:var(--t4)">翻訳</span>'
+            + '<pre style="white-space:pre-wrap;font-size:0.78rem;margin-top:0.4rem">'
+            + data.translation.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            + '</pre>';
+        resultDiv.style.display = '';
+        btn.textContent = '再翻訳';
+    } catch (e) {
+        console.error('[translateReasoning] エラー:', e);
+        resultDiv.innerHTML = '<span style="color:#c87070;font-size:0.75rem">' + e.message + '</span>';
+        resultDiv.style.display = '';
+        btn.textContent = '翻訳';
+    } finally {
+        btn.disabled = false;
+    }
+}
+</script>
 {% endblock %}

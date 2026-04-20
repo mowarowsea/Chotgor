@@ -1100,3 +1100,51 @@ hr {
     justify-content: center;
   }
 }
+
+/* --- ログUI: 思考ブロック表示 --- */
+.log-reasoning-block {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 0.3rem 0.65rem 0.4rem;
+}
+.log-reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--t3);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.log-reasoning-summary::-webkit-details-marker { display: none; }
+.log-reasoning-content {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+}
+.log-translate-btn {
+  margin-left: auto;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.68rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  color: var(--t3);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.log-translate-btn:hover:not(:disabled) {
+  color: var(--t2);
+  border-color: var(--t3);
+}
+.log-translate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.log-translation-result {
+  padding: 0.3rem 0 0.1rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}

@@ -324,6 +324,16 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
                 pass
             break
 
+    # --- Reasoning ログを探す（翻訳ボタン用） ---
+    reasoning_text = ""
+    for f in files:
+        if "Reasoning" in f.name:
+            try:
+                reasoning_text = f.read_text(encoding="utf-8")
+            except Exception:
+                pass
+            break
+
     # --- ツール呼び出しを Request/Response ファイルペアから構築 ---
     # 同一 feature/preset でも複数ラウンドトリップが発生する（tool-use時）ため、
     # dict でのキー管理はせず FIFO キューで「先に来た Request に先の Response を対応付ける」。
@@ -408,6 +418,7 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
         "source": source,
         "user_message": user_message,
         "character_response": character_response,
+        "reasoning_text": reasoning_text,
         "tool_calls": tool_calls,
         "warnings": warnings,
         "files": file_names,

@@ -14,7 +14,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { fetchLogEntry, fetchRawLog } from "../api";
+import { fetchLogEntry, fetchRawLog, translateText } from "../api";
 import type { LogEntry, LogToolCall } from "../api";
 
 // ---------------------------------------------------------------------------
@@ -57,6 +57,7 @@ function isMemoryLine(line: string): boolean {
 /**
  * 思考ブロック・想起記憶を折りたたみ表示するコンポーネント。
  * ストリーミング中は自動展開する。
+ * 展開状態かつ非ストリーミング時に翻訳ボタンを表示する。
  */
 export function ThinkingBlock({
   content,
@@ -66,6 +67,24 @@ export function ThinkingBlock({
   streaming?: boolean;
 }) {
   const [expanded, setExpanded] = useState(streaming);
+  const [translation, setTranslation] = useState<string | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
+  const handleTranslate = useCallback(async () => {
+    setTranslating(true);
+    setTranslateError(null);
+    try {
+      const result = await translateText(content);
+      setTranslation(result);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[ThinkingBlock] 翻訳エラー:", e);
+      setTranslateError(msg);
+    } finally {
+      setTranslating(false);
+    }
+  }, [content]);
 
   const lines = content.split("\n").filter((l) => l !== "");
   const memoryLines = lines.filter(isMemoryLine);
@@ -73,14 +92,27 @@ export function ThinkingBlock({
 
   return (
     <div className="rounded-lg overflow-hidden text-xs mb-1" style={{ border: "1px solid rgba(255,255,255,0.07)" }}>
-      <button
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-ch-t3 hover:text-ch-t2 transition-colors text-left"
-        onClick={() => setExpanded((e) => !e)}
-      >
-        <span className="text-[9px] opacity-50">{expanded ? "▼" : "▶"}</span>
-        <span className="tracking-wide">想起した記憶・スケッチ</span>
-        {streaming && <span className="animate-pulse ml-1 text-ch-accent-t text-[10px]">●</span>}
-      </button>
+      <div className="flex items-center">
+        <button
+          className="flex-1 flex items-center gap-1.5 px-3 py-1.5 text-ch-t3 hover:text-ch-t2 transition-colors text-left"
+          onClick={() => setExpanded((e) => !e)}
+        >
+          <span className="text-[9px] opacity-50">{expanded ? "▼" : "▶"}</span>
+          <span className="tracking-wide">想起した記憶・スケッチ</span>
+          {streaming && <span className="animate-pulse ml-1 text-ch-accent-t text-[10px]">●</span>}
+        </button>
+        {expanded && !streaming && (
+          <button
+            className="px-2 py-1 mr-1 text-[10px] text-ch-t4 hover:text-ch-t2 transition-colors shrink-0 rounded"
+            style={{ border: "1px solid rgba(255,255,255,0.1)" }}
+            onClick={handleTranslate}
+            disabled={translating}
+            title="日本語に翻訳"
+          >
+            {translating ? "…" : translation ? "再翻訳" : "翻訳"}
+          </button>
+        )}
+      </div>
       {expanded && (
         <div className="px-3 py-2 font-mono leading-relaxed" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
           {memoryLines.length > 0 && (
@@ -106,6 +138,23 @@ export function ThinkingBlock({
               </div>
               <div className="text-ch-t3 whitespace-pre-wrap">
                 {sketchLines.join("\n")}
+              </div>
+            </>
+          )}
+          {translateError && (
+            <div className="mt-2 text-[10px]" style={{ color: "#c87070" }}>
+              {translateError}
+            </div>
+          )}
+          {translation && (
+            <>
+              <div className="flex items-center gap-2 mt-2 mb-1.5">
+                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <span className="text-ch-t4 shrink-0 text-[10px]">翻訳</span>
+                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+              </div>
+              <div className="text-ch-t3 whitespace-pre-wrap">
+                {translation}
               </div>
             </>
           )}

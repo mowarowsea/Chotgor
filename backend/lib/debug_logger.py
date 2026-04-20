@@ -95,6 +95,17 @@ class ChotgorLogger:
         """
         self._write_log("FrontOutput", self._unescape_text(text))
 
+    def log_reasoning(self, text: str) -> None:
+        """思考ブロック・想起記憶の累積テキストをファイルに記録する。
+
+        ファイル: {NN}_Reasoning.log
+        翻訳ボタン機能のために、ログ表示UIから参照できる形で保存する。
+
+        Args:
+            text: 思考ブロックと想起記憶を結合した累積テキスト。
+        """
+        self._write_log("Reasoning", text)
+
     def log_provider_request(self, preset_name: str, params: Any) -> None:
         """プロバイダーAPIへ送るリクエストパラメータを記録する。
 

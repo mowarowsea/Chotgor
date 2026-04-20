@@ -323,14 +323,16 @@ async def delete_model_preset(request: Request, preset_id: str):
 
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_form(request: Request):
-    """設定ページを表示する。Google APIキー設定状況をテンプレートに渡す。"""
+    """設定ページを表示する。Google APIキー設定状況とモデルプリセット一覧をテンプレートに渡す。"""
     settings = request.app.state.sqlite.get_all_settings()
+    model_presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
         "settings.html",
         {
             "request": request,
             "settings": settings,
             "has_google_key": bool(settings.get("google_api_key")),
+            "model_presets": model_presets,
         },
     )
 
@@ -350,6 +352,7 @@ async def save_settings(
     context_window_max_chronicled: int = Form(10),
     embedding_provider: str = Form("default"),
     embedding_model: str = Form(""),
+    translation_preset_id: str = Form(""),
 ):
     """設定を保存し、embeddingモデルが変更された場合は記憶を再インデックスする。"""
     store = request.app.state.sqlite
@@ -386,6 +389,9 @@ async def save_settings(
     # embedding設定の保存
     store.set_setting("embedding_provider", embedding_provider)
     store.set_setting("embedding_model", embedding_model)
+
+    # 翻訳モデル設定の保存
+    store.set_setting("translation_preset_id", translation_preset_id)
 
     # embeddingモデルが変更された場合は全記憶を再インデックスする
     embedding_changed = (

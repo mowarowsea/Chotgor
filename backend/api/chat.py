@@ -497,6 +497,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
         clean_text = full_text
         # log_front_output は service.py 内で呼び出し済みのため、ここでは不要
+        if accumulated_reasoning:
+            logger.log_reasoning(accumulated_reasoning)
         used_char_name, used_preset_name = effective_model_id.rsplit("@", 1) if "@" in effective_model_id else (effective_model_id, None)
 
         char_msg_id = str(uuid.uuid4())

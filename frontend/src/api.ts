@@ -390,6 +390,8 @@ export interface LogEntry {
   source: string;
   user_message: string;
   character_response: string;
+  /** 思考ブロック・想起記憶テキスト。CHOTGOR_DEBUG=1 かつ Thinking 有効時のみ存在する。 */
+  reasoning_text?: string;
   tool_calls: LogToolCall[];
   warnings: LogWarning[];
   files: string[];
@@ -412,4 +414,33 @@ export async function fetchRawLog(messageId: string, filename: string): Promise<
   const res = await fetch(`/ui/logs/${encodeURIComponent(messageId)}/raw/${encodeURIComponent(filename)}`);
   if (!res.ok) throw new Error("ログファイルの取得に失敗しました");
   return res.text();
+}
+
+// ---------------------------------------------------------------------------
+// 翻訳
+// ---------------------------------------------------------------------------
+
+/**
+ * テキストを日本語に翻訳する。
+ *
+ * Settings 画面で設定した翻訳モデルを使ってサーバ側で翻訳を実行する。
+ * 翻訳結果はDBに保存されず、その場限りで表示されるのみ。
+ *
+ * @param text - 翻訳するテキスト。
+ * @param presetId - 使用するモデルプリセットID（省略時はサーバ設定を使用）。
+ * @returns 翻訳されたテキスト。
+ * @throws APIサービスエラー(ステータスコード) またはその他のエラー。
+ */
+export async function translateText(text: string, presetId?: string): Promise<string> {
+  const res = await fetch("/api/translate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, ...(presetId ? { preset_id: presetId } : {}) }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `APIサービスエラー(${res.status})`);
+  }
+  const data = await res.json();
+  return data.translation as string;
 }
