@@ -759,15 +759,6 @@ class TestSwitchAngleSystemPromptBlock:
         )
         assert "プリセット切り替え" in prompt
 
-    def test_current_preset_name_shown(self):
-        """現在のプリセット名がブロックに表示される。"""
-        prompt = build_system_prompt(
-            "You are Alice.",
-            available_presets=_SAMPLE_PRESETS,
-            current_preset_name="slowModel",
-        )
-        assert "slowModel" in prompt
-
     def test_available_presets_listed(self):
         """利用可能なプリセット名がブロックに列挙される。"""
         prompt = build_system_prompt(
@@ -806,8 +797,7 @@ class TestSwitchAngleSystemPromptBlock:
 
     def test_build_switch_angle_block_direct_tool_use(self):
         """_build_switch_angle_block の tool-use 形式出力を直接検証する。"""
-        block = _build_switch_angle_block(_SAMPLE_PRESETS, "currentPreset", use_tools=True)
-        assert "currentPreset" in block
+        block = _build_switch_angle_block(_SAMPLE_PRESETS, use_tools=True)
         assert "fastModel" in block
         assert "軽い雑談のとき" in block
         assert "switch_angle" in block
@@ -815,14 +805,13 @@ class TestSwitchAngleSystemPromptBlock:
 
     def test_build_switch_angle_block_direct_tag_mode(self):
         """_build_switch_angle_block のタグ方式出力を直接検証する。"""
-        block = _build_switch_angle_block(_SAMPLE_PRESETS, "currentPreset", use_tools=False)
-        assert "currentPreset" in block
+        block = _build_switch_angle_block(_SAMPLE_PRESETS, use_tools=False)
         assert "[SWITCH_ANGLE:" in block
         assert "gemini2FlashLite" in block or "fastModel" in block
 
     def test_preset_without_when_to_switch_has_no_empty_label(self):
         """when_to_switch が空のプリセットはコロン付きの説明が表示されない。"""
-        block = _build_switch_angle_block(_SAMPLE_PRESETS, "", use_tools=False)
+        block = _build_switch_angle_block(_SAMPLE_PRESETS, use_tools=False)
         # deepModel は when_to_switch が空 → "deepModel: " という形式にならない
         lines = block.split("\n")
         deep_lines = [l for l in lines if "deepModel" in l]

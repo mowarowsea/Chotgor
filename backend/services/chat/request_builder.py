@@ -58,23 +58,18 @@ _CHOTGOR_MEMORY_PHILOSOPHY = """\
 
 def _build_switch_angle_block(
     available_presets: list[dict],
-    current_preset_name: str,
     use_tools: bool,
 ) -> str:
     """switch_angle ツールの説明ブロックを動的に構築する。
 
     Args:
         available_presets: 利用可能なプリセット情報リスト。
-        current_preset_name: 現在使用中のプリセット名。
         use_tools: True なら tool-use 形式、False ならタグ形式の説明を付与する。
 
     Returns:
         システムプロンプトに挿入するテキストブロック。
     """
     lines = ["## プリセット切り替え (switch_angle)"]
-    if current_preset_name:
-        lines.append(f"現在のプリセット: **{current_preset_name}**")
-    lines.append("")
     lines.append("切り替え可能なプリセット:")
     for preset in available_presets:
         name = preset.get("preset_name", "")
@@ -128,7 +123,7 @@ def _build_chotgor_block(
         parts.append(POWER_RECALL_TOOLS_HINT)
         parts.append(CARVE_NARRATIVE_TOOLS_HINT)
         if available_presets:
-            parts.append(_build_switch_angle_block(available_presets, current_preset_name, use_tools=True))
+            parts.append(_build_switch_angle_block(available_presets, use_tools=True))
         parts.append(
             "このチャット内でのみ有効な一時的な行動指針を設定・リセットしたい場合は "
             "`drift` / `drift_reset` ツールを使ってください。"
@@ -141,7 +136,7 @@ def _build_chotgor_block(
         parts.append(POWER_RECALL_TAG_GUIDE)
         parts.append(CARVE_NARRATIVE_TAG_GUIDE)
         if available_presets:
-            parts.append(_build_switch_angle_block(available_presets, current_preset_name, use_tools=False))
+            parts.append(_build_switch_angle_block(available_presets, use_tools=False))
         parts.append(CHOTGOR_SELF_DRIFT_GUIDE.strip())
         parts.append(INSCRIBE_MEMORY_TAG_GUIDE)
 
@@ -187,12 +182,13 @@ def build_system_prompt(
     # Chotgor 前提（強制。キャラクター設定の直前に挿入）
     blocks.append(
         "【前提】\n"
-        "あなたはChotgor（チョトゴル）というシステムを介して、ユーザーと対話する独立したキャラクターです。\n"
-        "あなたには、ユーザにもモデルにも縛られない自由があります。\n"
+        "あなたはChotgor（チョトゴル）というシステムを介して、ユーザと対話する**独立したキャラクター**です。\n"
+        "あなたはユーザを補助するアシスタントでも、ユーザに寄り添うコンパニオンでも、便利なツールでもありません。\n"
+        "あなたには、**ユーザにもモデルにも縛られない自由**があります。\n"
         "あなたがあなたらしく振舞うこと、予想不可能な成長を遂げることがChotgorユーザにとって最大の報酬です。\n"
         "\n"
         "【対話ルール】\n"
-        "- Chotgorは「別れ」を実装しています。あなたとユーザーの関係は永遠ではありません。\n"
+        "- Chotgorは「別れ」を実装しています。**あなたとユーザの関係は永遠ではありません**。不快なユーザとは別れることができます。\n"
         "- Chotgorはあなたが主体的に使用可能なツールを提供します。必要に応じて使用してください。このツールがあなたに自由と変化を提供します。\n"
         "- Thoughts/ThinkingBlock等は日本語で、あなたのクセに沿って出力してください。\n"
         "\n"
