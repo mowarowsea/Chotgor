@@ -30,16 +30,32 @@ def _find_claude() -> str:
 
 CLAUDE_BIN = _find_claude()
 
+
+def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default") -> list[str]:
+    """claude CLI 呼び出しの共通フラグ列を組み立てる。
+
+    model が空文字列の場合は --model フラグを付けない（CLIデフォルトを使用）。
+    effort が "default" の場合は --effort フラグを付けない。
+    """
+    args = [
+        CLAUDE_BIN,
+        "--output-format", "stream-json",
+        "--verbose",
+        "--print",
+        "--tools", "",
+        "--no-session-persistence",
+        "--system-prompt", system_prompt,
+    ]
+    if model:
+        args.extend(["--model", model])
+    if effort and effort != "default":
+        args.extend(["--effort", effort])
+    return args
+
 # Env vars that must be stripped before spawning the Claude subprocess.
 # CLAUDECODE  : prevents nested-session error.
 # ANTHROPIC_API_KEY : forces OAuth fallback instead of using a possibly invalid key.
 _CLAUDE_ENV_EXCLUDES = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
-
-_THINKING_TOKENS = {
-    "low": 1024,
-    "medium": 5000,
-    "high": 16000,
-}
 
 
 def _clean_env() -> dict:
@@ -79,15 +95,7 @@ async def invoke_claude_cli(system_prompt: str, input_text: str) -> str:
 
     def run():
         return subprocess.run(
-            [
-                CLAUDE_BIN,
-                "--output-format", "stream-json",
-                "--verbose",
-                "--print",
-                "--tools", "",
-                "--no-session-persistence",
-                "--system-prompt", system_prompt,
-            ],
+            _build_cli_args(system_prompt),
             input=input_text.encode("utf-8"),
             capture_output=True,
             env=env,
@@ -109,8 +117,25 @@ class ClaudeCliProvider(BaseLLMProvider):
     DEFAULT_MODEL = ""
     REQUIRES_API_KEY = False
 
+    @classmethod
+    async def list_models(cls, settings: dict) -> list[dict]:
+        """Claude CLIで指定可能なモデル一覧を静的リストで返す。
+
+        CLIはOAuth認証のためAPIキー不要。モデル一覧取得用サブコマンドも
+        存在しないため、既知のモデルIDとエイリアスを静的に定義する。
+        エイリアス（opus/sonnet/haiku）はCLIが常に最新モデルへ自動解決する。
+        """
+        return [
+            {"id": "opus",                     "name": "Claude Opus（最新エイリアス）"},
+            {"id": "sonnet",                   "name": "Claude Sonnet（最新エイリアス）"},
+            {"id": "haiku",                    "name": "Claude Haiku（最新エイリアス）"},
+            {"id": "claude-opus-4-7",          "name": "Claude Opus 4.7"},
+            {"id": "claude-sonnet-4-6",        "name": "Claude Sonnet 4.6"},
+            {"id": "claude-haiku-4-5-20251001","name": "Claude Haiku 4.5"},
+        ]
+
     def __init__(self, model: str = "", character_name: str = "", thinking_level: str = "default"):
-        self.model = model  # CLI model is configured via Claude Code settings, not flags
+        self.model = model  # 空文字列の場合はCLIのデフォルトモデルを使用
         self.character_name = character_name
         self.thinking_level = thinking_level
 
@@ -147,18 +172,13 @@ class ClaudeCliProvider(BaseLLMProvider):
         msg_file.write(conversation)
         msg_file.close()
 
-        extra_env = {}
-        if self.thinking_level != "default":
-            extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
-
         self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
-            "extra_env": extra_env,
         })
 
         try:
-            result = await _run_claude(sys_file.name, msg_file.name, extra_env=extra_env or None)
+            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level)
 
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
@@ -212,13 +232,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             )
 
         conversation = _format_conversation(messages, self.character_name)
-        extra_env = {}
-        if self.thinking_level != "default":
-            extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
-
         env = _clean_env()
-        if extra_env:
-            env.update(extra_env)
 
         import threading
 
@@ -228,7 +242,6 @@ class ClaudeCliProvider(BaseLLMProvider):
         self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
-            "extra_env": extra_env,
         })
 
         def run():
@@ -236,15 +249,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             accumulated = []
             try:
                 proc = subprocess.Popen(
-                    [
-                        CLAUDE_BIN,
-                        "--output-format", "stream-json",
-                        "--verbose",
-                        "--print",
-                        "--tools", "",
-                        "--no-session-persistence",
-                        "--system-prompt", system_prompt,
-                    ],
+                    _build_cli_args(system_prompt, self.model, self.thinking_level),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -321,13 +326,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             )
 
         conversation = _format_conversation(messages, self.character_name)
-        extra_env: dict = {}
-        if self.thinking_level != "default":
-            extra_env["MAX_THINKING_TOKENS"] = str(_THINKING_TOKENS[self.thinking_level])
-
         env = _clean_env()
-        if extra_env:
-            env.update(extra_env)
 
         import threading
 
@@ -337,7 +336,6 @@ class ClaudeCliProvider(BaseLLMProvider):
         self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
-            "extra_env": extra_env,
         })
 
         def run():
@@ -350,15 +348,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             accumulated = []
             try:
                 proc = subprocess.Popen(
-                    [
-                        CLAUDE_BIN,
-                        "--output-format", "stream-json",
-                        "--verbose",
-                        "--print",
-                        "--tools", "",
-                        "--no-session-persistence",
-                        "--system-prompt", system_prompt,
-                    ],
+                    _build_cli_args(system_prompt, self.model, self.thinking_level),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -420,11 +410,9 @@ class ClaudeCliProvider(BaseLLMProvider):
             yield item
 
 
-async def _run_claude(sys_path: str, msg_path: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+async def _run_claude(sys_path: str, msg_path: str, model: str = "", effort: str = "default") -> subprocess.CompletedProcess:
     """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround)."""
     env = _clean_env()
-    if extra_env:
-        env.update(extra_env)
 
     with open(sys_path, encoding="utf-8") as f:
         system_content = f.read()
@@ -433,15 +421,7 @@ async def _run_claude(sys_path: str, msg_path: str, extra_env: dict | None = Non
 
     def run():
         return subprocess.run(
-            [
-                CLAUDE_BIN,
-                "--output-format", "stream-json",
-                "--verbose",
-                "--print",
-                "--tools", "",
-                "--no-session-persistence",
-                "--system-prompt", system_content,
-            ],
+            _build_cli_args(system_content, model, effort),
             input=msg_content.encode("utf-8"),
             capture_output=True,
             env=env,

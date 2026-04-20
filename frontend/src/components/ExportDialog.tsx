@@ -55,12 +55,29 @@ export default function ExportDialog({
     );
 
     if (destination === "clipboard") {
-      await navigator.clipboard.writeText(exportText);
-      setCopied(true);
-      setTimeout(() => {
-        setCopied(false);
-        onClose();
-      }, 1200);
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(exportText);
+        } else {
+          // フォールバック: 古いブラウザまたはHTTPコンテキスト用
+          const textarea = document.createElement("textarea");
+          textarea.value = exportText;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+        }
+        setCopied(true);
+        setTimeout(() => {
+          setCopied(false);
+          onClose();
+        }, 1200);
+      } catch (error) {
+        console.error("クリップボードへのコピーに失敗しました:", error);
+        alert("クリップボードへのコピーに失敗しました。ファイルダウンロードをお試しください。");
+      }
     } else {
       const blob = new Blob([exportText], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
