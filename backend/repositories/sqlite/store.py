@@ -130,6 +130,8 @@ class Character(Base):
     farewell_config = Column(JSON, nullable=True)  # chronicle で更新される感情閾値・退席設定JSON
     relationship_status = Column(String, nullable=False, default="active")  # "active" | "estranged"
     definition_embedding_id = Column(String, nullable=True)  # ChromaDB char_definitions コレクション内の doc ID
+    # キャラクターごとの外部ツール許可設定 (web_search/google_calendar/gmail/google_drive)
+    allowed_tools = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -231,6 +233,7 @@ class SQLiteStore(
                 "ALTER TABLE characters ADD COLUMN farewell_config TEXT",
                 "ALTER TABLE characters ADD COLUMN relationship_status TEXT NOT NULL DEFAULT 'active'",
                 "ALTER TABLE characters ADD COLUMN definition_embedding_id TEXT",
+                "ALTER TABLE characters ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '{}'",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -269,6 +272,7 @@ class SQLiteStore(
                             farewell_config TEXT,
                             relationship_status TEXT NOT NULL DEFAULT 'active',
                             definition_embedding_id TEXT,
+                            allowed_tools TEXT NOT NULL DEFAULT '{}',
                             created_at DATETIME,
                             updated_at DATETIME
                         )

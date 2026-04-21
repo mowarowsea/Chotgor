@@ -337,6 +337,9 @@ class ChatService:
             request.provider, request.model, request.settings,
             thinking_level=request.thinking_level,
             preset_name=request.current_preset_name or "",
+            character_id=request.character_id,
+            session_id=request.session_id or "",
+            allowed_tools=request.allowed_tools,
         )
 
         # --- システムプロンプト構築 ---

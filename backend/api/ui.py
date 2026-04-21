@@ -38,6 +38,25 @@ def _extract_self_reflection_params(form) -> tuple:
     )
 
 
+def _build_allowed_tools(form) -> dict:
+    """フォームから allowed_tools 辞書を構築する。
+
+    チェックボックスがONの場合のみ True、未チェックは False になる。
+
+    Args:
+        form: await request.form() の結果。
+
+    Returns:
+        {web_search, google_calendar, gmail, google_drive} の bool dict。
+    """
+    return {
+        "web_search":       bool(form.get("tool_web_search")),
+        "google_calendar":  bool(form.get("tool_google_calendar")),
+        "gmail":            bool(form.get("tool_gmail")),
+        "google_drive":     bool(form.get("tool_google_drive")),
+    }
+
+
 def _build_enabled_providers(form) -> dict:
     """フォームから enabled_providers 辞書を構築する。
 
@@ -124,6 +143,7 @@ async def create_character(request: Request):
         return RedirectResponse(url="/ui/characters/new", status_code=303)
 
     enabled_providers = _build_enabled_providers(form)
+    allowed_tools = _build_allowed_tools(form)
 
     image_data = await _read_image_data(form)
 
@@ -147,6 +167,7 @@ async def create_character(request: Request):
         self_reflection_mode=self_reflection_mode,
         self_reflection_preset_id=self_reflection_preset_id,
         self_reflection_n_turns=self_reflection_n_turns,
+        allowed_tools=allowed_tools,
     )
     return RedirectResponse(url="/ui/", status_code=303)
 
@@ -174,6 +195,7 @@ async def update_character(request: Request, character_id: str):
     form = await request.form()
 
     enabled_providers = _build_enabled_providers(form)
+    allowed_tools = _build_allowed_tools(form)
 
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
@@ -192,6 +214,7 @@ async def update_character(request: Request, character_id: str):
         self_reflection_mode=self_reflection_mode,
         self_reflection_preset_id=self_reflection_preset_id,
         self_reflection_n_turns=self_reflection_n_turns,
+        allowed_tools=allowed_tools,
     )
     new_image = await _read_image_data(form)
     if new_image:

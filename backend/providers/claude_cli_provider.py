@@ -31,18 +31,32 @@ def _find_claude() -> str:
 CLAUDE_BIN = _find_claude()
 
 
-def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default") -> list[str]:
+def _build_tools_flag(allowed_tools: dict) -> str:
+    """allowed_tools 設定から --tools フラグ文字列を組み立てる。
+
+    web_search が True の場合のみ WebSearch と WebFetch（組み込みツール）を有効化する。
+    Google系ツールは MCP 経由のため --tools フラグでは制御できず、ここでは加算しない。
+    """
+    tool_names: list[str] = []
+    if allowed_tools.get("web_search"):
+        tool_names.extend(["WebSearch", "WebFetch"])
+    return ",".join(tool_names)
+
+
+def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default", allowed_tools: dict | None = None) -> list[str]:
     """claude CLI 呼び出しの共通フラグ列を組み立てる。
 
     model が空文字列の場合は --model フラグを付けない（CLIデフォルトを使用）。
     effort が "default" の場合は --effort フラグを付けない。
+    allowed_tools が None または空の場合は --tools "" で全組み込みツールを無効化する。
     """
+    tools_str = _build_tools_flag(allowed_tools or {})
     args = [
         CLAUDE_BIN,
         "--output-format", "stream-json",
         "--verbose",
         "--print",
-        "--tools", "",
+        "--tools", tools_str,
         "--no-session-persistence",
         "--system-prompt", system_prompt,
     ]
@@ -59,6 +73,7 @@ _CLAUDE_ENV_EXCLUDES = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
 
 
 def _clean_env() -> dict:
+    """グローバル環境変数からClaudeネスト検出・誤認証キーを除いた dict を返す。"""
     return {k: v for k, v in os.environ.items() if k not in _CLAUDE_ENV_EXCLUDES}
 
 
@@ -82,6 +97,24 @@ def _parse_stream_json(raw: str) -> str:
             result_text = event.get("result", "")
             if result_text and not collected:
                 collected = result_text
+    return collected
+
+
+def _extract_thinking_from_stream_json(raw: str) -> str:
+    """Claude CLI stream-json 出力から thinking ブロックのテキストを抽出する。"""
+    collected = ""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "assistant":
+            for block in event.get("message", {}).get("content", []):
+                if block.get("type") == "thinking":
+                    collected += block.get("thinking", "")
     return collected
 
 
@@ -116,6 +149,9 @@ class ClaudeCliProvider(BaseLLMProvider):
     PROVIDER_ID = "claude_cli"
     DEFAULT_MODEL = ""
     REQUIRES_API_KEY = False
+    # MCP サーバー経由でtool-useを実現するため True に設定する。
+    # generate_with_tools() をオーバーライドしてClaude CLI内部のMCPループに委譲する。
+    SUPPORTS_TOOLS = True
 
     @classmethod
     async def list_models(cls, settings: dict) -> list[dict]:
@@ -134,17 +170,80 @@ class ClaudeCliProvider(BaseLLMProvider):
             {"id": "claude-haiku-4-5-20251001","name": "Claude Haiku 4.5"},
         ]
 
-    def __init__(self, model: str = "", character_name: str = "", thinking_level: str = "default"):
+    def __init__(
+        self,
+        model: str = "",
+        character_name: str = "",
+        thinking_level: str = "default",
+        character_id: str = "",
+        session_id: str = "",
+        allowed_tools: dict | None = None,
+    ):
         self.model = model  # 空文字列の場合はCLIのデフォルトモデルを使用
         self.character_name = character_name
         self.thinking_level = thinking_level
+        # MCP サーバーへのコンテキスト注入に使用
+        self.character_id = character_id
+        self.session_id = session_id
+        # キャラクターごとの外部ツール許可設定
+        self.allowed_tools: dict = allowed_tools or {}
 
     @classmethod
-    def from_config(cls, model: str, settings: dict, character_name: str = "", thinking_level: str = "default", **kwargs):
-        return cls(model=model, character_name=character_name, thinking_level=thinking_level)
+    def from_config(
+        cls,
+        model: str,
+        settings: dict,
+        character_name: str = "",
+        thinking_level: str = "default",
+        character_id: str = "",
+        session_id: str = "",
+        allowed_tools: dict | None = None,
+        **kwargs,
+    ):
+        return cls(
+            model=model,
+            character_name=character_name,
+            thinking_level=thinking_level,
+            character_id=character_id,
+            session_id=session_id,
+            allowed_tools=allowed_tools,
+        )
 
-    async def generate(self, system_prompt: str, messages: list[dict]) -> str:
-        # Detect if any image exists in messages
+    def _make_env(self) -> dict:
+        """Claude CLI サブプロセス用の環境変数 dict を返す。
+
+        _clean_env() をベースに、MCP サーバーが必要とするキャラクターコンテキストを追加する。
+        """
+        env = _clean_env()
+        if self.character_id:
+            env["CHOTGOR_CHARACTER_ID"] = self.character_id
+        if self.session_id:
+            env["CHOTGOR_SESSION_ID"] = self.session_id
+        return env
+
+    async def generate_with_tools(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        tool_executor,
+    ) -> tuple[str, str]:
+        """Claude CLI 内部の MCP ループに委譲する。
+
+        tool_executor（Python 側）は使用しない。ツール呼び出しは MCP サーバーが処理する。
+
+        Returns:
+            (text, thinking): thinking は思考ブロックが存在する場合その内容、なければ空文字列。
+        """
+        raw = await self._run_generate_raw(system_prompt, messages)
+        text = _parse_stream_json(raw)
+        thinking = _extract_thinking_from_stream_json(raw)
+        return text, thinking
+
+    async def _run_generate_raw(self, system_prompt: str, messages: list[dict]) -> str:
+        """Claude CLI を呼び出して raw stdout 文字列を返す内部メソッド。
+
+        エラー時はエラーメッセージ文字列を返す（例外は送出しない）。
+        """
         has_images = any(
             isinstance(item, dict) and item.get("type") == "image_url"
             for m in messages
@@ -178,7 +277,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         })
 
         try:
-            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level)
+            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(), allowed_tools=self.allowed_tools)
 
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
@@ -192,7 +291,7 @@ class ClaudeCliProvider(BaseLLMProvider):
 
             raw_stdout = result.stdout.decode("utf-8", errors="replace")
             self._log_response(raw_stdout)
-            return _parse_stream_json(raw_stdout)
+            return raw_stdout
 
         except FileNotFoundError:
             err = (
@@ -213,6 +312,11 @@ class ClaudeCliProvider(BaseLLMProvider):
                 except Exception:
                     pass
 
+    async def generate(self, system_prompt: str, messages: list[dict]) -> str:
+        """Claude CLI を呼び出してテキスト応答を返す。"""
+        raw = await self._run_generate_raw(system_prompt, messages)
+        return _parse_stream_json(raw)
+
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
         """Claude CLI からテキストチャンクをストリーミングで取得する。
 
@@ -232,7 +336,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             )
 
         conversation = _format_conversation(messages, self.character_name)
-        env = _clean_env()
+        env = self._make_env()
 
         import threading
 
@@ -249,7 +353,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             accumulated = []
             try:
                 proc = subprocess.Popen(
-                    _build_cli_args(system_prompt, self.model, self.thinking_level),
+                    _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -326,7 +430,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             )
 
         conversation = _format_conversation(messages, self.character_name)
-        env = _clean_env()
+        env = self._make_env()
 
         import threading
 
@@ -348,7 +452,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             accumulated = []
             try:
                 proc = subprocess.Popen(
-                    _build_cli_args(system_prompt, self.model, self.thinking_level),
+                    _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -410,9 +514,20 @@ class ClaudeCliProvider(BaseLLMProvider):
             yield item
 
 
-async def _run_claude(sys_path: str, msg_path: str, model: str = "", effort: str = "default") -> subprocess.CompletedProcess:
-    """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround)."""
-    env = _clean_env()
+async def _run_claude(
+    sys_path: str,
+    msg_path: str,
+    model: str = "",
+    effort: str = "default",
+    env: dict | None = None,
+    allowed_tools: dict | None = None,
+) -> subprocess.CompletedProcess:
+    """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround).
+
+    env が None の場合は _clean_env() をフォールバックとして使用する。
+    """
+    if env is None:
+        env = _clean_env()
 
     with open(sys_path, encoding="utf-8") as f:
         system_content = f.read()
@@ -421,7 +536,7 @@ async def _run_claude(sys_path: str, msg_path: str, model: str = "", effort: str
 
     def run():
         return subprocess.run(
-            _build_cli_args(system_content, model, effort),
+            _build_cli_args(system_content, model, effort, allowed_tools),
             input=msg_content.encode("utf-8"),
             capture_output=True,
             env=env,

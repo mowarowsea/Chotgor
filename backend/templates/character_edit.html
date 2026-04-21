@@ -113,6 +113,36 @@
             </label>
         </div>
 
+        <!-- 外部ツール連携 -->
+        <div class="form-group">
+            <label>外部ツール連携
+                <span class="label-hint">このキャラクターに許可する外部ツール（Claude Code CLI プリセットのみ有効）</span>
+            </label>
+            {% set at = (character.allowed_tools or {}) if character else {} %}
+            <div style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.4rem">
+                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+                    <input type="checkbox" name="tool_web_search" value="1"
+                        {% if at.get('web_search') %}checked{% endif %}>
+                    Web Search <span style="color:var(--t3);font-size:0.78rem">（WebSearch + WebFetch）</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+                    <input type="checkbox" name="tool_google_calendar" value="1"
+                        {% if at.get('google_calendar') %}checked{% endif %}>
+                    Google Calendar
+                </label>
+                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+                    <input type="checkbox" name="tool_gmail" value="1"
+                        {% if at.get('gmail') %}checked{% endif %}>
+                    Gmail
+                </label>
+                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+                    <input type="checkbox" name="tool_google_drive" value="1"
+                        {% if at.get('google_drive') %}checked{% endif %}>
+                    Google Drive
+                </label>
+            </div>
+        </div>
+
         <hr>
 
         <!-- 利用モデル -->

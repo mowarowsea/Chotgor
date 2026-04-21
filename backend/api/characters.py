@@ -52,6 +52,7 @@ async def create_character(request: Request, body: CharacterCreate):
         inner_narrative=body.inner_narrative,
         cleanup_config=body.cleanup_config,
         ghost_model=body.ghost_model,
+        allowed_tools=body.allowed_tools,
     )
 
     # キャラクター定義を ChromaDB に登録する（embedding 作成）

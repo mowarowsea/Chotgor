@@ -46,6 +46,7 @@ def char_to_dict(char) -> dict:
         "cleanup_config": char.cleanup_config,
         "ghost_model": char.ghost_model,
         "afterglow_default": bool(getattr(char, "afterglow_default", 0)),
+        "allowed_tools": getattr(char, "allowed_tools", None) or {},
         "created_at": fmt_dt(char.created_at),
         "updated_at": fmt_dt(char.updated_at),
     }

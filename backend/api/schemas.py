@@ -15,6 +15,7 @@ class CharacterCreate(BaseModel):
     inner_narrative: str = ""
     cleanup_config: dict = {}
     ghost_model: Optional[str] = None
+    allowed_tools: dict = {}
 
 
 class CharacterUpdate(BaseModel):
@@ -36,3 +37,4 @@ class CharacterUpdate(BaseModel):
     ghost_model: Optional[str] = None
     farewell_config: Optional[dict] = None
     relationship_status: Optional[str] = None
+    allowed_tools: Optional[dict] = None

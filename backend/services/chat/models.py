@@ -52,3 +52,5 @@ class ChatRequest:
     self_reflection_mode: str = "disabled"       # disabled/local_trigger/always
     self_reflection_preset_id: str = ""          # 契機判断モデルプリセットID
     self_reflection_n_turns: int = 5             # 自己参照に使う直近ターン数
+    # 外部ツール許可設定（ClaudeCliProvider の --tools フラグに反映される）
+    allowed_tools: dict = field(default_factory=dict)

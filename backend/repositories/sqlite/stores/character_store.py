@@ -26,6 +26,7 @@ class CharacterStoreMixin:
         self_reflection_n_turns: int = 5,
         farewell_config: Optional[dict] = None,
         relationship_status: str = "active",
+        allowed_tools: Optional[dict] = None,
     ):
         """キャラクターを新規作成する。
 
@@ -38,6 +39,7 @@ class CharacterStoreMixin:
             self_reflection_n_turns: 自己参照に使う直近ターン数。
             farewell_config: chronicle で更新される感情閾値・退席設定JSON。
             relationship_status: 関係ステータス。"active" または "estranged"。
+            allowed_tools: 外部ツール許可設定。{web_search, google_calendar, gmail, google_drive} の bool dict。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Character
@@ -59,6 +61,7 @@ class CharacterStoreMixin:
                 self_reflection_n_turns=self_reflection_n_turns,
                 farewell_config=farewell_config,
                 relationship_status=relationship_status,
+                allowed_tools=allowed_tools or {},
             )
             session.add(char)
             session.commit()
