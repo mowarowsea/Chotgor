@@ -68,6 +68,7 @@ def _init_executor():
         embedding_provider=all_settings.get("embedding_provider", "default"),
         embedding_model=all_settings.get("embedding_model", ""),
         api_key=all_settings.get("google_api_key", ""),
+        base_url=all_settings.get("infinity_base_url", "http://localhost:7997"),
     )
     memory_manager = MemoryManager(sqlite=sqlite, chroma=chroma)
     drift_manager = DriftManager(sqlite=sqlite)

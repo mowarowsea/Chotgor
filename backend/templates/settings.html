@@ -35,6 +35,12 @@
 {% if request.query_params.get("migration_error") %}
 <div class="alert alert-danger">Embedding の再インデックスに失敗しました。APIキーとモデルIDを確認して再保存してください。記憶は SQLite に保全されています。</div>
 {% endif %}
+{% if request.query_params.get("reindex_done") %}
+<div class="alert alert-success">記憶の再インデックスが完了しました。</div>
+{% endif %}
+{% if request.query_params.get("reindex_error") %}
+<div class="alert alert-danger">再インデックスに失敗しました。APIキーとモデルIDを確認してください。記憶は SQLite に保全されています。</div>
+{% endif %}
 
 <div class="form-card">
     <form method="post" action="/ui/settings">
@@ -147,27 +153,41 @@
                         {% if not has_google_key %}disabled title="Google APIキーが未設定です"{% endif %}>
                     Google Gemini Embedding{% if not has_google_key %} (Google APIキー未設定){% endif %}
                 </option>
+                <option value="infinity" {% if settings.get('embedding_provider') == 'infinity' %}selected{% endif %}>
+                    infinity / ruri-v3 (ローカル)
+                </option>
             </select>
+        </div>
+
+        <div class="form-group" id="infinity_url_group"
+             style="{% if settings.get('embedding_provider') != 'infinity' %}display:none{% endif %}">
+            <label for="infinity_base_url">infinity Base URL
+                <span class="label-hint">infinity サーバーのURL</span>
+            </label>
+            <input type="text" id="infinity_base_url" name="infinity_base_url"
+                   class="form-control"
+                   value="{{ settings.get('infinity_base_url', 'http://localhost:7997') }}"
+                   placeholder="http://localhost:7997"
+                   autocomplete="off">
         </div>
 
         <div class="form-group" id="embedding_model_group"
              style="{% if settings.get('embedding_provider', 'default') == 'default' %}display:none{% endif %}">
             <label for="embedding_model">Embedding Model ID
-                <span class="label-hint">空欄の場合は gemini-embedding-2-preview を使用</span>
+                <span class="label-hint" id="embedding_model_hint">モデルIDを入力するか一覧から選択</span>
             </label>
             <input type="text" id="embedding_model" name="embedding_model"
                    class="form-control"
                    value="{{ settings.get('embedding_model', '') }}"
-                   placeholder="gemini-embedding-2-preview"
+                   placeholder="cl-nagoya/ruri-v3-310m"
                    autocomplete="off"
                    list="embedding-models-list">
             <datalist id="embedding-models-list"></datalist>
-            <p class="form-hint">推奨: <code>gemini-embedding-2-preview</code>（高精度）/ <code>text-embedding-004</code>（安定版）</p>
         </div>
 
         {% if settings.get('embedding_provider', 'default') != 'default' %}
         <div class="alert alert-warning">
-            現在 Google Gemini Embedding を使用中です。モデルを変更すると全キャラクターの記憶が再インデックスされます。
+            外部Embeddingモデルを使用中です。モデルを変更すると全キャラクターの記憶が再インデックスされます。
         </div>
         {% endif %}
 
@@ -195,11 +215,15 @@
         </div>
     </form>
 
-    <div class="info-box">
-        <strong>OpenWebUI 接続先</strong><br>
-        OpenAI API Base URL: <code>http://localhost:8000/v1</code><br>
-        API Key: <code>chotgor-local</code>（任意の値で可）
+    <div class="form-card" style="margin-top:1rem">
+        <h3 style="margin-bottom:0.5rem;font-size:1rem">記憶の修復</h3>
+        <p class="form-hint">Embedding モデル変更後に記憶が想起されなくなった場合、現在の設定で全記憶を再インデックスします。SQLite に記憶データが残っていれば復元されます。</p>
+        <form method="post" action="/ui/settings/reindex"
+              onsubmit="return confirm('全キャラクターの記憶を再インデックスします。完了まで時間がかかる場合があります。続けますか？')">
+            <button type="submit" class="btn btn-secondary">記憶を再インデックス</button>
+        </form>
     </div>
+
 </div>
 
 <script>
@@ -220,10 +244,12 @@ async function loadEmbeddingModels(provider) {
     } catch (e) { /* 取得失敗時はdatalistを空のまま */ }
 }
 
-/** Embedding プロバイダー変更時にモデルフィールドの表示を切り替える。 */
+/** Embedding プロバイダー変更時にモデルフィールドと infinity URL フィールドの表示を切り替える。 */
 function updateEmbeddingUI(provider) {
     document.getElementById('embedding_model_group').style.display =
         provider === 'default' ? 'none' : '';
+    document.getElementById('infinity_url_group').style.display =
+        provider === 'infinity' ? '' : 'none';
     loadEmbeddingModels(provider);
 }
 

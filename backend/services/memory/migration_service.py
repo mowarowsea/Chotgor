@@ -17,10 +17,10 @@ from backend.repositories.sqlite.store import SQLiteStore
 logger = logging.getLogger(__name__)
 
 # キャラクターごとにバッチupsertする際の最大件数。
-# Gemini Embedding API の RPM 制限対策として、1リクエストにまとめることで
-# キャラクターあたりのAPIコール数を最小化する。
-# ただし1バッチが大きすぎるとAPI側のサイズ制限に当たる可能性があるため上限を設ける。
-_UPSERT_CHUNK_SIZE = 100
+# Gemini など RPM 制限がある外部 API には小さめの値を、
+# infinity（ローカル）など制限のないプロバイダーには大きめの値が効率的。
+# infinity を使う場合は 50 件程度まで増やしても問題ない。
+_UPSERT_CHUNK_SIZE = 50
 
 
 async def migrate_embeddings(
@@ -31,6 +31,7 @@ async def migrate_embeddings(
     new_provider: str,
     new_model: str,
     new_api_key: str,
+    new_base_url: str = "http://localhost:11434",
 ) -> tuple[ChromaStore, MemoryManager, ChatService]:
     """embeddingモデル変更時に全キャラクターの記憶を新モデルで再インデックスする。
 
@@ -63,14 +64,17 @@ async def migrate_embeddings(
         import time
         from backend.repositories.chroma.store import get_embedding_function
         # 同一 client を使い続けたまま embedding function だけ差し替える
-        old_chroma._embedding_fn = get_embedding_function(new_provider, new_model, new_api_key)
+        old_chroma._embedding_fn = get_embedding_function(new_provider, new_model, new_api_key, new_base_url)
         characters = sqlite.list_characters()
         for char in characters:
-            old_chroma.delete_all_memories(char.id)
+            # SQLiteから記憶を先に取得してから削除する。
+            # 先に削除してからupsertすると、upsert失敗時にコレクションが空のまま残る。
             memories = sqlite.get_all_active_memories(char.id)
             if not memories:
                 logger.info("migrate_embeddings: 記憶なし char=%s (%s)", char.name, char.id[:8])
+                old_chroma.delete_all_memories(char.id)
                 continue
+            old_chroma.delete_all_memories(char.id)
 
             # キャラクターの全記憶を chunk_size 件ずつバッチupsert
             collection = old_chroma._get_collection(char.id)
@@ -89,18 +93,19 @@ async def migrate_embeddings(
                     }
                     for m in chunk
                 ]
-                # RPM制限でのリトライ（最大3回、65秒待ち）
-                for attempt in range(3):
+                # RPM制限でのリトライ（最大5回、指数バックオフ: 65/130/195/260秒）
+                for attempt in range(5):
                     try:
                         collection.upsert(ids=ids, documents=contents, metadatas=metadatas)
                         break
                     except Exception as e:
-                        if attempt < 2:
+                        if attempt < 4:
+                            wait_sec = 65 * (attempt + 1)
                             logger.warning(
-                                "migrate_embeddings: upsert失敗（%d回目）65秒後にリトライ char=%s error=%s",
-                                attempt + 1, char.name, e,
+                                "migrate_embeddings: upsert失敗（%d回目）%d秒後にリトライ char=%s error=%s",
+                                attempt + 1, wait_sec, char.name, e,
                             )
-                            time.sleep(65)
+                            time.sleep(wait_sec)
                         else:
                             raise
                 logger.info(

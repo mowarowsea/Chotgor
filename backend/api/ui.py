@@ -375,6 +375,7 @@ async def save_settings(
     context_window_max_chronicled: int = Form(10),
     embedding_provider: str = Form("default"),
     embedding_model: str = Form(""),
+    infinity_base_url: str = Form("http://localhost:7997"),
     translation_preset_id: str = Form(""),
 ):
     """設定を保存し、embeddingモデルが変更された場合は記憶を再インデックスする。"""
@@ -412,6 +413,8 @@ async def save_settings(
     # embedding設定の保存
     store.set_setting("embedding_provider", embedding_provider)
     store.set_setting("embedding_model", embedding_model)
+    if infinity_base_url.strip():
+        store.set_setting("infinity_base_url", infinity_base_url.strip())
 
     # 翻訳モデル設定の保存
     store.set_setting("translation_preset_id", translation_preset_id)
@@ -422,8 +425,9 @@ async def save_settings(
         or embedding_model != old_embedding_model
     )
     if embedding_changed:
-        # APIキー保存後の最新値を使用する
+        # APIキー・Ollama URL 保存後の最新値を使用する
         current_google_key = store.get_setting("google_api_key", "")
+        current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
         try:
             state = request.app.state
             new_chroma, new_memory_manager, new_chat_service = await migrate_embeddings(
@@ -434,6 +438,7 @@ async def save_settings(
                 new_provider=embedding_provider,
                 new_model=embedding_model,
                 new_api_key=current_google_key,
+                new_base_url=current_infinity_url,
             )
             # マイグレーション後に app.state を新しいインスタンスで更新する
             state.chroma = new_chroma
@@ -443,6 +448,39 @@ async def save_settings(
             return RedirectResponse(url="/ui/settings?saved=1&migration_error=1", status_code=303)
 
     return RedirectResponse(url="/ui/settings?saved=1", status_code=303)
+
+
+@router.post("/settings/reindex")
+async def reindex_memories(request: Request):
+    """現在のembedding設定で全キャラクターの記憶を強制再インデックスする。
+
+    Geminiモデル変更直後にコレクションが空になった場合の緊急修復用。
+    SQLiteに記憶データが残っていれば復元できる。
+    設定は変更せず、現在のDBに保存されているembedding設定をそのまま使用する。
+    """
+    store = request.app.state.sqlite
+    current_provider = store.get_setting("embedding_provider", "default")
+    current_model = store.get_setting("embedding_model", "")
+    current_api_key = store.get_setting("google_api_key", "")
+    current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
+    try:
+        state = request.app.state
+        new_chroma, new_memory_manager, new_chat_service = await migrate_embeddings(
+            sqlite=state.sqlite,
+            old_chroma=state.chroma,
+            chroma_db_path=state.chroma_db_path,
+            drift_manager=state.drift_manager,
+            new_provider=current_provider,
+            new_model=current_model,
+            new_api_key=current_api_key,
+            new_base_url=current_infinity_url,
+        )
+        state.chroma = new_chroma
+        state.memory_manager = new_memory_manager
+        state.chat_service = new_chat_service
+    except Exception:
+        return RedirectResponse(url="/ui/settings?reindex_error=1", status_code=303)
+    return RedirectResponse(url="/ui/settings?reindex_done=1", status_code=303)
 
 
 # --- Provider helpers ---

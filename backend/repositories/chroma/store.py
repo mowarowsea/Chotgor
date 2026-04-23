@@ -8,6 +8,83 @@ from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.config import Settings
 
 
+class InfinityEmbeddingFunction(EmbeddingFunction):
+    """infinity サーバーの OpenAI 互換 /v1/embeddings を使う EmbeddingFunction実装。
+
+    ruri-v3 は文書には「検索文書: 」、クエリには「検索クエリ: 」プレフィックスが必要。
+    __call__（ChromaDB によるドキュメント追加時）は文書プレフィックスを付加する。
+    クエリ埋め込みは embed_query() を使い、ChromaStore 側で query_embeddings に渡す。
+    """
+
+    def __init__(
+        self,
+        model: str = "cl-nagoya/ruri-v3-310m",
+        base_url: str = "http://localhost:7997",
+        doc_prefix: str = "検索文書: ",
+        query_prefix: str = "検索クエリ: ",
+    ):
+        """初期化。
+
+        Args:
+            model: infinity サーバーで提供するモデルID。
+            base_url: infinity サーバーの BaseURL（例: http://localhost:7997）。
+            doc_prefix: ドキュメント埋め込み時に先頭に付加するプレフィックス。
+            query_prefix: クエリ埋め込み時に先頭に付加するプレフィックス。
+        """
+        self._model = model
+        self._base_url = base_url.rstrip("/")
+        self._doc_prefix = doc_prefix
+        self._query_prefix = query_prefix
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        """テキストリストを /v1/embeddings でベクトル化する（プレフィックス付加前提）。
+
+        Args:
+            texts: プレフィックス付加済みのテキストリスト。
+
+        Returns:
+            各テキストに対応するembeddingベクトルのリスト。
+        """
+        import json
+        import urllib.request
+
+        payload = json.dumps({"model": self._model, "input": texts}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self._base_url}/embeddings",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        # タイムアウトを設定（デフォルト60秒）。大きなバッチでも余裕を持たせる。
+        # infinity v2 は /v1/ プレフィックスなし（/embeddings が正しいエンドポイント）
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        return [item["embedding"] for item in result["data"]]
+
+    def __call__(self, input: Documents) -> Embeddings:
+        """ChromaDB からドキュメント追加時に呼ばれる（検索文書: プレフィックス付加）。
+
+        Args:
+            input: ChromaDBから渡されるテキストのリスト。
+
+        Returns:
+            各テキストに対応するembeddingベクトルのリスト。
+        """
+        prefixed = [f"{self._doc_prefix}{t}" for t in input]
+        return self._embed(prefixed)
+
+    def embed_query(self, texts: list[str]) -> list[list[float]]:
+        """クエリ埋め込み用（検索クエリ: プレフィックス付加）。ChromaStore から直接呼ぶ。
+
+        Args:
+            texts: クエリテキストのリスト。
+
+        Returns:
+            各クエリに対応するembeddingベクトルのリスト。
+        """
+        prefixed = [f"{self._query_prefix}{t}" for t in texts]
+        return self._embed(prefixed)
+
+
 class GeminiEmbeddingFunction(EmbeddingFunction):
     """Google Gemini Embeddingを使用するEmbeddingFunction実装。
 
@@ -46,13 +123,15 @@ def get_embedding_function(
     provider: str,
     model: str,
     api_key: str,
+    base_url: str = "http://localhost:7997",
 ) -> Optional[EmbeddingFunction]:
     """プロバイダーに応じたEmbeddingFunctionを返す。
 
     Args:
-        provider: "default"（ChromaDB組み込み）または "google"。
+        provider: "default"（ChromaDB組み込み）、"google"、または "infinity"。
         model: embeddingモデルID。空の場合はプロバイダーのデフォルトを使用。
-        api_key: プロバイダーのAPIキー。
+        api_key: プロバイダーのAPIキー（infinity の場合は未使用）。
+        base_url: infinity サーバーの BaseURL（infinity の場合のみ使用）。
 
     Returns:
         EmbeddingFunctionの実装。"default"の場合はNone（ChromaDB組み込みを使用）。
@@ -61,6 +140,11 @@ def get_embedding_function(
         return GeminiEmbeddingFunction(
             api_key=api_key,
             model=model or "gemini-embedding-2-preview",
+        )
+    if provider == "infinity":
+        return InfinityEmbeddingFunction(
+            model=model or "cl-nagoya/ruri-v3-310m",
+            base_url=base_url,
         )
     return None
 
@@ -74,21 +158,23 @@ class ChromaStore:
         embedding_provider: str = "default",
         embedding_model: str = "",
         api_key: str = "",
+        base_url: str = "http://localhost:7997",
     ):
         """ChromaDBクライアントを初期化する。
 
         Args:
             db_path: ChromaDBデータディレクトリのパス。
-            embedding_provider: "default"（ChromaDB組み込み）または "google"。
+            embedding_provider: "default"（ChromaDB組み込み）、"google"、または "infinity"。
             embedding_model: embeddingモデルID。空の場合はプロバイダーのデフォルトを使用。
-            api_key: プロバイダーのAPIキー。
+            api_key: プロバイダーのAPIキー（infinity の場合は未使用）。
+            base_url: infinity サーバーの BaseURL（infinity の場合のみ使用）。
         """
         os.makedirs(db_path, exist_ok=True)
         self.client = chromadb.PersistentClient(
             path=db_path,
             settings=Settings(anonymized_telemetry=False),
         )
-        self._embedding_fn = get_embedding_function(embedding_provider, embedding_model, api_key)
+        self._embedding_fn = get_embedding_function(embedding_provider, embedding_model, api_key, base_url)
 
     def _safe_get_or_create_collection(self, collection_name: str):
         """コレクションを安全に取得または作成する共通ヘルパー。
@@ -117,7 +203,23 @@ class ChromaStore:
             try:
                 n = collection.count()
                 if n > 0:
-                    collection.query(query_texts=["__health_check__"], n_results=1, include=[])
+                    # HNSWチェックに外部embedding APIを使わない。
+                    # query_texts はembedding fnを呼ぶため、Gemini等の外部APIが一時失敗すると
+                    # HNSW正常なのに「破損」と誤判定してコレクションを削除してしまう。
+                    # 代わりに格納済みembeddingの次元でゼロベクトルを作りquery_embeddingsで確認する。
+                    first = collection.get(limit=1, include=["embeddings"])
+                    raw_embs = first.get("embeddings")
+                    # numpy 配列は bool 評価不可（ambiguous error）のため is not None + len() で判定する
+                    # or [] も内部で bool 評価が走るため使用しない
+                    if raw_embs is not None and len(raw_embs) > 0:
+                        emb0 = raw_embs[0]
+                        if emb0 is not None and len(emb0) > 0:
+                            # ゼロベクトルは cosine 距離で除算不能になるため実ベクトルをそのまま使う
+                            collection.query(
+                                query_embeddings=[list(emb0)],
+                                n_results=1,
+                                include=[],
+                            )
             except Exception as e:
                 logger.warning(
                     "コレクション破損を検出（HNSW読み取り不可）name=%s error=%s → 強制再作成",
@@ -142,6 +244,26 @@ class ChromaStore:
             except Exception:
                 pass
             return self.client.get_or_create_collection(**kwargs)
+
+    def _get_query_kwargs(self, text: str, as_document: bool = False) -> dict:
+        """クエリ用パラメータを返す。
+
+        InfinityEmbeddingFunction の場合はプレフィックスを制御して query_embeddings を返す。
+        それ以外は ChromaDB に query_texts として渡す。
+
+        Args:
+            text: 検索テキスト。
+            as_document: True の場合は文書プレフィックスで埋め込む（文書間類似度検索用）。
+
+        Returns:
+            collection.query() に ** 展開できる dict。
+        """
+        if isinstance(self._embedding_fn, InfinityEmbeddingFunction):
+            if as_document:
+                # 文書対文書の比較（find_similar 系）は文書プレフィックスを使う
+                return {"query_embeddings": self._embedding_fn([text])}
+            return {"query_embeddings": self._embedding_fn.embed_query([text])}
+        return {"query_texts": [text]}
 
     def _get_collection(self, character_id: str):
         """キャラクターの記憶コレクションを取得または作成する。"""
@@ -201,7 +323,7 @@ class ChromaStore:
 
         n = min(top_k, count)
         query_kwargs: dict = {
-            "query_texts": [query],
+            **self._get_query_kwargs(query),
             "n_results": n,
             "include": ["documents", "metadatas", "distances"],
         }
@@ -278,7 +400,7 @@ class ChromaStore:
 
         try:
             results = collection.query(
-                query_texts=[content],
+                **self._get_query_kwargs(content, as_document=True),
                 n_results=1,
                 include=["distances"],
                 where={"category": category},
@@ -363,7 +485,7 @@ class ChromaStore:
         n = min(top_k, count)
         try:
             results = collection.query(
-                query_texts=[query],
+                **self._get_query_kwargs(query),
                 n_results=n,
                 include=["documents", "metadatas", "distances"],
             )
@@ -456,7 +578,7 @@ class ChromaStore:
 
         try:
             results = collection.query(
-                query_texts=[definition_text],
+                **self._get_query_kwargs(definition_text, as_document=True),
                 n_results=min(5, len(estranged_ids)),
                 include=["metadatas", "distances"],
                 where={"status": "estranged"},
@@ -501,11 +623,19 @@ class ChromaStore:
             character_id: コレクションを削除するキャラクターID。
         """
         import logging
+        logger = logging.getLogger(__name__)
         collection_name = f"char_{character_id.replace('-', '_')}"
         try:
             self.client.delete_collection(collection_name)
         except Exception as e:
-            logging.getLogger(__name__).warning(
-                "delete_all_memories: コレクション削除失敗 char=%s name=%s error=%s",
-                character_id, collection_name, e,
-            )
+            err_str = str(e)
+            # 存在しないコレクションの削除は記憶がまだないキャラで起きる想定内の状態
+            if "does not exist" in err_str:
+                logger.debug(
+                    "delete_all_memories: コレクション未作成のためスキップ char=%s", character_id
+                )
+            else:
+                logger.warning(
+                    "delete_all_memories: コレクション削除失敗 char=%s name=%s error=%s",
+                    character_id, collection_name, e,
+                )

@@ -1,17 +1,12 @@
 services:
-  openwebui:
-    image: ghcr.io/open-webui/open-webui:main
+  infinity:
+    image: michaelf34/infinity:latest
     ports:
-      - "3000:8080"
-    environment:
-      - OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1
-      - OPENAI_API_KEY=chotgor-local
-      - WEBUI_AUTH=false
+      - "7997:7997"
     volumes:
-      - openwebui-data:/app/backend/data
+      - infinity-data:/app/.cache
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    command: v2 --model-id cl-nagoya/ruri-v3-310m --port 7997
 
   ollama:
     image: ollama/ollama:latest
@@ -22,4 +17,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  openwebui-data:
+  infinity-data:
