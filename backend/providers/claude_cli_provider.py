@@ -73,8 +73,11 @@ _CLAUDE_ENV_EXCLUDES = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
 
 
 def _clean_env() -> dict:
-    """グローバル環境変数からClaudeネスト検出・誤認証キーを除いた dict を返す。"""
-    return {k: v for k, v in os.environ.items() if k not in _CLAUDE_ENV_EXCLUDES}
+    """グローバル環境変数からClaudeネスト検出・誤認証キーを除き、コスト削減フラグを注入した dict を返す。"""
+    env = {k: v for k, v in os.environ.items() if k not in _CLAUDE_ENV_EXCLUDES}
+    # プロンプトキャッシュを無効化してコストを削減する（キャッシュ料金を避けるため）
+    env["DISABLE_PROMPT_CACHING"] = "1"
+    return env
 
 
 def _parse_stream_json(raw: str) -> str:

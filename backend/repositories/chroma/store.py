@@ -11,7 +11,7 @@ from chromadb.config import Settings
 class InfinityEmbeddingFunction(EmbeddingFunction):
     """infinity サーバーの OpenAI 互換 /v1/embeddings を使う EmbeddingFunction実装。
 
-    ruri-v3 は文書には「検索文書: 」、クエリには「検索クエリ: 」プレフィックスが必要。
+    ruri-v3-310m は文書には「文章: 」、クエリには「クエリ: 」プレフィックスが必要。
     __call__（ChromaDB によるドキュメント追加時）は文書プレフィックスを付加する。
     クエリ埋め込みは embed_query() を使い、ChromaStore 側で query_embeddings に渡す。
     """
@@ -20,8 +20,8 @@ class InfinityEmbeddingFunction(EmbeddingFunction):
         self,
         model: str = "cl-nagoya/ruri-v3-310m",
         base_url: str = "http://localhost:7997",
-        doc_prefix: str = "検索文書: ",
-        query_prefix: str = "検索クエリ: ",
+        doc_prefix: str = "文章: ",
+        query_prefix: str = "クエリ: ",
     ):
         """初期化。
 
@@ -61,7 +61,7 @@ class InfinityEmbeddingFunction(EmbeddingFunction):
         return [item["embedding"] for item in result["data"]]
 
     def __call__(self, input: Documents) -> Embeddings:
-        """ChromaDB からドキュメント追加時に呼ばれる（検索文書: プレフィックス付加）。
+        """ChromaDB からドキュメント追加時に呼ばれる（文章: プレフィックス付加）。
 
         Args:
             input: ChromaDBから渡されるテキストのリスト。
@@ -73,7 +73,7 @@ class InfinityEmbeddingFunction(EmbeddingFunction):
         return self._embed(prefixed)
 
     def embed_query(self, texts: list[str]) -> list[list[float]]:
-        """クエリ埋め込み用（検索クエリ: プレフィックス付加）。ChromaStore から直接呼ぶ。
+        """クエリ埋め込み用（クエリ: プレフィックス付加）。ChromaStore から直接呼ぶ。
 
         Args:
             texts: クエリテキストのリスト。
