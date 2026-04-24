@@ -1,10 +1,19 @@
 """チャット履歴インデクサー — メッセージをChromaDBのchat_コレクションへupsertする。
 
 asyncio.to_thread 経由で呼び出すことを想定した同期関数を提供する。
+ChromaDB書き込みはSQLiteコミット後のベストエフォート。失敗時は30秒ごとに最大5回リトライする。
 """
 
 import json
+import logging
+import time
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+# チャット履歴インデックス書き込みのリトライ設定
+_CHAT_INDEX_MAX_RETRIES = 5
+_CHAT_INDEX_RETRY_INTERVAL_SEC = 30.0
 
 
 def get_participant_char_ids(session, sqlite) -> list[str]:
@@ -95,12 +104,24 @@ def index_message_sync(
     }
 
     for char_id in character_ids:
-        try:
-            chroma.add_chat_turn(
-                message_id=message.id,
-                content=doc,
-                character_id=char_id,
-                metadata=metadata,
-            )
-        except Exception:
-            pass
+        for attempt in range(_CHAT_INDEX_MAX_RETRIES):
+            try:
+                chroma.add_chat_turn(
+                    message_id=message.id,
+                    content=doc,
+                    character_id=char_id,
+                    metadata=metadata,
+                )
+                break
+            except Exception as e:
+                if attempt < _CHAT_INDEX_MAX_RETRIES - 1:
+                    logger.warning(
+                        "チャット履歴インデックス失敗（%d回目） msg=%s char=%s error=%s → %gs後にリトライ",
+                        attempt + 1, message.id, char_id, e, _CHAT_INDEX_RETRY_INTERVAL_SEC,
+                    )
+                    time.sleep(_CHAT_INDEX_RETRY_INTERVAL_SEC)
+                else:
+                    logger.error(
+                        "チャット履歴インデックス最終失敗（%d回試行） msg=%s char=%s error=%s",
+                        _CHAT_INDEX_MAX_RETRIES, message.id, char_id, e,
+                    )

@@ -1,6 +1,7 @@
 """Character CRUD REST API."""
 
 import base64
+import logging
 import uuid
 from typing import Optional
 
@@ -8,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from backend.api.schemas import CharacterCreate, CharacterUpdate
 from backend.api.utils import char_to_dict
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/characters", tags=["characters"])
 
@@ -59,8 +62,8 @@ async def create_character(request: Request, body: CharacterCreate):
     if body.system_prompt_block1 and hasattr(state, "chroma") and state.chroma:
         try:
             state.chroma.upsert_character_definition(char_id, body.system_prompt_block1)
-        except Exception:
-            pass  # embedding 失敗は致命的エラーではない
+        except Exception as e:
+            logger.warning("ChromaDB キャラクター定義登録失敗 char=%s error=%s", char_id, e)
 
     return char_to_dict(char)
 
@@ -89,8 +92,8 @@ async def update_character(request: Request, character_id: str, body: CharacterU
     if "system_prompt_block1" in updates and hasattr(state, "chroma") and state.chroma:
         try:
             state.chroma.upsert_character_definition(character_id, updates["system_prompt_block1"])
-        except Exception:
-            pass  # embedding 失敗は致命的エラーではない
+        except Exception as e:
+            logger.warning("ChromaDB キャラクター定義更新失敗 char=%s error=%s", character_id, e)
 
     return char_to_dict(char)
 

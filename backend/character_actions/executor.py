@@ -221,6 +221,8 @@ class ToolExecutor:
     def _power_recall(self, query: str, top_k: int) -> str:
         """power_recall ツールの実装。記憶コレクションとチャット履歴コレクションを横断検索して結果をテキストで返す。
 
+        ChromaDB同期失敗中の場合、結果の先頭に再インデックスを促す警告を表示する。
+
         Args:
             query: 検索クエリテキスト。
             top_k: 各コレクションから取得する最大件数。
@@ -236,6 +238,9 @@ class ToolExecutor:
             self.logger.exception("エラー char=%s query=%.50s", self.character_id, query)
             return f"[power_recall error: {e}]"
 
+        # ChromaDB同期失敗中の警告を取り出す（存在しない場合はNone）
+        warning = results.pop("_warning", None)
+
         memories = results.get("memories", [])
         chat_turns = results.get("chat_turns", [])
 
@@ -243,10 +248,18 @@ class ToolExecutor:
             "完了 char=%s query=%.50s memories=%d chat_turns=%d",
             self.character_id, query, len(memories), len(chat_turns),
         )
-        if not memories and not chat_turns:
-            return f"「{query}」に関する記憶・会話は見つからなかった。"
 
-        lines = [f"【PowerRecall 検索結果】 クエリ: 「{query}」\n"]
+        lines: list[str] = []
+
+        # ChromaDB同期失敗中は先頭に警告を表示する
+        if warning:
+            lines.append(f"【⚠️ システム警告】{warning}\n")
+
+        if not memories and not chat_turns:
+            lines.append(f"「{query}」に関する記憶・会話は見つからなかった。")
+            return "\n".join(lines)
+
+        lines.append(f"【PowerRecall 検索結果】 クエリ: 「{query}」\n")
 
         if memories:
             lines.append(f"▼ 記憶 ({len(memories)}件)")
