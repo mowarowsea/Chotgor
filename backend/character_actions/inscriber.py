@@ -188,8 +188,8 @@ class Inscriber:
             impact: 重要度係数 0.1〜2.0。1.0が標準。
             source_preset_id: 記憶を作成したプリセットID（空文字列の場合はNULL保存）。
         """
-        default_base = {k: 0.5 for k in ["contextual", "semantic", "identity", "user"]}
-        base = _BASE_IMPORTANCE.get(category, default_base)
+        # 未知カテゴリは contextual と同じ速度で減衰するよう contextual マトリクスをデフォルトにする
+        base = _BASE_IMPORTANCE.get(category, _BASE_IMPORTANCE["contextual"])
         scores = {f"{k}_importance": (v * impact) for k, v in base.items()}
         preset_id_or_none = source_preset_id if source_preset_id else None
         self.memory_manager.write_memory(
