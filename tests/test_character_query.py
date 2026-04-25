@@ -20,7 +20,7 @@ import uuid
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.services.character_query import ask_character
+from backend.services.character_query import ask_character, ask_character_with_tools
 
 
 # ─── フィクスチャ ──────────────────────────────────────────────────────────────
@@ -324,3 +324,177 @@ class TestAskCharacterRecall:
                 recall_query=None,
             )
         assert result == "応答"
+
+
+# ─── ask_character_with_tools ─────────────────────────────────────────────────
+
+
+def _mock_tools_provider(supports: bool = True) -> MagicMock:
+    """tool-use 対応・非対応のモックプロバイダーを生成する。
+
+    Args:
+        supports: True の場合 SUPPORTS_TOOLS=True で generate_with_tools を持つ。
+                  False の場合 SUPPORTS_TOOLS=False。
+
+    Returns:
+        MagicMock プロバイダー。
+    """
+    provider = MagicMock()
+    provider.SUPPORTS_TOOLS = supports
+    if supports:
+        provider.generate_with_tools = AsyncMock(return_value=("", ""))
+    return provider
+
+
+class TestAskCharacterWithTools:
+    """ask_character_with_tools() の動作を検証する。
+
+    テスト方針:
+        - SQLite は conftest.py の sqlite_store フィクスチャで実際の一時DBを使用する
+        - LLMプロバイダーは MagicMock で差し替える
+        - ToolExecutor / DriftManager は patch でモックに差し替え、副作用を排除する
+        - エラー系（未発見・生成失敗・非対応・LLM失敗）は全て False を返すことを確認する
+        - 正常系は True を返し、generate_with_tools が正しく呼ばれることを確認する
+    """
+
+    @pytest.mark.asyncio
+    async def test_character_not_found_returns_false(self, sqlite_store, preset_id):
+        """存在しないキャラクターIDを渡すと False を返すこと。"""
+        result = await ask_character_with_tools(
+            character_id="nonexistent-char",
+            preset_id=preset_id,
+            messages=[{"role": "user", "content": "テスト"}],
+            sqlite=sqlite_store,
+            settings={},
+            memory_manager=MagicMock(),
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_preset_not_found_returns_false(self, sqlite_store, char_id):
+        """存在しないプリセットIDを渡すと False を返すこと。"""
+        result = await ask_character_with_tools(
+            character_id=char_id,
+            preset_id="nonexistent-preset",
+            messages=[{"role": "user", "content": "テスト"}],
+            sqlite=sqlite_store,
+            settings={},
+            memory_manager=MagicMock(),
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_provider_creation_failure_returns_false(self, sqlite_store, char_id, preset_id):
+        """create_provider() が例外を送出したとき False を返すこと（例外が伝播しないこと）。"""
+        with patch(
+            "backend.services.character_query.create_provider",
+            side_effect=RuntimeError("provider init failed"),
+        ):
+            result = await ask_character_with_tools(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+                memory_manager=MagicMock(),
+            )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_unsupported_provider_returns_false(self, sqlite_store, char_id, preset_id):
+        """SUPPORTS_TOOLS=False のプロバイダーを渡すと False を返すこと。"""
+        with patch(
+            "backend.services.character_query.create_provider",
+            return_value=_mock_tools_provider(supports=False),
+        ):
+            result = await ask_character_with_tools(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+                memory_manager=MagicMock(),
+            )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_generate_with_tools_exception_returns_false(self, sqlite_store, char_id, preset_id):
+        """generate_with_tools() が例外を送出したとき False を返すこと（例外が伝播しないこと）。"""
+        failing_provider = MagicMock()
+        failing_provider.SUPPORTS_TOOLS = True
+        failing_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("LLM unreachable"))
+        with patch("backend.services.character_query.create_provider", return_value=failing_provider), \
+             patch("backend.character_actions.executor.ToolExecutor"), \
+             patch("backend.services.memory.drift_manager.DriftManager"):
+            result = await ask_character_with_tools(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+                memory_manager=MagicMock(),
+            )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_success_returns_true(self, sqlite_store, char_id, preset_id):
+        """generate_with_tools() が正常終了したとき True を返すこと。"""
+        with patch("backend.services.character_query.create_provider", return_value=_mock_tools_provider()), \
+             patch("backend.character_actions.executor.ToolExecutor"), \
+             patch("backend.services.memory.drift_manager.DriftManager"):
+            result = await ask_character_with_tools(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "蒸留テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+                memory_manager=MagicMock(),
+            )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_success_calls_generate_with_tools(self, sqlite_store, char_id, preset_id):
+        """正常系で generate_with_tools() が渡した messages を引数に呼ばれること。"""
+        provider = _mock_tools_provider()
+        input_messages = [{"role": "user", "content": "蒸留クエリ"}]
+        with patch("backend.services.character_query.create_provider", return_value=provider), \
+             patch("backend.character_actions.executor.ToolExecutor"), \
+             patch("backend.services.memory.drift_manager.DriftManager"):
+            await ask_character_with_tools(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=input_messages,
+                sqlite=sqlite_store,
+                settings={},
+                memory_manager=MagicMock(),
+            )
+        provider.generate_with_tools.assert_called_once()
+        _, call_messages, _ = provider.generate_with_tools.call_args[0]
+        assert call_messages == input_messages
+
+    @pytest.mark.asyncio
+    async def test_llm_api_error_returns_false(self, sqlite_store, char_id, preset_id):
+        """generate_with_tools() が LLMApiError を送出したとき False を返すこと。
+
+        APIキー未設定・認証失敗時は LLMApiError が raise されるため、
+        バッチ処理がバイナリ判定フォールバックへ正しく分岐できることを確認する。
+        """
+        from backend.providers.base import LLMApiError
+
+        api_error_provider = MagicMock()
+        api_error_provider.SUPPORTS_TOOLS = True
+        api_error_provider.generate_with_tools = AsyncMock(
+            side_effect=LLMApiError("[Error: anthropic_api_key が設定されていません。Settings ページで設定してください]")
+        )
+        with patch("backend.services.character_query.create_provider", return_value=api_error_provider), \
+             patch("backend.character_actions.executor.ToolExecutor"), \
+             patch("backend.services.memory.drift_manager.DriftManager"):
+            result = await ask_character_with_tools(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+                memory_manager=MagicMock(),
+            )
+        assert result is False

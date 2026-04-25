@@ -34,6 +34,7 @@ from backend.services.memory.drift_manager import DriftManager
 from backend.character_actions.carver import Carver
 from backend.character_actions.inscriber import Inscriber
 from backend.services.memory.manager import MemoryManager
+from backend.providers.base import LLMApiError
 from backend.providers.registry import create_provider
 from backend.services.chat.request_builder import build_system_prompt
 from backend.lib.tag_parser import StreamingTagStripper
@@ -398,6 +399,10 @@ class ChatService:
             try:
                 # thinking は非ストリーミングパスでは捨てる（execute はテキスト返却のみ）
                 clean_text, _ = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
+            except LLMApiError as e:
+                # str(e) は既に "[Error: ...]" 形式なのでそのまま返す
+                _log.warning("LLM APIエラー（ツール方式）char=%s@%s: %s", request.character_name, request.current_preset_name or request.provider, e)
+                return str(e)
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
                 return f"[Error: {type(e).__name__}: {e}]"
@@ -456,6 +461,11 @@ class ChatService:
             )
             try:
                 clean_text, thinking_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
+            except LLMApiError as e:
+                # str(e) は既に "[Error: ...]" 形式なのでそのまま yield する
+                _log.warning("LLM APIエラー（ツール方式）char=%s@%s: %s", request.character_name, request.current_preset_name or request.provider, e)
+                yield ("text", str(e))
+                return
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
                 yield ("text", f"[Error: {type(e).__name__}: {e}]")

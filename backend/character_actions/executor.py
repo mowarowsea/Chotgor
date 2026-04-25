@@ -107,6 +107,9 @@ class ToolTurnResult:
     tool_calls: list[ToolCall]
     thinking: str = field(default="")
     _raw: Any = field(default=None, repr=False)
+    # True の場合、APIエラー・パッケージ未インストール等の致命的失敗を示す。
+    # generate_with_tools() はこのフラグを見て LLMApiError を送出する。
+    error: bool = field(default=False)
 
 
 class ToolExecutor:

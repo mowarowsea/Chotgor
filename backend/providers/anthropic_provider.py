@@ -275,7 +275,7 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             return await asyncio.to_thread(run)
         except Exception as e:
-            return ToolTurnResult(text=f"[Anthropic API error: {e}]", tool_calls=[])
+            return ToolTurnResult(text=f"[Anthropic API error: {e}]", tool_calls=[], error=True)
 
     def _extend_messages_with_results(
         self,

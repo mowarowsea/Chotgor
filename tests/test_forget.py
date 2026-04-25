@@ -17,11 +17,12 @@
 
 import pytest
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from backend.repositories.sqlite.store import Memory
 from backend.services.memory.manager import MemoryManager
-from backend.batch.forget_job import run_forget_process
+from backend.batch.forget_job import build_distill_prompt, run_forget_process
 
 
 @pytest.fixture
@@ -194,7 +195,8 @@ async def test_forget_default_keeps_all_when_no_delete(sqlite_store):
     preset_id = _make_preset(sqlite_store)
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2", "m3"])
 
-    with patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="何も手放しません。")):
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="何も手放しません。")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
@@ -223,7 +225,8 @@ async def test_forget_deletes_only_explicitly_listed(sqlite_store):
     preset_id = _make_preset(sqlite_store)
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2", "m3"])
 
-    with patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: m2]")):
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: m2]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
@@ -252,7 +255,8 @@ async def test_forget_delete_none_keeps_all(sqlite_store):
     preset_id = _make_preset(sqlite_store)
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
 
-    with patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: NONE]")):
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: NONE]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
@@ -275,7 +279,8 @@ async def test_forget_parse_failure_keeps_all(sqlite_store):
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
 
     garbled = "うーん、どれも大切かな... KEEP m1 DELETE maybe m2??"
-    with patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value=garbled)):
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value=garbled)):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
@@ -297,7 +302,8 @@ async def test_forget_ask_character_none_returns_error(sqlite_store):
     preset_id = _make_preset(sqlite_store)
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1"])
 
-    with patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value=None)):
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value=None)):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
@@ -327,7 +333,8 @@ async def test_forget_kept_memories_have_updated_last_accessed_at(sqlite_store):
 
     old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
 
-    with patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: NONE]")):
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: NONE]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
@@ -358,7 +365,8 @@ async def test_forget_deleted_memories_do_not_update_last_accessed_at(sqlite_sto
 
     old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
 
-    with patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: m1]")):
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: m1]")):
         result = await run_forget_process(
             character_id=char_id,
             character_name="TestChar",
@@ -374,3 +382,122 @@ async def test_forget_deleted_memories_do_not_update_last_accessed_at(sqlite_sto
     # 削除されているが last_accessed_at は更新されていないこと
     assert m1.deleted_at is not None
     assert m1.last_accessed_at == old_last_accessed
+
+
+# ─── build_distill_prompt ────────────────────────────────────────────────────
+
+
+class TestBuildDistillPrompt:
+    """build_distill_prompt() の出力内容を検証する。"""
+
+    def test_includes_memory_content(self):
+        """記憶の content が蒸留プロンプトに含まれること。"""
+        m = SimpleNamespace(memory_category="event", content="花火を見た記憶")
+        prompt = build_distill_prompt([m])
+        assert "花火を見た記憶" in prompt
+
+    def test_includes_category(self):
+        """記憶のカテゴリが蒸留プロンプトに含まれること。"""
+        m = SimpleNamespace(memory_category="identity", content="自分の価値観")
+        prompt = build_distill_prompt([m])
+        assert "identity" in prompt
+
+    def test_multiple_memories_all_included(self):
+        """複数の記憶が全てプロンプトに含まれること。"""
+        memories = [
+            SimpleNamespace(memory_category="event", content="記憶その一"),
+            SimpleNamespace(memory_category="fact", content="記憶その二"),
+        ]
+        prompt = build_distill_prompt(memories)
+        assert "記憶その一" in prompt
+        assert "記憶その二" in prompt
+
+    def test_empty_candidates_returns_string(self):
+        """candidates が空リストの場合も文字列を返すこと（クラッシュしないこと）。"""
+        prompt = build_distill_prompt([])
+        assert isinstance(prompt, str)
+
+
+# ─── run_forget_process — 蒸留パス（tool-use 対応） ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_forget_distill_path_deletes_all_candidates(sqlite_store):
+    """ask_character_with_tools が True を返した場合、全候補記憶が削除されること（蒸留方式）。
+
+    蒸留成功（True）の場合、キャラクター自身が新しい形で記憶を書き直したとみなし、
+    元の候補記憶は全件削除される。
+    """
+    char_id = "char-distill-all"
+    preset_id = _make_preset(sqlite_store)
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2", "m3"])
+
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=True)):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            settings={},
+            threshold=1.0,
+            ghost_model=preset_id,
+        )
+
+    assert result["status"] == "success"
+    assert result["candidates_count"] == 3
+    assert result["deleted_count"] == 3
+    # 削除後は active な候補記憶が残っていないこと
+    active = sqlite_store.get_all_active_memories(char_id)
+    assert len(active) == 0
+
+
+@pytest.mark.asyncio
+async def test_forget_distill_path_true_does_not_call_ask_character(sqlite_store):
+    """蒸留成功（True）の場合、バイナリ判定用の ask_character は呼ばれないこと。"""
+    char_id = "char-distill-no-binary"
+    preset_id = _make_preset(sqlite_store)
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1"])
+    mock_ask_char = AsyncMock(return_value="[DELETE: NONE]")
+
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=True)), \
+         patch("backend.batch.forget_job.ask_character", new=mock_ask_char):
+        await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            settings={},
+            threshold=1.0,
+            ghost_model=preset_id,
+        )
+
+    mock_ask_char.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_forget_distill_path_false_falls_back_to_binary(sqlite_store):
+    """ask_character_with_tools が False を返した場合、ask_character（バイナリ判定）が呼ばれること。
+
+    tool-use 非対応プロバイダーや API 呼び出し失敗時は False が返り、
+    従来のバイナリ判定方式へフォールバックする。
+    """
+    char_id = "char-distill-fallback"
+    preset_id = _make_preset(sqlite_store)
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
+    mock_ask_char = AsyncMock(return_value="[DELETE: NONE]")
+
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
+         patch("backend.batch.forget_job.ask_character", new=mock_ask_char):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            settings={},
+            threshold=1.0,
+            ghost_model=preset_id,
+        )
+
+    mock_ask_char.assert_called_once()
+    assert result["status"] == "success"
+    assert result["deleted_count"] == 0

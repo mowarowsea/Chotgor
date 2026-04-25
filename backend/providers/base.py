@@ -12,6 +12,16 @@ if TYPE_CHECKING:
     from backend.character_actions.executor import ToolExecutor, ToolTurnResult
 
 
+class LLMApiError(Exception):
+    """プロバイダーのAPI呼び出しが失敗したことを示す例外。
+
+    str(e) はそのままユーザ向けに表示できる形式（"[Error: ...]"）で格納される。
+    バッチ処理（ask_character_with_tools など）ではこの例外をキャッチして
+    フォールバック処理へ分岐する。
+    チャットサービスでは except LLMApiError として個別にハンドリングすること。
+    """
+
+
 def _api_guard(package: str):
     """パッケージのインポートとAPIキーの確認を行うデコレータ。
 
@@ -77,11 +87,11 @@ def _api_guard_tool_turn(package: str):
                     f"[Error: {package} パッケージがインストールされていません。"
                     f"pip install {package} を実行してください]"
                 )
-                return ToolTurnResult(text=msg, tool_calls=[])
+                return ToolTurnResult(text=msg, tool_calls=[], error=True)
             if hasattr(self, "api_key") and not self.api_key:
                 key = getattr(self, "_API_SETTINGS_KEY", "api_key")
                 msg = f"[Error: {key} が設定されていません。Settings ページで設定してください]"
-                return ToolTurnResult(text=msg, tool_calls=[])
+                return ToolTurnResult(text=msg, tool_calls=[], error=True)
             return await fn(self, *args, **kwargs)
         return wrapper
     return decorator
@@ -219,6 +229,10 @@ class BaseLLMProvider:
 
         while True:
             result = await self._tool_turn(system_prompt, api_messages)
+            if result.error:
+                # API認証失敗・パッケージ未インストール等の致命的エラー。
+                # チャットサービスは except LLMApiError でハンドリングする。
+                raise LLMApiError(result.text)
             full_text += result.text
             full_thinking += result.thinking
 

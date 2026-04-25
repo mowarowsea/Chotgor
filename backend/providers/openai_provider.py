@@ -216,7 +216,7 @@ class OpenAIProvider(BaseLLMProvider):
         except Exception as e:
             err = f"[OpenAI API error: {e}]"
             self._log_error(err)
-            return ToolTurnResult(text=err, tool_calls=[])
+            return ToolTurnResult(text=err, tool_calls=[], error=True)
 
     def _extend_messages_with_results(
         self,

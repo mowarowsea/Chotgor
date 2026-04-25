@@ -237,7 +237,14 @@ class ClaudeCliProvider(BaseLLMProvider):
         Returns:
             (text, thinking): thinking は思考ブロックが存在する場合その内容、なければ空文字列。
         """
+        from backend.providers.base import LLMApiError
+
         raw = await self._run_generate_raw(system_prompt, messages)
+        # _run_generate_raw はエラーを例外ではなく "[Error: ...]" 文字列で返す設計。
+        # バッチ処理（ask_character_with_tools 等）が正しくフォールバックできるよう
+        # ここで LLMApiError に変換して送出する。
+        if raw.startswith("[Error:"):
+            raise LLMApiError(raw)
         text = _parse_stream_json(raw)
         thinking = _extract_thinking_from_stream_json(raw)
         return text, thinking

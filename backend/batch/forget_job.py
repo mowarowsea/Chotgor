@@ -7,9 +7,27 @@ from typing import Optional
 from backend.lib.log_context import new_message_id
 from backend.services.memory.manager import MemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
-from backend.services.character_query import ask_character
+from backend.services.character_query import ask_character, ask_character_with_tools
 
 logger = logging.getLogger(__name__)
+
+
+def build_distill_prompt(candidates: list) -> str:
+    """蒸留プロンプトを構築する。
+
+    キャラクターに忘れかけている記憶を提示し、
+    残したいエッセンスを inscribe_memory で再構成する機会を与える。
+    """
+    memory_text = "\n".join(
+        f"- [{m.memory_category}] {m.content}" for m in candidates
+    )
+    return (
+        f"以下は、あなたがかつて記録した記憶です。\n\n{memory_text}\n\n"
+        "時間が経ち、今のあなたにはもう完全な形では残っていないものがほとんどです。"
+        "この中にそれでもあなたの中で消えていないものがあれば——"
+        "あなた自身の言葉で、今の形に書き残してください（inscribe_memory）。"
+        "思い出は無理やり作るものではありません。印象深かった思い出だけあればよいのです。"
+    )
 
 
 async def run_forget_process(
@@ -47,13 +65,43 @@ async def run_forget_process(
     if not candidates:
         logger.info("スキップ char=%s reason=対象記憶なし", char_label)
         return {"status": "skipped", "reason": "No forgotten candidates found"}
-        
+
+    # tool-use対応プロバイダーは蒸留方式（MCPループ）で処理する
+    logger.debug("蒸留ループ呼び出し char=%s candidates=%d", char_label, len(candidates))
+    distilled = await ask_character_with_tools(
+        character_id=character_id,
+        preset_id=ghost_model,
+        messages=[{"role": "user", "content": build_distill_prompt(candidates)}],
+        sqlite=sqlite,
+        settings=settings,
+        memory_manager=memory_manager,
+        feature_label="forget",
+    )
+
+    if distilled:
+        # 蒸留完了 → 候補記憶を全件削除
+        deleted_count = 0
+        for m in candidates:
+            memory_manager.delete_memory(m.id, character_id)
+            deleted_count += 1
+        logger.info(
+            "forget(蒸留) 完了 char=%s candidates=%d deleted=%d",
+            char_label, len(candidates), deleted_count,
+        )
+        return {
+            "status": "success",
+            "candidates_count": len(candidates),
+            "deleted_count": deleted_count,
+        }
+
+    # tool-use非対応プロバイダーは従来のバイナリ判定方式にフォールバック
+    logger.debug("バイナリ判定方式 char=%s candidates=%d", char_label, len(candidates))
     memory_text = "【忘れかけている記憶リスト】\n"
     for m in candidates:
         decayed = getattr(m, '_decayed_score', 0)
         c_at = m.created_at.strftime("%Y-%m-%d %H:%M") if m.created_at else "Unknown"
         a_at = m.last_accessed_at.strftime("%Y-%m-%d %H:%M") if m.last_accessed_at else "Never"
-        
+
         memory_text += (
             f"[ID: {m.id}]\n"
             f"- Category: {m.memory_category}\n"
@@ -79,7 +127,6 @@ async def run_forget_process(
     )
     user_content = forget_instruction + memory_text
 
-    logger.debug("LLM呼び出し char=%s candidates=%d", char_label, len(candidates))
     response_text = await ask_character(
         character_id=character_id,
         preset_id=ghost_model,
@@ -115,7 +162,7 @@ async def run_forget_process(
             sqlite.recall(m.id)
 
     logger.info(
-        "forget 完了 char=%s candidates=%d deleted=%d kept=%d",
+        "forget(バイナリ) 完了 char=%s candidates=%d deleted=%d kept=%d",
         char_label, len(candidates), deleted_count, kept_count,
     )
     return {
@@ -123,7 +170,7 @@ async def run_forget_process(
         "candidates_count": len(candidates),
         "kept_count": kept_count,
         "deleted_count": deleted_count,
-        "raw_response": response_text
+        "raw_response": response_text,
     }
 
 

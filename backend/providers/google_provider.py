@@ -346,12 +346,14 @@ class GoogleProvider(BaseLLMProvider):
             return ToolTurnResult(
                 text="[Error: google-genai パッケージがインストールされていません]",
                 tool_calls=[],
+                error=True,
             )
 
         if not self.api_key:
             return ToolTurnResult(
                 text="[Error: google_api_key が設定されていません。Settings ページで設定してください]",
                 tool_calls=[],
+                error=True,
             )
 
         client = genai.Client(api_key=self.api_key)
@@ -395,7 +397,7 @@ class GoogleProvider(BaseLLMProvider):
         except Exception as e:
             err = f"[Google API error: {e}]"
             self._log_error(err)
-            return ToolTurnResult(text=err, tool_calls=[])
+            return ToolTurnResult(text=err, tool_calls=[], error=True)
 
         # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
         self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
