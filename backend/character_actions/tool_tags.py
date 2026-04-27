@@ -23,14 +23,20 @@ def tool_call_to_tag_body(tool_name: str, args: dict) -> tuple[str, str]:
     logs_ui._parse_tag_body に渡すことで統一的に表示できる。
     未登録のツール名は大文字化してタグ名とし、引数を key=value 形式で結合する。
 
+    Claude CLI が出力する stream-json ではツール名に MCP ネームスペースプレフィックスが付く
+    （例: "mcp__chotgor__inscribe_memory"）ため、`__` で区切った末尾部分を使う。
+
     Args:
         tool_name: ツール名（APIの function_call.name フィールド）。
+                   MCP プレフィックス付き ("mcp__<server>__<name>") にも対応する。
         args: ツール引数辞書（APIレスポンスの args / input フィールド）。
 
     Returns:
         (tag_name, body) のタプル。
     """
-    tag_name = TOOL_TO_TAG.get(tool_name, tool_name.upper())
+    # "mcp__chotgor__inscribe_memory" → "inscribe_memory"（プレフィックスを除去）
+    bare_name = tool_name.rsplit("__", 1)[-1] if "__" in tool_name else tool_name
+    tag_name = TOOL_TO_TAG.get(bare_name, bare_name.upper())
 
     if tag_name == "INSCRIBE_MEMORY":
         # [INSCRIBE_MEMORY:category|impact|content]

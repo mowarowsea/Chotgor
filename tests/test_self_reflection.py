@@ -5,12 +5,14 @@
 対象クラス・関数:
     SelfReflector.run()              — エントリポイント。モード・設定に応じて処理を振り分ける
     SelfReflector._detect_trigger()  — 中立プロバイダーによる契機判断（YES/NO応答の解析を含む）
-    SelfReflector._run_reflection()  — ask_character() 経由の自己参照コール＋タグ処理
+    SelfReflector._run_reflection()  — プロバイダー能力に応じてMCPツール方式 or タグ方式を選択する
     _format_conversation()           — メッセージリストを整形する内部ユーティリティ
 
 テスト方針:
     - LLMプロバイダーは AsyncMock で差し替える
-    - _run_reflection() は内部で ask_character() を呼ぶため、これを patch して検証する
+    - _run_reflection() はプロバイダーの SUPPORTS_TOOLS に応じて分岐する:
+        - tool-use対応（claude_cli / anthropic 等）→ ask_character_with_tools() を呼ぶ
+        - tool-use非対応（ollama / openrouter 等）→ ask_character() + タグパース
     - _detect_trigger() は create_provider() を直接呼ぶため、これを patch して検証する
     - SQLite は conftest.py の sqlite_store フィクスチャで実際の一時DBを使用する
     - エラー系（接続失敗・空応答・preset未発見・キャラ未発見）がサイレントにスキップされることを確認する
@@ -57,16 +59,34 @@ def trigger_preset_id(sqlite_store):
 
 @pytest.fixture
 def reflection_preset_id(sqlite_store):
-    """テスト用モデルプリセット（Anthropic）をSQLiteに作成し、そのIDを返すフィクスチャ。
+    """テスト用モデルプリセット（Ollama: SUPPORTS_TOOLS=False）をSQLiteに作成し、そのIDを返すフィクスチャ。
 
-    _run_reflection() で ask_character() に渡す preset_id として使用する。
+    _run_reflection() のタグ方式フォールバックパスを検証するために使用する。
+    Ollama は SUPPORTS_TOOLS=False のため ask_character() + タグパースを経由する。
     """
     pid = str(uuid.uuid4())
     sqlite_store.create_model_preset(
         preset_id=pid,
-        name="Test-Anthropic",
-        provider="anthropic",
-        model_id="claude-3-haiku-20240307",
+        name="Test-Ollama-Reflection",
+        provider="ollama",
+        model_id="qwen2.5:7b",
+    )
+    return pid
+
+
+@pytest.fixture
+def tools_reflection_preset_id(sqlite_store):
+    """テスト用モデルプリセット（claude_cli: SUPPORTS_TOOLS=True）をSQLiteに作成し、そのIDを返すフィクスチャ。
+
+    _run_reflection() のMCPツール方式パスを検証するために使用する。
+    claude_cli は SUPPORTS_TOOLS=True のため ask_character_with_tools() を経由する。
+    """
+    pid = str(uuid.uuid4())
+    sqlite_store.create_model_preset(
+        preset_id=pid,
+        name="Test-ClaudeCLI-Reflection",
+        provider="claude_cli",
+        model_id="",
     )
     return pid
 
@@ -693,6 +713,106 @@ class TestRunReflectionErrorHandling:
             )
         char = sqlite_store.get_character(char_id)
         assert char.inner_narrative == ""
+
+
+# ─── SelfReflector._run_reflection() — MCPツール方式 ────────────────────────
+
+
+class TestRunReflectionToolsPath:
+    """SUPPORTS_TOOLS=True のプロバイダー使用時に ask_character_with_tools() が呼ばれることを検証する。
+
+    MCP ツール方式では ask_character() は呼ばれず、
+    carve_narrative / drift はツールコール経由でキャラクター自身が実行する。
+    """
+
+    def test_tools_provider_calls_ask_character_with_tools(
+        self, reflector, sqlite_store, char_id, tools_reflection_preset_id
+    ):
+        """SUPPORTS_TOOLS=True プリセット使用時に ask_character_with_tools() が呼ばれること。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch(
+            "backend.character_actions.reflector.ask_character_with_tools",
+            new=AsyncMock(return_value=True),
+        ) as mock_with_tools, patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value=""),
+        ) as mock_without_tools:
+            asyncio.run(
+                reflector._run_reflection(
+                    preset_id=tools_reflection_preset_id,
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    settings={},
+                )
+            )
+        mock_with_tools.assert_called_once()
+        mock_without_tools.assert_not_called()
+
+    def test_tools_path_passes_session_id(
+        self, reflector, sqlite_store, char_id, tools_reflection_preset_id
+    ):
+        """MCPツール方式では session_id が ask_character_with_tools() に渡されること。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch(
+            "backend.character_actions.reflector.ask_character_with_tools",
+            new=AsyncMock(return_value=True),
+        ) as mock_with_tools:
+            asyncio.run(
+                reflector._run_reflection(
+                    preset_id=tools_reflection_preset_id,
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="my-session-id",
+                    settings={},
+                )
+            )
+        call_kwargs = mock_with_tools.call_args.kwargs
+        assert call_kwargs.get("session_id") == "my-session-id"
+
+    def test_tools_path_feature_label_is_reflection(
+        self, reflector, sqlite_store, char_id, tools_reflection_preset_id
+    ):
+        """MCPツール方式では feature_label="reflection" が渡されること。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch(
+            "backend.character_actions.reflector.ask_character_with_tools",
+            new=AsyncMock(return_value=True),
+        ) as mock_with_tools:
+            asyncio.run(
+                reflector._run_reflection(
+                    preset_id=tools_reflection_preset_id,
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    settings={},
+                )
+            )
+        call_kwargs = mock_with_tools.call_args.kwargs
+        assert call_kwargs.get("feature_label") == "reflection"
+
+    def test_non_tools_provider_does_not_call_ask_character_with_tools(
+        self, reflector, sqlite_store, char_id, reflection_preset_id
+    ):
+        """SUPPORTS_TOOLS=False プリセット使用時は ask_character_with_tools() が呼ばれないこと。"""
+        reflector.memory_manager.sqlite = sqlite_store
+        with patch(
+            "backend.character_actions.reflector.ask_character_with_tools",
+            new=AsyncMock(return_value=True),
+        ) as mock_with_tools, patch(
+            "backend.character_actions.reflector.ask_character",
+            new=AsyncMock(return_value=""),
+        ):
+            asyncio.run(
+                reflector._run_reflection(
+                    preset_id=reflection_preset_id,
+                    conversation_window=[{"role": "user", "content": "テスト"}],
+                    character_id=char_id,
+                    session_id="sess-1",
+                    settings={},
+                )
+            )
+        mock_with_tools.assert_not_called()
 
 
 # ─── SQLite スキーマ — 自己参照カラムのデフォルト値 ──────────────────────────

@@ -134,6 +134,7 @@ async def ask_character_with_tools(
     settings: dict,
     memory_manager: "MemoryManager",
     feature_label: str = "",
+    session_id: str = "",
 ) -> bool:
     """tool-use MCPループを使ってキャラクターに問いかける。
 
@@ -148,6 +149,7 @@ async def ask_character_with_tools(
         settings: グローバル設定 dict。
         memory_manager: 記憶の読み書きに使用するマネージャー。
         feature_label: ログ識別用のフィーチャーラベル。
+        session_id: セッションID。drift ツール使用時にセッションと指針を紐付ける。空文字列の場合は drift を無効化。
 
     Returns:
         True: tool-use ループを正常に実行した。
@@ -179,7 +181,7 @@ async def ask_character_with_tools(
             thinking_level=preset.thinking_level or "default",
             preset_name=preset.name,
             character_id=character_id,
-            session_id="",
+            session_id=session_id,
         )
     except Exception as e:
         _log.warning(
@@ -202,11 +204,12 @@ async def ask_character_with_tools(
         self_history=char.self_history or "",
         relationship_state=char.relationship_state or "",
         inner_narrative=char.inner_narrative or "",
+        use_tools=True,
     )
 
     tool_executor = ToolExecutor(
         character_id=character_id,
-        session_id=None,
+        session_id=session_id or None,
         memory_manager=memory_manager,
         drift_manager=DriftManager(sqlite=sqlite),
     )

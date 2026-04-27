@@ -360,7 +360,7 @@ class ClaudeCliProvider(BaseLLMProvider):
 
         def run():
             """subprocess.Popenでストリーミング出力を行単位で読み、キューへ送信する。"""
-            accumulated = []
+            raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
             try:
                 proc = subprocess.Popen(
                     _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
@@ -376,12 +376,12 @@ class ClaudeCliProvider(BaseLLMProvider):
                     line = line_bytes.decode("utf-8", errors="replace").strip()
                     if not line:
                         continue
+                    raw_lines.append(line)
                     try:
                         event = json.loads(line)
                         if event.get("type") == "assistant":
                             for block in event.get("message", {}).get("content", []):
                                 if block.get("type") == "text" and block["text"]:
-                                    accumulated.append(block["text"])
                                     loop.call_soon_threadsafe(queue.put_nowait, block["text"])
                     except json.JSONDecodeError:
                         pass
@@ -401,7 +401,9 @@ class ClaudeCliProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                self._log_response("".join(accumulated))
+                # ツール呼び出しを含む全NDJSONイベント行をログに記録する。
+                # テキストのみだとtool_useブロックが欠落してログUIにバッジが表示されない。
+                self._log_response("\n".join(raw_lines))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         ctx = contextvars.copy_context()
@@ -459,7 +461,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             type == "thinking" は ("thinking", ...) として、
             type == "text" は ("text", ...) として送信する。
             """
-            accumulated = []
+            raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
             try:
                 proc = subprocess.Popen(
                     _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
@@ -475,18 +477,17 @@ class ClaudeCliProvider(BaseLLMProvider):
                     line = line_bytes.decode("utf-8", errors="replace").strip()
                     if not line:
                         continue
+                    raw_lines.append(line)
                     try:
                         event = json.loads(line)
                         if event.get("type") == "assistant":
                             for block in event.get("message", {}).get("content", []):
                                 btype = block.get("type")
                                 if btype == "thinking" and block.get("thinking"):
-                                    accumulated.append(block["thinking"])
                                     loop.call_soon_threadsafe(
                                         queue.put_nowait, ("thinking", block["thinking"])
                                     )
                                 elif btype == "text" and block.get("text"):
-                                    accumulated.append(block["text"])
                                     loop.call_soon_threadsafe(
                                         queue.put_nowait, ("text", block["text"])
                                     )
@@ -508,7 +509,9 @@ class ClaudeCliProvider(BaseLLMProvider):
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
             finally:
-                self._log_response("".join(accumulated))
+                # ツール呼び出しを含む全NDJSONイベント行をログに記録する。
+                # テキストのみだとtool_useブロックが欠落してログUIにバッジが表示されない。
+                self._log_response("\n".join(raw_lines))
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         ctx = contextvars.copy_context()

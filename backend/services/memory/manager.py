@@ -183,9 +183,6 @@ class MemoryManager:
         - user: Medium weight (0.8), Medium decay (half-life ~10 days)
         - semantic: Medium weight (0.6), Slow decay (half-life ~20 days)
         - identity: Low weight (0.3), Very slow decay (half-life ~90 days)
-
-        未知カテゴリ（digest / fact / general / event / relationship など廃止済み）は
-        contextual と同じ半減期 4 日を全体スコアに適用する。
         """
         if now is None:
             now = datetime.now()
@@ -198,17 +195,6 @@ class MemoryManager:
 
         # Math: e^(-lambda * t) where lambda = ln(2) / half_life
         ln2 = 0.69314718
-
-        category = getattr(memory, "memory_category", None)
-        if category not in self._KNOWN_CATEGORIES:
-            # 廃止カテゴリ: raw スコアを contextual の半減期（4日）で一括減衰
-            raw = (
-                memory.contextual_importance * 1.0 +
-                memory.user_importance * 0.8 +
-                memory.semantic_importance * 0.6 +
-                memory.identity_importance * 0.3
-            )
-            return raw * math.exp(-(ln2 / 4.0) * days_passed)
 
         decay_contextual = memory.contextual_importance * math.exp(-(ln2 / 4.0) * days_passed)
         decay_user = memory.user_importance * math.exp(-(ln2 / 10.0) * days_passed)
@@ -404,7 +390,7 @@ class MemoryManager:
         character_id: str,
         query: str,
         identity_top_k: int = 5,
-        other_top_k: int = 5,
+        other_top_k: int = 10,
     ) -> tuple[list[dict], list[dict]]:
         """identity カテゴリとそれ以外を別枠で想起して返す。
 

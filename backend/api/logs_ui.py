@@ -167,29 +167,16 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
     }
 
 
-def _extract_function_calls_from_json(text: str) -> list[dict]:
-    """JSONレスポンスファイルからfunction_call（ツール呼び出し）をタグとして抽出する。
-
-    Gemini、Anthropic、OpenAI等のAPIレスポンスJSON内の function_call / tool_use エントリを
-    検出し、タグ構造体に変換して返す。JSON 以外のファイルは無視して空リストを返す。
-
-    対応フォーマット:
-        - Gemini: candidates[].content.parts[].function_call
-        - Anthropic: content[].type == "tool_use"（input キー）
-        - OpenAI: choices[].message.tool_calls[].function（arguments は JSON 文字列）
+def _collect_tool_calls_from_single_json(data: dict) -> list[tuple[str, dict]]:
+    """単一JSONオブジェクト（Anthropic/OpenAI/Gemini形式）からツール呼び出しを収集する。
 
     Args:
-        text: ログファイルのテキスト内容。
+        data: パース済みのJSONオブジェクト。
 
     Returns:
-        タグ構造体のリスト。該当がなければ空リスト。
+        (tool_name, args_dict) のリスト。
     """
-    try:
-        data = _parse_json_safely(text)
-    except (json.JSONDecodeError, ValueError):
-        return []
-
-    function_calls: list[tuple[str, dict]] = []
+    calls: list[tuple[str, dict]] = []
 
     # Gemini形式: candidates[].content.parts[].function_call
     # 注: promptFeedback でブロックされた場合など candidates が null で返ることがあるため
@@ -198,14 +185,14 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
         for part in ((candidate.get("content") or {}).get("parts") or []):
             fc = part.get("function_call")
             if fc and isinstance(fc, dict) and "name" in fc:
-                function_calls.append((fc["name"], fc.get("args", {}) or {}))
+                calls.append((fc["name"], fc.get("args", {}) or {}))
 
     # Anthropic形式: content[].type == "tool_use"（input キー）
     content = data.get("content")
     if isinstance(content, list):
         for block in content:
             if isinstance(block, dict) and block.get("type") == "tool_use":
-                function_calls.append((block.get("name", ""), block.get("input", {}) or {}))
+                calls.append((block.get("name", ""), block.get("input", {}) or {}))
 
     # OpenAI形式: choices[].message.tool_calls[].function（arguments は JSON 文字列）
     for choice in (data.get("choices") or []):
@@ -215,7 +202,71 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
                 args = json.loads(fc.get("arguments", "{}"))
             except (json.JSONDecodeError, ValueError):
                 args = {}
-            function_calls.append((fc.get("name", ""), args))
+            calls.append((fc.get("name", ""), args))
+
+    return calls
+
+
+def _collect_tool_calls_from_stream_json(text: str) -> list[tuple[str, dict]]:
+    """stream-json（NDJSON）形式のClaude CLI出力からtool_useブロックを収集する。
+
+    Claude CLI が --output-format stream-json --verbose で出力する形式では、
+    各行が独立したJSONイベントになる。tool_use ブロックは assistant イベントの
+    message.content 配列内に含まれる。
+
+    Args:
+        text: stream-json形式のテキスト（1行1JSONイベント）。
+
+    Returns:
+        (tool_name, args_dict) のリスト。
+    """
+    calls: list[tuple[str, dict]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line, strict=False)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if event.get("type") != "assistant":
+            continue
+        for block in ((event.get("message") or {}).get("content") or []):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                calls.append((block.get("name", ""), block.get("input", {}) or {}))
+    return calls
+
+
+def _extract_function_calls_from_json(text: str) -> list[dict]:
+    """JSONレスポンスファイルからfunction_call（ツール呼び出し）をタグとして抽出する。
+
+    Gemini、Anthropic、OpenAI等のAPIレスポンスJSON内の function_call / tool_use エントリを
+    検出し、タグ構造体に変換して返す。
+    Claude CLI が出力する stream-json（NDJSON）形式にも対応する。
+
+    対応フォーマット:
+        - Gemini: candidates[].content.parts[].function_call
+        - Anthropic: content[].type == "tool_use"（input キー）
+        - OpenAI: choices[].message.tool_calls[].function（arguments は JSON 文字列）
+        - Claude CLI stream-json: assistant イベントの message.content[].type == "tool_use"
+
+    Args:
+        text: ログファイルのテキスト内容。
+
+    Returns:
+        タグ構造体のリスト。該当がなければ空リスト。
+    """
+    function_calls: list[tuple[str, dict]] = []
+    try:
+        data = _parse_json_safely(text)
+        function_calls = _collect_tool_calls_from_single_json(data)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # シングルJSONでツール呼び出しが見つからなかった場合は stream-json（NDJSON）として試みる。
+    # 単一行 NDJSON が正常にパースできても Claude CLI イベント形式の場合はここで抽出する。
+    if not function_calls:
+        function_calls = _collect_tool_calls_from_stream_json(text)
 
     results = []
     for name, args in function_calls:
@@ -227,10 +278,16 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
 
 
 def _extract_tags_from_file(file_path: Path) -> list[dict]:
-    """ファイルからタグを抽出して構造化リストで返す。
+    """ファイルからタグ / ツール呼び出しを抽出して構造化リストで返す。
 
-    `parse_tags` を使い INSCRIBE_MEMORY / CARVE_NARRATIVE 等を検出する。
-    ファイル読み込みエラーや解析エラーは無視して空リストを返す。
+    抽出の優先順位:
+      1. JSON / stream-json 内のツール呼び出し（tool-use対応プロバイダー）
+      2. テキスト内の [INSCRIBE_MEMORY:...] 等のタグ（タグ方式プロバイダーへのフォールバック）
+
+    tool-use プロバイダー（Anthropic / OpenAI / Claude CLI 等）はレスポンスに
+    tool_use ブロックを含むため、それを優先表示する。
+    タグ方式プロバイダー（Ollama / OpenRouter 等）はツール呼び出しが存在しないため、
+    テキスト内のタグをフォールバックとして抽出する。
 
     Args:
         file_path: ログファイルのパス。
@@ -242,6 +299,13 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
         text = file_path.read_text(encoding="utf-8")
     except Exception:
         return []
+
+    # ツール呼び出し（JSON / stream-json）を優先して試みる
+    tool_call_tags = _extract_function_calls_from_json(text)
+    if tool_call_tags:
+        return tool_call_tags
+
+    # ツール呼び出しが見つからなければタグ方式（Ollama等）としてフォールバック
     try:
         _, matches = parse_tags(text, _KNOWN_TAG_NAMES, multiline=True)
     except Exception:
@@ -256,10 +320,7 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
             flat.append((m.start, tag_name, m.body))
     flat.sort(key=lambda x: x[0])
 
-    tags = [_parse_tag_body(tn, body) for _, tn, body in flat]
-    # JSON形式のレスポンスファイルからfunction_callも抽出する（tool-use対応プロバイダー向け）
-    tags.extend(_extract_function_calls_from_json(text))
-    return tags
+    return [_parse_tag_body(tn, body) for _, tn, body in flat]
 
 
 def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:

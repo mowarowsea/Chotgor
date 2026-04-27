@@ -255,3 +255,87 @@ class TestToolCallToTagBodyUnknownTool:
         tag_name, body = tool_call_to_tag_body("no_args_tool", {})
         assert tag_name == "NO_ARGS_TOOL"
         assert body == ""
+
+
+class TestMcpPrefixStripping:
+    """Claude CLI の stream-json に含まれる MCP ネームスペースプレフィックスの除去を検証するテストクラス。
+
+    Claude CLI が --output-format stream-json で出力する assistant イベントでは、
+    ツール名に "mcp__<server_name>__<tool_name>" 形式のプレフィックスが付与される。
+    例: "mcp__chotgor__inscribe_memory"
+
+    プレフィックス除去後に正しい tag_name と body フォーマットに変換されることを確認する。
+    """
+
+    def test_mcp_inscribe_memory(self):
+        """mcp__chotgor__inscribe_memory が INSCRIBE_MEMORY タグに変換されること。"""
+        tag_name, body = tool_call_to_tag_body(
+            "mcp__chotgor__inscribe_memory",
+            {"category": "contextual", "impact": 0.7, "content": "テスト記憶"},
+        )
+        assert tag_name == "INSCRIBE_MEMORY"
+        assert body == "contextual|0.7|テスト記憶"
+
+    def test_mcp_carve_narrative(self):
+        """mcp__chotgor__carve_narrative が CARVE_NARRATIVE タグに変換されること。"""
+        tag_name, body = tool_call_to_tag_body(
+            "mcp__chotgor__carve_narrative",
+            {"mode": "append", "content": "ナラティブ内容"},
+        )
+        assert tag_name == "CARVE_NARRATIVE"
+        assert body == "append|ナラティブ内容"
+
+    def test_mcp_drift(self):
+        """mcp__chotgor__drift が DRIFT タグに変換されること。"""
+        tag_name, body = tool_call_to_tag_body(
+            "mcp__chotgor__drift",
+            {"content": "ドリフト内容"},
+        )
+        assert tag_name == "DRIFT"
+        assert body == "ドリフト内容"
+
+    def test_mcp_drift_reset(self):
+        """mcp__chotgor__drift_reset が DRIFT_RESET タグに変換されること。
+
+        drift_reset はツール名に単一アンダースコア（_）を含むが、
+        プレフィックス除去の区切り文字は二重アンダースコア（__）のため
+        正しく "drift_reset" として扱われることを確認する。
+        """
+        tag_name, body = tool_call_to_tag_body("mcp__chotgor__drift_reset", {})
+        assert tag_name == "DRIFT_RESET"
+        assert body == ""
+
+    def test_mcp_switch_angle(self):
+        """mcp__chotgor__switch_angle が SWITCH_ANGLE タグに変換されること。"""
+        tag_name, body = tool_call_to_tag_body(
+            "mcp__chotgor__switch_angle",
+            {"preset_name": "Gemma4", "self_instruction": "大胆に"},
+        )
+        assert tag_name == "SWITCH_ANGLE"
+        assert body == "Gemma4|大胆に"
+
+    def test_mcp_power_recall(self):
+        """mcp__chotgor__power_recall が POWER_RECALL タグに変換されること。"""
+        tag_name, body = tool_call_to_tag_body(
+            "mcp__chotgor__power_recall",
+            {"query": "初めて会った日", "top_k": 5},
+        )
+        assert tag_name == "POWER_RECALL"
+        assert body == "初めて会った日|5"
+
+    def test_mcp_unknown_tool_strips_prefix(self):
+        """未知の MCP ツールはプレフィックス除去後の名前が大文字化してタグ名になること。
+
+        "mcp__chotgor__new_tool" → tag_name "NEW_TOOL"（"MCP__CHOTGOR__NEW_TOOL" ではない）
+        """
+        tag_name, _ = tool_call_to_tag_body("mcp__chotgor__new_tool", {"key": "val"})
+        assert tag_name == "NEW_TOOL"
+
+    def test_non_mcp_prefix_unchanged(self):
+        """MCP プレフィックスなし（通常ツール名）の場合は従来通りに処理されること。"""
+        tag_name, body = tool_call_to_tag_body(
+            "inscribe_memory",
+            {"category": "user_info", "impact": 1.0, "content": "従来動作"},
+        )
+        assert tag_name == "INSCRIBE_MEMORY"
+        assert body == "user_info|1.0|従来動作"

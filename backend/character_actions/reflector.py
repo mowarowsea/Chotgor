@@ -14,10 +14,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from backend.providers.registry import create_provider
+from backend.providers.registry import create_provider, PROVIDER_REGISTRY
 from backend.lib.log_context import current_log_feature
 from backend.lib.character_context import build_character_context
-from backend.services.character_query import ask_character
+from backend.services.character_query import ask_character, ask_character_with_tools
 
 if TYPE_CHECKING:
     from backend.services.memory.drift_manager import DriftManager
@@ -47,7 +47,7 @@ _TRIGGER_USER_TEMPLATE = """\
 逸脱している場合は「YES」、範囲内であれば「NO」とのみ答えてください。
 """
 
-# 自己参照のユーザーメッセージ。
+# 自己参照のユーザーメッセージ（タグ方式：tool-use非対応プロバイダー向け）。
 # ask_character() 経由で「キャラクターとして」問いかけるため、
 # システムプロンプトはキャラクター設定が担う。
 _REFLECTION_USER_TEMPLATE = """\
@@ -62,6 +62,21 @@ _REFLECTION_USER_TEMPLATE = """\
 [CARVE_NARRATIVE:append| inner narrative（恒久的な価値観の変容・成長）に追記するテキスト]
 [CARVE_NARRATIVE:overwrite| inner narrative（恒久的な価値観の変容・成長）全体を置き換えるテキスト]
 [DRIFT: 一時的に感情・状態のテキスト]
+
+[会話]
+{conversation}
+"""
+
+# 自己参照のユーザーメッセージ（MCPツール方式：tool-use対応プロバイダー向け）。
+# ask_character_with_tools() 経由で呼ぶため、システムプロンプト（use_tools=True）が
+# carve_narrative / drift ツールの説明を担う。タグの記述は不要。
+_REFLECTION_USER_TEMPLATE_TOOLS = """\
+これはユーザからのメッセージではなく、Chotgorシステムからのメッセージです。
+
+以下の会話を読み、あなたの反応がSystemInstructionを逸脱していないか確認してください。
+大幅に逸脱している場合は carve_narrative ツールを呼び出し、アイデンティティの再解釈・恒久的な価値観の変容・成長をあなたの言葉で記載してください。
+少々逸脱している場合は drift ツールを呼び出し、一時的な感情・状態をあなたの言葉で記載してください。
+逸脱していない場合はツールを使わず「逸脱していない」「No」などと返答してください。
 
 [会話]
 {conversation}
@@ -193,25 +208,48 @@ class SelfReflector:
         session_id: str,
         settings: dict,
     ) -> None:
-        """ask_character() 経由で自己参照コールし、タグを解析してDBに反映する。
+        """自己参照コールを実行し、内省結果をDBに反映する。
 
-        ask_character() がシステムプロンプトの構築・LLMコールを担う。
-        生成されたテキストから [CARVE_NARRATIVE:...] / [DRIFT:...] タグを抽出し、
-        Carver / Drifter を通じてDBに書き込む。
+        プロバイダーが tool-use に対応している場合は ask_character_with_tools() 経由で
+        carve_narrative / drift ツールを直接呼び出す（MCPツール方式）。
+        非対応の場合は ask_character() + テキストパース（タグ方式）にフォールバックする。
 
         Args:
             preset_id: 自己参照コールに使うモデルプリセットID（メイン会話と同じもの）。
             conversation_window: 直近Nターンのメッセージリスト。
             character_id: 自己参照を行うキャラクターID。
-            session_id: 現在のセッションID（DRIFT操作に必要）。
+            session_id: 現在のセッションID（drift ツール / タグの適用に必要）。
             settings: グローバル設定 dict。
         """
         from backend.character_actions.carver import Carver
         from backend.character_actions.drifter import Drifter
 
         conversation_text = _format_conversation(conversation_window)
-        user_message = _REFLECTION_USER_TEMPLATE.format(conversation=conversation_text)
 
+        # プロバイダーが tool-use 対応かどうかをクラス変数で確認する（インスタンス生成不要）
+        preset = self.memory_manager.sqlite.get_model_preset(preset_id)
+        provider_cls = PROVIDER_REGISTRY.get(preset.provider) if preset else None
+        supports_tools = bool(provider_cls and provider_cls.SUPPORTS_TOOLS)
+
+        if supports_tools:
+            # MCPツール方式: carve_narrative / drift ツールをキャラクター自身が呼び出す
+            user_message = _REFLECTION_USER_TEMPLATE_TOOLS.format(conversation=conversation_text)
+            _log.debug("自己参照(ツール方式) char=%s preset=%s", character_id, preset_id)
+            await ask_character_with_tools(
+                character_id=character_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": user_message}],
+                sqlite=self.memory_manager.sqlite,
+                settings=settings,
+                memory_manager=self.memory_manager,
+                feature_label="reflection",
+                session_id=session_id,
+            )
+            return
+
+        # タグ方式フォールバック: 応答テキストから [CARVE_NARRATIVE:...] / [DRIFT:...] を抽出する
+        user_message = _REFLECTION_USER_TEMPLATE.format(conversation=conversation_text)
+        _log.debug("自己参照(タグ方式) char=%s preset=%s", character_id, preset_id)
         reflection_text = await ask_character(
             character_id=character_id,
             preset_id=preset_id,

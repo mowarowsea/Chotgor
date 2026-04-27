@@ -67,8 +67,8 @@ POWER_RECALL_SCHEMA: dict = {
         },
         "top_k": {
             "type": "integer",
-            "description": "各コレクション（記憶・会話履歴）から取得する最大件数。デフォルト5。",
-            "default": 5,
+            "description": "各コレクション（記憶・会話履歴）から取得する最大件数。デフォルト10。",
+            "default": 10,
         },
     },
     "required": ["query"],

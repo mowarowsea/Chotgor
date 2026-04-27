@@ -245,12 +245,13 @@ class TestInscriberInscribeMemory:
         assert abs(kwargs_2x["contextual_importance"] - kwargs_1x["contextual_importance"] * 2) < 1e-9
 
     def test_unknown_category_uses_default_base_0_5(self):
-        """未知のカテゴリでもエラーにならず、デフォルト基準値 0.5 を使うこと。"""
-        kwargs = self._run("未知カテゴリ", 1.0)
-        assert kwargs["contextual_importance"] == pytest.approx(0.5)
-        assert kwargs["semantic_importance"] == pytest.approx(0.5)
-        assert kwargs["identity_importance"] == pytest.approx(0.5)
-        assert kwargs["user_importance"] == pytest.approx(0.5)
+        """未知のカテゴリでもエラーにならず、contextual カテゴリ同等 となること。"""
+        kwargs_undif = self._run("未知カテゴリ", 1.0)
+        kwargs_contx = self._run("contextual", 1.0)
+        assert kwargs_undif["contextual_importance"] == kwargs_contx["contextual_importance"]
+        assert kwargs_undif["semantic_importance"] == kwargs_contx["semantic_importance"]
+        assert kwargs_undif["user_importance"] == kwargs_contx["user_importance"]
+        assert kwargs_undif["identity_importance"] == kwargs_contx["identity_importance"]
 
     def test_impact_default_is_1_0(self):
         """impact のデフォルト値は 1.0 であること。"""
