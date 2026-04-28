@@ -21,9 +21,11 @@ def mock_chroma():
 
 @pytest.fixture
 def manager(sqlite_store, mock_chroma):
-    """MemoryManagerのフィクスチャ。"""
+    """MemoryManagerのフィクスチャ。テスト終了時にリトライスレッドを停止する。"""
     import backend.services.memory.manager
-    return MemoryManager(sqlite=sqlite_store, chroma=mock_chroma)
+    mgr = MemoryManager(sqlite=sqlite_store, chroma=mock_chroma)
+    yield mgr
+    mgr.stop()
 
 
 def test_write_memory_new(manager, sqlite_store, mock_chroma):

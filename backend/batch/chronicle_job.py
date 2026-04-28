@@ -130,16 +130,18 @@ def _format_conversation(messages: list) -> str:
     return "\n".join(lines)
 
 
-def _parse_chronicle_response(response_text: str) -> dict:
+def _parse_chronicle_response(response_text: str) -> dict | None:
     """LLM の応答テキストから JSON を抽出してパースする。
 
     コードブロック（```json ... ```）で囲まれていても対応する。
+    プロンプト仕様で「変更不要なら null を返せ」としているため、
+    LLM が null を返した場合は None を返して「変更なし」を示す。
 
     Args:
         response_text: LLM の応答テキスト。
 
     Returns:
-        パース済み辞書。パース失敗時は空辞書。
+        パース済み辞書。null 応答は None。パース失敗は空辞書。
     """
     text = response_text.strip()
     start = text.find("{")
@@ -147,7 +149,8 @@ def _parse_chronicle_response(response_text: str) -> dict:
     if start != -1 and end > start:
         text = text[start:end]
     try:
-        return json.loads(text)
+        result = json.loads(text)
+        return result if isinstance(result, dict) else None
     except Exception:
         return {}
 
@@ -279,6 +282,12 @@ async def run_chronicle(
         return {"status": "error", "error": "LLMからの応答が取得できませんでした"}
 
     parsed = _parse_chronicle_response(response_text)
+    if parsed is None:
+        # プロンプト仕様通り null が返された場合 = 変更なし
+        logger.info("変更なし（null応答） char=%s", char_label)
+        if messages:
+            sqlite.mark_messages_as_chronicled([m.id for m in messages])
+        return {"status": "success", "updated_fields": []}
     if not parsed:
         logger.warning("JSONパース失敗 char=%s raw=%.100s", char_label, response_text)
         return {"status": "error", "error": "JSON のパースに失敗しました", "raw": response_text[:500]}

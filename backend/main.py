@@ -29,9 +29,10 @@ from backend.repositories.sqlite.store import SQLiteStore
 
 load_dotenv()
 
-SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "./data/chotgor.db")
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/chroma")
-UPLOADS_DIR = os.getenv("UPLOADS_DIR", "./data/uploads")
+_PROJECT_ROOT = Path(__file__).parent.parent
+SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", str(_PROJECT_ROOT / "data" / "chotgor.db"))
+CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(_PROJECT_ROOT / "data" / "chroma"))
+UPLOADS_DIR = os.getenv("UPLOADS_DIR", str(_PROJECT_ROOT / "data" / "uploads"))
 TEMPLATES_DIR = str(Path(__file__).parent / "templates")
 STATIC_DIR = str(Path(__file__).parent / "static")
 
@@ -97,6 +98,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    app.state.memory_manager.stop()
     _log.info("Chotgor backend 終了")
 
 

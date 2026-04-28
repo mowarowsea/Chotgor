@@ -69,6 +69,7 @@ class MemoryManager:
         _chroma_failed_chars: 最大リトライを超えて失敗したキャラのIDセット（in-memory）。
         _pending_writes: バックグラウンドリトライ待ちのタスクリスト。
         _pending_lock: _pending_writes へのスレッドセーフなアクセスを保護するロック。
+        _stop_event: graceful shutdown用の停止フラグ。
         _retry_thread: バックグラウンドリトライワーカースレッド。
     """
 
@@ -79,6 +80,7 @@ class MemoryManager:
         self._chroma_failed_chars: set[str] = set()
         self._pending_writes: list[_PendingChromaWrite] = []
         self._pending_lock = threading.Lock()
+        self._stop_event = threading.Event()
         self._retry_thread = threading.Thread(
             target=self._chroma_retry_worker, daemon=True, name="chroma-retry"
         )
@@ -142,11 +144,15 @@ class MemoryManager:
         """ChromaDB書き込みをバックグラウンドでリトライするワーカースレッド。
 
         _CHROMA_RETRY_POLL_SEC ごとに _process_pending_writes() を呼び出す。
-        daemon=True のため、メインスレッド終了時に自動的に停止する。
+        stop() が呼ばれると _stop_event がセットされ、次のポーリング前に終了する。
         """
-        while True:
-            time.sleep(_CHROMA_RETRY_POLL_SEC)
+        while not self._stop_event.wait(_CHROMA_RETRY_POLL_SEC):
             self._process_pending_writes()
+
+    def stop(self) -> None:
+        """リトライスレッドを graceful に停止する。lifespan shutdown 時に呼ぶ。"""
+        self._stop_event.set()
+        self._retry_thread.join(timeout=10)
 
     def _schedule_chroma_write(self, fn_name: str, character_id: str, **kwargs) -> None:
         """ChromaDB書き込みをスケジュールする。

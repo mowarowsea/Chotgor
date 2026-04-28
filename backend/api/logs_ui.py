@@ -176,6 +176,8 @@ def _collect_tool_calls_from_single_json(data: dict) -> list[tuple[str, dict]]:
     Returns:
         (tool_name, args_dict) のリスト。
     """
+    if not isinstance(data, dict):
+        return []
     calls: list[tuple[str, dict]] = []
 
     # Gemini形式: candidates[].content.parts[].function_call
@@ -229,6 +231,8 @@ def _collect_tool_calls_from_stream_json(text: str) -> list[tuple[str, dict]]:
             event = json.loads(line, strict=False)
         except (json.JSONDecodeError, ValueError):
             continue
+        if not isinstance(event, dict):
+            continue
         if event.get("type") != "assistant":
             continue
         for block in ((event.get("message") or {}).get("content") or []):
@@ -260,13 +264,16 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
     try:
         data = _parse_json_safely(text)
         function_calls = _collect_tool_calls_from_single_json(data)
-    except (json.JSONDecodeError, ValueError):
+    except Exception:
         pass
 
     # シングルJSONでツール呼び出しが見つからなかった場合は stream-json（NDJSON）として試みる。
     # 単一行 NDJSON が正常にパースできても Claude CLI イベント形式の場合はここで抽出する。
     if not function_calls:
-        function_calls = _collect_tool_calls_from_stream_json(text)
+        try:
+            function_calls = _collect_tool_calls_from_stream_json(text)
+        except Exception:
+            pass
 
     results = []
     for name, args in function_calls:

@@ -25,4 +25,4 @@ if "%DEBUG_MODE%"=="1" (
 echo Press Ctrl+C to stop.
 echo.
 set PYTHONUNBUFFERED=1
-python -u -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+python -u -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
