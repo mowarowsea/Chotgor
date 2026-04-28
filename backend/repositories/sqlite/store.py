@@ -313,8 +313,6 @@ class SQLiteStore(
                 "ALTER TABLE chat_sessions ADD COLUMN afterglow_session_id TEXT",
                 "ALTER TABLE chat_sessions ADD COLUMN exited_chars TEXT",
                 "ALTER TABLE chat_messages ADD COLUMN is_system_message INTEGER",
-                "ALTER TABLE chat_messages ADD COLUMN chronicled_at TIMESTAMP",
-                "UPDATE chat_messages SET chronicled_at = created_at WHERE chronicled_at IS NULL",
                 "ALTER TABLE chat_messages ADD COLUMN log_message_id TEXT",
             ]:
                 try:
@@ -322,6 +320,16 @@ class SQLiteStore(
                     conn.commit()
                 except Exception:
                     pass
+
+            # chronicled_at カラム追加と既存メッセージの一括マークは同一トランザクション内で実行する。
+            # ALTER TABLE が失敗（カラム既存）した場合は UPDATE も実行しないことで、
+            # 起動のたびに未処理メッセージが上書きされるバグを防ぐ。
+            try:
+                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN chronicled_at TIMESTAMP"))
+                conn.execute(text("UPDATE chat_messages SET chronicled_at = created_at WHERE chronicled_at IS NULL"))
+                conn.commit()
+            except Exception:
+                pass
 
             for stmt in [
                 (
