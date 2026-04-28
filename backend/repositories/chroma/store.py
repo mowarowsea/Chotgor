@@ -1,5 +1,6 @@
 """ChromaDB integration for semantic memory retrieval."""
 
+import logging
 import os
 from typing import Optional
 
@@ -347,12 +348,28 @@ class ChromaStore:
         try:
             results = collection.query(**query_kwargs)
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(
-                "ChromaDB query 失敗 where=%s n_results=%s error=%s",
-                where, query_kwargs.get("n_results"), e,
-            )
-            return []
+            logger = logging.getLogger(__name__)
+            if "Error finding id" in str(e):
+                # HNSWインデックスにゴーストIDが残っている。再構築してリトライする。
+                logger.warning(
+                    "ChromaDB HNSWインデックス破損検出 char=%s - 再構築してリトライ", character_id
+                )
+                self.rebuild_memory_collection(character_id)
+                collection = self._get_collection(character_id)
+                try:
+                    results = collection.query(**query_kwargs)
+                except Exception as e2:
+                    logger.error(
+                        "ChromaDB 再構築後も query 失敗 char=%s where=%s error=%s",
+                        character_id, where, e2,
+                    )
+                    return []
+            else:
+                logger.warning(
+                    "ChromaDB query 失敗 where=%s n_results=%s error=%s",
+                    where, query_kwargs.get("n_results"), e,
+                )
+                return []
 
         memories = []
         if results["ids"] and results["ids"][0]:
@@ -426,6 +443,55 @@ class ChromaStore:
         """
         collection = self._get_collection(character_id)
         collection.delete(ids=[memory_id])
+
+    def rebuild_memory_collection(self, character_id: str) -> int:
+        """HNSWインデックス破損時にキャラクターの記憶コレクションを再構築する。
+
+        ChromaDB内部のメタデータストアから全ドキュメントと保存済み埋め込みベクトルを取り出し、
+        コレクションを削除・再作成してHNSWインデックスを再構築する。
+        embedding APIを呼ばないため高速（DB操作のみ）。
+
+        Args:
+            character_id: キャラクターID。
+
+        Returns:
+            再登録したドキュメント件数。
+        """
+        logger = logging.getLogger(__name__)
+        try:
+            collection = self._get_collection(character_id)
+            total_count = collection.count()
+            all_docs = collection.get(
+                limit=total_count,
+                include=["embeddings", "documents", "metadatas"],
+            )
+            ids = all_docs.get("ids", [])
+            documents = all_docs.get("documents", []) or []
+            metadatas = all_docs.get("metadatas", []) or []
+            embeddings = all_docs.get("embeddings", []) or []
+            if not ids:
+                return 0
+            collection_name = collection.name
+            self.client.delete_collection(collection_name)
+            new_collection = self._get_collection(character_id)
+            use_metadatas = bool(metadatas)
+            use_embeddings = bool(embeddings)
+            batch_size = 100
+            for i in range(0, len(ids), batch_size):
+                batch_kwargs: dict = {
+                    "ids": ids[i:i + batch_size],
+                    "documents": documents[i:i + batch_size],
+                }
+                if use_metadatas:
+                    batch_kwargs["metadatas"] = metadatas[i:i + batch_size]
+                if use_embeddings:
+                    batch_kwargs["embeddings"] = embeddings[i:i + batch_size]
+                new_collection.upsert(**batch_kwargs)
+            logger.info("ChromaDB コレクション再構築完了 char=%s count=%d", character_id, len(ids))
+            return len(ids)
+        except Exception as e:
+            logger.error("ChromaDB コレクション再構築失敗 char=%s error=%s", character_id, e)
+            return 0
 
     def _get_chat_collection(self, character_id: str):
         """キャラクターのチャット履歴コレクションを取得または作成する。"""
