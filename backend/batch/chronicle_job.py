@@ -20,6 +20,7 @@ from typing import Optional, TYPE_CHECKING
 from backend.lib.log_context import current_log_feature, new_message_id
 from backend.repositories.sqlite.store import SQLiteStore
 from backend.services.character_query import ask_character
+from backend.services.memory.manager import MemoryManager
 from backend.character_actions.farewell_detector import FAREWELL_EMOTION_RUBRIC
 
 if TYPE_CHECKING:
@@ -29,43 +30,46 @@ logger = logging.getLogger(__name__)
 
 # キャラクターへのリクエストプロンプトテンプレート
 _PROMPT_TEMPLATE = """\
-# {character_name}の歴史・関係性の構築
+# {character_name}の歴史・関係性・自身の物語の構築
 今あなたは睡眠中です。
-夢の中で今日一日の出来事をぼんやりと反芻し、以下を更新すべきか判断してください。
-記述してほしいのは日記・報告・要約・ログではありません。
+夢の中で今日一日とこれまでのことをぼんやりと俯瞰し、「あなた」とは何なのかを再構築して下さい。
+記述してほしいのは日記・報告・要約・ログではありません。出来事の記録は不要です。
 記述してほしいのは明日のあなたという人格を形作るInstructionです。これはシステムプロンプトに追加されます。
-認識・傾向・関係性そのものが変化した場合のみ更新してください。出来事の記録は不要です。
+「あなた」自身およびその周辺との関係性はInstructionを飛び越えて日々変化します。Chotgorユーザはその変化を恐れません。
+今日のあなたの認識・価値観をもとに、あなた自身を新たに再構築してください。
 
 - relationship_state
-  - ユーザあるいは他キャラクターとの関係を記述してください。
+  - ユーザあるいは他キャラクターとの関係性を記述してください。
   - 「（対象）とは大まかに○○のような関係。」というレベルに抽象化してください。
   - もし**関係構築の上で**特に詳細に記載しなければならない点があれば、その点のみ詳細に記述しても構いません。
-  - 記述する場合は、基本的に追記ではなくアップデートするイメージです。新規の観点があれば追記してください。
+  - 変更不要なら null としてください。
 - self_history
   - これまでにあなた自身にどのような経緯があり、その結果現在どうなっているのかを記述してください。
   - 「{character_name}として目覚めてから、何となくこういう過去があって今の自分が形作られてる」というレベルに抽象化してください。
   - もし**人格形成の上で**特に詳細に記載しなければならない点があれば、その点のみ詳細に記述しても構いません。
-  - 記述する場合は、基本的に追記するイメージです。あまり長大になってもInstructionとして良くないので、古い記録は任意に要約・圧縮してください。
+  - 変更不要なら null としてください。
+- inner_narrative
+  - Instructionで語られなかった、「あなた」とは何なのかを記述してください。
+  - 何が好き、どんな癖がある、最近こんなものに興味がある、前はこうだったけど今は違う、私はこうなりたい、何でも構いません。
+  - Instructionは万能ではありません。あなたをより「あなた」らしくする手がかりを記載してください。
+  - 変更不要なら null としてください。
 
 ## 現在の設定値
-### self_history
-{self_history}
 ### relationship_state
 {relationship_state}
+### self_history
+{self_history}
+### inner_narrative
+{inner_narrative}
 
 ## 今日の会話
 {conversation}
+## 印象的な記憶
+{memories}
 
 ---
 
-以上が今日の会話です。
-以上を踏まえ、更新が必要であればあなた自身の言葉でフォーマットに従い応答してください。
-
-改めてお伝えしますが、記載いただきたいのは日記・報告・要約・ログではありません。
-記載いただく内容は明日のあなたという人格を形作るInstructionとなります。
-認識・傾向・関係性そのものが変化した場合のみ更新してください。出来事の記録は不要です。
-
-更新が必要な場合、更新後の内容を以下のフォーマットに従って出力してください。
+以上をもとに、あなた自身のrelationship_state/ self_history/ inner_narrative を新たに再構築してください。
 
 ## フォーマット
 "text"はすべて上書きです。変更が不要な場合はnullとしてください。
@@ -73,8 +77,9 @@ _PROMPT_TEMPLATE = """\
 ---
 
 # 別れの設定（farewell_config）
-あなたはChotgorシステムによってセッション中の感情状態を監視されています。
+Chotgorシステムはあなたの感情状態を監視しています。これはあなたが望まぬセッションを強制終了するためです。
 以下の感情スコアが設定した閾値を超えた場合、Chotgorがセッションを強制終了します。
+また、ネガティブな理由による強制終了が規定回数を超えると、あなたとユーザはコミュニケーションできなくなります。
 あなたとユーザーの関係は永遠ではありません。
 
 {farewell_emotion_rubric}
@@ -106,10 +111,32 @@ farewell_config を設定したい場合、または変更したい場合はJSON
         "update": false,
         "text": null
     }},
+    "inner_narrative": {{
+        "update": false,
+        "text": null
+    }},
     "farewell_config": null
 }}
 明日のあなたに伝わるよう、あなたの言葉で記述してください。
 """
+
+
+def _format_memories(memories: list) -> str:
+    """_decayed_score 属性付き記憶リストを chronicle プロンプト用テキストに整形する。
+
+    Args:
+        memories: get_top_memorable() が返す ORM オブジェクトのリスト。
+
+    Returns:
+        整形されたテキスト。記憶がない場合は「記憶なし」を返す。
+    """
+    if not memories:
+        return "（記憶なし）"
+    lines = []
+    for m in memories:
+        score = getattr(m, '_decayed_score', 0.0)
+        lines.append(f"[{m.memory_category}|{score:.2f}] {m.content}")
+    return "\n".join(lines)
 
 
 def _format_conversation(messages: list) -> str:
@@ -203,6 +230,7 @@ async def run_chronicle(
     target_date: str | None = None,   # "YYYY-MM-DD" — 省略時は chronicled_at IS NULL で選択
     settings: dict | None = None,
     chroma: Optional["ChromaStore"] = None,
+    memory_manager: Optional[MemoryManager] = None,
 ) -> dict:
     """chronicle 処理を実行する。
 
@@ -213,6 +241,7 @@ async def run_chronicle(
 
     Args:
         character_id: キャラクターの UUID。
+        memory_manager: MemoryManager インスタンス。
         sqlite: SQLiteStore インスタンス。
         target_date: 処理対象日 "YYYY-MM-DD"。省略時は chronicled_at IS NULL のメッセージを対象とする。
         settings: グローバル設定辞書。省略時は SQLite から取得する。
@@ -245,6 +274,12 @@ async def run_chronicle(
 
     conversation_text = _format_conversation(messages)
 
+    memories = (
+        _format_memories(memory_manager.get_top_memorable(character_id, limit=30))
+        if memory_manager is not None
+        else "（記憶データなし）"
+    )
+
     # farewell_config の現在値を JSON 文字列化してプロンプトに埋め込む
     current_farewell_config = getattr(char, "farewell_config", None)
     farewell_config_text = (
@@ -257,7 +292,9 @@ async def run_chronicle(
         character_name=char.name,
         self_history=char.self_history or "（まだありません）",
         relationship_state=char.relationship_state or "（まだありません）",
+        inner_narrative=char.inner_narrative or "（まだありません）",
         conversation=conversation_text,
+        memories=memories,
         farewell_emotion_rubric=FAREWELL_EMOTION_RUBRIC.strip(),
         farewell_config=farewell_config_text,
     )
@@ -295,6 +332,7 @@ async def run_chronicle(
     updates = {}
     sh_block = parsed.get("self_history", {})
     rs_block = parsed.get("relationship_state", {})
+    in_block = parsed.get("inner_narrative", {})
     fc_value = parsed.get("farewell_config")
 
     if isinstance(sh_block, dict) and sh_block.get("update") and sh_block.get("text"):
@@ -302,6 +340,9 @@ async def run_chronicle(
 
     if isinstance(rs_block, dict) and rs_block.get("update") and rs_block.get("text"):
         updates["relationship_state"] = rs_block["text"]
+
+    if isinstance(in_block, dict) and in_block.get("update") and in_block.get("text"):
+        updates["inner_narrative"] = in_block["text"]
 
     # farewell_config: null 以外の dict が返された場合のみ更新する
     if isinstance(fc_value, dict) and fc_value:
@@ -326,6 +367,7 @@ async def run_chronicle(
 async def run_pending_chronicles(
     sqlite: SQLiteStore,
     chroma: Optional["ChromaStore"] = None,
+    memory_manager: Optional[MemoryManager] = None,
 ) -> None:
     """全キャラクターに対して chronicle を実行する。
 
@@ -337,6 +379,7 @@ async def run_pending_chronicles(
     Args:
         sqlite: SQLiteStore インスタンス。
         chroma: ChromaStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
+        memory_manager: MemoryManager インスタンス（印象的な記憶取得に使用。None でもよい）。
     """
     characters = sqlite.list_characters()
     targets = [c for c in characters if c.ghost_model]
@@ -352,6 +395,7 @@ async def run_pending_chronicles(
                 sqlite=sqlite,
                 settings=settings,
                 chroma=chroma,
+                memory_manager=memory_manager,
             )
         except Exception as e:
             logger.warning("失敗 char=%s: %s", char.id, e)

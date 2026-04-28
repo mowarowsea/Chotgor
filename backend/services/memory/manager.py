@@ -235,6 +235,26 @@ class MemoryManager:
         candidates.sort(key=lambda x: getattr(x, '_decayed_score', 0))
         return candidates[:limit]
 
+    def get_top_memorable(self, character_id: str, limit: int = 30) -> list:
+        """減衰スコア降順で上位limit件のアクティブ記憶を返す。
+
+        get_forgotten_candidates と対称で、chronicle 向けに「印象的な記憶」を
+        セマンティック検索なしで取得する。各記憶に _decayed_score 属性を付与する。
+
+        Args:
+            character_id: キャラクターID。
+            limit: 返す最大件数。
+
+        Returns:
+            _decayed_score 属性付きの記憶 ORM オブジェクトのリスト（降順）。
+        """
+        now = datetime.now()
+        memories = self.sqlite.get_all_active_memories(character_id)
+        for m in memories:
+            setattr(m, '_decayed_score', self.calculate_decayed_score(m, now))
+        memories.sort(key=lambda x: getattr(x, '_decayed_score', 0.0), reverse=True)
+        return memories[:limit]
+
     def write_memory(
         self,
         character_id: str,

@@ -70,5 +70,6 @@ async def trigger_chronicle(
         character_id=character_id,
         sqlite=request.app.state.sqlite,
         target_date=target_date,
+        memory_manager=request.app.state.memory_manager,
     )
     return result
