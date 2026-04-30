@@ -812,6 +812,42 @@ details[open] .log-toggle-icon { transform: rotate(90deg); }
   border-left: 2px solid var(--border-2);
 }
 
+/* インライン展開トグルボタン */
+.log-inline-btn {
+  font-size: 0.72rem;
+  color: var(--accent-text);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--mono);
+  opacity: 0.8;
+  transition: opacity var(--dur) var(--ease);
+}
+.log-inline-btn:hover { opacity: 1; }
+.log-inline-btn:disabled { cursor: wait; opacity: 0.5; }
+
+/* インライン展開されたログ本文 */
+.log-inline-body {
+  margin-top: 0.5rem;
+}
+.log-inline-pre {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 0.5rem 0.7rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.77rem;
+  font-family: var(--mono);
+  color: var(--t1);
+  line-height: 1.55;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+.log-inline-pre .jk { color: #79c0ff; }
+.log-inline-pre mark.jv { background: #2a3820; color: #a5d6a7; border-radius: 3px; padding: 0 2px; }
+
 hr {
   border: none;
   border-top: 1px solid var(--border);

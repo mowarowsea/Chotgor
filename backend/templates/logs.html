@@ -107,18 +107,24 @@
                 <div class="log-tool-list">
                     {% for tc in e.tool_calls %}
                     <div class="log-tool-block">
-                        <!-- ツール名バッジ + ファイルリンク -->
+                        <!-- ツール名バッジ + インライン展開ボタン -->
                         <div class="log-tool-header">
                             <span class="log-tool-tag">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
                             {% if tc.request_file %}
-                            <a href="/ui/logs/{{ e.message_id }}/view/{{ tc.request_file }}"
-                               target="_blank" class="log-file-link">Request ↗</a>
+                            <button class="log-inline-btn"
+                                    onclick="toggleInlineLog(this,'{{ e.message_id }}','{{ tc.request_file }}')">▶ Request</button>
                             {% endif %}
                             {% if tc.response_file %}
-                            <a href="/ui/logs/{{ e.message_id }}/view/{{ tc.response_file }}"
-                               target="_blank" class="log-file-link">Response ↗</a>
+                            <button class="log-inline-btn"
+                                    onclick="toggleInlineLog(this,'{{ e.message_id }}','{{ tc.response_file }}')">▶ Response</button>
                             {% endif %}
                         </div>
+                        {% if tc.request_file %}
+                        <div class="log-inline-body" data-filename="{{ tc.request_file }}" style="display:none"></div>
+                        {% endif %}
+                        {% if tc.response_file %}
+                        <div class="log-inline-body" data-filename="{{ tc.response_file }}" style="display:none"></div>
+                        {% endif %}
 
                         <!-- タグ使用 -->
                         {% if tc.tags %}
@@ -205,6 +211,155 @@
 {% endif %}
 
 <script>
+/**
+ * JSON 文字列値内の生改行・CR を文字ベースで置換する。大ファイルでも O(n) で安全。
+ *
+ * @param {string} text - 前処理する文字列。
+ * @returns {string} 制御文字を JSON エスケープに置換した文字列。
+ */
+function fixRawControlChars(text) {
+    const out = [];
+    let inStr = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (!inStr) {
+            out.push(ch);
+            if (ch === '"') inStr = true;
+        } else if (ch === '\\') {
+            out.push(ch);
+            out.push(text[++i] ?? '');
+        } else if (ch === '"') {
+            out.push(ch);
+            inStr = false;
+        } else if (ch === '\n') {
+            out.push('\\n');
+        } else if (ch === '\r') {
+            out.push('\\r');
+        } else {
+            out.push(ch);
+        }
+    }
+    return out.join('');
+}
+
+/**
+ * JSON テキストを整形＋ハイライトした HTML 文字列を返す。
+ * text/content/thought/system_prompt/conversation/thinking/result キーをハイライトし、
+ * JSON エスケープ（\n \t \"等）を展開して改行・タブとして表示する。
+ * 通常の JSON パース失敗時は NDJSON（複数行またがり対応）として解析する。
+ *
+ * @param {string} text - ログファイルのテキスト内容。
+ * @returns {string} <pre> の中身として挿入できる HTML 文字列。
+ */
+function renderJsonHtml(text) {
+    const HIGHLIGHT_KEYS = new Set(['text', 'content', 'thought', 'system_prompt', 'system_instruction', 'conversation', 'thinking', 'result']);
+    const KV_RE = /^(\s*)"([^"]+)"(\s*:\s*)(.+)$/;
+
+    function tryParse(t) {
+        try { return JSON.parse(t); } catch {}
+        const f1 = t.replace(/\\\n/g, '\\n');
+        try { return JSON.parse(f1); } catch {}
+        const f2 = fixRawControlChars(f1);
+        try { return JSON.parse(f2); } catch {}
+        // NDJSON（複数行またがり対応）
+        const lines = f1.split('\n');
+        const objects = [];
+        const acc = [];
+        for (const line of lines) {
+            acc.push(line);
+            try {
+                objects.push(JSON.parse(fixRawControlChars(acc.join('\n'))));
+                acc.length = 0;
+            } catch {}
+        }
+        if (objects.length > 0 && acc.every(l => !l.trim())) return objects;
+        return null;
+    }
+
+    const parsed = tryParse(text);
+    if (!parsed) {
+        return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    const pretty = JSON.stringify(parsed, null, 2);
+
+    function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    /** JSON 文字列表現（両端 " 付き）の内部エスケープを展開して返す。 */
+    function expandJsonStr(stripped) {
+        const inner = stripped.slice(1, -1);
+        return inner
+            .replace(/\\\\/g, '\x00BS\x00')
+            .replace(/\\"/g, '"')
+            .replace(/\\n/g, '\n')
+            .replace(/\\t/g, '\t')
+            .replace(/\\r/g, '\r')
+            .replace(/\x00BS\x00/g, '\\');
+    }
+
+    return pretty.split('\n').map(line => {
+        const m = KV_RE.exec(line);
+        if (m) {
+            const [, indent, key, sep, valuePart] = m;
+            if (HIGHLIGHT_KEYS.has(key)) {
+                const trailing = valuePart.endsWith(',') ? ',' : '';
+                const stripped = trailing ? valuePart.slice(0, -1) : valuePart;
+                if (stripped.startsWith('"') && stripped !== '"null"' && stripped.length > 2) {
+                    const inner = expandJsonStr(stripped);
+                    return esc(indent)
+                        + `<span class="jk">${esc('"' + key + '"')}</span>`
+                        + esc(sep)
+                        + `<mark class="jv">${esc(inner)}</mark>`
+                        + esc(trailing);
+                }
+            }
+        }
+        return esc(line);
+    }).join('\n');
+}
+
+/**
+ * ツール呼び出しのログファイルをインライン展開・折りたたみする。
+ * ボタンの次の兄弟要素（.log-inline-body）をトグルする。
+ * 初回クリック時に /ui/logs/{messageId}/raw/{filename} を fetch してレンダリングする。
+ *
+ * @param {HTMLElement} btn - クリックされたボタン要素。
+ * @param {string} messageId - リクエストID（8桁hex）。
+ * @param {string} filename - ログファイル名。
+ */
+async function toggleInlineLog(btn, messageId, filename) {
+    // data-filename 属性で対応する .log-inline-body を探す
+    const block = btn.closest('.log-tool-block');
+    const container = block
+        ? block.querySelector(`.log-inline-body[data-filename="${CSS.escape(filename)}"]`)
+        : null;
+    if (!container) return;
+
+    if (container.style.display !== 'none') {
+        container.style.display = 'none';
+        btn.textContent = btn.textContent.replace('▼', '▶');
+        return;
+    }
+    if (!container.dataset.loaded) {
+        const prev = btn.textContent;
+        btn.textContent = '… ' + prev.replace('▶ ', '');
+        btn.disabled = true;
+        try {
+            const res = await fetch(`/ui/logs/${messageId}/raw/${filename}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const text = await res.text();
+            container.innerHTML = '<pre class="log-inline-pre">' + renderJsonHtml(text) + '</pre>';
+            container.dataset.loaded = '1';
+        } catch (e) {
+            container.innerHTML = `<span style="color:#c87070;font-size:0.75rem">読み込み失敗: ${e.message}</span>`;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = prev;
+        }
+    }
+    container.style.display = '';
+    btn.textContent = btn.textContent.replace('▶', '▼');
+}
+
 /**
  * ログ一覧画面の思考ブロック翻訳ボタン処理。
  * ボタンクリック時に /api/translate を呼び出し、結果を details 内に表示する。

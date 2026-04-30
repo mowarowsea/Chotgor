@@ -76,19 +76,40 @@ def _parse_json_safely(text: str) -> dict | list:
     バックスラッシュ直後の改行（\\<LF>）が不正エスケープになる場合がある。
     パース前にこのパターンを JSON 改行エスケープ \\n に戻し、
     残る制御文字は strict=False で許容する。
-    パース失敗時は ValueError を送出する。
+    通常の JSON パースに失敗した場合は NDJSON（各行が独立した JSON オブジェクト、
+    ただし複数行またがりあり）として解析して list を返す。
+    どちらも失敗した場合は ValueError を送出する。
 
     Args:
         text: ログファイルのテキスト内容。
 
     Returns:
-        パース結果の dict または list。
+        パース結果の dict または list。NDJSON の場合はオブジェクトの list。
 
     Raises:
-        ValueError: JSON パースに失敗した場合。
+        ValueError: JSON・NDJSON どちらのパースにも失敗した場合。
     """
     text_safe = _BACKSLASH_NEWLINE_RE.sub(r"\\n", text)
-    return json.loads(text_safe, strict=False)
+    try:
+        return json.loads(text_safe, strict=False)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # NDJSON として解析する（LLM出力の生改行で複数行にまたがる場合も対応）
+    objects: list = []
+    accumulator: list[str] = []
+    for line in text_safe.splitlines():
+        accumulator.append(line)
+        candidate = "\n".join(accumulator)
+        try:
+            obj = json.loads(candidate, strict=False)
+            objects.append(obj)
+            accumulator = []
+        except (json.JSONDecodeError, ValueError):
+            pass
+    if objects:
+        return objects
+    raise ValueError("JSON/NDJSON parse failed")
 
 
 def _build_char_index() -> dict[str, str]:
@@ -582,8 +603,8 @@ async def log_raw_file(message_id: str, filename: str):
         return PlainTextResponse("Read error", status_code=500)
 
 
-# JSON ビュー表示でハイライトするキー名のセット
-_HIGHLIGHT_JSON_KEYS = {"text", "content", "thought"}
+# JSON ビュー表示でハイライトするキー名のセット（Claude CLI 向けキーも含む）
+_HIGHLIGHT_JSON_KEYS = {"text", "content", "thought", "system_prompt", "conversation", "thinking", "result", "system_instruction"}
 
 # JSON 整形ビュー用: key-value 行マッチパターン（indent=2 の json.dumps 前提）
 _JSON_KV_LINE_RE = re.compile(r'^(\s*)"([^"]+)"(\s*:\s*)(.+)$')
@@ -620,11 +641,20 @@ def _render_json_html(raw_text: str) -> str:
                 stripped = value_part.rstrip(",")
                 # 文字列値（ダブルクォートで囲まれ、null でない）のみハイライト
                 if stripped.startswith('"') and stripped != '"null"' and len(stripped) > 2:
+                    # JSON文字列内部のエスケープを展開して改行・タブを実際の文字に変換する
+                    inner = stripped[1:-1]
+                    inner = (inner
+                        .replace('\\\\', '\x00BACKSLASH\x00')
+                        .replace('\\"', '"')
+                        .replace('\\n', '\n')
+                        .replace('\\t', '\t')
+                        .replace('\\r', '\r')
+                        .replace('\x00BACKSLASH\x00', '\\'))
                     lines_html.append(
                         _html.escape(indent)
                         + f'<span class="jk">{_html.escape(chr(34) + key + chr(34))}</span>'
                         + _html.escape(sep)
-                        + f'<mark class="jv">{_html.escape(stripped)}</mark>'
+                        + f'<mark class="jv">{_html.escape(inner)}</mark>'
                         + _html.escape(trailing)
                     )
                     continue

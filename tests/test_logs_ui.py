@@ -859,6 +859,144 @@ class TestParseJsonSafely:
         assert "line1" in result["msg"]
         assert "line2" in result["msg"]
 
+    def test_ndjson_simple(self):
+        """1行1オブジェクトの NDJSON が list として返されること。"""
+        lines = [
+            '{"type": "system", "session_id": "sess01"}',
+            '{"type": "result", "is_error": false}',
+        ]
+        result = _parse_json_safely("\n".join(lines))
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["type"] == "system"
+        assert result[1]["type"] == "result"
+
+    def test_ndjson_multiline_value(self):
+        """LLM 出力の生改行で複数行にまたがる NDJSON が正しくパースされること。
+
+        Claude CLI の stream-json では text フィールドに生改行を含む行が複数行に分断される。
+        積み上げパース方式で完全な JSON が形成されるまで行を結合することを確認する。
+        """
+        obj1 = '{"type": "system", "id": "s1"}'
+        # 文字列値内に実際の改行を含む → splitlines() では 2 行になる
+        obj2_line1 = '{"type": "assistant", "text": "line1'
+        obj2_line2 = 'line2"}'
+        obj3 = '{"type": "result", "ok": true}'
+        raw = "\n".join([obj1, obj2_line1, obj2_line2, obj3])
+
+        result = _parse_json_safely(raw)
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert result[0]["type"] == "system"
+        assert result[1]["type"] == "assistant"
+        assert "line1" in result[1]["text"]
+        assert result[2]["type"] == "result"
+
+    def test_ndjson_all_invalid_raises_value_error(self):
+        """どの行も JSON としてパース不能なテキストは ValueError を送出すること。"""
+        with pytest.raises((ValueError, json.JSONDecodeError)):
+            _parse_json_safely("not json at all\nalso not json")
+
+
+# ─── _render_json_html ────────────────────────────────────────────────────────
+
+
+from backend.api.logs_ui import _render_json_html  # noqa: E402
+
+
+class TestRenderJsonHtml:
+    """_render_json_html() のハイライトとエスケープ展開を検証するテストクラス。
+
+    text/content/thought/system_prompt/system_instruction/conversation/thinking/result
+    キーの文字列値がハイライトされること、JSON エスケープ（\\n 等）が展開されること、
+    NDJSON 形式でも整形されることを確認する。
+    """
+
+    def test_highlight_text_key(self):
+        """'text' キーの文字列値が <mark class="jv"> でハイライトされること。"""
+        html = _render_json_html('{"text": "hello world"}')
+        assert '<mark class="jv">' in html
+        assert 'hello world' in html
+
+    def test_highlight_content_key(self):
+        """'content' キーがハイライトされること。"""
+        html = _render_json_html('{"content": "テスト内容"}')
+        assert '<mark class="jv">' in html
+
+    def test_highlight_thought_key(self):
+        """'thought' キーがハイライトされること。"""
+        html = _render_json_html('{"thought": "内部思考"}')
+        assert '<mark class="jv">' in html
+
+    def test_highlight_system_prompt_key(self):
+        """'system_prompt' キーがハイライトされること。"""
+        html = _render_json_html('{"system_prompt": "プロンプト内容"}')
+        assert '<mark class="jv">' in html
+
+    def test_highlight_system_instruction_key(self):
+        """'system_instruction' キーがハイライトされること（Gemini 向け）。"""
+        html = _render_json_html('{"system_instruction": "指示内容"}')
+        assert '<mark class="jv">' in html
+
+    def test_highlight_thinking_key(self):
+        """'thinking' キーがハイライトされること（Claude CLI 向け）。"""
+        html = _render_json_html('{"thinking": "思考内容"}')
+        assert '<mark class="jv">' in html
+
+    def test_highlight_result_key(self):
+        """'result' キーがハイライトされること（Claude CLI 向け）。"""
+        html = _render_json_html('{"result": "完了"}')
+        assert '<mark class="jv">' in html
+
+    def test_no_highlight_for_unknown_key(self):
+        """ハイライト対象外のキーには <mark> が生成されないこと。"""
+        html = _render_json_html('{"unknown_key": "値"}')
+        assert '<mark class="jv">' not in html
+
+    def test_newline_escape_expanded_in_highlight(self):
+        """ハイライト値内の \\n が実際の改行として展開されること。"""
+        data = {"text": "line1\nline2\nline3"}
+        html = _render_json_html(json.dumps(data))
+        # <mark> と </mark> の間に実際の改行文字（HTMLエスケープ後の改行）が含まれること
+        import re as _re
+        m = _re.search(r'<mark class="jv">(.*?)</mark>', html, _re.DOTALL)
+        assert m is not None
+        inner = m.group(1)
+        assert "\n" in inner or "&#10;" in inner or "<br" in inner
+
+    def test_cr_escape_expanded_in_highlight(self):
+        """ハイライト値内の \\r が展開されること。"""
+        data = {"text": "line1\r\nline2"}
+        html = _render_json_html(json.dumps(data))
+        assert '<mark class="jv">' in html
+
+    def test_null_value_not_highlighted(self):
+        """null 値はハイライトされないこと。"""
+        html = _render_json_html('{"text": null}')
+        assert '<mark class="jv">' not in html
+
+    def test_jk_span_for_highlighted_key(self):
+        """ハイライトされたキーに <span class="jk"> が付くこと。"""
+        html = _render_json_html('{"text": "hello"}')
+        assert '<span class="jk">' in html
+
+    def test_ndjson_is_rendered(self):
+        """NDJSON 形式のファイルが整形・ハイライトされること。"""
+        lines = [
+            json.dumps({"type": "system", "id": "s1"}),
+            json.dumps({"type": "assistant", "text": "応答内容"}),
+            json.dumps({"type": "result", "ok": True}),
+        ]
+        html = _render_json_html("\n".join(lines))
+        # NDJSON をリストとして整形した結果に "text" のハイライトが含まれること
+        assert '<mark class="jv">' in html
+
+    def test_invalid_json_returns_escaped_plain_text(self):
+        """パース不能なテキストは HTML エスケープされたプレーンテキストで返されること。"""
+        html = _render_json_html("not json <script>")
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
 
 # ─── _extract_function_calls_from_json ───────────────────────────────────────
 

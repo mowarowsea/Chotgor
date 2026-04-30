@@ -329,7 +329,7 @@ function ToolCallRow({
               {Object.entries(tag.fields).map(([k, v]) => (
                 <div key={k} className="flex gap-1.5 text-ch-t3">
                   <span className="text-ch-t4 shrink-0">{k}:</span>
-                  <span className="text-ch-t2 break-all">{v}</span>
+                  <span className="text-ch-t2 break-all whitespace-pre-wrap">{v}</span>
                 </div>
               ))}
             </div>
@@ -344,21 +344,44 @@ function ToolCallRow({
 // HighlightedJson（JSON整形＋フィールドハイライト）
 // ---------------------------------------------------------------------------
 
-/** ハイライト対象のキー名セット。 */
-const HIGHLIGHT_KEYS = new Set(["text", "content", "thought"]);
+/** ハイライト対象のキー名セット（Claude CLI / Gemini 向けキーも含む）。 */
+const HIGHLIGHT_KEYS = new Set(["text", "content", "thought", "system_prompt", "system_instruction", "conversation", "thinking", "result"]);
 /** JSON の key-value 行にマッチする正規表現（indent=2 前提）。 */
 const KV_LINE_RE = /^(\s*)"([^"]+)"(\s*:\s*)(.+)$/;
 
 /**
+ * 文字を1つずつ走査して JSON 文字列値内の生改行・CR を
+ * JSON エスケープに置換する。大きなファイルでも O(n) で確実に動作する。
+ */
+function fixRawControlChars(text: string): string {
+  const out: string[] = [];
+  let inStr = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (!inStr) {
+      out.push(ch);
+      if (ch === '"') inStr = true;
+    } else if (ch === "\\") {
+      out.push(ch);
+      out.push(text[++i] ?? "");
+    } else if (ch === '"') {
+      out.push(ch);
+      inStr = false;
+    } else if (ch === "\n") {
+      out.push("\\n");
+    } else if (ch === "\r") {
+      out.push("\\r");
+    } else {
+      out.push(ch);
+    }
+  }
+  return out.join("");
+}
+
+/**
  * JSON テキストのパースを試みる。
- * debug_logger が生成する2種類の不正エスケープを段階的に前処理して再試行する。
- *
- * 試み1: そのままパース（正常ファイル）
- * 試み2: \<LF>（バックスラッシュ+実改行）を JSON エスケープ \\n に戻す
- *         → thought_signature フィールドなどで発生するパターン
- * 試み3: 文字列値内の生改行（debug_logger が \\n → 実改行した結果）を \\n に戻す
- *         → candidates.content.parts[].text など複数行テキストで発生するパターン
- *         文字列トークン "..." 全体をマッチして内部の生改行だけをエスケープし直す。
+ * debug_logger が生成する不正エスケープや生改行を段階的に前処理して再試行する。
+ * 通常の JSON パースが失敗した場合は NDJSON（複数行またがり対応）として解析する。
  */
 function tryParseJson(text: string): unknown | null {
   try { return JSON.parse(text); } catch {}
@@ -367,10 +390,22 @@ function tryParseJson(text: string): unknown | null {
   const fixed1 = text.replace(/\\\n/g, "\\n");
   try { return JSON.parse(fixed1); } catch {}
 
-  // 文字列トークン内の生改行を \\n に置換
-  // "(?:[^"\\]|\\.|\n)*" で quoted string 全体をキャプチャし、その中の生 \n だけを変換する
-  const fixed2 = fixed1.replace(/"(?:[^"\\]|\\.|\n)*"/g, (m) => m.replace(/\n/g, "\\n"));
+  // 文字ベースの処理で生改行・CR を確実に置換（大ファイル対応）
+  const fixed2 = fixRawControlChars(fixed1);
   try { return JSON.parse(fixed2); } catch {}
+
+  // NDJSON（行またがり対応）として解析する
+  const lines = fixed1.split("\n");
+  const objects: unknown[] = [];
+  const acc: string[] = [];
+  for (const line of lines) {
+    acc.push(line);
+    try {
+      objects.push(JSON.parse(fixRawControlChars(acc.join("\n"))));
+      acc.length = 0;
+    } catch { /* まだ不完全 */ }
+  }
+  if (objects.length > 0 && acc.every(l => !l.trim())) return objects;
 
   return null;
 }
@@ -402,13 +437,19 @@ function HighlightedJson({ raw }: { raw: string }) {
             const stripped = trailing ? valuePart.slice(0, -1) : valuePart;
             // 文字列値（長さ 2 超、null 文字列でない）のみハイライト
             if (stripped.startsWith('"') && stripped !== '"null"' && stripped.length > 2) {
+              // JSON.parse で内部のエスケープ（\n \t \" 等）を実際の文字に展開する
+              let displayValue: string = stripped;
+              try {
+                const inner = JSON.parse(stripped) as unknown;
+                if (typeof inner === "string") displayValue = inner;
+              } catch { /* フォールバック: そのまま */ }
               return (
                 <span key={i}>
                   {indent}
                   <span style={{ color: "#79c0ff" }}>"{key}"</span>
                   {sep}
-                  <mark style={{ background: "#2a3820", color: "#a5d6a7", borderRadius: "3px", padding: "0 2px" }}>
-                    {stripped}
+                  <mark style={{ background: "#2a3820", color: "#a5d6a7", borderRadius: "3px", padding: "0 2px", whiteSpace: "pre-wrap" }}>
+                    {displayValue}
                   </mark>
                   {trailing}
                   {"\n"}
