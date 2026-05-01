@@ -4,12 +4,24 @@ lib/embedding_migration_service.py から移動。
 app（APIレイヤー）への依存をなくし、個別依存を引数で受け取って
 新しいインスタンスのタプルを返す設計にした。
 app.state の更新は呼び出し元（api/ui.py）で行う。
+
+再インデックス対象は **ChromaDB に存在する全コレクション** で、内訳は以下の3系統:
+
+1. ``char_{character_id}``      — 記憶コレクション（``MemoryStore``）
+2. ``chat_{character_id}``      — チャット履歴コレクション（``ChatStore``）
+3. ``char_definitions``         — キャラクター定義コレクション（別れ機能用、グローバル）
+
+過去 (1) のみを対象にしていたため embedding 次元が混在し、
+``Collection expecting embedding with dimension of N, got M`` エラーが
+頻発する不具合があった。現在は全系統を対象とすること。
 """
 
 import asyncio
 import logging
+import time
 
 from backend.services.chat.service import ChatService
+from backend.services.chat.indexer import build_chat_doc_and_metadata, get_participant_char_ids
 from backend.repositories.chroma.store import ChromaStore
 from backend.services.memory.manager import MemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
@@ -19,8 +31,19 @@ logger = logging.getLogger(__name__)
 # キャラクターごとにバッチupsertする際の最大件数。
 # Gemini など RPM 制限がある外部 API には小さめの値を、
 # infinity（ローカル）など制限のないプロバイダーには大きめの値が効率的。
-# infinity を使う場合は 50 件程度まで増やしても問題ない。
-_UPSERT_CHUNK_SIZE = 50
+# チャット再インデックス時のタイムアウト多発を避けるため小さめに設定。
+_UPSERT_CHUNK_SIZE = 1
+
+# 全チャットセッションを取得する際の上限。
+# SQLiteStore.list_chat_sessions の API を変えずに「実質全件」を取るための上限値。
+_CHAT_SESSION_FETCH_LIMIT = 1_000_000
+
+# チャットコレクション upsert のリトライ設定。
+# embedding server への過負荷タイムアウト対策。
+_CHAT_UPSERT_MAX_RETRIES = 5
+_CHAT_UPSERT_RETRY_WAIT_SEC = 30
+# チャンク間の待機時間（embedding server の過負荷防止）。
+_CHAT_UPSERT_INTER_CHUNK_SLEEP = 0.5
 
 
 async def migrate_embeddings(
@@ -61,7 +84,6 @@ async def migrate_embeddings(
         これにより 1件ずつ API を呼ぶ場合に比べ、外部 embedding API（Gemini 等）の
         RPM 制限への当たりを大幅に抑えられる。
         """
-        import time
         from backend.repositories.chroma.store import get_embedding_function
         # 同一 client を使い続けたまま embedding function だけ差し替える
         old_chroma._embedding_fn = get_embedding_function(new_provider, new_model, new_api_key, new_base_url)
@@ -113,6 +135,11 @@ async def migrate_embeddings(
                     min(chunk_start + _UPSERT_CHUNK_SIZE, total), total, char.name, char.id[:8],
                 )
 
+        # 記憶コレクションの再インデックス完了後、
+        # チャット履歴とキャラクター定義の再インデックスを順に実施する。
+        _reindex_chat_collections(sqlite, old_chroma)
+        _reindex_definition_collection(sqlite, old_chroma, characters)
+
         return old_chroma
 
     chroma = await asyncio.to_thread(_do_migrate)
@@ -122,3 +149,127 @@ async def migrate_embeddings(
         drift_manager=drift_manager,
     )
     return chroma, new_memory_manager, new_chat_service
+
+
+def _reindex_chat_collections(sqlite: SQLiteStore, chroma: ChromaStore) -> None:
+    """全 ``chat_{character_id}`` コレクションを新しい embedding fn で再インデックスする。
+
+    全チャットセッションを走査し、各メッセージを「そのセッションに参加した
+    キャラクター全員」の chat コレクションへ振り分ける。
+    旧コレクションは embedding 次元が古いため、削除→再作成してから upsert する。
+
+    is_system_message が立っているメッセージはインデックス対象外
+    （indexer.index_message_sync の挙動と一致させる）。
+
+    Args:
+        sqlite: SQLite ストアインスタンス。
+        chroma: 新しい embedding fn が設定済みの ChromaStore インスタンス。
+    """
+    sessions = sqlite.list_chat_sessions(limit=_CHAT_SESSION_FETCH_LIMIT)
+    # char_id -> [(message_id, doc, metadata), ...] の蓄積
+    by_char: dict[str, list[tuple[str, str, dict]]] = {}
+
+    for session in sessions:
+        char_ids = get_participant_char_ids(session, sqlite)
+        if not char_ids:
+            continue
+        messages = sqlite.list_chat_messages(session.id)
+        for msg in messages:
+            built = build_chat_doc_and_metadata(msg)
+            if built is None:
+                continue
+            doc, metadata = built
+            for char_id in char_ids:
+                by_char.setdefault(char_id, []).append((msg.id, doc, metadata))
+
+    if not by_char:
+        logger.info("migrate_embeddings: 再インデックス対象のチャット履歴なし")
+        return
+
+    for char_id, entries in by_char.items():
+        # 旧 chat_{id} コレクションを削除して新次元で作り直す
+        collection_name = f"chat_{char_id.replace('-', '_')}"
+        try:
+            chroma.client.delete_collection(collection_name)
+        except Exception as e:
+            err_str = str(e)
+            if "does not exist" not in err_str:
+                logger.warning(
+                    "migrate_embeddings(chat): コレクション削除失敗 char=%s name=%s error=%s",
+                    char_id, collection_name, e,
+                )
+        new_collection = chroma._get_chat_collection(char_id)
+
+        total = len(entries)
+        for chunk_start in range(0, total, _UPSERT_CHUNK_SIZE):
+            chunk = entries[chunk_start:chunk_start + _UPSERT_CHUNK_SIZE]
+            ids = [e[0] for e in chunk]
+            docs = [e[1] for e in chunk]
+            # add_chat_turn と同じく character_id を metadata にマージする
+            metas = [{**e[2], "character_id": char_id} for e in chunk]
+            # str/int/float/bool 以外は ChromaDB が拒絶するためフィルタ（add_chat_turn と同等）
+            metas = [
+                {k: v for k, v in m.items() if isinstance(v, (str, int, float, bool))}
+                for m in metas
+            ]
+            for attempt in range(_CHAT_UPSERT_MAX_RETRIES):
+                try:
+                    new_collection.upsert(ids=ids, documents=docs, metadatas=metas)
+                    break
+                except Exception as e:
+                    if attempt < _CHAT_UPSERT_MAX_RETRIES - 1:
+                        logger.warning(
+                            "migrate_embeddings(chat): upsert失敗（%d回目）%d秒後にリトライ char=%s chunk=%d-%d error=%s",
+                            attempt + 1, _CHAT_UPSERT_RETRY_WAIT_SEC,
+                            char_id, chunk_start, chunk_start + len(chunk), e,
+                        )
+                        time.sleep(_CHAT_UPSERT_RETRY_WAIT_SEC)
+                    else:
+                        logger.warning(
+                            "migrate_embeddings(chat): upsert失敗（最終）char=%s chunk=%d-%d error=%s",
+                            char_id, chunk_start, chunk_start + len(chunk), e,
+                        )
+            time.sleep(_CHAT_UPSERT_INTER_CHUNK_SLEEP)
+        logger.info(
+            "migrate_embeddings(chat): upsert完了 char=%s count=%d", char_id, total,
+        )
+
+
+def _reindex_definition_collection(
+    sqlite: SQLiteStore, chroma: ChromaStore, characters: list
+) -> None:
+    """``char_definitions`` グローバルコレクションを新しい embedding fn で再インデックスする。
+
+    全キャラクターの定義テキスト（``system_prompt_block1``）を新次元で再登録する。
+    relationship_status は維持するため、estranged キャラの「同一定義による再作成」検出は
+    再インデックス後も正しく機能する。
+
+    Args:
+        sqlite: SQLite ストアインスタンス（参照は characters 引数で代用するため未使用）。
+        chroma: 新しい embedding fn が設定済みの ChromaStore インスタンス。
+        characters: list_characters() の戻り値（重複取得を避けるため _do_migrate から受け取る）。
+    """
+    try:
+        chroma.client.delete_collection("char_definitions")
+    except Exception as e:
+        err_str = str(e)
+        if "does not exist" not in err_str:
+            logger.warning(
+                "migrate_embeddings(definitions): コレクション削除失敗 error=%s", e,
+            )
+
+    count = 0
+    for char in characters:
+        text = (getattr(char, "system_prompt_block1", "") or "").strip()
+        if not text:
+            continue
+        status = getattr(char, "relationship_status", "active") or "active"
+        try:
+            chroma.upsert_character_definition(char.id, text, status=status)
+            count += 1
+        except Exception as e:
+            logger.warning(
+                "migrate_embeddings(definitions): upsert失敗 char=%s error=%s",
+                getattr(char, "name", "?"), e,
+            )
+    logger.info("migrate_embeddings(definitions): upsert完了 count=%d", count)
