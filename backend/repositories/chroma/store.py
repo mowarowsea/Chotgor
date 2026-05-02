@@ -186,8 +186,12 @@ class ChromaStore:
 
         また、取得できたコレクションでも HNSW ファイルが存在しない（破損）場合は
         強制削除して再作成する。これは migration 中断などで起きる稀な状態を自動修復する。
+
+        注意: 関数内で ``import logging`` を書かないこと。``logging`` はモジュール先頭で
+        import 済みのため関数内で再 import するとローカル変数扱いになり、
+        条件分岐によっては UnboundLocalError を引き起こす（過去にこの罠で記憶リコールが
+        全停止した）。``logger`` 変数の生成のみ行う。
         """
-        import logging
         logger = logging.getLogger(__name__)
         kwargs: dict = {
             "name": collection_name,
@@ -337,7 +341,9 @@ class ChromaStore:
                 filtered_ids = collection.get(where=where, limit=n, include=[])["ids"]
                 filtered_count = len(filtered_ids)
             except Exception as e:
-                import logging
+                # 関数内で ``import logging`` を書かないこと（モジュール先頭で import 済み）。
+                # 再 import すると logging がローカル変数扱いになり、後続 except ブロック
+                # （別パス）で logging 参照時に UnboundLocalError になるため。
                 logging.getLogger(__name__).warning(
                     "ChromaDB pre-filter (get) 失敗 where=%s error=%s", where, e
                 )
@@ -415,15 +421,41 @@ class ChromaStore:
         if count == 0:
             return None
 
+        query_kwargs = {
+            **self._get_query_kwargs(content, as_document=True),
+            "n_results": 1,
+            "include": ["distances"],
+            "where": {"category": category},
+        }
+
+        # HNSWインデックス破損を黙殺せず、recall_memory と同じパターンで自動修復する。
+        # 黙殺したまま None を返すと「類似なし」と誤判断されて新規 add_memory が走り、
+        # ゴーストID共存の連鎖破損を増幅させる（欠陥 B）。
         try:
-            results = collection.query(
-                **self._get_query_kwargs(content, as_document=True),
-                n_results=1,
-                include=["distances"],
-                where={"category": category},
-            )
-        except Exception:
-            return None
+            results = collection.query(**query_kwargs)
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            if "Error finding id" in str(e):
+                logger.warning(
+                    "ChromaDB HNSWインデックス破損検出 char=%s (find_similar) - 再構築してリトライ",
+                    character_id,
+                )
+                self.rebuild_memory_collection(character_id)
+                collection = self._get_collection(character_id)
+                try:
+                    results = collection.query(**query_kwargs)
+                except Exception as e2:
+                    logger.error(
+                        "ChromaDB 再構築後も find_similar query 失敗 char=%s error=%s",
+                        character_id, e2,
+                    )
+                    return None
+            else:
+                logger.warning(
+                    "ChromaDB find_similar query 失敗 char=%s category=%s error=%s",
+                    character_id, category, e,
+                )
+                return None
 
         if not results["ids"] or not results["ids"][0]:
             return None
@@ -624,7 +656,7 @@ class ChromaStore:
         Returns:
             類似するestrangedキャラクターの情報リスト（character_id, distance）。
         """
-        import logging
+        # 関数内で ``import logging`` を書かないこと（モジュール先頭で import 済み）。
         logger = logging.getLogger(__name__)
         collection = self._get_definition_collection()
         if collection.count() == 0:
@@ -671,7 +703,7 @@ class ChromaStore:
         Args:
             character_id: 疎遠になったキャラクターのID。
         """
-        import logging
+        # 関数内で ``import logging`` を書かないこと（モジュール先頭で import 済み）。
         logger = logging.getLogger(__name__)
         collection = self._get_definition_collection()
         try:
@@ -688,7 +720,7 @@ class ChromaStore:
         Args:
             character_id: コレクションを削除するキャラクターID。
         """
-        import logging
+        # 関数内で ``import logging`` を書かないこと（モジュール先頭で import 済み）。
         logger = logging.getLogger(__name__)
         collection_name = f"char_{character_id.replace('-', '_')}"
         try:

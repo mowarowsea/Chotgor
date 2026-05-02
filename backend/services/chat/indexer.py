@@ -2,18 +2,66 @@
 
 asyncio.to_thread 経由で呼び出すことを想定した同期関数を提供する。
 ChromaDB書き込みはSQLiteコミット後のベストエフォート。失敗時は30秒ごとに最大5回リトライする。
+
+文書・メタデータの構築仕様は ``build_chat_doc_and_metadata`` に集約しており、
+embedding model 変更時の再インデックス処理（``services.memory.migration_service``）からも
+同関数を再利用する。indexer と migration の構築ロジックがズレないように同関数経由で行うこと。
 """
 
 import json
 import logging
 import time
 from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # チャット履歴インデックス書き込みのリトライ設定
 _CHAT_INDEX_MAX_RETRIES = 5
 _CHAT_INDEX_RETRY_INTERVAL_SEC = 30.0
+
+
+def build_chat_doc_and_metadata(
+    message,
+    user_name: str = "ユーザ",
+) -> Optional[tuple[str, dict]]:
+    """メッセージから ChromaDB upsert 用の (document, metadata) を構築する。
+
+    indexer（通常書き込み）と migration_service（embedding 再構築）の双方から
+    呼び出される。両者で構築ロジックが乖離しないよう、ここに一本化する。
+
+    is_system_message が立っているメッセージはインデックス対象外として None を返す。
+
+    Args:
+        message: ChatMessage ORM オブジェクト。``role`` / ``content`` / ``session_id`` /
+            ``character_name`` / ``created_at`` / ``is_system_message`` を読み取る。
+        user_name: role="user" のときのスピーカー名表示。
+
+    Returns:
+        ``(doc, metadata)`` のタプル。system message の場合は ``None``。
+    """
+    if getattr(message, "is_system_message", None):
+        return None
+
+    role = message.role
+    if role == "user":
+        speaker_name = user_name
+    else:
+        speaker_name = getattr(message, "character_name", None) or "キャラクター"
+
+    doc = f"{speaker_name}: {message.content}"
+    created_at = message.created_at
+    metadata = {
+        "session_id": message.session_id,
+        "role": role,
+        "speaker_name": speaker_name,
+        "created_at": (
+            created_at.isoformat(timespec="seconds")
+            if created_at
+            else datetime.now().isoformat(timespec="seconds")
+        ),
+    }
+    return doc, metadata
 
 
 def get_participant_char_ids(session, sqlite) -> list[str]:
@@ -81,27 +129,10 @@ def index_message_sync(
         chroma: ChromaStore インスタンス。
         user_name: role="user" のときに使用するスピーカー名。
     """
-    if getattr(message, "is_system_message", None):
+    built = build_chat_doc_and_metadata(message, user_name=user_name)
+    if built is None:
         return
-
-    role = message.role
-    if role == "user":
-        speaker_name = user_name
-    else:
-        speaker_name = getattr(message, "character_name", None) or "キャラクター"
-
-    doc = f"{speaker_name}: {message.content}"
-    created_at = message.created_at
-    metadata = {
-        "session_id": message.session_id,
-        "role": role,
-        "speaker_name": speaker_name,
-        "created_at": (
-            created_at.isoformat(timespec="seconds")
-            if created_at
-            else datetime.now().isoformat(timespec="seconds")
-        ),
-    }
+    doc, metadata = built
 
     for char_id in character_ids:
         for attempt in range(_CHAT_INDEX_MAX_RETRIES):
