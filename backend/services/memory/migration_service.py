@@ -83,62 +83,71 @@ async def migrate_embeddings(
         各キャラクターの記憶を _UPSERT_CHUNK_SIZE 件ずつバッチupsertする。
         これにより 1件ずつ API を呼ぶ場合に比べ、外部 embedding API（Gemini 等）の
         RPM 制限への当たりを大幅に抑えられる。
+
+        migration 全体を ``ChromaStore._write_lock`` の中で実行することで、
+        delete_collection と get_or_create_collection の間に他経路の書き込み
+        （chat indexer / 同期 inscribe / リトライワーカー）が割り込んで
+        HNSW 初期化が破損するシナリオ（欠陥 E）を構造的に排除する。
+        RLock のため、内部から ``ChromaStore.delete_all_memories`` 等を呼んだ際の
+        再帰取得も問題ない。migration 中の他経路 write は完了まで block される
+        （メンテナンスモード相当）。
         """
         from backend.repositories.chroma.store import get_embedding_function
         # 同一 client を使い続けたまま embedding function だけ差し替える
         old_chroma._embedding_fn = get_embedding_function(new_provider, new_model, new_api_key, new_base_url)
-        characters = sqlite.list_characters()
-        for char in characters:
-            # SQLiteから記憶を先に取得してから削除する。
-            # 先に削除してからupsertすると、upsert失敗時にコレクションが空のまま残る。
-            memories = sqlite.get_all_active_memories(char.id)
-            if not memories:
-                logger.info("migrate_embeddings: 記憶なし char=%s (%s)", char.name, char.id[:8])
+        with old_chroma._write_lock:
+            characters = sqlite.list_characters()
+            for char in characters:
+                # SQLiteから記憶を先に取得してから削除する。
+                # 先に削除してからupsertすると、upsert失敗時にコレクションが空のまま残る。
+                memories = sqlite.get_all_active_memories(char.id)
+                if not memories:
+                    logger.info("migrate_embeddings: 記憶なし char=%s (%s)", char.name, char.id[:8])
+                    old_chroma.delete_all_memories(char.id)
+                    continue
                 old_chroma.delete_all_memories(char.id)
-                continue
-            old_chroma.delete_all_memories(char.id)
 
-            # キャラクターの全記憶を chunk_size 件ずつバッチupsert
-            collection = old_chroma._get_collection(char.id)
-            total = len(memories)
-            for chunk_start in range(0, total, _UPSERT_CHUNK_SIZE):
-                chunk = memories[chunk_start:chunk_start + _UPSERT_CHUNK_SIZE]
-                ids = [m.id for m in chunk]
-                contents = [m.content for m in chunk]
-                metadatas = [
-                    {
-                        "category": m.memory_category or "general",
-                        "contextual_importance": m.contextual_importance,
-                        "semantic_importance": m.semantic_importance,
-                        "identity_importance": m.identity_importance,
-                        "user_importance": m.user_importance,
-                    }
-                    for m in chunk
-                ]
-                # RPM制限でのリトライ（最大5回、指数バックオフ: 65/130/195/260秒）
-                for attempt in range(5):
-                    try:
-                        collection.upsert(ids=ids, documents=contents, metadatas=metadatas)
-                        break
-                    except Exception as e:
-                        if attempt < 4:
-                            wait_sec = 65 * (attempt + 1)
-                            logger.warning(
-                                "migrate_embeddings: upsert失敗（%d回目）%d秒後にリトライ char=%s error=%s",
-                                attempt + 1, wait_sec, char.name, e,
-                            )
-                            time.sleep(wait_sec)
-                        else:
-                            raise
-                logger.info(
-                    "migrate_embeddings: upsert %d/%d char=%s (%s)",
-                    min(chunk_start + _UPSERT_CHUNK_SIZE, total), total, char.name, char.id[:8],
-                )
+                # キャラクターの全記憶を chunk_size 件ずつバッチupsert
+                collection = old_chroma._get_collection(char.id)
+                total = len(memories)
+                for chunk_start in range(0, total, _UPSERT_CHUNK_SIZE):
+                    chunk = memories[chunk_start:chunk_start + _UPSERT_CHUNK_SIZE]
+                    ids = [m.id for m in chunk]
+                    contents = [m.content for m in chunk]
+                    metadatas = [
+                        {
+                            "category": m.memory_category or "general",
+                            "contextual_importance": m.contextual_importance,
+                            "semantic_importance": m.semantic_importance,
+                            "identity_importance": m.identity_importance,
+                            "user_importance": m.user_importance,
+                        }
+                        for m in chunk
+                    ]
+                    # RPM制限でのリトライ（最大5回、指数バックオフ: 65/130/195/260秒）
+                    for attempt in range(5):
+                        try:
+                            collection.upsert(ids=ids, documents=contents, metadatas=metadatas)
+                            break
+                        except Exception as e:
+                            if attempt < 4:
+                                wait_sec = 65 * (attempt + 1)
+                                logger.warning(
+                                    "migrate_embeddings: upsert失敗（%d回目）%d秒後にリトライ char=%s error=%s",
+                                    attempt + 1, wait_sec, char.name, e,
+                                )
+                                time.sleep(wait_sec)
+                            else:
+                                raise
+                    logger.info(
+                        "migrate_embeddings: upsert %d/%d char=%s (%s)",
+                        min(chunk_start + _UPSERT_CHUNK_SIZE, total), total, char.name, char.id[:8],
+                    )
 
-        # 記憶コレクションの再インデックス完了後、
-        # チャット履歴とキャラクター定義の再インデックスを順に実施する。
-        _reindex_chat_collections(sqlite, old_chroma)
-        _reindex_definition_collection(sqlite, old_chroma, characters)
+            # 記憶コレクションの再インデックス完了後、
+            # チャット履歴とキャラクター定義の再インデックスを順に実施する。
+            _reindex_chat_collections(sqlite, old_chroma)
+            _reindex_definition_collection(sqlite, old_chroma, characters)
 
         return old_chroma
 
