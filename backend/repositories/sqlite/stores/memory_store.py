@@ -95,6 +95,54 @@ class MemoryStoreMixin:
                 mem.access_count = (mem.access_count or 0) + 1
                 session.commit()
 
+    def update_memory_for_overwrite(
+        self,
+        memory_id: str,
+        content: str,
+        memory_category: str,
+        contextual_importance: float,
+        semantic_importance: float,
+        identity_importance: float,
+        user_importance: float,
+    ) -> bool:
+        """既存記憶を in-place 上書き更新する（重複排除時に使用）。
+
+        write_memory 経路で類似既存記憶が見つかった際、旧レコードを soft_delete して
+        新規 UUID で作り直すと、ChromaDB 側で「旧ID delete + 新ID add」という競合
+        2 操作になり、ゴーストID共存の連鎖破損を引き起こす（欠陥 C）。
+        本メソッドは旧IDをそのまま再利用して content / category / importances を
+        上書きすることで、ChromaDB 側も単一 upsert で完結させる。
+
+        access_count / created_at / last_accessed_at は維持し、updated_at のみ更新する。
+        deleted_at が設定されている記憶は更新対象外（False を返す）。
+
+        Args:
+            memory_id: 更新対象の記憶ID。
+            content: 新しい本文。
+            memory_category: 新しいカテゴリ。
+            contextual_importance: 新しい contextual_importance。
+            semantic_importance: 新しい semantic_importance。
+            identity_importance: 新しい identity_importance。
+            user_importance: 新しい user_importance。
+
+        Returns:
+            更新できたら True、対象が存在しない／soft-delete 済みなら False。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import Memory
+            mem = session.get(Memory, memory_id)
+            if not mem or mem.deleted_at is not None:
+                return False
+            mem.content = content
+            mem.memory_category = memory_category
+            mem.contextual_importance = contextual_importance
+            mem.semantic_importance = semantic_importance
+            mem.identity_importance = identity_importance
+            mem.user_importance = user_importance
+            mem.updated_at = datetime.now()
+            session.commit()
+            return True
+
     def soft_delete_memory(self, memory_id: str) -> bool:
         """記憶をソフト削除する（deleted_at をセット）。"""
         with self.get_session() as session:

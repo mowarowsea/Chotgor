@@ -266,14 +266,20 @@ class MemoryManager:
         user_importance: float = 0.5,
         source_preset_id: Optional[str] = None,
     ) -> str:
-        """記憶をSQLiteとChromaDBに書き込む。類似記憶があれば更新、なければ新規作成する。
+        """記憶をSQLiteとChromaDBに書き込む。類似記憶があれば in-place 更新、なければ新規作成する。
 
         SQLiteへの書き込みを先に確定させ、ChromaDB書き込みはその後ベストエフォートで行う。
         ChromaDB書き込みが失敗した場合はバックグラウンドでリトライする。
 
-        同一キャラクター・カテゴリ内でコサイン距離 < 0.2 の記憶が既存する場合は
-        新規作成せずに上書き更新する（重複排除）。
-        更新時は access_count と created_at を引き継ぎ、content・各importance を上書きする。
+        同一キャラクター・カテゴリ内で類似既存記憶が見つかった場合は、
+        既存 memory_id を再利用して in-place 上書きする（重複排除）。
+        旧来は soft_delete + 新規UUIDで作り直していたが、
+        その方式は ChromaDB 側で「旧ID delete + 新ID add」の競合 2 操作になり
+        ゴーストID共存の連鎖破損を引き起こすため廃止された（欠陥 C 対策）。
+        access_count / created_at / last_accessed_at は維持され、
+        content / category / importances / updated_at のみ上書きされる。
+        ChromaDB 側は同一 ID で ``add_memory`` を呼ぶことで内部 upsert により
+        embedding と metadata が原子的に置き換わる（delete は不要）。
 
         Returns:
             書き込んだ記憶のmemory_id（更新の場合は既存ID、新規の場合は新規UUID）。
@@ -291,29 +297,45 @@ class MemoryManager:
         )
 
         if existing_id:
-            # 類似記憶が見つかった → SQLiteをsoft-delete後、ChromaDBから削除する（ベストエフォート）
-            self.sqlite.soft_delete_memory(existing_id)
-            self._schedule_chroma_write(
-                "delete_memory", character_id,
+            # 既存IDを再利用して in-place 更新する。SQLite 側を先に確定させる。
+            updated = self.sqlite.update_memory_for_overwrite(
                 memory_id=existing_id,
+                content=content,
+                memory_category=category,
+                contextual_importance=contextual_importance,
+                semantic_importance=semantic_importance,
+                identity_importance=identity_importance,
+                user_importance=user_importance,
+            )
+            if updated:
+                memory_id = existing_id
+            else:
+                # 既存IDが SQLite 側で見つからない／soft-delete 済み等の不整合状態。
+                # ChromaDB 側にだけ存在するゴーストレコードの可能性が高いので、
+                # 新規 UUID で作り直す方向にフォールバックする（旧来のフローと等価）。
+                logger.warning(
+                    "in-place 更新失敗（SQLite 側に existing_id=%s が見つからず）→ 新規作成にフォールバック",
+                    existing_id,
+                )
+                existing_id = None
+
+        if not existing_id:
+            # 新規作成: まずSQLiteにコミットしてからChromaDBへ書き込む
+            memory_id = str(uuid.uuid4())
+            self.sqlite.create_memory(
+                memory_id=memory_id,
+                character_id=character_id,
+                content=content,
+                memory_category=category,
+                contextual_importance=contextual_importance,
+                semantic_importance=semantic_importance,
+                identity_importance=identity_importance,
+                user_importance=user_importance,
+                source_preset_id=source_preset_id,
             )
 
-        # 新規作成: まずSQLiteにコミットしてからChromaDBへ書き込む
-        memory_id = str(uuid.uuid4())
-
-        self.sqlite.create_memory(
-            memory_id=memory_id,
-            character_id=character_id,
-            content=content,
-            memory_category=category,
-            contextual_importance=contextual_importance,
-            semantic_importance=semantic_importance,
-            identity_importance=identity_importance,
-            user_importance=user_importance,
-            source_preset_id=source_preset_id,
-        )
-
-        # SQLiteコミット完了後にChromaDBへ書き込む（失敗時はリトライキューへ）
+        # SQLiteコミット完了後にChromaDBへ書き込む（失敗時はリトライキューへ）。
+        # 同一IDの場合は内部 upsert により embedding と metadata が原子的に置き換わる。
         self._schedule_chroma_write(
             "add_memory", character_id,
             memory_id=memory_id,

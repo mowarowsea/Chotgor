@@ -46,21 +46,25 @@ def test_write_memory_new(manager, sqlite_store, mock_chroma):
     mock_chroma.add_memory.assert_called_once()
 
 
-def test_write_memory_delete_insert_when_similar_found(manager, sqlite_store, mock_chroma):
-    """類似記憶がある場合、旧レコードをsoft-deleteして新規レコードを作成することを確認する。
+def test_write_memory_inplace_update_when_similar_found(manager, sqlite_store, mock_chroma):
+    """類似記憶がある場合、既存IDで in-place 更新されることを確認する（欠陥 C 対策）。
 
-    delete-insert方式（Issue #38対応）の動作を検証する。
+    旧来は soft_delete + 新規UUID で作り直していたため、ChromaDB 側で
+    「旧ID delete + 新ID add」の競合 2 操作となり、ゴーストID共存の連鎖破損を
+    引き起こす元凶になっていた。新仕様では既存IDをそのまま再利用し、
+    SQLite側は in-place 更新、ChromaDB側は同一IDでの upsert（add_memory が
+    内部で collection.upsert を呼ぶ）にすることで delete を完全に排除する。
 
     ChromaDBが既存のmemory_idを返したとき:
-    - 旧レコード（"existing-mem"）がSQLiteでsoft-deleteされること
-    - ChromaDBの旧レコードが物理削除されること
-    - 新しいUUIDでSQLiteに新規レコードが作成されること
-    - 新しいIDでChromaDBにembeddingが追加されること
-    - アクティブな記憶は1件のみであること（旧レコードは削除済み）
+    - 返却IDは既存ID（"existing-mem"）と同一であること
+    - SQLite側は soft-delete されず、in-place で content/category/importances が上書きされていること
+    - access_count / created_at は維持されること
+    - ChromaDB.delete_memory は **呼ばれないこと**
+    - ChromaDB.add_memory が同一IDで呼ばれること（内部 upsert で置き換わる）
 
     コサイン距離の目安:
       ~0.05 : ほぼ同じ文（「コーヒーが好き」vs「コーヒーが大好き」）
-      ~0.15 : 同系統の内容（「コーヒーが好き」vs「カフェラテが好き」）← delete-insert対象
+      ~0.15 : 同系統の内容（「コーヒーが好き」vs「カフェラテが好き」）← in-place 更新対象
       ~0.6+ : 別トピック（「コーヒーが好き」vs「犬を飼っている」）← 新規作成
     """
     char_id = "char-001"
@@ -76,6 +80,12 @@ def test_write_memory_delete_insert_when_similar_found(manager, sqlite_store, mo
         identity_importance=0.3,
         user_importance=0.3,
     )
+    # access_count を 5 に積み上げて、in-place 更新で維持されることを後で確認する
+    for _ in range(5):
+        sqlite_store.remember("existing-mem")
+    pre_mem = sqlite_store.get_memory("existing-mem")
+    pre_created_at = pre_mem.created_at
+    assert pre_mem.access_count == 5
 
     # ChromaDBが「コーヒーが好き」→「カフェラテが好き」で類似ありと判定した想定
     mock_chroma.find_similar_in_category.return_value = "existing-mem"
@@ -90,28 +100,70 @@ def test_write_memory_delete_insert_when_similar_found(manager, sqlite_store, mo
         user_importance=0.9,
     )
 
-    # 返却IDは新しいUUIDであること（旧IDではない）
-    assert returned_id != "existing-mem"
+    # 返却IDは既存IDと同一であること（新規UUIDではない）
+    assert returned_id == "existing-mem"
 
-    # アクティブな記憶は新規レコード1件のみであること
+    # アクティブな記憶は in-place 更新された 1 件のみ
     active_mems = sqlite_store.list_memories(char_id)
     assert len(active_mems) == 1
-    assert active_mems[0].id == returned_id
+    assert active_mems[0].id == "existing-mem"
     assert active_mems[0].content == "カフェラテが好き"
     assert active_mems[0].contextual_importance == 0.8
     assert active_mems[0].semantic_importance == 0.7
     assert active_mems[0].identity_importance == 0.6
     assert active_mems[0].user_importance == 0.9
 
-    # 旧レコードはsoft-deleteされていること
-    old_mem = sqlite_store.get_memory("existing-mem")
-    assert old_mem.deleted_at is not None
+    # in-place 更新で deleted_at は付与されないこと
+    assert active_mems[0].deleted_at is None
+    # access_count / created_at は維持されていること
+    assert active_mems[0].access_count == 5
+    assert active_mems[0].created_at == pre_created_at
 
-    # ChromaDBで旧レコードが削除され、新IDで追加されていること
-    mock_chroma.delete_memory.assert_called_once_with(memory_id="existing-mem", character_id=char_id)
+    # ChromaDB.delete_memory は呼ばれないこと（欠陥 C の主目的）
+    mock_chroma.delete_memory.assert_not_called()
+    # add_memory は同一IDで呼ばれていること（内部 upsert により置き換わる）
     mock_chroma.add_memory.assert_called_once()
     call_kwargs = mock_chroma.add_memory.call_args
-    assert call_kwargs.kwargs["memory_id"] == returned_id
+    assert call_kwargs.kwargs["memory_id"] == "existing-mem"
+    assert call_kwargs.kwargs["content"] == "カフェラテが好き"
+
+
+def test_write_memory_falls_back_to_new_when_existing_is_soft_deleted(
+    manager, sqlite_store, mock_chroma
+):
+    """find_similar が既存IDを返したが SQLite 側が soft-delete 済みのとき、新規UUIDで作り直すこと。
+
+    ChromaDB と SQLite の整合が崩れている場合のフォールバックの動作確認。
+    update_memory_for_overwrite は False を返し、write_memory は新規UUIDで
+    create_memory に進む。delete は呼ばれない（旧来の delete + add 二重操作は
+    すでに廃止されている）。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory(
+        "ghost-existing",
+        char_id,
+        "古い記憶",
+        memory_category="user",
+    )
+    sqlite_store.soft_delete_memory("ghost-existing")
+    mock_chroma.find_similar_in_category.return_value = "ghost-existing"
+
+    returned_id = manager.write_memory(
+        char_id,
+        "新しい記憶",
+        category="user",
+    )
+
+    # 新規UUIDが返却されていること
+    assert returned_id != "ghost-existing"
+    # アクティブな記憶は新規 1 件
+    active_mems = sqlite_store.list_memories(char_id)
+    assert len(active_mems) == 1
+    assert active_mems[0].id == returned_id
+    # add_memory は新規IDで呼ばれ、delete_memory は呼ばれていないこと
+    mock_chroma.add_memory.assert_called_once()
+    assert mock_chroma.add_memory.call_args.kwargs["memory_id"] == returned_id
+    mock_chroma.delete_memory.assert_not_called()
 
 
 def test_recall_memory_hybrid(manager, sqlite_store, mock_chroma):
