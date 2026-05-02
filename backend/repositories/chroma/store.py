@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 from typing import Optional
 
 import chromadb
@@ -176,6 +177,15 @@ class ChromaStore:
             settings=Settings(anonymized_telemetry=False),
         )
         self._embedding_fn = get_embedding_function(embedding_provider, embedding_model, api_key, base_url)
+        # ChromaDB 書き込みを直列化するロック（欠陥 D 対策）。
+        # ChromaDB の HNSW バイナリ（link_lists.bin 等）は multi-writer-unsafe で、
+        # 同一プロセス内の複数スレッド（chat indexer / retry worker / 同期 inscribe 等）
+        # が同時に upsert/delete を走らせるとファイル整合性が崩れる。
+        # 書き込み系メソッドは全て本ロックの内側で実行する。
+        # RLock を使うのは _safe_get_or_create_collection 内で破損検出→delete_collection
+        # を呼ぶ再帰経路があるため。読み取り（query/get/count）は ChromaDB 内部の SQLite
+        # トランザクションに任せ、外側ではロックを取らない（性能優先）。
+        self._write_lock = threading.RLock()
 
     def _safe_get_or_create_collection(self, collection_name: str):
         """コレクションを安全に取得または作成する共通ヘルパー。
@@ -230,11 +240,14 @@ class ChromaStore:
                     "コレクション破損を検出（HNSW読み取り不可）name=%s error=%s → 強制再作成",
                     collection_name, e,
                 )
-                try:
-                    self.client.delete_collection(collection_name)
-                except Exception:
-                    pass
-                return self.client.get_or_create_collection(**kwargs)
+                # delete_collection は write 行為。read 経路から本関数が呼ばれた場合も
+                # ここで初めてロックを取得して並行 write と直列化する（RLock 再帰取得対応）。
+                with self._write_lock:
+                    try:
+                        self.client.delete_collection(collection_name)
+                    except Exception:
+                        pass
+                    return self.client.get_or_create_collection(**kwargs)
             return collection
         except Exception:
             # データが存在するコレクションは削除しない
@@ -244,11 +257,12 @@ class ChromaStore:
                     return existing
             except Exception:
                 pass
-            try:
-                self.client.delete_collection(collection_name)
-            except Exception:
-                pass
-            return self.client.get_or_create_collection(**kwargs)
+            with self._write_lock:
+                try:
+                    self.client.delete_collection(collection_name)
+                except Exception:
+                    pass
+                return self.client.get_or_create_collection(**kwargs)
 
     def _get_query_kwargs(self, text: str, as_document: bool = False) -> dict:
         """クエリ用パラメータを返す。
@@ -289,18 +303,19 @@ class ChromaStore:
             character_id: キャラクターID。
             metadata: 追加メタデータ（str/int/float/bool型の値のみ有効）。
         """
-        collection = self._get_collection(character_id)
-        meta = {"character_id": character_id}
-        if metadata:
-            # ChromaDBのメタデータ値はstr/int/float/bool型のみ許可
-            for k, v in metadata.items():
-                if isinstance(v, (str, int, float, bool)):
-                    meta[k] = v
-        collection.upsert(
-            ids=[memory_id],
-            documents=[content],
-            metadatas=[meta],
-        )
+        with self._write_lock:
+            collection = self._get_collection(character_id)
+            meta = {"character_id": character_id}
+            if metadata:
+                # ChromaDBのメタデータ値はstr/int/float/bool型のみ許可
+                for k, v in metadata.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        meta[k] = v
+            collection.upsert(
+                ids=[memory_id],
+                documents=[content],
+                metadatas=[meta],
+            )
 
     def recall_memory(
         self,
@@ -473,8 +488,9 @@ class ChromaStore:
             memory_id: 削除する記憶のID。
             character_id: キャラクターID。
         """
-        collection = self._get_collection(character_id)
-        collection.delete(ids=[memory_id])
+        with self._write_lock:
+            collection = self._get_collection(character_id)
+            collection.delete(ids=[memory_id])
 
     def rebuild_memory_collection(self, character_id: str) -> int:
         """HNSWインデックス破損時にキャラクターの記憶コレクションを再構築する。
@@ -490,40 +506,41 @@ class ChromaStore:
             再登録したドキュメント件数。
         """
         logger = logging.getLogger(__name__)
-        try:
-            collection = self._get_collection(character_id)
-            total_count = collection.count()
-            all_docs = collection.get(
-                limit=total_count,
-                include=["embeddings", "documents", "metadatas"],
-            )
-            ids = all_docs.get("ids", [])
-            documents = all_docs.get("documents", []) or []
-            metadatas = all_docs.get("metadatas", []) or []
-            embeddings = all_docs.get("embeddings", []) or []
-            if not ids:
+        with self._write_lock:
+            try:
+                collection = self._get_collection(character_id)
+                total_count = collection.count()
+                all_docs = collection.get(
+                    limit=total_count,
+                    include=["embeddings", "documents", "metadatas"],
+                )
+                ids = all_docs.get("ids", [])
+                documents = all_docs.get("documents", []) or []
+                metadatas = all_docs.get("metadatas", []) or []
+                embeddings = all_docs.get("embeddings", []) or []
+                if not ids:
+                    return 0
+                collection_name = collection.name
+                self.client.delete_collection(collection_name)
+                new_collection = self._get_collection(character_id)
+                use_metadatas = bool(metadatas)
+                use_embeddings = bool(embeddings)
+                batch_size = 100
+                for i in range(0, len(ids), batch_size):
+                    batch_kwargs: dict = {
+                        "ids": ids[i:i + batch_size],
+                        "documents": documents[i:i + batch_size],
+                    }
+                    if use_metadatas:
+                        batch_kwargs["metadatas"] = metadatas[i:i + batch_size]
+                    if use_embeddings:
+                        batch_kwargs["embeddings"] = embeddings[i:i + batch_size]
+                    new_collection.upsert(**batch_kwargs)
+                logger.info("ChromaDB コレクション再構築完了 char=%s count=%d", character_id, len(ids))
+                return len(ids)
+            except Exception as e:
+                logger.error("ChromaDB コレクション再構築失敗 char=%s error=%s", character_id, e)
                 return 0
-            collection_name = collection.name
-            self.client.delete_collection(collection_name)
-            new_collection = self._get_collection(character_id)
-            use_metadatas = bool(metadatas)
-            use_embeddings = bool(embeddings)
-            batch_size = 100
-            for i in range(0, len(ids), batch_size):
-                batch_kwargs: dict = {
-                    "ids": ids[i:i + batch_size],
-                    "documents": documents[i:i + batch_size],
-                }
-                if use_metadatas:
-                    batch_kwargs["metadatas"] = metadatas[i:i + batch_size]
-                if use_embeddings:
-                    batch_kwargs["embeddings"] = embeddings[i:i + batch_size]
-                new_collection.upsert(**batch_kwargs)
-            logger.info("ChromaDB コレクション再構築完了 char=%s count=%d", character_id, len(ids))
-            return len(ids)
-        except Exception as e:
-            logger.error("ChromaDB コレクション再構築失敗 char=%s error=%s", character_id, e)
-            return 0
 
     def _get_chat_collection(self, character_id: str):
         """キャラクターのチャット履歴コレクションを取得または作成する。"""
@@ -544,17 +561,18 @@ class ChromaStore:
             character_id: upsert先のキャラクターID。
             metadata: 追加メタデータ（str/int/float/bool型の値のみ有効）。
         """
-        collection = self._get_chat_collection(character_id)
-        meta = {"character_id": character_id}
-        if metadata:
-            for k, v in metadata.items():
-                if isinstance(v, (str, int, float, bool)):
-                    meta[k] = v
-        collection.upsert(
-            ids=[message_id],
-            documents=[content],
-            metadatas=[meta],
-        )
+        with self._write_lock:
+            collection = self._get_chat_collection(character_id)
+            meta = {"character_id": character_id}
+            if metadata:
+                for k, v in metadata.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        meta[k] = v
+            collection.upsert(
+                ids=[message_id],
+                documents=[content],
+                metadatas=[meta],
+            )
 
     def recall_chat_turns(
         self,
@@ -629,12 +647,13 @@ class ChromaStore:
         Returns:
             upsertしたdoc ID（character_idと同一）。
         """
-        collection = self._get_definition_collection()
-        collection.upsert(
-            ids=[character_id],
-            documents=[definition_text],
-            metadatas=[{"character_id": character_id, "status": status}],
-        )
+        with self._write_lock:
+            collection = self._get_definition_collection()
+            collection.upsert(
+                ids=[character_id],
+                documents=[definition_text],
+                metadatas=[{"character_id": character_id, "status": status}],
+            )
         return character_id
 
     def find_similar_definition(
@@ -705,14 +724,15 @@ class ChromaStore:
         """
         # 関数内で ``import logging`` を書かないこと（モジュール先頭で import 済み）。
         logger = logging.getLogger(__name__)
-        collection = self._get_definition_collection()
-        try:
-            collection.update(
-                ids=[character_id],
-                metadatas=[{"character_id": character_id, "status": "estranged"}],
-            )
-        except Exception as e:
-            logger.warning("mark_definition_estranged: 更新失敗 char=%s error=%s", character_id, e)
+        with self._write_lock:
+            collection = self._get_definition_collection()
+            try:
+                collection.update(
+                    ids=[character_id],
+                    metadatas=[{"character_id": character_id, "status": "estranged"}],
+                )
+            except Exception as e:
+                logger.warning("mark_definition_estranged: 更新失敗 char=%s error=%s", character_id, e)
 
     def delete_all_memories(self, character_id: str) -> None:
         """キャラクターのコレクション全体を削除する。
@@ -723,17 +743,18 @@ class ChromaStore:
         # 関数内で ``import logging`` を書かないこと（モジュール先頭で import 済み）。
         logger = logging.getLogger(__name__)
         collection_name = f"char_{character_id.replace('-', '_')}"
-        try:
-            self.client.delete_collection(collection_name)
-        except Exception as e:
-            err_str = str(e)
-            # 存在しないコレクションの削除は記憶がまだないキャラで起きる想定内の状態
-            if "does not exist" in err_str:
-                logger.debug(
-                    "delete_all_memories: コレクション未作成のためスキップ char=%s", character_id
-                )
-            else:
-                logger.warning(
-                    "delete_all_memories: コレクション削除失敗 char=%s name=%s error=%s",
-                    character_id, collection_name, e,
-                )
+        with self._write_lock:
+            try:
+                self.client.delete_collection(collection_name)
+            except Exception as e:
+                err_str = str(e)
+                # 存在しないコレクションの削除は記憶がまだないキャラで起きる想定内の状態
+                if "does not exist" in err_str:
+                    logger.debug(
+                        "delete_all_memories: コレクション未作成のためスキップ char=%s", character_id
+                    )
+                else:
+                    logger.warning(
+                        "delete_all_memories: コレクション削除失敗 char=%s name=%s error=%s",
+                        character_id, collection_name, e,
+                    )
