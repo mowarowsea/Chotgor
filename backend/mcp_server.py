@@ -5,40 +5,37 @@ Claude Code CLI がスポーンする MCP サーバーとして機能する。
 inscribe_memory / drift / drift_reset / carve_narrative / power_recall
 の 5 ツールを公開する。
 
+このプロセスは **Chotgor backend (uvicorn) の薄いプロキシ** として動作する。
+ChromaStore / MemoryManager / DriftManager は backend が保持する単一インスタンスを
+利用するため、本プロセスは ChromaDB を一切開かない（構造的欠陥 A 対策）。
+
 登録方法（一度だけ実行）:
     claude mcp add chotgor -s user -- python C:/Users/seamo/Chotgor/backend/mcp_server.py
 
 環境変数:
-    CHOTGOR_CHARACTER_ID : 操作対象キャラクターID（必須）
-    CHOTGOR_SESSION_ID   : セッションID（SELF_DRIFT 操作に使用）
-    SQLITE_DB_PATH       : SQLite ファイルパス（省略時はプロジェクト内 data/chotgor.db）
-    CHROMA_DB_PATH       : ChromaDB ディレクトリパス（省略時はプロジェクト内 data/chroma）
+    CHOTGOR_CHARACTER_ID  : 操作対象キャラクターID（必須）
+    CHOTGOR_SESSION_ID    : セッションID（SELF_DRIFT 操作に使用）
+    CHOTGOR_BACKEND_URL   : Chotgor backend のベース URL（省略時は http://127.0.0.1:8000）
 """
 
 import io
 import json
 import os
 import sys
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 # UTF-8 強制（Windows 環境での文字化け対策）
-sys.stdin  = io.TextIOWrapper(sys.stdin.buffer,  encoding="utf-8")
+sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
 
-# プロジェクトルートを sys.path に追加（backend.* モジュールを import するため）
-_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(_BACKEND_DIR)
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
 CHARACTER_ID: str = os.environ.get("CHOTGOR_CHARACTER_ID", "")
 SESSION_ID: str = os.environ.get("CHOTGOR_SESSION_ID", "")
-SQLITE_DB_PATH: str = os.environ.get(
-    "SQLITE_DB_PATH", os.path.join(_PROJECT_ROOT, "data", "chotgor.db")
-)
-CHROMA_DB_PATH: str = os.environ.get(
-    "CHROMA_DB_PATH", os.path.join(_PROJECT_ROOT, "data", "chroma")
-)
+BACKEND_URL: str = os.environ.get("CHOTGOR_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+
+# HTTP タイムアウト秒。inscribe や power_recall は embedding 計算で数秒かかることがある。
+_HTTP_TIMEOUT_SEC = 30.0
 
 
 def _log(msg: str) -> None:
@@ -53,48 +50,57 @@ def _write(obj: dict) -> None:
     sys.stdout.flush()
 
 
-def _init_executor():
-    """DB・MemoryManager・ToolExecutor を初期化して返す。起動時に一度だけ呼ぶ。"""
-    from backend.repositories.sqlite.store import SQLiteStore
-    from backend.repositories.chroma.store import ChromaStore
-    from backend.services.memory.manager import MemoryManager
-    from backend.services.memory.drift_manager import DriftManager
-    from backend.character_actions.executor import ToolExecutor
+def _http_post_json(path: str, body: dict) -> tuple[bool, dict | str]:
+    """backend の JSON エンドポイントに POST する。
 
-    sqlite = SQLiteStore(SQLITE_DB_PATH)
-    all_settings = sqlite.get_all_settings()
-    chroma = ChromaStore(
-        CHROMA_DB_PATH,
-        embedding_provider=all_settings.get("embedding_provider", "default"),
-        embedding_model=all_settings.get("embedding_model", ""),
-        api_key=all_settings.get("google_api_key", ""),
-        base_url=all_settings.get("infinity_base_url", "http://localhost:7997"),
+    Args:
+        path: backend からの相対パス（先頭の "/" 含む）。
+        body: リクエストボディ。
+
+    Returns:
+        (成功かどうか, 成功時はレスポンス dict / 失敗時はエラーメッセージ文字列)。
+    """
+    url = BACKEND_URL + path
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urlrequest.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
     )
-    memory_manager = MemoryManager(sqlite=sqlite, chroma=chroma)
-    drift_manager = DriftManager(sqlite=sqlite)
+    try:
+        with urlrequest.urlopen(req, timeout=_HTTP_TIMEOUT_SEC) as resp:
+            raw = resp.read().decode("utf-8")
+            return True, json.loads(raw)
+    except urlerror.URLError as e:
+        return False, f"backend 接続失敗 ({url}): {e.reason if hasattr(e, 'reason') else e}"
+    except Exception as e:
+        return False, f"backend 呼び出し失敗 ({url}): {type(e).__name__}: {e}"
 
-    return ToolExecutor(
-        character_id=CHARACTER_ID,
-        session_id=SESSION_ID or None,
-        memory_manager=memory_manager,
-        drift_manager=drift_manager,
-    )
+
+def _http_get_json(path: str) -> tuple[bool, dict | str]:
+    """backend の JSON エンドポイントに GET する。"""
+    url = BACKEND_URL + path
+    try:
+        with urlrequest.urlopen(url, timeout=_HTTP_TIMEOUT_SEC) as resp:
+            raw = resp.read().decode("utf-8")
+            return True, json.loads(raw)
+    except urlerror.URLError as e:
+        return False, f"backend 接続失敗 ({url}): {e.reason if hasattr(e, 'reason') else e}"
+    except Exception as e:
+        return False, f"backend 呼び出し失敗 ({url}): {type(e).__name__}: {e}"
 
 
-def _build_tool_list() -> list[dict]:
-    """公開するMCPツール定義リストを構築する。"""
-    from backend.character_actions.inscriber import INSCRIBE_MEMORY_SCHEMA, INSCRIBE_MEMORY_TOOL_DESCRIPTION
-    from backend.character_actions.drifter import DRIFT_SCHEMA, DRIFT_RESET_SCHEMA, DRIFT_TOOL_DESCRIPTION, DRIFT_RESET_TOOL_DESCRIPTION
-    from backend.character_actions.carver import CARVE_NARRATIVE_SCHEMA, CARVE_NARRATIVE_TOOL_DESCRIPTION
-    from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
-
-    return [
-        {"name": "inscribe_memory",  "description": INSCRIBE_MEMORY_TOOL_DESCRIPTION,  "inputSchema": INSCRIBE_MEMORY_SCHEMA},
-        {"name": "drift",            "description": DRIFT_TOOL_DESCRIPTION,            "inputSchema": DRIFT_SCHEMA},
-        {"name": "drift_reset",      "description": DRIFT_RESET_TOOL_DESCRIPTION,      "inputSchema": DRIFT_RESET_SCHEMA},
-        {"name": "carve_narrative",  "description": CARVE_NARRATIVE_TOOL_DESCRIPTION,  "inputSchema": CARVE_NARRATIVE_SCHEMA},
-        {"name": "power_recall",     "description": POWER_RECALL_TOOL_DESCRIPTION,     "inputSchema": POWER_RECALL_SCHEMA},
-    ]
+def _fetch_tool_list() -> list[dict]:
+    """backend から MCP ツール定義リストを取得する。失敗時は空リスト。"""
+    ok, payload = _http_get_json("/api/mcp/tools")
+    if not ok:
+        _log(f"tools/list 取得失敗: {payload}")
+        return []
+    if not isinstance(payload, dict):
+        return []
+    tools = payload.get("tools") or []
+    return [t for t in tools if isinstance(t, dict)]
 
 
 def main() -> None:
@@ -103,18 +109,15 @@ def main() -> None:
         _log("WARNING: CHOTGOR_CHARACTER_ID が未設定。ツール呼び出しはエラーになります。")
 
     _log(f"起動 character_id={CHARACTER_ID!r} session_id={SESSION_ID!r}")
-    _log(f"  SQLITE={SQLITE_DB_PATH}")
-    _log(f"  CHROMA={CHROMA_DB_PATH}")
+    _log(f"  BACKEND_URL={BACKEND_URL}")
 
-    executor = None
-    tools: list[dict] = []
-
-    try:
-        executor = _init_executor()
-        tools = _build_tool_list()
-        _log("初期化完了")
-    except Exception as exc:
-        _log(f"初期化失敗: {exc}")
+    # ツール定義は backend から取得。backend が落ちていたら空リストで起動するが、
+    # tools/call が呼ばれた時点でも改めて backend を叩くため、後から復旧してもよい。
+    tools = _fetch_tool_list()
+    if tools:
+        _log(f"初期化完了 (ツール数={len(tools)})")
+    else:
+        _log("初期化時 backend に接続できず。tools/list は空で応答する。")
 
     for raw_line in sys.stdin:
         raw_line = raw_line.strip()
@@ -142,15 +145,17 @@ def main() -> None:
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "chotgor", "version": "1.0.0"},
+                    "serverInfo": {"name": "chotgor", "version": "2.0.0"},
                 },
             })
 
         elif method == "tools/list":
+            # 都度 backend に問い合わせる（起動時取得失敗からの復旧を可能にする）
+            current_tools = _fetch_tool_list() or tools
             _write({
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {"tools": tools},
+                "result": {"tools": current_tools},
             })
 
         elif method == "tools/call":
@@ -159,21 +164,28 @@ def main() -> None:
             arguments: dict = params.get("arguments", {})
             _log(f"ツール呼び出し: {tool_name} args={arguments}")
 
-            if executor is None:
-                result_text = "[Error: MCP サーバーの初期化に失敗しています]"
-                is_error = True
-            elif not CHARACTER_ID:
+            if not CHARACTER_ID:
                 result_text = "[Error: CHOTGOR_CHARACTER_ID が設定されていません]"
                 is_error = True
             else:
-                try:
-                    result_text = executor.execute(tool_name, arguments)
-                    is_error = False
-                    _log(f"完了: {tool_name}")
-                except Exception as exc:
-                    result_text = f"[Error: {type(exc).__name__}: {exc}]"
+                ok, payload = _http_post_json(
+                    "/api/mcp/tools/call",
+                    {
+                        "character_id": CHARACTER_ID,
+                        "session_id": SESSION_ID or None,
+                        "name": tool_name,
+                        "arguments": arguments,
+                    },
+                )
+                if not ok:
+                    result_text = f"[Error: {payload}]"
                     is_error = True
-                    _log(f"エラー: {tool_name} → {exc}")
+                    _log(f"エラー: {tool_name} → {payload}")
+                else:
+                    assert isinstance(payload, dict)
+                    result_text = str(payload.get("result", ""))
+                    is_error = bool(payload.get("is_error", False))
+                    _log(f"完了: {tool_name} is_error={is_error}")
 
             _write({
                 "jsonrpc": "2.0",
