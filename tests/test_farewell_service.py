@@ -522,7 +522,7 @@ class TestFarewellDetectionEstrangement:
 
         result = _make_farewell_result(should_exit=True, farewell_type="negative")
         detector = _make_detector(sqlite_store, result)
-        mock_chroma = MagicMock()
+        mock_vector_store = MagicMock()
 
         _run(_run_farewell_detection(
             detector=detector,
@@ -533,13 +533,13 @@ class TestFarewellDetectionEstrangement:
             farewell_config=config,
             messages=[],
             settings={},
-            chroma=mock_chroma,
+            vector_store=mock_vector_store,
         ))
 
-        mock_chroma.mark_definition_estranged.assert_called_once_with(char_id)
+        mock_vector_store.mark_definition_estranged.assert_called_once_with(char_id)
 
     def test_chroma_none_does_not_raise_on_estrangement(self, sqlite_store, char_id, session_id):
-        """chroma=None でも疎遠化確定時に例外が発生しないこと。"""
+        """vector_store=None でも疎遠化確定時に例外が発生しないこと。"""
         config = _make_farewell_config(threshold=1)
 
         result = _make_farewell_result(should_exit=True, farewell_type="negative")
@@ -554,7 +554,7 @@ class TestFarewellDetectionEstrangement:
             farewell_config=config,
             messages=[],
             settings={},
-            chroma=None,
+            vector_store=None,
         ))
 
         char = sqlite_store.get_character(char_id)
@@ -566,8 +566,8 @@ class TestFarewellDetectionEstrangement:
 
         result = _make_farewell_result(should_exit=True, farewell_type="negative")
         detector = _make_detector(sqlite_store, result)
-        mock_chroma = MagicMock()
-        mock_chroma.mark_definition_estranged.side_effect = RuntimeError("ChromaDB接続失敗")
+        mock_vector_store = MagicMock()
+        mock_vector_store.mark_definition_estranged.side_effect = RuntimeError("ChromaDB接続失敗")
 
         _run(_run_farewell_detection(
             detector=detector,
@@ -578,7 +578,7 @@ class TestFarewellDetectionEstrangement:
             farewell_config=config,
             messages=[],
             settings={},
-            chroma=mock_chroma,
+            vector_store=mock_vector_store,
         ))
 
         char = sqlite_store.get_character(char_id)
@@ -591,7 +591,7 @@ class TestFarewellDetectionEstrangement:
 
         result = _make_farewell_result(should_exit=True, farewell_type="negative")
         detector = _make_detector(sqlite_store, result)
-        mock_chroma = MagicMock()
+        mock_vector_store = MagicMock()
 
         _run(_run_farewell_detection(
             detector=detector,
@@ -602,10 +602,10 @@ class TestFarewellDetectionEstrangement:
             farewell_config=config,
             messages=[],
             settings={},
-            chroma=mock_chroma,
+            vector_store=mock_vector_store,
         ))
 
-        mock_chroma.mark_definition_estranged.assert_not_called()
+        mock_vector_store.mark_definition_estranged.assert_not_called()
 
 
 # ─── 非ネガティブ退席 — 疎遠化が起きないこと ─────────────────────────────────

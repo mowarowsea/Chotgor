@@ -1,41 +1,57 @@
-"""MemoryManagerのユニットテスト。
+"""MemoryManager のユニットテスト。
 
-ChromaStoreはモック化し、SQLiteStoreは実インメモリDBを使用する。
-write_memoryのupsertロジック（Issue #50）と、ChromaDBリトライ・警告注入機構を中心にテストする。
+# テスト方針
+
+LanceStore はモック化し、SQLiteStore は実インメモリ DB を使用する。
+write_memory の upsert ロジック（欠陥 C 対策の in-place 更新）と、
+recall_memory の soft-delete 除外、recall_with_identity の where フィルタを中心に検証する。
+
+旧 ChromaStore 時代に存在した「バックグラウンドリトライ機構」「警告エントリ注入」は
+LanceStore 移行時に撤廃したため、それらのテストは削除した。
+LanceStore は書き込みが原子的で失敗時即例外（呼び出し側に伝播）になる。
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
 import pytest
-from backend.services.memory.manager import MemoryManager, _CHROMA_MAX_RETRIES
+
+from backend.services.memory.manager import MemoryManager
+
 
 @pytest.fixture
-def mock_chroma():
-    """ChromaStoreのモック。デフォルトでは類似記憶なし（新規作成ケース）。"""
+def mock_vector_store():
+    """LanceStore のモック。デフォルトでは類似記憶なし（新規作成ケース）。"""
     store = MagicMock()
-    # recall_memoryはhybridスコア計算用（1件返す）
+    # recall_memory は hybrid スコア計算用（1件返す）
     store.recall_memory.return_value = [
         {"id": "mem-1", "content": "test content", "distance": 0.1, "metadata": {"category": "general"}}
     ]
-    # find_similar_in_categoryはデフォルトで「類似なし」
+    # find_similar_in_category はデフォルトで「類似なし」
     store.find_similar_in_category.return_value = None
     return store
 
+
 @pytest.fixture
-def manager(sqlite_store, mock_chroma):
-    """MemoryManagerのフィクスチャ。テスト終了時にリトライスレッドを停止する。"""
-    import backend.services.memory.manager
-    mgr = MemoryManager(sqlite=sqlite_store, chroma=mock_chroma)
-    yield mgr
-    mgr.stop()
+def manager(sqlite_store, mock_vector_store):
+    """MemoryManager のフィクスチャ。
+
+    旧 ChromaStore 時代のリトライスレッドは廃止したため、テスト終了時の stop() 呼び出しは不要。
+    """
+    return MemoryManager(sqlite=sqlite_store, vector_store=mock_vector_store)
 
 
-def test_write_memory_new(manager, sqlite_store, mock_chroma):
+# ---------------------------------------------------------------------------
+# write_memory — upsert ロジック（欠陥 C 対策）
+# ---------------------------------------------------------------------------
+
+
+def test_write_memory_new(manager, sqlite_store, mock_vector_store):
     """類似記憶がない場合、新規レコードを作成することを確認する。
 
-    ChromaDBが類似なし（None）を返したとき、SQLiteに新規レコードが1件作成され、
-    chroma.add_memoryが1回呼ばれること。
+    LanceStore が類似なし（None）を返したとき、SQLite に新規レコードが 1 件作成され、
+    vector_store.add_memory が 1 回呼ばれること。
     """
     char_id = "char-001"
-    mock_chroma.find_similar_in_category.return_value = None
+    mock_vector_store.find_similar_in_category.return_value = None
 
     manager.write_memory(char_id, "Hello world", category="user")
 
@@ -43,33 +59,28 @@ def test_write_memory_new(manager, sqlite_store, mock_chroma):
     assert len(mems) == 1
     assert mems[0].content == "Hello world"
     assert mems[0].memory_category == "user"
-    mock_chroma.add_memory.assert_called_once()
+    mock_vector_store.add_memory.assert_called_once()
 
 
-def test_write_memory_inplace_update_when_similar_found(manager, sqlite_store, mock_chroma):
-    """類似記憶がある場合、既存IDで in-place 更新されることを確認する（欠陥 C 対策）。
+def test_write_memory_inplace_update_when_similar_found(manager, sqlite_store, mock_vector_store):
+    """類似記憶がある場合、既存 ID で in-place 更新されることを確認する（欠陥 C 対策）。
 
-    旧来は soft_delete + 新規UUID で作り直していたため、ChromaDB 側で
-    「旧ID delete + 新ID add」の競合 2 操作となり、ゴーストID共存の連鎖破損を
-    引き起こす元凶になっていた。新仕様では既存IDをそのまま再利用し、
-    SQLite側は in-place 更新、ChromaDB側は同一IDでの upsert（add_memory が
-    内部で collection.upsert を呼ぶ）にすることで delete を完全に排除する。
+    旧来は soft_delete + 新規 UUID で作り直していたため、ベクトル DB 側で
+    「旧 ID delete + 新 ID add」の競合 2 操作となり、ゴースト ID 共存の連鎖破損を
+    引き起こす元凶になっていた。新仕様では既存 ID をそのまま再利用し、
+    SQLite 側は in-place 更新、ベクトル DB 側は同一 ID での upsert（add_memory が
+    内部で merge_insert を呼ぶ）にすることで delete を完全に排除する。
 
-    ChromaDBが既存のmemory_idを返したとき:
-    - 返却IDは既存ID（"existing-mem"）と同一であること
-    - SQLite側は soft-delete されず、in-place で content/category/importances が上書きされていること
+    ベクトル DB が既存の memory_id を返したとき:
+    - 返却 ID は既存 ID（"existing-mem"）と同一であること
+    - SQLite 側は soft-delete されず、in-place で content/category/importances が上書きされていること
     - access_count / created_at は維持されること
-    - ChromaDB.delete_memory は **呼ばれないこと**
-    - ChromaDB.add_memory が同一IDで呼ばれること（内部 upsert で置き換わる）
-
-    コサイン距離の目安:
-      ~0.05 : ほぼ同じ文（「コーヒーが好き」vs「コーヒーが大好き」）
-      ~0.15 : 同系統の内容（「コーヒーが好き」vs「カフェラテが好き」）← in-place 更新対象
-      ~0.6+ : 別トピック（「コーヒーが好き」vs「犬を飼っている」）← 新規作成
+    - vector_store.delete_memory は **呼ばれないこと**
+    - vector_store.add_memory が同一 ID で呼ばれること（内部 upsert で置き換わる）
     """
     char_id = "char-001"
 
-    # 既存記憶をSQLiteに直接作成しておく
+    # 既存記憶を SQLite に直接作成しておく
     sqlite_store.create_memory(
         "existing-mem",
         char_id,
@@ -87,8 +98,8 @@ def test_write_memory_inplace_update_when_similar_found(manager, sqlite_store, m
     pre_created_at = pre_mem.created_at
     assert pre_mem.access_count == 5
 
-    # ChromaDBが「コーヒーが好き」→「カフェラテが好き」で類似ありと判定した想定
-    mock_chroma.find_similar_in_category.return_value = "existing-mem"
+    # ベクトル DB が「コーヒーが好き」→「カフェラテが好き」で類似ありと判定した想定
+    mock_vector_store.find_similar_in_category.return_value = "existing-mem"
 
     returned_id = manager.write_memory(
         char_id,
@@ -100,7 +111,7 @@ def test_write_memory_inplace_update_when_similar_found(manager, sqlite_store, m
         user_importance=0.9,
     )
 
-    # 返却IDは既存IDと同一であること（新規UUIDではない）
+    # 返却 ID は既存 ID と同一であること（新規 UUID ではない）
     assert returned_id == "existing-mem"
 
     # アクティブな記憶は in-place 更新された 1 件のみ
@@ -119,24 +130,23 @@ def test_write_memory_inplace_update_when_similar_found(manager, sqlite_store, m
     assert active_mems[0].access_count == 5
     assert active_mems[0].created_at == pre_created_at
 
-    # ChromaDB.delete_memory は呼ばれないこと（欠陥 C の主目的）
-    mock_chroma.delete_memory.assert_not_called()
-    # add_memory は同一IDで呼ばれていること（内部 upsert により置き換わる）
-    mock_chroma.add_memory.assert_called_once()
-    call_kwargs = mock_chroma.add_memory.call_args
+    # vector_store.delete_memory は呼ばれないこと（欠陥 C の主目的）
+    mock_vector_store.delete_memory.assert_not_called()
+    # add_memory は同一 ID で呼ばれていること（内部 upsert により置き換わる）
+    mock_vector_store.add_memory.assert_called_once()
+    call_kwargs = mock_vector_store.add_memory.call_args
     assert call_kwargs.kwargs["memory_id"] == "existing-mem"
     assert call_kwargs.kwargs["content"] == "カフェラテが好き"
 
 
 def test_write_memory_falls_back_to_new_when_existing_is_soft_deleted(
-    manager, sqlite_store, mock_chroma
+    manager, sqlite_store, mock_vector_store
 ):
-    """find_similar が既存IDを返したが SQLite 側が soft-delete 済みのとき、新規UUIDで作り直すこと。
+    """find_similar が既存 ID を返したが SQLite 側が soft-delete 済みのとき、新規 UUID で作り直すこと。
 
-    ChromaDB と SQLite の整合が崩れている場合のフォールバックの動作確認。
-    update_memory_for_overwrite は False を返し、write_memory は新規UUIDで
-    create_memory に進む。delete は呼ばれない（旧来の delete + add 二重操作は
-    すでに廃止されている）。
+    ベクトル DB と SQLite の整合が崩れている場合のフォールバック動作の確認。
+    update_memory_for_overwrite は False を返し、write_memory は新規 UUID で
+    create_memory に進む。delete は呼ばれない（旧来の delete + add 二重操作はすでに廃止）。
     """
     char_id = "char-001"
     sqlite_store.create_memory(
@@ -146,7 +156,7 @@ def test_write_memory_falls_back_to_new_when_existing_is_soft_deleted(
         memory_category="user",
     )
     sqlite_store.soft_delete_memory("ghost-existing")
-    mock_chroma.find_similar_in_category.return_value = "ghost-existing"
+    mock_vector_store.find_similar_in_category.return_value = "ghost-existing"
 
     returned_id = manager.write_memory(
         char_id,
@@ -154,20 +164,25 @@ def test_write_memory_falls_back_to_new_when_existing_is_soft_deleted(
         category="user",
     )
 
-    # 新規UUIDが返却されていること
+    # 新規 UUID が返却されていること
     assert returned_id != "ghost-existing"
     # アクティブな記憶は新規 1 件
     active_mems = sqlite_store.list_memories(char_id)
     assert len(active_mems) == 1
     assert active_mems[0].id == returned_id
-    # add_memory は新規IDで呼ばれ、delete_memory は呼ばれていないこと
-    mock_chroma.add_memory.assert_called_once()
-    assert mock_chroma.add_memory.call_args.kwargs["memory_id"] == returned_id
-    mock_chroma.delete_memory.assert_not_called()
+    # add_memory は新規 ID で呼ばれ、delete_memory は呼ばれていないこと
+    mock_vector_store.add_memory.assert_called_once()
+    assert mock_vector_store.add_memory.call_args.kwargs["memory_id"] == returned_id
+    mock_vector_store.delete_memory.assert_not_called()
 
 
-def test_recall_memory_hybrid(manager, sqlite_store, mock_chroma):
-    """recall_memoryがhybridスコアと減衰スコアを返すことを確認する。"""
+# ---------------------------------------------------------------------------
+# recall_memory — hybrid スコア / soft-delete 除外
+# ---------------------------------------------------------------------------
+
+
+def test_recall_memory_hybrid(manager, sqlite_store, mock_vector_store):
+    """recall_memory が hybrid スコアと減衰スコアを返すことを確認する。"""
     char_id = "char-001"
     sqlite_store.create_memory("mem-1", char_id, "real content")
 
@@ -177,42 +192,47 @@ def test_recall_memory_hybrid(manager, sqlite_store, mock_chroma):
     assert "decayed_score" in results[0]
 
 
-def test_recall_with_identity_calls_recall_memory_twice(manager, mock_chroma):
-    """recall_with_identity が identity / 非identity それぞれで chroma.recall_memory を呼ぶことを確認する。
+# ---------------------------------------------------------------------------
+# recall_with_identity — identity / 非 identity の分離
+# ---------------------------------------------------------------------------
 
-    chroma.recall_memory はカテゴリ別にフィルタされた2回の呼び出しが行われ、
-    返り値が (identity_list, other_list) のタプルであることを検証する。
+
+def test_recall_with_identity_calls_recall_memory_twice(manager, mock_vector_store):
+    """recall_with_identity が identity / 非 identity それぞれで vector_store.recall_memory を呼ぶことを確認する。
+
+    vector_store.recall_memory はカテゴリ別にフィルタされた 2 回の呼び出しが行われ、
+    返り値が ``(identity_list, other_list)`` のタプルであることを検証する。
     """
     char_id = "char-001"
     identity_mem = {"id": "id-mem", "content": "私はプログラマーだ", "distance": 0.02, "metadata": {"category": "identity"}}
     other_mem = {"id": "other-mem", "content": "昨日カフェに行った", "distance": 0.1, "metadata": {"category": "contextual"}}
 
-    # 1回目（identity）と2回目（others）で異なる結果を返す
-    mock_chroma.recall_memory.side_effect = [[identity_mem], [other_mem]]
+    # 1 回目（identity）と 2 回目（others）で異なる結果を返す
+    mock_vector_store.recall_memory.side_effect = [[identity_mem], [other_mem]]
 
     identity_results, other_results = manager.recall_with_identity(char_id, "テスト", identity_top_k=5, other_top_k=5)
 
-    # chroma.recall_memory が2回呼ばれていること
-    assert mock_chroma.recall_memory.call_count == 2
+    # vector_store.recall_memory が 2 回呼ばれていること
+    assert mock_vector_store.recall_memory.call_count == 2
 
-    # 1回目は identity フィルタ付き
-    first_call = mock_chroma.recall_memory.call_args_list[0]
+    # 1 回目は identity フィルタ付き
+    first_call = mock_vector_store.recall_memory.call_args_list[0]
     assert first_call.kwargs.get("where") == {"category": "identity"}
 
-    # 2回目は identity 除外フィルタ付き
-    second_call = mock_chroma.recall_memory.call_args_list[1]
+    # 2 回目は identity 除外フィルタ付き
+    second_call = mock_vector_store.recall_memory.call_args_list[1]
     assert second_call.kwargs.get("where") == {"category": {"$ne": "identity"}}
 
 
-def test_recall_with_identity_returns_tuple_of_two_lists(manager, sqlite_store, mock_chroma):
-    """recall_with_identity の戻り値が (list, list) のタプルであることを確認する。
+def test_recall_with_identity_returns_tuple_of_two_lists(manager, sqlite_store, mock_vector_store):
+    """recall_with_identity の戻り値が ``(list, list)`` のタプルであることを確認する。
 
-    identity が空、others に1件ある場合でも正しくアンパックできることを検証する。
+    identity が空、others に 1 件ある場合でも正しくアンパックできることを検証する。
     """
     char_id = "char-001"
     sqlite_store.create_memory("m1", char_id, "test content")
     other_mem = {"id": "m1", "content": "test content", "distance": 0.1, "metadata": {"category": "contextual"}}
-    mock_chroma.recall_memory.side_effect = [[], [other_mem]]
+    mock_vector_store.recall_memory.side_effect = [[], [other_mem]]
 
     identity_results, other_results = manager.recall_with_identity(char_id, "query")
 
@@ -222,18 +242,26 @@ def test_recall_with_identity_returns_tuple_of_two_lists(manager, sqlite_store, 
     assert len(other_results) == 1
 
 
-def test_delete_memory(manager, sqlite_store, mock_chroma):
-    """delete_memoryがSQLiteをソフト削除し、ChromaDBを物理削除することを確認する。"""
+# ---------------------------------------------------------------------------
+# delete_memory
+# ---------------------------------------------------------------------------
+
+
+def test_delete_memory(manager, sqlite_store, mock_vector_store):
+    """delete_memory が SQLite をソフト削除し、ベクトル DB を物理削除することを確認する。"""
     char_id = "char-001"
     sqlite_store.create_memory("mem-1", char_id, "to be deleted")
 
     ok = manager.delete_memory("mem-1", char_id)
     assert ok is True
     assert sqlite_store.get_memory("mem-1").deleted_at is not None
-    mock_chroma.delete_memory.assert_called_once_with(memory_id="mem-1", character_id=char_id)
+    mock_vector_store.delete_memory.assert_called_once_with(memory_id="mem-1", character_id=char_id)
 
 
-# --- remember / recall メソッドの単体テスト（Issue #56） ---
+# ---------------------------------------------------------------------------
+# remember / recall（SQLite 側のメソッド）
+# ---------------------------------------------------------------------------
+
 
 def test_remember_increments_count_without_updating_date(sqlite_store):
     """remember() は access_count のみ更新し、last_accessed_at は変更しないことを確認する。
@@ -256,7 +284,7 @@ def test_remember_increments_count_without_updating_date(sqlite_store):
 def test_remember_is_cumulative(sqlite_store):
     """remember() を複数回呼んだとき、access_count が正しく累積されることを確認する。
 
-    3回呼び出すと access_count が 3 になり、last_accessed_at は依然として None のままであること。
+    3 回呼び出すと access_count が 3 になり、last_accessed_at は依然として None のままであること。
     """
     sqlite_store.create_memory("mem-r", "char-x", "content")
 
@@ -287,9 +315,12 @@ def test_recall_updates_both_count_and_date(sqlite_store):
     assert mem_after.last_accessed_at is not None  # decay タイマーリセット済み
 
 
-# --- recall_memory() の統合テスト（Issue #56） ---
+# ---------------------------------------------------------------------------
+# recall_memory の Issue #56（last_accessed_at 非更新）
+# ---------------------------------------------------------------------------
 
-def test_recall_memory_does_not_update_last_accessed_at(manager, sqlite_store, mock_chroma):
+
+def test_recall_memory_does_not_update_last_accessed_at(manager, sqlite_store, mock_vector_store):
     """recall_memory() 後、想起された記憶の last_accessed_at が更新されないことを確認する。
 
     Issue #56: システムによる自動想起では decay タイマーをリセットしてはならない。
@@ -306,7 +337,7 @@ def test_recall_memory_does_not_update_last_accessed_at(manager, sqlite_store, m
     assert mem_after.last_accessed_at == last_accessed_before
 
 
-def test_recall_memory_increments_access_count(manager, sqlite_store, mock_chroma):
+def test_recall_memory_increments_access_count(manager, sqlite_store, mock_vector_store):
     """recall_memory() 後、想起された記憶の access_count がインクリメントされることを確認する。
 
     Issue #56: last_accessed_at は更新しないが、想起回数（access_count）は記録する。
@@ -323,12 +354,15 @@ def test_recall_memory_increments_access_count(manager, sqlite_store, mock_chrom
     assert mem_after.access_count == count_before + 1
 
 
-# --- soft-delete 済み記憶の除外テスト ---
+# ---------------------------------------------------------------------------
+# soft-delete 済み記憶の除外
+# ---------------------------------------------------------------------------
 
-def test_recall_memory_skips_soft_deleted(manager, sqlite_store, mock_chroma):
+
+def test_recall_memory_skips_soft_deleted(manager, sqlite_store, mock_vector_store):
     """recall_memory() は soft-delete 済みの記憶を想起結果から除外することを確認する。
 
-    ChromaDB が soft-delete 済みの memory_id を返した場合、
+    ベクトル DB が soft-delete 済みの memory_id を返した場合、
     deleted_at が設定されているため reranking でスキップされ、
     最終的な想起結果に含まれないことを検証する。
     「忘れた記憶」がシステムプロンプトに混入しないことを保証する。
@@ -337,7 +371,7 @@ def test_recall_memory_skips_soft_deleted(manager, sqlite_store, mock_chroma):
     sqlite_store.create_memory("mem-deleted", char_id, "忘れたはずの記憶")
     sqlite_store.soft_delete_memory("mem-deleted")
 
-    mock_chroma.recall_memory.return_value = [
+    mock_vector_store.recall_memory.return_value = [
         {"id": "mem-deleted", "content": "忘れたはずの記憶", "distance": 0.05, "metadata": {"category": "general"}},
     ]
 
@@ -346,16 +380,16 @@ def test_recall_memory_skips_soft_deleted(manager, sqlite_store, mock_chroma):
     assert results == []
 
 
-def test_recall_memory_skips_record_not_in_sqlite(manager, sqlite_store, mock_chroma):
-    """recall_memory() は ChromaDB にあるが SQLite に存在しない記憶をスキップすることを確認する。
+def test_recall_memory_skips_record_not_in_sqlite(manager, sqlite_store, mock_vector_store):
+    """recall_memory() はベクトル DB にあるが SQLite に存在しない記憶をスキップすることを確認する。
 
-    ChromaDB と SQLite の乖離（例: SQLite 側のみ削除された場合）が発生したとき、
+    ベクトル DB と SQLite の乖離（例: SQLite 側のみ削除された場合）が発生したとき、
     session.get() が None を返す記憶は reranking でスキップされ、
     最終結果に含まれないことを検証する。
     """
     char_id = "char-001"
-    # SQLite には登録しない（ChromaDB にだけある想定）
-    mock_chroma.recall_memory.return_value = [
+    # SQLite には登録しない（ベクトル DB にだけある想定）
+    mock_vector_store.recall_memory.return_value = [
         {"id": "ghost-id", "content": "SQLiteにない記憶", "distance": 0.05, "metadata": {"category": "general"}},
     ]
 
@@ -364,10 +398,10 @@ def test_recall_memory_skips_record_not_in_sqlite(manager, sqlite_store, mock_ch
     assert results == []
 
 
-def test_recall_with_identity_excludes_soft_deleted_from_other(manager, sqlite_store, mock_chroma):
+def test_recall_with_identity_excludes_soft_deleted_from_other(manager, sqlite_store, mock_vector_store):
     """recall_with_identity() の other 枠で soft-delete 済み記憶がスキップされることを確認する。
 
-    本事象の再現テスト: ChromaDB の non-identity 検索結果が全て soft-delete 済みだった場合、
+    本事象の再現テスト: ベクトル DB の non-identity 検索結果が全て soft-delete 済みだった場合、
     スキップされて other=0 になることを検証する（identity 枠には影響しない）。
     """
     char_id = "char-001"
@@ -377,7 +411,7 @@ def test_recall_with_identity_excludes_soft_deleted_from_other(manager, sqlite_s
 
     identity_mem = {"id": "mem-identity", "content": "私はエンジニアだ", "distance": 0.02, "metadata": {"category": "identity"}}
     soft_deleted_mem = {"id": "mem-ctx-deleted", "content": "soft-delete済みの記憶", "distance": 0.05, "metadata": {"category": "contextual"}}
-    mock_chroma.recall_memory.side_effect = [[identity_mem], [soft_deleted_mem]]
+    mock_vector_store.recall_memory.side_effect = [[identity_mem], [soft_deleted_mem]]
 
     identity_results, other_results = manager.recall_with_identity(char_id, "テスト")
 
@@ -388,7 +422,7 @@ def test_recall_with_identity_excludes_soft_deleted_from_other(manager, sqlite_s
     assert other_results == []
 
 
-def test_recall_with_identity_both_sections_appear_when_valid_memories_exist(manager, sqlite_store, mock_chroma):
+def test_recall_with_identity_both_sections_appear_when_valid_memories_exist(manager, sqlite_store, mock_vector_store):
     """recall_with_identity() が identity と other 両方に有効な記憶を返すことを確認する。
 
     soft-delete 済み記憶が混在していても、有効な記憶だけが各セクションに入ることを検証する。
@@ -404,8 +438,8 @@ def test_recall_with_identity_both_sections_appear_when_valid_memories_exist(man
     identity_mem = {"id": "mem-identity", "content": "私はエンジニアだ", "distance": 0.02, "metadata": {"category": "identity"}}
     valid_other = {"id": "mem-other-valid", "content": "昨日コードを書いた", "distance": 0.1, "metadata": {"category": "contextual"}}
     deleted_other = {"id": "mem-other-deleted", "content": "soft-delete済み", "distance": 0.05, "metadata": {"category": "contextual"}}
-    # ChromaDB は soft-delete 済みを先に返す（スコアが高い想定）が、スキップされて valid が残る
-    mock_chroma.recall_memory.side_effect = [[identity_mem], [deleted_other, valid_other]]
+    # ベクトル DB は soft-delete 済みを先に返す（スコアが高い想定）が、スキップされて valid が残る
+    mock_vector_store.recall_memory.side_effect = [[identity_mem], [deleted_other, valid_other]]
 
     identity_results, other_results = manager.recall_with_identity(char_id, "テスト")
 
@@ -416,201 +450,33 @@ def test_recall_with_identity_both_sections_appear_when_valid_memories_exist(man
 
 
 # ---------------------------------------------------------------------------
-# ChromaDB リトライ機構のテスト
+# delete_character_with_memories — SQLite 先 → ベクトル DB 後の順序
 # ---------------------------------------------------------------------------
 
-class TestChromaRetry:
-    """ChromaDBリトライ機構と警告注入のユニットテスト。
 
-    バックグラウンドスレッドを直接テストする代わりに、_process_pending_writes()
-    を呼び出してリトライワーカーの1イテレーション分の処理を検証する。
-    time.sleep が走らないよう next_retry_after を0に設定して即時実行させる。
+def test_delete_character_sqlite_first_then_vector_store(manager, mock_vector_store):
+    """delete_character_with_memories が SQLite 削除後にベクトル DB 削除を行うことを確認する。
+
+    SQLite = source of truth のため、SQLite の削除を先に確定させる。
+    SQLite 削除が False（存在しない）のときはベクトル DB 削除が呼ばれないことも検証する。
     """
+    call_order: list[str] = []
 
-    def test_write_memory_sqlite_saved_even_if_chroma_fails(self, manager, sqlite_store, mock_chroma):
-        """ChromaDB書き込みが失敗してもSQLiteには記憶が保存されることを確認する。
+    original_sqlite = manager.sqlite
+    mock_sqlite = MagicMock(wraps=original_sqlite)
+    mock_sqlite.delete_character = MagicMock(
+        side_effect=lambda cid: (call_order.append("sqlite"), False)[1]
+    )
+    manager.sqlite = mock_sqlite
+    mock_vector_store.delete_all_memories = MagicMock(
+        side_effect=lambda cid: call_order.append("vector_store")
+    )
 
-        SQLite = source of truth 方針の検証。ChromaDB失敗はリトライキューに入るが、
-        write_memory() は例外を伝播させずに memory_id を正常に返す。
-        SQLiteには記録が残り、データロスが発生しないことを保証する。
-        """
-        mock_chroma.add_memory.side_effect = Exception("ChromaDB接続エラー")
+    result = manager.delete_character_with_memories("char-nonexistent")
 
-        mem_id = manager.write_memory("char-001", "テスト記憶", category="user")
+    assert result is False
+    assert "sqlite" in call_order
+    assert "vector_store" not in call_order  # SQLite 削除が失敗したのでベクトル DB は呼ばれない
 
-        assert mem_id is not None
-        mems = sqlite_store.list_memories("char-001")
-        assert len(mems) == 1
-        assert mems[0].content == "テスト記憶"
-        # リトライキューに積まれていること
-        assert len(manager._pending_writes) == 1
-        assert manager._pending_writes[0].fn_name == "add_memory"
-        assert manager._pending_writes[0].character_id == "char-001"
-        assert manager._pending_writes[0].attempts == 1
-
-    def test_delete_memory_sqlite_soft_deleted_even_if_chroma_fails(self, manager, sqlite_store, mock_chroma):
-        """ChromaDB削除が失敗してもSQLiteのsoft-deleteは確定することを確認する。
-
-        SQLite = source of truth 方針の検証。ChromaDB削除失敗はリトライキューに入るが、
-        SQLiteの論理削除は確定済みであり、記憶はシステムから見えなくなる。
-        """
-        sqlite_store.create_memory("mem-del", "char-001", "削除対象記憶")
-        mock_chroma.delete_memory.side_effect = Exception("ChromaDB削除エラー")
-
-        ok = manager.delete_memory("mem-del", "char-001")
-
-        assert ok is True
-        assert sqlite_store.get_memory("mem-del").deleted_at is not None
-        assert len(manager._pending_writes) == 1
-        assert manager._pending_writes[0].fn_name == "delete_memory"
-
-    def test_retry_worker_removes_task_on_success(self, manager, mock_chroma):
-        """リトライが成功した際にキューからタスクが除去されることを確認する。
-
-        1回目失敗してキューに積まれた後、_process_pending_writes() を呼び出すと
-        2回目試行（成功）が実行されてキューが空になることを検証する。
-        _chroma_failed_chars にも追加されないことを確認する。
-        """
-        # 1回目（_schedule_chroma_write内の即時試行）: 失敗
-        # 2回目（_process_pending_writes呼び出し）: 成功
-        mock_chroma.add_memory.side_effect = [Exception("初回失敗"), None]
-        manager.write_memory("char-001", "リトライ記憶", category="user")
-        assert len(manager._pending_writes) == 1
-
-        # next_retry_after を過去に設定して即時実行させる
-        manager._pending_writes[0].next_retry_after = 0.0
-        manager._process_pending_writes()
-
-        assert len(manager._pending_writes) == 0
-        assert "char-001" not in manager._chroma_failed_chars
-
-    def test_process_pending_writes_skips_future_tasks(self, manager, mock_chroma):
-        """next_retry_after が未来のタスクはスキップされることを確認する。
-
-        リトライ待ち時間（30秒）が経過していないタスクは処理されず、
-        キューに残り続けることを検証する。
-        """
-        import time
-        mock_chroma.add_memory.side_effect = Exception("失敗")
-        manager.write_memory("char-001", "待機中記憶", category="user")
-        assert len(manager._pending_writes) == 1
-
-        # next_retry_after を遠い未来に設定
-        manager._pending_writes[0].next_retry_after = time.monotonic() + 9999.0
-        manager._process_pending_writes()
-
-        # タスクはスキップされてキューに残ること
-        assert len(manager._pending_writes) == 1
-        assert mock_chroma.add_memory.call_count == 1  # 初回のみ（リトライなし）
-
-    def test_chroma_permanently_failed_after_max_retries(self, manager, mock_chroma):
-        """ChromaDB書き込みが最大リトライ回数に達すると _chroma_failed_chars に追加されることを確認する。
-
-        _CHROMA_MAX_RETRIES 回試行後にキューからタスクが除去され、
-        _chroma_failed_chars にキャラIDが追加されることを検証する。
-        再インデックスを促す警告のトリガーとなるフラグである。
-        """
-        mock_chroma.add_memory.side_effect = Exception("永続的なChromaDB障害")
-        manager.write_memory("char-001", "失敗する記憶", category="user")
-
-        task = manager._pending_writes[0]
-        # _CHROMA_MAX_RETRIES - 1 回リトライさせて最終失敗に到達させる
-        for _ in range(_CHROMA_MAX_RETRIES - 1):
-            task.next_retry_after = 0.0
-            manager._process_pending_writes()
-
-        assert "char-001" in manager._chroma_failed_chars
-        assert len(manager._pending_writes) == 0
-
-    def test_recall_memory_includes_warning_when_chroma_failed(self, manager, sqlite_store, mock_chroma):
-        """ChromaDB同期失敗フラグが立った場合、recall_memoryの先頭に警告エントリが入ることを確認する。
-
-        _chroma_failed_chars にキャラIDを登録した後のrecall_memory呼び出しで、
-        id="_chroma_sync_error" かつ "⚠️" を含む警告エントリが先頭に挿入されることを検証する。
-        システムプロンプトを通じてキャラクターが再インデックスを促すために使用される。
-        """
-        char_id = "char-001"
-        manager._chroma_failed_chars.add(char_id)
-        sqlite_store.create_memory("mem-1", char_id, "通常の記憶")
-        mock_chroma.recall_memory.return_value = [
-            {"id": "mem-1", "content": "通常の記憶", "distance": 0.1, "metadata": {"category": "general"}}
-        ]
-
-        results = manager.recall_memory(char_id, "テスト")
-
-        assert results[0]["id"] == "_chroma_sync_error"
-        assert "⚠️" in results[0]["content"]
-        assert "Reindex" in results[0]["content"]
-        # 通常の記憶も後続に含まれること
-        assert any(r["id"] == "mem-1" for r in results)
-
-    def test_recall_memory_no_warning_when_chroma_ok(self, manager, sqlite_store, mock_chroma):
-        """ChromaDB同期失敗フラグがない場合、recall_memoryに警告が含まれないことを確認する。
-
-        正常状態では警告エントリが挿入されず、通常の想起結果のみが返ることを検証する。
-        """
-        char_id = "char-001"
-        sqlite_store.create_memory("mem-1", char_id, "通常の記憶")
-        mock_chroma.recall_memory.return_value = [
-            {"id": "mem-1", "content": "通常の記憶", "distance": 0.1, "metadata": {"category": "general"}}
-        ]
-
-        results = manager.recall_memory(char_id, "テスト")
-
-        assert all(r["id"] != "_chroma_sync_error" for r in results)
-
-    def test_power_recall_includes_warning_when_chroma_failed(self, manager, mock_chroma):
-        """ChromaDB同期失敗フラグが立った場合、power_recallの結果に _warning キーが入ることを確認する。
-
-        executor._power_recall() が _warning を取り出してPowerRecall結果テキストの先頭に
-        表示するためのフック。キーが存在しかつ "Reindex" を含むことを検証する。
-        """
-        char_id = "char-001"
-        manager._chroma_failed_chars.add(char_id)
-        mock_chroma.recall_memory.return_value = []
-        mock_chroma.recall_chat_turns.return_value = []
-
-        result = manager.power_recall(char_id, "テスト")
-
-        assert "_warning" in result
-        assert "Reindex" in result["_warning"]
-
-    def test_power_recall_no_warning_when_chroma_ok(self, manager, mock_chroma):
-        """ChromaDB同期失敗フラグがない場合、power_recallに _warning キーが含まれないことを確認する。
-
-        正常状態では _warning キーが存在せず、executor側での警告表示が行われないことを検証する。
-        """
-        char_id = "char-001"
-        mock_chroma.recall_memory.return_value = []
-        mock_chroma.recall_chat_turns.return_value = []
-
-        result = manager.power_recall(char_id, "テスト")
-
-        assert "_warning" not in result
-
-    def test_delete_character_sqlite_first_then_chroma(self, manager, mock_chroma):
-        """delete_character_with_memories がSQLite削除後にChromaDB削除を行うことを確認する。
-
-        SQLite = source of truth のため、SQLiteの削除を先に確定させる。
-        SQLite削除が False（存在しない）のときはChromaDB削除が呼ばれないことも検証する。
-        """
-        call_order: list[str] = []
-
-        original_sqlite = manager.sqlite
-        mock_sqlite = MagicMock(wraps=original_sqlite)
-        mock_sqlite.delete_character = MagicMock(
-            side_effect=lambda cid: (call_order.append("sqlite"), False)[1]
-        )
-        manager.sqlite = mock_sqlite
-        mock_chroma.delete_all_memories = MagicMock(
-            side_effect=lambda cid: call_order.append("chroma")
-        )
-
-        result = manager.delete_character_with_memories("char-nonexistent")
-
-        assert result is False
-        assert "sqlite" in call_order
-        assert "chroma" not in call_order  # SQLite削除が失敗したのでChromaは呼ばれない
-
-        # 後始末
-        manager.sqlite = original_sqlite
+    # 後始末
+    manager.sqlite = original_sqlite

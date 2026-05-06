@@ -127,7 +127,7 @@ class TestMemoryManagerPowerRecall:
     @pytest.fixture
     def manager(self, sqlite_store, mock_chroma):
         """MemoryManager のフィクスチャ。"""
-        return MemoryManager(sqlite=sqlite_store, chroma=mock_chroma)
+        return MemoryManager(sqlite=sqlite_store, vector_store=mock_chroma)
 
     def test_記憶とチャット履歴の両方を返す(self, manager, mock_chroma):
         """power_recall が memories と chat_turns の両キーを持つ dict を返すこと。"""

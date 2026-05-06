@@ -21,7 +21,7 @@ from backend.api import translation as translation_module
 from backend.api import mcp_tools as mcp_tools_module
 from backend.services.chat.service import ChatService
 from backend.lib.log_context import setup_logging
-from backend.repositories.chroma.store import ChromaStore
+from backend.repositories.lance.store import LanceStore
 from backend.batch.chronicle_job import run_pending_chronicles
 from backend.services.memory.drift_manager import DriftManager
 from backend.batch.forget_job import run_pending_forget
@@ -32,7 +32,7 @@ load_dotenv()
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", str(_PROJECT_ROOT / "data" / "chotgor.db"))
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(_PROJECT_ROOT / "data" / "chroma"))
+LANCE_DB_PATH = os.getenv("LANCE_DB_PATH", str(_PROJECT_ROOT / "data" / "lancedb"))
 UPLOADS_DIR = os.getenv("UPLOADS_DIR", str(_PROJECT_ROOT / "data" / "uploads"))
 TEMPLATES_DIR = str(Path(__file__).parent / "templates")
 STATIC_DIR = str(Path(__file__).parent / "static")
@@ -51,22 +51,27 @@ async def lifespan(app: FastAPI):
 
     sqlite = SQLiteStore(SQLITE_DB_PATH)
 
-    # embeddingモデル設定をSQLiteから一括取得してChromaStoreに渡す
+    # embedding モデル設定を SQLite から一括取得してベクトルストアに渡す
     all_settings = sqlite.get_all_settings()
-    chroma = ChromaStore(
-        CHROMA_DB_PATH,
-        embedding_provider=all_settings.get("embedding_provider", "default"),
-        embedding_model=all_settings.get("embedding_model", ""),
-        api_key=all_settings.get("google_api_key", ""),
-        base_url=all_settings.get("infinity_base_url", "http://localhost:7997"),
-    )
+    embedding_provider = all_settings.get("embedding_provider", "infinity")
+    embedding_model = all_settings.get("embedding_model", "")
+    api_key = all_settings.get("google_api_key", "")
+    base_url = all_settings.get("infinity_base_url", "http://localhost:7997")
 
-    memory_manager = MemoryManager(sqlite=sqlite, chroma=chroma)
+    vector_store = LanceStore(
+        LANCE_DB_PATH,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    _log.info("ベクトルストア: LanceStore (path=%s)", LANCE_DB_PATH)
+
+    memory_manager = MemoryManager(sqlite=sqlite, vector_store=vector_store)
     drift_manager = DriftManager(sqlite=sqlite)
 
     app.state.sqlite = sqlite
-    app.state.chroma = chroma
-    app.state.chroma_db_path = CHROMA_DB_PATH
+    app.state.vector_store = vector_store
     app.state.memory_manager = memory_manager
     app.state.drift_manager = drift_manager
     app.state.chat_service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
@@ -98,8 +103,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
-    app.state.memory_manager.stop()
+    # Shutdown — MemoryManager は LanceStore 移行後はバックグラウンドリトライスレッドを
+    # 持たないため stop() 不要。
     _log.info("Chotgor backend 終了")
 
 
@@ -121,7 +126,7 @@ async def _chronicle_scheduler(app: FastAPI) -> None:
             _log.info("chronicle スケジューラー 起動 設定時刻=%s", chronicle_time_str)
             app.state.sqlite.set_setting("chronicle_last_run_date", today_str)
             try:
-                await run_pending_chronicles(app.state.sqlite, chroma=app.state.chroma, memory_manager=app.state.memory_manager)
+                await run_pending_chronicles(app.state.sqlite, vector_store=app.state.vector_store, memory_manager=app.state.memory_manager)
             except Exception:
                 _log.exception("chronicle スケジューラー 実行エラー")
 

@@ -26,14 +26,14 @@ async def create_character(request: Request, body: CharacterCreate):
     """キャラクターを新規作成する。
 
     estranged キャラクターと類似する定義の場合は HTTP 409 を返す。
-    作成後にキャラクター定義を ChromaDB に登録する。
+    作成後にキャラクター定義をベクトルストアに登録する。
     """
     state = request.app.state
 
     # 類似 estranged キャラクターのチェック: 同一定義での再作成を防ぐ
-    if body.system_prompt_block1 and hasattr(state, "chroma") and state.chroma:
+    if body.system_prompt_block1 and hasattr(state, "vector_store") and state.vector_store:
         try:
-            similar = state.chroma.find_similar_definition(body.system_prompt_block1)
+            similar = state.vector_store.find_similar_definition(body.system_prompt_block1)
             if similar:
                 raise HTTPException(
                     status_code=409,
@@ -45,7 +45,7 @@ async def create_character(request: Request, body: CharacterCreate):
         except HTTPException:
             raise
         except Exception:
-            pass  # ChromaDB エラーは無視して作成を続行する
+            pass  # ベクトルストアエラーは無視して作成を続行する
 
     char_id = str(uuid.uuid4())
     char = state.sqlite.create_character(
@@ -58,12 +58,12 @@ async def create_character(request: Request, body: CharacterCreate):
         allowed_tools=body.allowed_tools,
     )
 
-    # キャラクター定義を ChromaDB に登録する（embedding 作成）
-    if body.system_prompt_block1 and hasattr(state, "chroma") and state.chroma:
+    # キャラクター定義をベクトルストアに登録する（embedding 作成）
+    if body.system_prompt_block1 and hasattr(state, "vector_store") and state.vector_store:
         try:
-            state.chroma.upsert_character_definition(char_id, body.system_prompt_block1)
+            state.vector_store.upsert_character_definition(char_id, body.system_prompt_block1)
         except Exception as e:
-            logger.warning("ChromaDB キャラクター定義登録失敗 char=%s error=%s", char_id, e)
+            logger.warning("ベクトルストア キャラクター定義登録失敗 char=%s error=%s", char_id, e)
 
     return char_to_dict(char)
 
@@ -80,7 +80,7 @@ async def get_character(request: Request, character_id: str):
 async def update_character(request: Request, character_id: str, body: CharacterUpdate):
     """キャラクター情報を更新する。
 
-    system_prompt_block1 が変更された場合は ChromaDB の定義 embedding も更新する。
+    system_prompt_block1 が変更された場合はベクトルストアの定義 embedding も更新する。
     """
     state = request.app.state
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -89,11 +89,11 @@ async def update_character(request: Request, character_id: str, body: CharacterU
         raise HTTPException(status_code=404, detail="Character not found")
 
     # system_prompt_block1 が更新された場合は定義 embedding を再登録する
-    if "system_prompt_block1" in updates and hasattr(state, "chroma") and state.chroma:
+    if "system_prompt_block1" in updates and hasattr(state, "vector_store") and state.vector_store:
         try:
-            state.chroma.upsert_character_definition(character_id, updates["system_prompt_block1"])
+            state.vector_store.upsert_character_definition(character_id, updates["system_prompt_block1"])
         except Exception as e:
-            logger.warning("ChromaDB キャラクター定義更新失敗 char=%s error=%s", character_id, e)
+            logger.warning("ベクトルストア キャラクター定義更新失敗 char=%s error=%s", character_id, e)
 
     return char_to_dict(char)
 

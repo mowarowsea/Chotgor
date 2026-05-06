@@ -414,7 +414,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         images=body.image_ids or None,
     )
     asyncio.create_task(asyncio.to_thread(
-        index_message_sync, user_msg, _chat_char_ids, state.chroma, _chat_user_name
+        index_message_sync, user_msg, _chat_char_ids, state.vector_store, _chat_user_name
     ))
 
     if already_exited:
@@ -514,7 +514,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             log_message_id=log_msg_id,
         )
         asyncio.create_task(asyncio.to_thread(
-            index_message_sync, char_msg, _chat_char_ids, state.chroma, _chat_user_name
+            index_message_sync, char_msg, _chat_char_ids, state.vector_store, _chat_user_name
         ))
 
         state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)

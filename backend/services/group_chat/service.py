@@ -184,7 +184,7 @@ async def run_group_turn(
     chat_service: ChatService,
     message_to_dict,
     uploads_dir: str = "",
-    chroma=None,
+    vector_store=None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザー発言後の自動ターンを実行し、SSEイベントをyieldする非同期ジェネレーター。
 
@@ -217,9 +217,9 @@ async def run_group_turn(
     user_name = settings.get("user_name", "ユーザ")
     all_char_names = {p["char_name"] for p in participants}
 
-    # チャット履歴インデックス登録用にセッション参加キャラIDを解決する（chroma が None の場合はスキップ）
+    # チャット履歴インデックス登録用にセッション参加キャラIDを解決する（vector_store が None の場合はスキップ）
     _participant_char_ids: list[str] = []
-    if chroma:
+    if vector_store:
         current_session = sqlite.get_chat_session(session_id)
         if current_session:
             _participant_char_ids = get_participant_char_ids(current_session, sqlite)
@@ -293,13 +293,13 @@ async def run_group_turn(
                     uploads_dir=uploads_dir,
                 ):
                     if chunk_type == "character_done":
-                        # キャラ発言をChromaDBのchat_コレクションにインデックス登録する（fire-and-forget）
-                        if chroma and _participant_char_ids:
+                        # キャラ発言をベクトルストアの chat_turns テーブルにインデックス登録する（fire-and-forget）
+                        if vector_store and _participant_char_ids:
                             asyncio.create_task(asyncio.to_thread(
                                 index_message_sync,
                                 payload["message"],
                                 _participant_char_ids,
-                                chroma,
+                                vector_store,
                                 user_name,
                             ))
                         # message ORM を dict に変換してからyieldする

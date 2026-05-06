@@ -75,12 +75,12 @@ async def _run_farewell_detection(
     farewell_config: dict,
     messages: list[dict],
     settings: dict,
-    chroma=None,
+    vector_store=None,
 ) -> None:
     """FarewellDetectorをバックグラウンドで実行し、退席判定をDBに保存するコルーチン。
 
     退席確定の場合のみセッションの exited_chars を更新する。
-    疎遠化確定時は SQLite に加えて ChromaDB の定義 embedding も "estranged" に更新する。
+    疎遠化確定時は SQLite に加えてベクトルストアの定義 embedding も "estranged" に更新する。
     SSEストリームは既に終了しているため、イベント送信は行わない。
     次リクエスト時の already_exited チェックで自動検知される。
 
@@ -93,7 +93,7 @@ async def _run_farewell_detection(
         farewell_config: キャラクターのfarewell_config辞書。
         messages: 判定に使用する会話履歴（最新の応答を含む）。
         settings: グローバル設定辞書。
-        chroma: ChromaStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
+        vector_store: LanceStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
     """
     try:
         result = await detector.detect(
@@ -145,12 +145,12 @@ async def _run_farewell_detection(
                     "別れ決断: 閾値到達 char=%s total=%d threshold=%d → estranged",
                     character_name, total_count, threshold,
                 )
-                # ChromaDB の定義 embedding も estranged に更新する（類似キャラ登録ブロックに必要）
-                if chroma is not None:
+                # ベクトルストアの定義 embedding も estranged に更新する（類似キャラ登録ブロックに必要）
+                if vector_store is not None:
                     try:
-                        chroma.mark_definition_estranged(character_id)
+                        vector_store.mark_definition_estranged(character_id)
                     except Exception:
-                        _log.exception("ChromaDB 疎遠化マーク失敗 char=%s", character_name)
+                        _log.exception("ベクトルストア 疎遠化マーク失敗 char=%s", character_name)
                 farewell_messages = farewell_config.get("farewell_message") or {}
                 estranged_msg = farewell_messages.get("estranged", "")
                 reason = estranged_msg if estranged_msg else reason
@@ -602,7 +602,7 @@ class ChatService:
                         farewell_config=char_for_farewell.farewell_config,
                         messages=farewell_messages,
                         settings=request.settings,
-                        chroma=self.memory_manager.chroma,
+                        vector_store=self.memory_manager.vector_store,
                     )
                 )
 

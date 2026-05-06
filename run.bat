@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 if not exist "data" mkdir data
-if not exist "data\chroma" mkdir data\chroma
+if not exist "data\lancedb" mkdir data\lancedb
 
 pip show fastapi >nul 2>&1
 if errorlevel 1 (

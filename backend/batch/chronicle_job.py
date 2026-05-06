@@ -24,7 +24,7 @@ from backend.services.memory.manager import MemoryManager
 from backend.character_actions.farewell_detector import FAREWELL_EMOTION_RUBRIC
 
 if TYPE_CHECKING:
-    from backend.repositories.chroma.store import ChromaStore
+    from backend.repositories.lance.store import LanceStore
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ def _parse_chronicle_response(response_text: str) -> dict | None:
 async def _check_estrangement(
     char,
     sqlite: SQLiteStore,
-    chroma: Optional["ChromaStore"],
+    vector_store: Optional["LanceStore"],
 ) -> None:
     """疎遠化条件を確認し、閾値超過で relationship_status を "estranged" に更新する。
 
@@ -195,7 +195,7 @@ async def _check_estrangement(
     Args:
         char: キャラクター ORM オブジェクト。
         sqlite: SQLiteStore インスタンス。
-        chroma: ChromaStore インスタンス（None の場合は embedding 更新をスキップ）。
+        vector_store: LanceStore インスタンス（None の場合は embedding 更新をスキップ）。
     """
     farewell_config = getattr(char, "farewell_config", None)
     if not farewell_config:
@@ -217,9 +217,9 @@ async def _check_estrangement(
     )
     sqlite.update_character(char.id, relationship_status="estranged")
 
-    if chroma:
+    if vector_store:
         try:
-            chroma.mark_definition_estranged(char.id)
+            vector_store.mark_definition_estranged(char.id)
         except Exception:
             logger.exception("ChromaDB 疎遠化マーク失敗 char=%s", char.name)
 
@@ -229,7 +229,7 @@ async def run_chronicle(
     sqlite: SQLiteStore,
     target_date: str | None = None,   # "YYYY-MM-DD" — 省略時は chronicled_at IS NULL で選択
     settings: dict | None = None,
-    chroma: Optional["ChromaStore"] = None,
+    vector_store: Optional["LanceStore"] = None,
     memory_manager: Optional[MemoryManager] = None,
 ) -> dict:
     """chronicle 処理を実行する。
@@ -245,7 +245,7 @@ async def run_chronicle(
         sqlite: SQLiteStore インスタンス。
         target_date: 処理対象日 "YYYY-MM-DD"。省略時は chronicled_at IS NULL のメッセージを対象とする。
         settings: グローバル設定辞書。省略時は SQLite から取得する。
-        chroma: ChromaStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
+        vector_store: LanceStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
 
     Returns:
         処理結果辞書 {status, updated_fields, error (optional)}。
@@ -358,7 +358,7 @@ async def run_chronicle(
     # 今回の更新を反映するため、char オブジェクトを再取得する
     updated_char = sqlite.get_character(character_id)
     if updated_char:
-        await _check_estrangement(updated_char, sqlite, chroma)
+        await _check_estrangement(updated_char, sqlite, vector_store)
 
     logger.info("完了 char=%s updated=%s", char_label, list(updates.keys()) or "なし")
     return {"status": "success", "updated_fields": list(updates.keys())}
@@ -366,7 +366,7 @@ async def run_chronicle(
 
 async def run_pending_chronicles(
     sqlite: SQLiteStore,
-    chroma: Optional["ChromaStore"] = None,
+    vector_store: Optional["LanceStore"] = None,
     memory_manager: Optional[MemoryManager] = None,
 ) -> None:
     """全キャラクターに対して chronicle を実行する。
@@ -378,7 +378,7 @@ async def run_pending_chronicles(
 
     Args:
         sqlite: SQLiteStore インスタンス。
-        chroma: ChromaStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
+        vector_store: LanceStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
         memory_manager: MemoryManager インスタンス（印象的な記憶取得に使用。None でもよい）。
     """
     characters = sqlite.list_characters()
@@ -394,7 +394,7 @@ async def run_pending_chronicles(
                 character_id=char.id,
                 sqlite=sqlite,
                 settings=settings,
-                chroma=chroma,
+                vector_store=vector_store,
                 memory_manager=memory_manager,
             )
         except Exception as e:

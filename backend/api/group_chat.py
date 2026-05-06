@@ -199,7 +199,7 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
             images=body.image_ids or None,
         )
         asyncio.create_task(asyncio.to_thread(
-            index_message_sync, saved_user_msg, _chat_char_ids, state.chroma, _chat_user_name
+            index_message_sync, saved_user_msg, _chat_char_ids, state.vector_store, _chat_user_name
         ))
 
         # セッションタイトルを自動設定する（最初のメッセージから）
@@ -224,7 +224,7 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
                 chat_service=state.chat_service,
                 message_to_dict=message_to_dict,
                 uploads_dir=state.uploads_dir,
-                chroma=state.chroma,
+                vector_store=state.vector_store,
             ):
                 data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
                 yield f"data: {data}\n\n"

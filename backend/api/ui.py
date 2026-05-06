@@ -430,10 +430,9 @@ async def save_settings(
         current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
         try:
             state = request.app.state
-            new_chroma, new_memory_manager, new_chat_service = await migrate_embeddings(
+            new_vector_store, new_memory_manager, new_chat_service = await migrate_embeddings(
                 sqlite=state.sqlite,
-                old_chroma=state.chroma,
-                chroma_db_path=state.chroma_db_path,
+                old_vector_store=state.vector_store,
                 drift_manager=state.drift_manager,
                 new_provider=embedding_provider,
                 new_model=embedding_model,
@@ -441,7 +440,7 @@ async def save_settings(
                 new_base_url=current_infinity_url,
             )
             # マイグレーション後に app.state を新しいインスタンスで更新する
-            state.chroma = new_chroma
+            state.vector_store = new_vector_store
             state.memory_manager = new_memory_manager
             state.chat_service = new_chat_service
         except Exception:
@@ -465,17 +464,16 @@ async def reindex_memories(request: Request):
     current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
     try:
         state = request.app.state
-        new_chroma, new_memory_manager, new_chat_service = await migrate_embeddings(
+        new_vector_store, new_memory_manager, new_chat_service = await migrate_embeddings(
             sqlite=state.sqlite,
-            old_chroma=state.chroma,
-            chroma_db_path=state.chroma_db_path,
+            old_vector_store=state.vector_store,
             drift_manager=state.drift_manager,
             new_provider=current_provider,
             new_model=current_model,
             new_api_key=current_api_key,
             new_base_url=current_infinity_url,
         )
-        state.chroma = new_chroma
+        state.vector_store = new_vector_store
         state.memory_manager = new_memory_manager
         state.chat_service = new_chat_service
     except Exception:

@@ -5,12 +5,12 @@ Chronicle バッチの farewell_config 対応と疎遠化判定（_check_estrang
 対象関数:
     _check_estrangement()           — ネガティブ退席数が閾値を超えたら relationship_status を更新する
     run_chronicle()                 — farewell_config を更新できること・_check_estrangement を呼ぶこと
-    run_pending_chronicles()        — chroma を受け取って各 run_chronicle に渡すこと
+    run_pending_chronicles()        — vector_store を受け取って各 run_chronicle に渡すこと
 
 テスト方針:
     - SQLite は conftest.py の sqlite_store フィクスチャで実際の一時DBを使用する
     - ask_character() は AsyncMock でモックして実際のLLM呼び出しを回避する
-    - ChromaDB は MagicMock で差し替える（embedding は不要）
+    - ベクトルストアは MagicMock で差し替える（embedding は不要）
     - _check_estrangement は公開関数ではないため、get_negative_exit_count をモックして間接的にテストする
     - run_chronicle() のテストでは farewell_config が JSON に含まれる場合のみ DB に書き込まれることを確認する
 """
@@ -125,7 +125,7 @@ class TestCheckEstrangement:
         sqlite_store.create_character(character_id=cid, name="NoConfig")
         char = sqlite_store.get_character(cid)
 
-        asyncio.run(_check_estrangement(char, sqlite_store, chroma=None))
+        asyncio.run(_check_estrangement(char, sqlite_store, vector_store=None))
 
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "active"
@@ -139,7 +139,7 @@ class TestCheckEstrangement:
         sqlite_store.update_character(cid, farewell_config=config_no_estrangement)
         char = sqlite_store.get_character(cid)
 
-        asyncio.run(_check_estrangement(char, sqlite_store, chroma=None))
+        asyncio.run(_check_estrangement(char, sqlite_store, vector_store=None))
 
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "active"
@@ -152,7 +152,7 @@ class TestCheckEstrangement:
         char = sqlite_store.get_character(cid)
         # negative_exit_threshold=3 に対して count=2 → 閾値未満
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=2):
-            asyncio.run(_check_estrangement(char, sqlite_store, chroma=None))
+            asyncio.run(_check_estrangement(char, sqlite_store, vector_store=None))
 
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "active"
@@ -165,7 +165,7 @@ class TestCheckEstrangement:
         char = sqlite_store.get_character(cid)
         # negative_exit_threshold=3 に対して count=3 → 閾値以上
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=3):
-            asyncio.run(_check_estrangement(char, sqlite_store, chroma=None))
+            asyncio.run(_check_estrangement(char, sqlite_store, vector_store=None))
 
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "estranged"
@@ -177,7 +177,7 @@ class TestCheckEstrangement:
         sqlite_store.update_character(cid, farewell_config=farewell_config_dict)
         char = sqlite_store.get_character(cid)
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=10):
-            asyncio.run(_check_estrangement(char, sqlite_store, chroma=None))
+            asyncio.run(_check_estrangement(char, sqlite_store, vector_store=None))
 
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "estranged"
@@ -189,11 +189,11 @@ class TestCheckEstrangement:
         sqlite_store.update_character(cid, farewell_config=farewell_config_dict)
         char = sqlite_store.get_character(cid)
 
-        mock_chroma = MagicMock()
+        mock_vector_store = MagicMock()
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=5):
-            asyncio.run(_check_estrangement(char, sqlite_store, chroma=mock_chroma))
+            asyncio.run(_check_estrangement(char, sqlite_store, vector_store=mock_vector_store))
 
-        mock_chroma.mark_definition_estranged.assert_called_once_with(cid)
+        mock_vector_store.mark_definition_estranged.assert_called_once_with(cid)
 
     def test_chroma_none_does_not_raise(self, sqlite_store, farewell_config_dict):
         """chroma が None でも例外が発生しないこと。"""
@@ -202,7 +202,7 @@ class TestCheckEstrangement:
         sqlite_store.update_character(cid, farewell_config=farewell_config_dict)
         char = sqlite_store.get_character(cid)
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=5):
-            asyncio.run(_check_estrangement(char, sqlite_store, chroma=None))
+            asyncio.run(_check_estrangement(char, sqlite_store, vector_store=None))
 
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "estranged"
@@ -214,10 +214,10 @@ class TestCheckEstrangement:
         sqlite_store.update_character(cid, farewell_config=farewell_config_dict)
         char = sqlite_store.get_character(cid)
 
-        mock_chroma = MagicMock()
-        mock_chroma.mark_definition_estranged.side_effect = RuntimeError("ChromaDB接続失敗")
+        mock_vector_store = MagicMock()
+        mock_vector_store.mark_definition_estranged.side_effect = RuntimeError("ChromaDB接続失敗")
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=5):
-            asyncio.run(_check_estrangement(char, sqlite_store, chroma=mock_chroma))
+            asyncio.run(_check_estrangement(char, sqlite_store, vector_store=mock_vector_store))
 
         # chroma エラーがあっても relationship_status は更新されていること
         char = sqlite_store.get_character(cid)
@@ -241,7 +241,7 @@ class TestRunChronicleFarewellConfig:
                     character_id=char_id_with_ghost,
                     sqlite=sqlite_store,
                     settings={},
-                    chroma=None,
+                    vector_store=None,
                 )
             )
 
@@ -267,7 +267,7 @@ class TestRunChronicleFarewellConfig:
                     character_id=char_id_with_ghost,
                     sqlite=sqlite_store,
                     settings={},
-                    chroma=None,
+                    vector_store=None,
                 )
             )
 
@@ -291,7 +291,7 @@ class TestRunChronicleFarewellConfig:
                     character_id=char_id_with_ghost,
                     sqlite=sqlite_store,
                     settings={},
-                    chroma=None,
+                    vector_store=None,
                 )
             )
 
@@ -314,7 +314,7 @@ class TestRunChronicleFarewellConfig:
                         character_id=char_id_with_ghost,
                         sqlite=sqlite_store,
                         settings={},
-                        chroma=None,
+                        vector_store=None,
                     )
                 )
         mock_check.assert_called_once()
@@ -355,7 +355,7 @@ class TestRunChronicleFarewellConfig:
                     character_id=char_id_with_ghost,
                     sqlite=sqlite_store,
                     settings={},
-                    chroma=None,
+                    vector_store=None,
                 )
             )
 
@@ -370,19 +370,19 @@ class TestRunChronicleFarewellConfig:
 
 
 class TestRunPendingChroniclesChroma:
-    """run_pending_chronicles() が chroma を受け取って run_chronicle に渡すことを検証する。"""
+    """run_pending_chronicles() が vector_store を受け取って run_chronicle に渡すことを検証する。"""
 
     def test_chroma_is_passed_to_run_chronicle(
         self, sqlite_store, char_id_with_ghost, ghost_preset_id
     ):
         """run_pending_chronicles() に渡した chroma が run_chronicle に伝達されること。"""
-        mock_chroma = MagicMock()
+        mock_vector_store = MagicMock()
         response = _make_chronicle_response()
 
         with patch("backend.batch.chronicle_job.ask_character", new=AsyncMock(return_value=response)):
             with patch("backend.batch.chronicle_job._check_estrangement", new=AsyncMock()) as mock_check:
                 asyncio.run(
-                    run_pending_chronicles(sqlite=sqlite_store, chroma=mock_chroma)
+                    run_pending_chronicles(sqlite=sqlite_store, vector_store=mock_vector_store)
                 )
 
         # _check_estrangement が少なくとも1回呼ばれていること
@@ -390,11 +390,11 @@ class TestRunPendingChroniclesChroma:
         assert mock_check.called
 
     def test_chroma_none_does_not_raise(self, sqlite_store, char_id_with_ghost, ghost_preset_id):
-        """run_pending_chronicles() に chroma=None を渡しても例外が発生しないこと。"""
+        """run_pending_chronicles() に vector_store=None を渡しても例外が発生しないこと。"""
         response = _make_chronicle_response()
         with patch("backend.batch.chronicle_job.ask_character", new=AsyncMock(return_value=response)):
             asyncio.run(
-                run_pending_chronicles(sqlite=sqlite_store, chroma=None)
+                run_pending_chronicles(sqlite=sqlite_store, vector_store=None)
             )
 
 

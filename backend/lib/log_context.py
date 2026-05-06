@@ -76,7 +76,7 @@ def setup_logging() -> None:
     - コンソール出力 (INFO以上): stdout に常時出力
     - ファイル出力 (DEBUG以上): logs/chotgor.log に RotatingFileHandler で出力
 
-    uvicorn / httpx / chromadb の過剰な DEBUG ログは WARNING レベルに制限する。
+    uvicorn / httpx / lance の過剰な DEBUG ログは WARNING レベルに制限する。
     """
     fmt = _ChotgorFormatter(
         "%(asctime)s %(levelname)-7s [%(msg_id)8s] %(short_name)s:%(funcName)s | %(message)s",
@@ -104,8 +104,8 @@ def setup_logging() -> None:
     file_handler.setFormatter(fmt)
     root.addHandler(file_handler)
 
-    # uvicorn/fastapi/httpx/chromadb の過剰なDEBUGログを抑制
+    # uvicorn/fastapi/httpx/lance の過剰なDEBUGログを抑制
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("chromadb").setLevel(logging.WARNING)
+    logging.getLogger("lance").setLevel(logging.WARNING)

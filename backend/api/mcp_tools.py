@@ -1,12 +1,13 @@
 """MCP tools プロキシ用 内部 API。
 
-mcp_server.py（独立子プロセスとして Claude CLI が起動する）が ChromaDB を
+mcp_server.py（独立子プロセスとして Claude CLI が起動する）がベクトルストアを
 backend と二重に開かないよう、backend に集約された ToolExecutor を HTTP 経由で
 実行するための内部 API。
 
-これは構造的欠陥 A（同一 ChromaDB ディレクトリに対する multi-process write）
-の根治対応。MCP プロセス側は本 API を叩くだけになり、ChromaStore /
-MemoryManager / DriftManager は backend lifespan が保持する単一インスタンスに集約される。
+旧 ChromaDB 時代は「同一ディレクトリへの multi-process write による HNSW 破損」
+を回避する根治対応として導入された。LanceStore 移行後はベクトルストア自体は
+multi-process safe になったが、MemoryManager / DriftManager の単一インスタンス
+集約という設計上の利点は維持するため本 API を残している。
 
 セキュリティ: localhost (127.0.0.1 / ::1) からのリクエストのみ受け付ける。
 backend は 0.0.0.0:8000 にバインドするため、ガードを入れないと LAN 内の他端末から

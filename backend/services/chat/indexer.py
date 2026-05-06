@@ -115,18 +115,18 @@ def get_participant_char_ids(session, sqlite) -> list[str]:
 def index_message_sync(
     message,
     character_ids: list[str],
-    chroma,
+    vector_store,
     user_name: str = "ユーザ",
 ) -> None:
-    """メッセージを参加キャラ全員の chat_ コレクションへupsertする（同期関数）。
+    """メッセージを参加キャラ全員の chat_turns テーブルへ upsert する（同期関数）。
 
     is_system_message が設定されたメッセージはインデックス対象外。
-    失敗してもチャット本体への影響がないよう、例外を握り潰す。
+    失敗してもチャット本体への影響がないよう、例外を握り潰す（embedding API 一時失敗対策）。
 
     Args:
         message: ChatMessage ORM オブジェクト。
-        character_ids: upsert先のキャラクターIDリスト。
-        chroma: ChromaStore インスタンス。
+        character_ids: upsert 先のキャラクター ID リスト。
+        vector_store: LanceStore インスタンス。
         user_name: role="user" のときに使用するスピーカー名。
     """
     built = build_chat_doc_and_metadata(message, user_name=user_name)
@@ -137,7 +137,7 @@ def index_message_sync(
     for char_id in character_ids:
         for attempt in range(_CHAT_INDEX_MAX_RETRIES):
             try:
-                chroma.add_chat_turn(
+                vector_store.add_chat_turn(
                     message_id=message.id,
                     content=doc,
                     character_id=char_id,

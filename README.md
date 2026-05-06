@@ -57,7 +57,7 @@ Chotgorは以下の構成で動く。
 │  / Google / Ollama                      │
 │                                         │
 │  Memory Layer                           │
-│  SQLite (メタデータ) + ChromaDB (ベクトル)│
+│  SQLite (メタデータ) + LanceDB (ベクトル)│
 │                                         │
 │  Management UI  /ui/                    │
 └─────────────────────────────────────────┘
@@ -111,7 +111,7 @@ pip install -e .
 
 ```env
 SQLITE_DB_PATH=./data/chotgor.db
-CHROMA_DB_PATH=./data/chroma
+LANCE_DB_PATH=./data/lancedb
 # 使用するプロバイダーのAPIキーを設定
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
