@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}{% if scenario %}{{ scenario.title }}{% else %}New Scenario{% endif %} &mdash; Chotgor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{% if scenario %}{{ scenario.title }}{% else %}New Scenario{% endif %}</h1>
+    <a href="/ui/scenarios" class="btn btn-secondary">Back</a>
+</div>
+
+<div class="form-card">
+    <form method="post" action="{{ action }}">
+
+        <!-- タイトル -->
+        <div class="form-group">
+            <label for="title">Scenario Title</label>
+            <input type="text" id="title" name="title" class="form-control"
+                value="{% if scenario %}{{ scenario.title }}{% endif %}"
+                placeholder="e.g. 古城に潜む影" required>
+        </div>
+
+        <!-- ユーザ alias -->
+        <div class="form-group">
+            <label for="user_alias">Player Alias
+                <span class="label-hint">@タグで使われるプレイヤーの呼称</span>
+            </label>
+            <input type="text" id="user_alias" name="user_alias" class="form-control"
+                value="{% if scenario %}{{ scenario.user_alias }}{% else %}プレイヤー{% endif %}"
+                placeholder="e.g. ヴァン, 旅人, プレイヤー" required>
+        </div>
+
+        <!-- GM プリセット -->
+        <div class="form-group">
+            <label for="gm_preset_id">GM Model
+                <span class="label-hint">GM が使う LLM プリセット</span>
+            </label>
+            <select id="gm_preset_id" name="gm_preset_id" class="form-control" required>
+                <option value="">— select a preset —</option>
+                {% for p in model_presets %}
+                <option value="{{ p.id }}"
+                    {% if scenario and scenario.gm_preset_id == p.id %}selected{% endif %}>
+                    {{ p.name }} ({{ p.provider }} / {{ p.model_id or 'default' }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- シナリオ概要 -->
+        <div class="form-group">
+            <label for="scenario">Scenario / World
+                <span class="label-hint">世界観・場所・空気感・Narratorの語り口・テンポなど、必要な前提を自由記述。GM の system prompt に注入されます</span>
+            </label>
+            <textarea id="scenario" name="scenario" class="form-control textarea-tall"
+                placeholder="e.g. 魔導書を探す旅。雨の中、古城の門前に到着した。Narrator は詩的に語る。テンポは ゆっくり。">{% if scenario %}{{ scenario.scenario or '' }}{% endif %}</textarea>
+        </div>
+
+        <!-- 導入部 -->
+        <div class="form-group">
+            <label for="intro">Intro / Prologue
+                <span class="label-hint">セッション開始時に固定で挿入される導入部。`@キャラ: 本文` 記法で各話者の発話を記述（`@Narrator:` / `@{{ scenario.user_alias if scenario else 'プレイヤー' }}:` も使用可）</span>
+            </label>
+            <textarea id="intro" name="intro" class="form-control textarea-tall"
+                placeholder="@Narrator: 雨の中、古城の門前に到着した。
+@レイカ: ……あんた、誰?
+@プレイヤー: ……">{% if scenario %}{{ scenario.intro or '' }}{% endif %}</textarea>
+        </div>
+
+        <!-- 履歴上限 -->
+        <div class="form-row">
+            <div class="form-group">
+                <label for="history_max_turns">History Max Turns
+                    <span class="label-hint">送信履歴のターン上限（空欄: 設定既定）</span>
+                </label>
+                <input type="number" id="history_max_turns" name="history_max_turns" class="form-control"
+                    value="{% if scenario and scenario.history_max_turns %}{{ scenario.history_max_turns }}{% endif %}"
+                    min="0" placeholder="100">
+            </div>
+            <div class="form-group">
+                <label for="history_max_chars">History Max Chars
+                    <span class="label-hint">送信履歴の文字数上限（空欄: 設定既定）</span>
+                </label>
+                <input type="number" id="history_max_chars" name="history_max_chars" class="form-control"
+                    value="{% if scenario and scenario.history_max_chars %}{{ scenario.history_max_chars }}{% endif %}"
+                    min="0" placeholder="80000">
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">
+            {% if scenario %}Save{% else %}Create{% endif %}
+        </button>
+    </form>
+</div>
+
+{% if scenario %}
+<!-- NPC 編集 -->
+<div class="form-card" style="margin-top:1.5rem">
+    <h2>NPCs</h2>
+    <p class="label-hint">
+        このシナリオに登場する NPC を定義します。`@名前:` の発話タグとして使われます。
+        description には人物像・口調・話し方を自由テキストで全部記述してください。
+    </p>
+
+    {% if npcs %}
+    {% for n in npcs %}
+    <div class="form-card" style="margin-bottom:0.75rem;padding:0.75rem">
+        <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/edit"
+              enctype="multipart/form-data">
+            <div class="image-upload-row" style="margin-bottom:0.5rem">
+                <div>
+                    {% if n.image_data %}
+                    <img src="{{ n.image_data }}" class="icon-preview" alt="{{ n.name }}">
+                    {% else %}
+                    <div class="icon-placeholder">{{ n.name[0] if n.name else '?' }}</div>
+                    {% endif %}
+                </div>
+                <div style="display:flex;flex-direction:column;gap:5px">
+                    <input type="file" name="image" accept="image/*">
+                    <label style="font-size:0.8em;color:var(--t3)">
+                        <input type="checkbox" name="remove_image"> 画像を削除
+                    </label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" name="name" class="form-control" value="{{ n.name }}" required>
+            </div>
+            <div class="form-group">
+                <label>Description
+                    <span class="label-hint">人物像・口調・話し方を自由記述</span>
+                </label>
+                <textarea name="description" class="form-control textarea-medium"
+                          placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
+            </div>
+            <div style="display:flex;gap:0.5rem">
+                <button type="submit" class="btn btn-secondary">Save</button>
+                <button type="submit" formmethod="post"
+                        formaction="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/delete"
+                        formnovalidate
+                        class="btn btn-danger"
+                        onclick="return confirm('Delete {{ n.name }}?')">Delete</button>
+            </div>
+        </form>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="label-hint">まだ NPC が登録されていません。</p>
+    {% endif %}
+
+    <h3 style="margin-top:1rem">Add NPC</h3>
+    <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/new" enctype="multipart/form-data">
+        <div class="image-upload-row" style="margin-bottom:0.5rem">
+            <div>
+                <div class="icon-placeholder">?</div>
+            </div>
+            <div>
+                <label style="font-size:0.85em;color:var(--t3)">Avatar Image (任意)</label>
+                <input type="file" name="image" accept="image/*">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" name="name" class="form-control" required placeholder="レイカ">
+        </div>
+        <div class="form-group">
+            <label>Description
+                <span class="label-hint">人物像・口調・話し方を自由記述</span>
+            </label>
+            <textarea name="description" class="form-control textarea-medium"
+                      placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">+ Add NPC</button>
+    </form>
+</div>
+{% endif %}
+{% endblock %}

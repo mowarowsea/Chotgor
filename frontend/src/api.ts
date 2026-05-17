@@ -346,6 +346,308 @@ export async function* streamGroupMessage(
 }
 
 // ---------------------------------------------------------------------------
+// シナリオチャット（Zeta モード）
+// ---------------------------------------------------------------------------
+
+/** シナリオテンプレート — 何度でも遊べる設定の塊。backend UI で登録・編集する。
+ *
+ * 場所・空気感・語り口・テンポなどの細分情報はすべて `scenario` テキストにまとめる
+ * （以前は別フィールドだったが、線引きが曖昧だったので統合）。
+ */
+export interface ScenarioTemplate {
+  id: string;
+  title: string;
+  scenario: string | null;
+  intro: string | null;
+  user_alias: string;
+  gm_preset_id: string;
+  history_max_turns: number | null;
+  history_max_chars: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** シナリオテンプレートに紐づく NPC。
+ *
+ * description には人物像・口調・話し方を自由テキストで全部詰め込む。
+ * image_data はアバター画像の base64 data URI（オプション）。
+ */
+export interface ZetaNpc {
+  id: string;
+  scenario_id: string;
+  name: string;
+  description: string | null;
+  image_data: string | null;
+  promoted_character_id: string | null;
+  created_at: string;
+}
+
+/** シナリオから起動されたプレイインスタンス。フロントの「セッション一覧」に並ぶ。
+ *
+ * session_type は判別用にフロント側で付与する。
+ */
+export interface ScenarioSession {
+  id: string;
+  scenario_id: string;
+  title: string;
+  engine_type: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  /** フロント側で判別用に追加（バックエンドからは返らない）。 */
+  session_type: "scenario";
+}
+
+/** シナリオセッションの発話ターン。 */
+export interface ZetaTurn {
+  id: string;
+  session_id: string;
+  turn_index: number;
+  /** "user" | "narrator" | "npc" | "character" */
+  speaker_type: string;
+  /** known NPC のみ NPC.id が入る。Narrator・未知 NPC・user は null。 */
+  speaker_id: string | null;
+  /** 表示用スナップショット名。 */
+  speaker_name: string;
+  content: string;
+  raw_response: string | null;
+  created_at: string;
+}
+
+/** プレイセッション詳細（元シナリオ + NPC を含む）。 */
+export interface ScenarioSessionDetail extends ScenarioSession {
+  scenario: ScenarioTemplate | null;
+  npcs: ZetaNpc[];
+}
+
+/** セッション単位のあらすじ（記憶捏造対策）。
+ *
+ * auto: LLM 自動生成（追記専用）。GM プロンプトのメインのあらすじ。
+ * manual: プレイヤー手書きの補足メモ。自動更新では一切触らない。
+ * last_turn_index: synopsis_auto に「どこまで要約済みか」を記録する境界。
+ */
+export interface ScenarioSynopsis {
+  auto: string;
+  manual: string;
+  last_turn_index: number;
+}
+
+/** シナリオストリーミング SSE イベントの型定義。 */
+export type ScenarioStreamEvent =
+  | { type: "user_saved"; turn: ZetaTurn }
+  | {
+      type: "speaker_start";
+      speaker_type: string;
+      speaker_id: string | null;
+      speaker_name: string;
+      is_known: boolean;
+    }
+  | { type: "content_delta"; text: string }
+  | { type: "speaker_end"; turn: ZetaTurn }
+  | { type: "turn_complete"; turn_ids: string[] }
+  | { type: "synopsis_updated"; synopsis: ScenarioSynopsis }
+  | { type: "error"; message: string }
+  | { type: "done" };
+
+/** タグ session_type を付与するヘルパ。 */
+function tagScenarioSession(
+  s: Omit<ScenarioSession, "session_type">,
+): ScenarioSession {
+  return { ...s, session_type: "scenario" as const };
+}
+
+// ─── シナリオテンプレート（一覧取得のみ。CRUD は backend UI で行う） ──────
+
+/** シナリオテンプレート一覧を取得する。フロントでは「開始するシナリオの選択」のみ使う。 */
+export async function fetchScenarioTemplates(): Promise<ScenarioTemplate[]> {
+  const res = await fetch("/api/scenario_chat/scenarios");
+  if (!res.ok) throw new Error("シナリオテンプレート一覧の取得に失敗しました");
+  return res.json();
+}
+
+// ─── プレイセッション ──────────────────────────────────────────────────────
+
+/** プレイセッション一覧を取得する。 */
+export async function fetchScenarioSessions(): Promise<ScenarioSession[]> {
+  const res = await fetch("/api/scenario_chat/sessions");
+  if (!res.ok) throw new Error("シナリオセッション一覧の取得に失敗しました");
+  const data = (await res.json()) as Array<Omit<ScenarioSession, "session_type">>;
+  return data.map(tagScenarioSession);
+}
+
+/** プレイセッション詳細を取得する（元シナリオ・NPC を含む）。 */
+export async function fetchScenarioSession(
+  sessionId: string,
+): Promise<ScenarioSessionDetail> {
+  const res = await fetch(`/api/scenario_chat/sessions/${sessionId}`);
+  if (!res.ok) throw new Error("シナリオセッションの取得に失敗しました");
+  const data = (await res.json()) as Omit<ScenarioSession, "session_type"> & {
+    scenario: ScenarioTemplate | null;
+    npcs: ZetaNpc[];
+  };
+  return {
+    ...tagScenarioSession(data),
+    scenario: data.scenario,
+    npcs: data.npcs,
+  };
+}
+
+/** プレイセッションのターン一覧を取得する。 */
+export async function fetchScenarioTurns(sessionId: string): Promise<ZetaTurn[]> {
+  const res = await fetch(`/api/scenario_chat/sessions/${sessionId}/turns`);
+  if (!res.ok) throw new Error("シナリオターンの取得に失敗しました");
+  return res.json();
+}
+
+/** シナリオから新しいプレイセッションを起動する。 */
+export async function startScenarioSession(
+  scenarioId: string,
+  title?: string,
+): Promise<ScenarioSession> {
+  const res = await fetch("/api/scenario_chat/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scenario_id: scenarioId, ...(title ? { title } : {}) }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "シナリオセッションの起動に失敗しました");
+  }
+  const data = (await res.json()) as Omit<ScenarioSession, "session_type">;
+  return tagScenarioSession(data);
+}
+
+/** プレイセッションを部分更新する（タイトル変更 / status 変更）。 */
+export async function updateScenarioSession(
+  sessionId: string,
+  patch: { title?: string; status?: string },
+): Promise<ScenarioSession> {
+  const res = await fetch(`/api/scenario_chat/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "シナリオセッションの更新に失敗しました");
+  }
+  const data = (await res.json()) as Omit<ScenarioSession, "session_type">;
+  return tagScenarioSession(data);
+}
+
+/** プレイセッションを削除する。テンプレには影響しない。 */
+export async function deleteScenarioSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/scenario_chat/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("シナリオセッションの削除に失敗しました");
+}
+
+/** プレイセッションを終了する（status=ended）。 */
+export async function endScenarioSession(
+  sessionId: string,
+): Promise<ScenarioSession> {
+  const res = await fetch(`/api/scenario_chat/sessions/${sessionId}/end`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("シナリオセッションの終了に失敗しました");
+  const data = (await res.json()) as Omit<ScenarioSession, "session_type">;
+  return tagScenarioSession(data);
+}
+
+/** 指定ターン以降（自身を含む）をすべて削除する。編集・再生成の前処理。 */
+export async function deleteScenarioTurnsFrom(
+  sessionId: string,
+  turnId: string,
+): Promise<void> {
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/turns/from/${turnId}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error("ターンの削除に失敗しました");
+}
+
+// ─── あらすじ（記憶捏造対策） ──────────────────────────────────────────────
+
+/** セッションのあらすじ（auto / manual / last_turn_index）を取得する。 */
+export async function fetchScenarioSynopsis(
+  sessionId: string,
+): Promise<ScenarioSynopsis> {
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/synopsis`,
+  );
+  if (!res.ok) throw new Error("あらすじの取得に失敗しました");
+  return res.json();
+}
+
+/** セッションのあらすじを部分更新する。
+ *
+ * `auto` と `manual` はそれぞれ独立に更新可能（undefined のフィールドは触らない）。
+ * ユーザが捏造記述を発見した場合、UI 上で `auto` を直接編集して送信できる。
+ */
+export async function patchScenarioSynopsis(
+  sessionId: string,
+  patch: { auto?: string; manual?: string },
+): Promise<ScenarioSynopsis> {
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/synopsis`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "あらすじの更新に失敗しました");
+  }
+  return res.json();
+}
+
+/** `synopsis_auto` への自動追記フローを手動で起動する。
+ *
+ * 通常チャットでは閾値未満は自動更新を抑制しているため、ユーザが任意の
+ * タイミングで強制追記したい場合に使う。既存 auto は**書き換えず**、
+ * 新規分だけが末尾に追記される。
+ */
+export async function regenerateScenarioSynopsis(
+  sessionId: string,
+): Promise<ScenarioSynopsis> {
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/synopsis/regenerate`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "あらすじの再生成に失敗しました");
+  }
+  return res.json();
+}
+
+/**
+ * ターンを SSE でストリーミング送信し、イベントを yield する。
+ *
+ * autoAdvance=true なら「ユーザは無言で続きを促す」モードで、
+ * content は無視され、user turn も保存されない。
+ */
+export async function* streamScenarioMessage(
+  sessionId: string,
+  content: string,
+  autoAdvance: boolean = false,
+): AsyncGenerator<ScenarioStreamEvent> {
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/stream`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, auto_advance: autoAdvance }),
+    },
+  );
+  if (!res.ok) throw new Error("シナリオストリームの送信に失敗しました");
+  yield* parseSSEStream<ScenarioStreamEvent>(res);
+}
+
+// ---------------------------------------------------------------------------
 // ログ閲覧（チャットバブル用）
 // ---------------------------------------------------------------------------
 

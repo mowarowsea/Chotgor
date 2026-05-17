@@ -3,16 +3,19 @@
  * セッション一覧の表示・新規チャット開始・グループチャット作成・セッション削除・タイトル編集を担当する。
  */
 import { useState, useRef, useEffect } from "react";
-import type { Character, Model, Session } from "../api";
-import { charNameOf, presetNameOf } from "../api";
+import type { Character, Model, ScenarioSession, ScenarioTemplate, Session } from "../api";
+import { charNameOf, presetNameOf, fetchScenarioTemplates } from "../api";
+
+/** サイドバーで表示する統合セッション型。1on1/group/scenario を判別可能にする。 */
+export type AnySession = Session | ScenarioSession;
 
 interface Props {
   /** 利用可能なモデル一覧 */
   models: Model[];
   /** キャラクター一覧（Afterglowデフォルト値の取得に使用） */
   characters: Character[];
-  /** セッション一覧 */
-  sessions: Session[];
+  /** セッション一覧（1on1 / group / scenario が混在） */
+  sessions: AnySession[];
   /** 現在選択中のセッションID */
   activeSessionId: string | null;
   /** 現在選択中のモデルID（Appから制御） */
@@ -33,7 +36,9 @@ interface Props {
   onNewChat: (modelId: string, afterglow: boolean) => void;
   /** 新規グループチャット作成時のコールバック */
   onNewGroupChat: (participants: string[], directorModelId: string, maxAutoTurns: number) => void;
-  /** セッション削除時のコールバック */
+  /** シナリオテンプレートからプレイセッションを起動するコールバック */
+  onStartScenario: (scenarioId: string, title?: string) => void;
+  /** セッション削除時のコールバック（session_type に応じて呼び出し側が分岐） */
   onDeleteSession: (sessionId: string) => void;
   /** セッションタイトル変更時のコールバック */
   onRenameSession: (sessionId: string, newTitle: string) => void;
@@ -52,11 +57,13 @@ export default function Sidebar({
   onSelectSession,
   onNewChat,
   onNewGroupChat,
+  onStartScenario,
   onDeleteSession,
   onRenameSession,
 }: Props) {
-  /** アクティブセッションがグループチャットかどうか（モデルセレクタの無効化判定用） */
-  const isGroupSession = sessions.find((s) => s.id === activeSessionId)?.session_type === "group";
+  /** アクティブセッションが1on1でない（=group or scenario）かどうか。モデルセレクタの無効化判定用。 */
+  const activeType = sessions.find((s) => s.id === activeSessionId)?.session_type;
+  const isGroupSession = activeType === "group" || activeType === "scenario";
 
   /** 削除確認中のセッションID */
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -120,6 +127,21 @@ export default function Sidebar({
   /** 最大自動ターン数 */
   const [maxAutoTurns, setMaxAutoTurns] = useState(3);
 
+  /** シナリオ開始パネルの開閉状態 */
+  const [scenarioPanelOpen, setScenarioPanelOpen] = useState(false);
+  /** 起動対象シナリオテンプレート ID */
+  const [scSelectedId, setScSelectedId] = useState("");
+  /** 起動時のセッションタイトル（空欄ならテンプレ title をコピー） */
+  const [scTitle, setScTitle] = useState("");
+  /** シナリオテンプレート一覧（パネル開時に取得） */
+  const [templates, setTemplates] = useState<ScenarioTemplate[]>([]);
+  useEffect(() => {
+    if (scenarioPanelOpen) {
+      // パネルを開くたびに最新一覧を取り直す（backend UI で追加・編集されている可能性）
+      fetchScenarioTemplates().then(setTemplates).catch(() => setTemplates([]));
+    }
+  }, [scenarioPanelOpen]);
+
   /** 新規チャットを作成する。 */
   const handleNewChat = () => {
     if (!selectedModel) return;
@@ -147,6 +169,16 @@ export default function Sidebar({
     setGroupPanelOpen(false);
     setGroupSelected(new Set());
     setDirectorModelId("");
+  };
+
+  /** 選択中のテンプレートからプレイセッションを起動する。 */
+  const handleStartScenario = () => {
+    if (!scSelectedId) return;
+    const title = scTitle.trim() || undefined;
+    onStartScenario(scSelectedId, title);
+    setScenarioPanelOpen(false);
+    setScSelectedId("");
+    setScTitle("");
   };
 
   const handleDeleteClick = (e: React.MouseEvent, sessionId: string) => {
@@ -340,6 +372,87 @@ export default function Sidebar({
             </button>
           </div>
         )}
+
+        {/* シナリオ開始ボタン */}
+        <button
+          onClick={() => setScenarioPanelOpen((o) => !o)}
+          className={`${btnGhost} mt-1.5`}
+        >
+          <span className="flex items-center gap-1.5">
+            <span className="text-ch-t3 text-xs">📖</span>
+            <span>シナリオ</span>
+          </span>
+          <span className="text-[10px] opacity-60">{scenarioPanelOpen ? "▲" : "▼"}</span>
+        </button>
+
+        {/* シナリオ開始パネル — テンプレ選択 + タイトル + 開始ボタン */}
+        {scenarioPanelOpen && (
+          <div
+            className="mt-1 space-y-2 rounded p-2.5"
+            style={{ border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,10,0.7)" }}
+          >
+            <div>
+              <p className="text-ch-t3 text-xs mb-1">シナリオを選択</p>
+              <select
+                value={scSelectedId}
+                onChange={(e) => setScSelectedId(e.target.value)}
+                className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 focus:outline-none appearance-none"
+                style={{ border: "1px solid rgba(255,255,255,0.16)" }}
+              >
+                <option value="">— select scenario —</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}
+                  </option>
+                ))}
+              </select>
+              {templates.length === 0 && (
+                <p className="text-ch-t4 text-[10px] mt-1">
+                  シナリオがありません。
+                  <a
+                    href="/ui/scenarios/new"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline ml-1 hover:text-ch-t2"
+                  >
+                    backend で登録
+                  </a>
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-ch-t3 text-xs mb-1">セッションタイトル（任意）</p>
+              <input
+                value={scTitle}
+                onChange={(e) => setScTitle(e.target.value)}
+                placeholder="空欄ならシナリオ名をコピー"
+                className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 focus:outline-none"
+                style={{ border: "1px solid rgba(255,255,255,0.16)" }}
+              />
+            </div>
+            <button
+              onClick={handleStartScenario}
+              disabled={!scSelectedId}
+              className={btnAccent}
+            >
+              <span>
+                {!scSelectedId ? "シナリオを選択してください" : "シナリオを開始"}
+              </span>
+            </button>
+            <p className="text-ch-t4 text-[10px]">
+              シナリオの編集・NPC追加は
+              <a
+                href="/ui/scenarios"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline mx-1 hover:text-ch-t2"
+              >
+                backend Scenarios
+              </a>
+              で行います
+            </p>
+          </div>
+        )}
       </div>
 
       {/* セッション一覧 */}
@@ -357,9 +470,12 @@ export default function Sidebar({
                 : "text-ch-t3 hover:bg-ch-s1 hover:text-ch-t2"
             }`}
           >
-            {/* グループチャットアイコン */}
+            {/* セッション種別アイコン */}
             {s.session_type === "group" && (
               <span className="text-[11px] shrink-0 opacity-50">👥</span>
+            )}
+            {s.session_type === "scenario" && (
+              <span className="text-[11px] shrink-0 opacity-50">📖</span>
             )}
             {/* アクティブインジケーター */}
             {s.id === activeSessionId && (

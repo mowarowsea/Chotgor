@@ -23,6 +23,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     text,
 )
@@ -33,6 +34,7 @@ from backend.repositories.sqlite.stores.chat_store import ChatStoreMixin
 from backend.repositories.sqlite.stores.drift_store import DriftStoreMixin
 from backend.repositories.sqlite.stores.memory_store import MemoryStoreMixin
 from backend.repositories.sqlite.stores.preset_store import PresetStoreMixin
+from backend.repositories.sqlite.stores.scenario_store import ScenarioChatStoreMixin
 from backend.repositories.sqlite.stores.settings_store import SettingsStoreMixin
 
 
@@ -191,6 +193,108 @@ class LLMModelPreset(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
+class ZetaScenario(Base):
+    """シナリオテンプレート — Zeta モードで何度でも遊べるシナリオ設定本体。
+
+    NPC 構成・GM プリセット・世界観などをテンプレートとして登録しておき、
+    そこから ZetaSession（プレイインスタンス）を起動する。
+    テンプレート編集中もプレイ中のセッションには影響しないよう、
+    セッションはテンプレートの内容を「実行時に lookup する」設計。
+    """
+
+    __tablename__ = "zeta_scenarios"
+
+    id = Column(String, primary_key=True)                  # UUID
+    title = Column(String, nullable=False)
+    scenario = Column(Text, nullable=True)                 # シナリオ概要・世界観テキスト（自由記述：場所・空気感・語り口など全部ここに詰める）
+    intro = Column(Text, nullable=True)                    # 導入部（@キャラ:記法）。セッション開始時に固定ターンとして挿入
+    user_alias = Column(String, nullable=False)            # ユーザの @タグ用エイリアス
+    gm_preset_id = Column(String, nullable=False)          # LLMModelPreset.id（FK 制約は付けない: preset 削除時もテンプレは残す）
+    history_max_turns = Column(Integer, nullable=True)     # 送信履歴の最大ターン数。NULL=settings 既定
+    history_max_chars = Column(Integer, nullable=True)     # 送信履歴の最大文字数。NULL=settings 既定
+    created_at = Column(DateTime, default=lambda: datetime.now())
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(),
+    )
+
+
+class ZetaNpc(Base):
+    """シナリオテンプレートに紐づく NPC — 軽量 Character。
+
+    シナリオの編集対象。P2 で promoted_character_id を使って既存キャラへ昇格できる予約あり。
+    複数のプレイセッションで共有される（テンプレ編集は新セッションに反映される）。
+
+    description には人物像・口調・話し方のサンプルなどを自由テキストで全部詰め込む。
+    （以前は description / speaking_style の 2 つに分けていたが、線引きが曖昧だったため統合）
+    """
+
+    __tablename__ = "zeta_npcs"
+
+    id = Column(String, primary_key=True)                          # UUID
+    scenario_id = Column(String, ForeignKey("zeta_scenarios.id"), nullable=False)
+    name = Column(String, nullable=False)                          # @タグに使う シナリオ内ユニーク名
+    description = Column(Text, nullable=True)                      # 人物像・口調・話し方を自由記述
+    image_data = Column(Text, nullable=True)                       # アバター画像 (base64 data URI)
+    promoted_character_id = Column(String, nullable=True)          # P2 予約。P1 では常に NULL
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+    # 同一シナリオ内では NPC 名（@タグ）はユニーク。@タグの曖昧性を防ぐ。
+    __table_args__ = (
+        UniqueConstraint("scenario_id", "name", name="uq_zeta_npcs_scenario_name"),
+    )
+
+
+class ZetaSession(Base):
+    """シナリオから起動されたプレイインスタンス。
+
+    テンプレ（ZetaScenario）の `scenario_id` を参照し、プレイ独自の
+    `title` / `status` / 発話履歴（zeta_turns）を持つ薄いテーブル。
+    user_alias や scenario・NPCs などのプレイ用設定はテンプレを lookup して取得する。
+    """
+
+    __tablename__ = "zeta_sessions"
+
+    id = Column(String, primary_key=True)                  # UUID
+    scenario_id = Column(String, ForeignKey("zeta_scenarios.id"), nullable=False)
+    title = Column(String, nullable=False)                 # 起動時はテンプレ title からコピー（編集可）
+    engine_type = Column(String, nullable=False, default="ensemble")  # P1 では 'ensemble' 固定
+    status = Column(String, nullable=False, default="active")  # active / ended
+    # あらすじ機構（記憶捏造対策）
+    #   synopsis_auto: LLM が古いターン群を要約して「追記」していく主あらすじ。
+    #                  ユーザも UI から自由編集可能（捏造の混入を発見した際に削除・修正できる）。
+    #   synopsis_manual: プレイヤーが手で書く補足メモ。自動更新では絶対に触らない。
+    #                    GM への補正指示として機能する。
+    #   synopsis_last_turn_index: synopsis_auto に「どこまで要約済みか」を記録する境界。
+    #                             この値以下の turn_index は既に要約反映済みと見做す。
+    synopsis_auto = Column(Text, nullable=False, default="")
+    synopsis_manual = Column(Text, nullable=False, default="")
+    synopsis_last_turn_index = Column(Integer, nullable=False, default=-1)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(),
+    )
+
+
+class ZetaTurn(Base):
+    """シナリオセッションの発話ターン — ユーザ・Narrator・NPC・(将来)既存キャラを多態で格納する。"""
+
+    __tablename__ = "zeta_turns"
+
+    id = Column(String, primary_key=True)                          # UUID
+    session_id = Column(String, ForeignKey("zeta_sessions.id"), nullable=False)
+    turn_index = Column(Integer, nullable=False)                   # セッション内連番（0始まり）
+    speaker_type = Column(String, nullable=False)                  # user / narrator / npc / character
+    speaker_id = Column(String, nullable=True)                     # npc: zeta_npcs.id / character: characters.id / 他NULL
+    speaker_name = Column(String, nullable=False)                  # 表示・履歴整形用のスナップショット名（NPC 名変更後も履歴保護）
+    content = Column(Text, nullable=False)
+    raw_response = Column(Text, nullable=True)                     # GM の単一呼出で得たターン全体の生出力（デバッグ用）
+    created_at = Column(DateTime, default=lambda: datetime.now())
+
+
 class SQLiteStore(
     SettingsStoreMixin,
     CharacterStoreMixin,
@@ -198,6 +302,7 @@ class SQLiteStore(
     PresetStoreMixin,
     ChatStoreMixin,
     DriftStoreMixin,
+    ScenarioChatStoreMixin,
 ):
     """SQLite永続化ストア — 全テーブルへのCRUD操作を提供するファサードクラス。
 
@@ -209,8 +314,57 @@ class SQLiteStore(
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         self.SessionLocal = sessionmaker(bind=self.engine)
+        self._predrop_legacy_zeta_tables()
         Base.metadata.create_all(self.engine)
         self._migrate()
+
+    def _predrop_legacy_zeta_tables(self) -> None:
+        """zeta_* の旧スキーマを検出して破壊的に DROP する。
+
+        スキーマ進化に合わせて、以下のいずれかが検出されたら 4 テーブルを一括作り直す:
+            - zeta_npcs.session_id 残存（最初の 1 層構造）
+            - zeta_npcs.speaking_style 残存（旧 NPC スキーマ）
+            - zeta_npcs.display_order 残存（display_order 廃止前）
+            - zeta_npcs.image_data 未追加（旧 NPC スキーマ）
+            - zeta_scenarios.location 残存（location/scene_summary 等の細分フィールド廃止前）
+
+        zeta_* は開発段階の試行データのみのため、旧スキーマ検出 = 一括 DROP で問題ない。
+        """
+        with self.engine.connect() as conn:
+            try:
+                npc_cols = {
+                    row[0]
+                    for row in conn.execute(
+                        text("SELECT name FROM pragma_table_info('zeta_npcs')")
+                    ).fetchall()
+                }
+                scen_cols = {
+                    row[0]
+                    for row in conn.execute(
+                        text("SELECT name FROM pragma_table_info('zeta_scenarios')")
+                    ).fetchall()
+                }
+                if not npc_cols and not scen_cols:
+                    return  # テーブル未作成 → create_all に任せる
+                needs_rebuild = (
+                    "session_id" in npc_cols
+                    or "speaking_style" in npc_cols
+                    or "display_order" in npc_cols
+                    or (bool(npc_cols) and "image_data" not in npc_cols)
+                    or "location" in scen_cols
+                )
+                if needs_rebuild:
+                    for tbl in (
+                        "zeta_turns",
+                        "zeta_npcs",
+                        "zeta_sessions",
+                        "zeta_scenarios",
+                    ):
+                        conn.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
+                    conn.commit()
+            except Exception:
+                # pragma 失敗等は無視（テーブル未作成時など）
+                pass
 
     def _migrate(self):
         """既存テーブルへの新カラム追加とテーブル新設を冪等に実行する。"""
@@ -234,6 +388,11 @@ class SQLiteStore(
                 "ALTER TABLE characters ADD COLUMN relationship_status TEXT NOT NULL DEFAULT 'active'",
                 "ALTER TABLE characters ADD COLUMN definition_embedding_id TEXT",
                 "ALTER TABLE characters ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '{}'",
+                "ALTER TABLE zeta_scenarios ADD COLUMN intro TEXT",
+                # zeta_sessions のあらすじ機構（記憶捏造対策）
+                "ALTER TABLE zeta_sessions ADD COLUMN synopsis_auto TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE zeta_sessions ADD COLUMN synopsis_manual TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE zeta_sessions ADD COLUMN synopsis_last_turn_index INTEGER NOT NULL DEFAULT -1",
             ]:
                 try:
                     conn.execute(text(stmt))

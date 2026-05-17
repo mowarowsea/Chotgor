@@ -8,7 +8,7 @@
  *   ユーザーメッセージ     — 右寄せ、ニュートラルなフラット背景。
  *   ボーダー/サーフェス    — すべてニュートラルグレー。緑はキャラ名・アクセントのみ。
  */
-import { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -169,7 +169,7 @@ export function ThinkingBlock({
 // ---------------------------------------------------------------------------
 
 /** テキストをクリップボードにコピーし、完了時に一時的にチェックマークを表示するボタン。 */
-function CopyButton({ text, className = "" }: { text: string; className?: string }) {
+export function CopyButton({ text, className = "" }: { text: string; className?: string }) {
   const [done, setDone] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -923,8 +923,17 @@ function CodeBlock({
 // MarkdownContent
 // ---------------------------------------------------------------------------
 
-/** Markdownテキストをレンダリングするコンポーネント。 */
-export function MarkdownContent({ content }: { content: string }) {
+/** Markdownテキストをレンダリングするコンポーネント。
+ *
+ * 1on1 / シナリオ / グループチャットすべて同一スタイル。バブル間で見た目を
+ * 揃えるため、種別ごとのバリアントは持たない（過去にあった variant="scenario" は
+ * 廃止済み — `*行動描写*` の見た目は 1on1 と同じ italic に集約）。
+ *
+ * パフォーマンス: 末尾で `React.memo` 化されている（同名 const で再エクスポート）。
+ * content prop が同一なら再レンダリングをスキップする — シンタックスハイライト・
+ * GFM テーブル等のレンダリングコストを抑え、ストリーミング中の不要描画を削減する。
+ */
+function MarkdownContentImpl({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkBreaks]}
@@ -973,7 +982,13 @@ export function MarkdownContent({ content }: { content: string }) {
           return <strong className="font-semibold text-ch-t1">{children}</strong>;
         },
         em({ children }) {
-          return <em className="italic">{children}</em>;
+          // 斜体は行動描写・強調として使われるので青みグレーの emphasis 色を当てる。
+          // PC とモバイルで明度を変える（モバイルは少し濃く）。
+          return (
+            <em className="italic mx-2 sm:text-ch-t-emphasis text-ch-t-emphasis-mobile">
+              {children}
+            </em>
+          );
         },
         h1({ children }) { return <h1 className="text-base font-semibold mt-3 mb-1 text-ch-t1">{children}</h1>; },
         h2({ children }) { return <h2 className="text-sm font-semibold mt-3 mb-1 text-ch-t1">{children}</h2>; },
@@ -994,3 +1009,14 @@ export function MarkdownContent({ content }: { content: string }) {
     </ReactMarkdown>
   );
 }
+
+/**
+ * MarkdownContent の memo 化版（公開エクスポート）。
+ *
+ * 親が再レンダしても、content prop が同じなら ReactMarkdown ツリーを再構築しない。
+ * シンタックスハイライト / コードブロック / GFM テーブル等が含まれる長いバブルでは
+ * 描画コストが大きいため、ストリーミング中の不要再描画を抑えるのに効く。
+ */
+export const MarkdownContent = React.memo(MarkdownContentImpl, (prev, next) => {
+  return prev.content === next.content;
+});

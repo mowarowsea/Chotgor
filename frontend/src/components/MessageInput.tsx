@@ -3,7 +3,8 @@
  * テキスト入力（auto-grow）、Ctrl+Enter での送信、画像添付、添付プレビュー機能を提供する。
  * セッション別に入力下書きを localStorage にキャッシュし、セッション切り替え後も復元する。
  */
-import { useRef, useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDraft } from "../hooks/useDraft";
 
 interface Props {
     /** セッションID（下書きキャッシュのキー）。省略時はキャッシュしない。 */
@@ -29,15 +30,13 @@ export default function MessageInput({
     allowImages = true,
     onSkip,
 }: Props) {
-    const [input, setInput] = useState("");
+    // 下書きの localStorage 連携は useDraft hook に集約済み。
+    // setInput("") を呼ぶと hook 内の useEffect が走り、localStorage の該当キーも削除される。
+    const [input, setInput] = useDraft(sessionId);
     /** 送信前の添付ファイルリスト */
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    /**
-     * restoreエフェクト実行直後のsaveエフェクトをスキップするフラグ。
-     */
-    const skipNextSaveRef = useRef(false);
 
     /** テキストエリアの高さをコンテンツに合わせて調整する。 */
     const adjustHeight = (el: HTMLTextAreaElement) => {
@@ -45,32 +44,14 @@ export default function MessageInput({
         el.style.height = Math.min(el.scrollHeight, 240) + "px";
     };
 
-    /** sessionId が変化したとき、新しいセッションの下書きを復元する。 */
+    // 復元された下書きに合わせて textarea の高さを調整する。
+    // useDraft が input を更新したフレームでは textareaRef.current.scrollHeight が
+    // まだ古いままなので、次フレームで再計算する。
     useEffect(() => {
-        if (!sessionId) return;
-        const saved = localStorage.getItem(`draft:${sessionId}`) ?? "";
-        skipNextSaveRef.current = true;
-        setInput(saved);
-        requestAnimationFrame(() => {
-            if (textareaRef.current) {
-                adjustHeight(textareaRef.current);
-            }
-        });
-    }, [sessionId]);
-
-    /** input が変化したとき、下書きを localStorage に保存する。 */
-    useEffect(() => {
-        if (!sessionId) return;
-        if (skipNextSaveRef.current) {
-            skipNextSaveRef.current = false;
-            return;
+        if (textareaRef.current) {
+            adjustHeight(textareaRef.current);
         }
-        if (input) {
-            localStorage.setItem(`draft:${sessionId}`, input);
-        } else {
-            localStorage.removeItem(`draft:${sessionId}`);
-        }
-    }, [input, sessionId]);
+    }, [input]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -78,9 +59,9 @@ export default function MessageInput({
         if (!text || sending) return;
 
         const files = [...pendingFiles];
+        // setInput("") は useDraft の useEffect 経由で localStorage キーも削除する。
         setInput("");
         setPendingFiles([]);
-        if (sessionId) localStorage.removeItem(`draft:${sessionId}`);
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
         }

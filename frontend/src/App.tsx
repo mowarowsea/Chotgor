@@ -18,12 +18,74 @@ import {
   fetchDrifts,
   fetchCharacters,
   updateSessionTitle,
+  fetchScenarioSessions,
+  fetchScenarioSession,
+  fetchScenarioTurns,
+  startScenarioSession,
+  deleteScenarioSession,
+  deleteScenarioTurnsFrom,
+  streamScenarioMessage,
+  fetchScenarioSynopsis,
+  patchScenarioSynopsis,
+  regenerateScenarioSynopsis,
 } from "./api";
-import type { Model, Session, ChatMessage, StreamEvent, GroupStreamEvent, Drift, Character } from "./api";
+import type {
+  Model,
+  Session,
+  ChatMessage,
+  StreamEvent,
+  GroupStreamEvent,
+  Drift,
+  Character,
+  ScenarioSession,
+  ScenarioSynopsis,
+  ScenarioTemplate,
+  ZetaNpc,
+  ZetaTurn,
+} from "./api";
 import { charNameOf } from "./api";
+
+/**
+ * ScenarioTurns を ExportDialog が期待する ChatMessage 形式に変換する。
+ *
+ * - user 発話: role="user"、speaker_name は無視（template 側で userName を使う）
+ * - GM 系（narrator / npc / character）: role="character"、character_name に
+ *   speaker_name を入れる（narrator は "Narrator" にする）
+ *
+ * intro 由来のターンや auto_advance ターンも、speaker_type に応じて
+ * 上記の単純なマッピングで出力される。
+ */
+function scenarioTurnsToExportMessages(
+  turns: ZetaTurn[],
+  sessionId: string,
+): ChatMessage[] {
+  return turns.map<ChatMessage>((t) => {
+    if (t.speaker_type === "user") {
+      return {
+        id: t.id,
+        session_id: sessionId,
+        role: "user",
+        content: t.content,
+        created_at: t.created_at,
+      };
+    }
+    const charName = t.speaker_type === "narrator" ? "Narrator" : t.speaker_name;
+    return {
+      id: t.id,
+      session_id: sessionId,
+      role: "character",
+      content: t.content,
+      character_name: charName,
+      created_at: t.created_at,
+    };
+  });
+}
 import Sidebar from "./components/Sidebar";
+import type { AnySession } from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import GroupChatView from "./components/GroupChatView";
+import ScenarioChatView from "./components/ScenarioChatView";
+import type { PendingBubble } from "./components/ScenarioChatView";
 import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
 
@@ -110,19 +172,64 @@ export default function App() {
   /** char_msg_id → log_message_id（8桁hex）のマッピング。バブルのログ折りたたみに使用する。 */
   const [msgLogIds, setMsgLogIds] = useState<Record<string, string>>({});
 
+  /** シナリオプレイセッション一覧（サイドバーで session に混ぜる）。 */
+  const [scenarioSessions, setScenarioSessions] = useState<ScenarioSession[]>([]);
+  /**
+   * scenarioSessions の最新値を参照するための ref。
+   * 初回マウント時のハッシュ復元など、setState 直後に同期判定が必要な箇所で
+   * stale な closure を避けるために使う。
+   */
+  const scenarioSessionsRef = useRef<ScenarioSession[]>([]);
+  scenarioSessionsRef.current = scenarioSessions;
+  /** 現在選択中のシナリオプレイセッション。 */
+  const [activeScenarioSession, setActiveScenarioSession] = useState<ScenarioSession | null>(null);
+  /** 元シナリオテンプレ（GM 設定や場所表示に使う）。 */
+  const [activeScenarioTemplate, setActiveScenarioTemplate] = useState<ScenarioTemplate | null>(null);
+  const [scenarioNpcs, setScenarioNpcs] = useState<ZetaNpc[]>([]);
+  const [scenarioTurns, setScenarioTurns] = useState<ZetaTurn[]>([]);
+  /** ストリーミング中の未確定吹き出し列。 */
+  const [scenarioPending, setScenarioPending] = useState<PendingBubble[]>([]);
+  /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
+  const [scenarioSynopsis, setScenarioSynopsis] = useState<ScenarioSynopsis | null>(null);
+
+  /** Sidebar に渡す統合セッションリスト（更新日時降順）。 */
+  const combinedSessions: AnySession[] = useMemo(() => {
+    const all: AnySession[] = [...sessions, ...scenarioSessions];
+    return all.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  }, [sessions, scenarioSessions]);
+
+  /** 現在選択中セッションがシナリオかどうか。 */
+  const isScenarioSession = combinedSessions.find(
+    (s) => s.id === activeSessionId,
+  )?.session_type === "scenario";
+
   /** 初期データ取得。URL ハッシュに対応するセッションがあれば自動選択する。 */
   useEffect(() => {
-    Promise.all([fetchModels(), fetchSessions(), fetchUserName(), fetchCharacters()])
-      .then(([m, s, u, c]) => {
+    Promise.all([
+      fetchModels(),
+      fetchSessions(),
+      fetchUserName(),
+      fetchCharacters(),
+      fetchScenarioSessions().catch(() => [] as ScenarioSession[]),
+    ])
+      .then(([m, s, u, c, sc]) => {
         setModels(m);
         if (m.length > 0) setSelectedModel(m[0].id);
         setSessions(s);
         setUserName(u);
         setCharacters(c);
-        // URL ハッシュからセッションを復元する
+        setScenarioSessions(sc);
+        // ref も即座に更新する。次行の handleSelectSession() がこの ref を
+        // 読みに来るため、setState の非同期反映を待たずに同期反映が必要。
+        scenarioSessionsRef.current = sc;
+        // URL ハッシュからセッションを復元する（chat / scenario の両方をチェック）
         const hashSessionId = window.location.hash.slice(1);
-        if (hashSessionId && s.find((sess) => sess.id === hashSessionId)) {
-          handleSelectSession(hashSessionId);
+        if (hashSessionId) {
+          if (s.find((sess) => sess.id === hashSessionId)) {
+            handleSelectSession(hashSessionId);
+          } else if (sc.find((sess) => sess.id === hashSessionId)) {
+            handleSelectSession(hashSessionId);
+          }
         }
       })
       .catch((e) => setError(String(e)));
@@ -153,8 +260,38 @@ export default function App() {
     setGroupStreamingContent(null);
     setGroupStreamingReasoning(null);
     setIsGroupUserTurn(false);
+    // シナリオ関連の状態もリセット
+    setActiveScenarioSession(null);
+    setActiveScenarioTemplate(null);
+    setScenarioNpcs([]);
+    setScenarioTurns([]);
+    setScenarioPending([]);
+    setScenarioSynopsis(null);
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
     window.location.hash = sessionId;
+
+    // セッション種別を一覧から判別する（scenarios と sessions の両方を見る）。
+    // ref 経由で参照するのは、初回マウント時のハッシュ復元で setScenarioSessions 直後に
+    // この関数が呼ばれた際、state closure はまだ空 [] のままで scenario と判定できないため。
+    const isScenario = scenarioSessionsRef.current.some((s) => s.id === sessionId);
+    if (isScenario) {
+      try {
+        const [detail, ts, syn] = await Promise.all([
+          fetchScenarioSession(sessionId),
+          fetchScenarioTurns(sessionId),
+          fetchScenarioSynopsis(sessionId).catch(() => null),
+        ]);
+        setActiveScenarioSession(detail);
+        setActiveScenarioTemplate(detail.scenario);
+        setScenarioNpcs(detail.npcs);
+        setScenarioTurns(ts);
+        setScenarioSynopsis(syn);
+      } catch (e) {
+        setError(String(e));
+      }
+      return;
+    }
+
     try {
       const [detail] = await Promise.all([
         fetchSession(sessionId),
@@ -238,21 +375,245 @@ export default function App() {
     }
   }, []);
 
-  /** セッション削除。 */
+  /** セッション削除。session_type を判別して適切な API を呼ぶ。 */
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     setError(null);
+    const isScenario = scenarioSessions.some((s) => s.id === sessionId);
     try {
-      await deleteSession(sessionId);
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      if (isScenario) {
+        await deleteScenarioSession(sessionId);
+        setScenarioSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      } else {
+        await deleteSession(sessionId);
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      }
       if (activeSessionId === sessionId) {
         window.location.hash = "";
         setActiveSessionId(null);
         setMessages([]);
+        setActiveScenarioSession(null);
+        setActiveScenarioTemplate(null);
+        setScenarioNpcs([]);
+        setScenarioTurns([]);
       }
     } catch (e) {
       setError(String(e));
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, scenarioSessions]);
+
+  /** シナリオテンプレートからプレイセッションを起動する。 */
+  const handleStartScenario = useCallback(
+    async (scenarioId: string, title?: string) => {
+      setError(null);
+      try {
+        const created = await startScenarioSession(scenarioId, title);
+        setScenarioSessions((prev) => [created, ...prev]);
+        // ref も即座に更新する。直後の handleSelectSession 等が ref を読むケースに備える。
+        scenarioSessionsRef.current = [created, ...scenarioSessionsRef.current];
+        // 起動と同時に詳細＋ターン履歴を取り直す。
+        // バックエンドは scenario.intro を起動時に固定ターンとして挿入するため、
+        // ここで turns を fetch しないと intro が画面に出ない（リロード後にだけ見える）。
+        const [detail, initialTurns, initialSyn] = await Promise.all([
+          fetchScenarioSession(created.id),
+          fetchScenarioTurns(created.id),
+          fetchScenarioSynopsis(created.id).catch(() => null),
+        ]);
+        setActiveSessionId(created.id);
+        setActiveScenarioSession(detail);
+        setActiveScenarioTemplate(detail.scenario);
+        setScenarioNpcs(detail.npcs);
+        setScenarioTurns(initialTurns);
+        setScenarioPending([]);
+        setScenarioSynopsis(initialSyn);
+        window.location.hash = created.id;
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [],
+  );
+
+  /** シナリオセッションのフィールド更新（終了など）後に呼ばれる。 */
+  const refreshScenarioSession = useCallback(async () => {
+    if (!activeScenarioSession) return;
+    try {
+      const detail = await fetchScenarioSession(activeScenarioSession.id);
+      setActiveScenarioSession(detail);
+      setActiveScenarioTemplate(detail.scenario);
+      setScenarioNpcs(detail.npcs);
+      setScenarioSessions((prev) =>
+        prev.map((s) => (s.id === detail.id ? detail : s)),
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [activeScenarioSession]);
+
+  /**
+   * シナリオ発話送信。SSE ストリームを消費しながら吹き出しを更新する。
+   *
+   * autoAdvance=true なら「ユーザは無言で続きを促す」モード。
+   * content は何が来てもサーバ側で無視され、user turn も保存されない。
+   */
+  const handleScenarioSend = useCallback(
+    async (content: string, autoAdvance: boolean = false) => {
+      if (!activeScenarioSession) return;
+      setError(null);
+      setSending(true);
+      setScenarioPending([]);
+      try {
+        const sessionId = activeScenarioSession.id;
+        const newPending: PendingBubble[] = [];
+        for await (const ev of streamScenarioMessage(sessionId, content, autoAdvance)) {
+          if (ev.type === "user_saved") {
+            // user_saved はユーザ発話を確定ターンとしてリストに追加する
+            setScenarioTurns((prev) => [...prev, ev.turn]);
+          } else if (ev.type === "speaker_start") {
+            // 新しい吹き出しを未確定として追加する。
+            // 安定キー (`id`) をここで一度だけ発行することで、後段の shift で
+            // インデックスがズレても他の pending バブルが React 上で再マウントされない。
+            newPending.push({
+              id:
+                typeof crypto !== "undefined" && "randomUUID" in crypto
+                  ? crypto.randomUUID()
+                  : `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              speaker_type: ev.speaker_type,
+              speaker_name: ev.speaker_name,
+              speaker_id: ev.speaker_id,
+              is_known: ev.is_known,
+              content: "",
+            });
+            setScenarioPending([...newPending]);
+          } else if (ev.type === "content_delta") {
+            // 最新の未確定吹き出しに本文を追記する
+            if (newPending.length > 0) {
+              newPending[newPending.length - 1].content += ev.text;
+              setScenarioPending([...newPending]);
+            }
+          } else if (ev.type === "speaker_end") {
+            // 確定ターンとしてリストに追加し、対応する未確定吹き出しを除く
+            setScenarioTurns((prev) => [...prev, ev.turn]);
+            if (newPending.length > 0) newPending.shift();
+            setScenarioPending([...newPending]);
+          } else if (ev.type === "turn_complete") {
+            // ターン完了。残った未確定吹き出しは捨てる（speaker_end でほぼ消えるはず）。
+            newPending.length = 0;
+            setScenarioPending([]);
+          } else if (ev.type === "synopsis_updated") {
+            // バックエンドが履歴上限を超えた古いターンを synopsis_auto に追記した。
+            // UI のあらすじパネルへ反映する。
+            setScenarioSynopsis(ev.synopsis);
+          } else if (ev.type === "error") {
+            setError(ev.message);
+            break;
+          } else if (ev.type === "done") {
+            break;
+          }
+        }
+        // 完了後にサーバから真の turns を取り直して整合性確保
+        if (sessionId === activeSessionIdRef.current) {
+          try {
+            const ts = await fetchScenarioTurns(sessionId);
+            setScenarioTurns(ts);
+          } catch {
+            // 取得失敗は無視
+          }
+          // セッション一覧も最新化（updated_at 反映）
+          fetchScenarioSessions().then(setScenarioSessions).catch(() => {});
+        }
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setScenarioPending([]);
+        setSending(false);
+      }
+    },
+    [activeScenarioSession],
+  );
+
+  /**
+   * シナリオの GM 応答を 1 ターン丸ごと再生成する。
+   *
+   * ターン境界は `raw_response` を共有する連続バブル列で判定する:
+   *   - GM の 1 回の LLM 呼出 = 同一 raw_response の GM バブル列
+   *   - その直前に user 発話があれば通常ターン → user 起点で再ストリーム
+   *   - 直前に user 発話がなければ auto_advance ターン → GM 列の先頭から
+   *     auto_advance=true で再ストリーム
+   *
+   * 1on1 chat の retry と同じ思想で、「ターンの開始点」より後を捨てる方式。
+   */
+  const handleScenarioRegenerate = useCallback(async () => {
+    if (!activeScenarioSession) return;
+    if (scenarioTurns.length === 0) return;
+
+    // 末尾 GM 列の先頭 index を raw_response 連続性で探す。
+    // 末尾が user の場合（GM 応答待ち状態）はそのまま user を起点にする。
+    let lastTurnStart = scenarioTurns.length - 1;
+    if (scenarioTurns[lastTurnStart].speaker_type !== "user") {
+      const tailRaw = scenarioTurns[lastTurnStart].raw_response;
+      while (lastTurnStart > 0) {
+        const prev = scenarioTurns[lastTurnStart - 1];
+        if (prev.speaker_type === "user") break;
+        if (prev.raw_response !== tailRaw) break;
+        lastTurnStart--;
+      }
+    }
+
+    // 直前に user 発話があるかを見て、通常 / auto_advance を判別。
+    const prev = lastTurnStart > 0 ? scenarioTurns[lastTurnStart - 1] : null;
+    let pivot: ZetaTurn;
+    let resend: () => Promise<void>;
+    if (prev && prev.speaker_type === "user") {
+      // 通常ターン: user を含めて削除し、同じ発話で再ストリーム
+      pivot = prev;
+      const content = prev.content;
+      resend = () => handleScenarioSend(content, false);
+    } else if (scenarioTurns[lastTurnStart].speaker_type !== "user") {
+      // auto_advance ターン: GM 列先頭から削除して auto_advance で再ストリーム
+      pivot = scenarioTurns[lastTurnStart];
+      resend = () => handleScenarioSend("", true);
+    } else {
+      // 末尾が user で GM 応答が無い特殊状態（前回ストリームエラー後など）
+      pivot = scenarioTurns[lastTurnStart];
+      const content = pivot.content;
+      resend = () => handleScenarioSend(content, false);
+    }
+
+    const pivotIndex = pivot.turn_index;
+    try {
+      await deleteScenarioTurnsFrom(activeScenarioSession.id, pivot.id);
+      setScenarioTurns((prevTurns) =>
+        prevTurns.filter((t) => t.turn_index < pivotIndex),
+      );
+      await resend();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [activeScenarioSession, scenarioTurns, handleScenarioSend]);
+
+  /**
+   * ユーザバブルの編集確定処理。
+   *
+   * 編集対象 user turn 以降を全削除し、新しい内容で再ストリームする。
+   * GM 応答の再生成と同じ流れ。
+   */
+  const handleScenarioEditUserTurn = useCallback(
+    async (turnId: string, newContent: string) => {
+      if (!activeScenarioSession) return;
+      const target = scenarioTurns.find((t) => t.id === turnId);
+      if (!target) return;
+      try {
+        await deleteScenarioTurnsFrom(activeScenarioSession.id, turnId);
+        setScenarioTurns((prev) =>
+          prev.filter((t) => t.turn_index < target.turn_index),
+        );
+        await handleScenarioSend(newContent);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession, scenarioTurns, handleScenarioSend],
+  );
 
   /**
    * グループチャットのメッセージ送信実装。
@@ -516,7 +877,7 @@ export default function App() {
       <Sidebar
         models={models}
         characters={characters}
-        sessions={sessions}
+        sessions={combinedSessions}
         activeSessionId={activeSessionId}
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
@@ -525,6 +886,7 @@ export default function App() {
         onSelectSession={(id) => { handleSelectSession(id); setSidebarOpen(window.innerWidth >= 640); }}
         onNewChat={handleNewChat}
         onNewGroupChat={handleNewGroupChat}
+        onStartScenario={handleStartScenario}
         onDeleteSession={handleDeleteSession}
         onRenameSession={handleRenameSession}
       />
@@ -544,7 +906,12 @@ export default function App() {
             </button>
 
             {/* セッション種別に応じてヘッダ内容を切り替える */}
-            {activeSessionId && isGroupSession ? (
+            {activeSessionId && isScenarioSession && activeScenarioSession ? (
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-ch-t3 text-xs">📖</span>
+                <span className="text-ch-t1 text-sm font-medium truncate">{activeScenarioSession.title}</span>
+              </div>
+            ) : activeSessionId && isGroupSession ? (
               <div className="flex items-center gap-3 flex-wrap min-w-0">
                 {groupParticipants.map(({ charName, presetName, characterId }) => {
                   const charDrifts = drifts.filter((d) => d.character_id === characterId);
@@ -581,7 +948,9 @@ export default function App() {
             ) : null}
 
             {/* エクスポートボタン */}
-            {activeSessionId && messages.length > 0 && (
+            {activeSessionId &&
+              ((isScenarioSession && scenarioTurns.length > 0) ||
+                (!isScenarioSession && messages.length > 0)) && (
               <button
                 onClick={() => setExportDialogOpen(true)}
                 title="会話をエクスポート"
@@ -604,7 +973,38 @@ export default function App() {
           </div>
         )}
 
-        {activeSessionId && isGroupSession ? (
+        {activeSessionId && isScenarioSession && activeScenarioSession ? (
+          <ScenarioChatView
+            session={activeScenarioSession}
+            scenario={activeScenarioTemplate}
+            npcs={scenarioNpcs}
+            turns={scenarioTurns}
+            sending={sending}
+            pendingBubbles={scenarioPending}
+            onSend={handleScenarioSend}
+            onEditUserTurn={handleScenarioEditUserTurn}
+            onRegenerate={handleScenarioRegenerate}
+            synopsis={scenarioSynopsis}
+            onSynopsisChange={async (patch) => {
+              try {
+                const sid = activeScenarioSession.id;
+                const updated = await patchScenarioSynopsis(sid, patch);
+                setScenarioSynopsis(updated);
+              } catch (e) {
+                setError(String(e));
+              }
+            }}
+            onSynopsisRegenerate={async () => {
+              try {
+                const sid = activeScenarioSession.id;
+                const updated = await regenerateScenarioSynopsis(sid);
+                setScenarioSynopsis(updated);
+              } catch (e) {
+                setError(String(e));
+              }
+            }}
+          />
+        ) : activeSessionId && isGroupSession ? (
           <GroupChatView
             sessionId={activeSessionId}
             messages={messages}
@@ -648,10 +1048,22 @@ export default function App() {
       {/* エクスポートダイアログ */}
       {exportDialogOpen && (
         <ExportDialog
-          messages={messages}
-          userName={userName}
+          messages={
+            isScenarioSession
+              ? scenarioTurnsToExportMessages(scenarioTurns, activeScenarioSession?.id ?? "")
+              : messages
+          }
+          userName={
+            isScenarioSession
+              ? (activeScenarioTemplate?.user_alias ?? userName)
+              : userName
+          }
           reasoningMap={isGroupSession ? groupReasoningMap : reasoningMap}
-          sessionTitle={activeSession?.title}
+          sessionTitle={
+            isScenarioSession
+              ? activeScenarioSession?.title
+              : activeSession?.title
+          }
           onClose={() => setExportDialogOpen(false)}
         />
       )}

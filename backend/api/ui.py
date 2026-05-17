@@ -342,6 +342,165 @@ async def delete_model_preset(request: Request, preset_id: str):
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 
 
+# --- Scenarios (Zeta Mode テンプレート管理) ---
+
+
+def _coalesce_optional_int(form, key: str):
+    """フォームから任意の int 値を取り出す。空欄は None、不正値も None。"""
+    raw = (form.get(key) or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/scenarios", response_class=HTMLResponse)
+async def scenarios_list(request: Request):
+    """シナリオテンプレート一覧ページ。"""
+    scenarios = request.app.state.sqlite.list_zeta_scenarios()
+    return get_templates().TemplateResponse(
+        "scenarios.html",
+        {"request": request, "scenarios": scenarios},
+    )
+
+
+@router.get("/scenarios/new", response_class=HTMLResponse)
+async def new_scenario_form(request: Request):
+    """シナリオテンプレート新規作成フォーム。"""
+    model_presets = request.app.state.sqlite.list_model_presets()
+    return get_templates().TemplateResponse(
+        "scenario_edit.html",
+        {
+            "request": request,
+            "scenario": None,
+            "npcs": [],
+            "action": "/ui/scenarios/new",
+            "model_presets": model_presets,
+        },
+    )
+
+
+@router.post("/scenarios/new")
+async def create_scenario(request: Request):
+    """シナリオテンプレートを作成する。"""
+    form = await request.form()
+    title = (form.get("title") or "").strip()
+    user_alias = (form.get("user_alias") or "").strip() or "プレイヤー"
+    gm_preset_id = (form.get("gm_preset_id") or "").strip()
+    if not title or not gm_preset_id:
+        return RedirectResponse(url="/ui/scenarios/new", status_code=303)
+
+    sid = str(uuid.uuid4())
+    request.app.state.sqlite.create_zeta_scenario(
+        scenario_id=sid,
+        title=title,
+        user_alias=user_alias,
+        gm_preset_id=gm_preset_id,
+        scenario=(form.get("scenario") or "") or None,
+        intro=(form.get("intro") or "") or None,
+        history_max_turns=_coalesce_optional_int(form, "history_max_turns"),
+        history_max_chars=_coalesce_optional_int(form, "history_max_chars"),
+    )
+    return RedirectResponse(url=f"/ui/scenarios/{sid}/edit", status_code=303)
+
+
+@router.get("/scenarios/{scenario_id}/edit", response_class=HTMLResponse)
+async def edit_scenario_form(request: Request, scenario_id: str):
+    """シナリオテンプレート編集ページ（NPC 編集を含む）。"""
+    sqlite = request.app.state.sqlite
+    scenario = sqlite.get_zeta_scenario(scenario_id)
+    if not scenario:
+        return RedirectResponse(url="/ui/scenarios", status_code=303)
+    npcs = sqlite.list_zeta_npcs(scenario_id)
+    model_presets = sqlite.list_model_presets()
+    return get_templates().TemplateResponse(
+        "scenario_edit.html",
+        {
+            "request": request,
+            "scenario": scenario,
+            "npcs": npcs,
+            "action": f"/ui/scenarios/{scenario_id}/edit",
+            "model_presets": model_presets,
+        },
+    )
+
+
+@router.post("/scenarios/{scenario_id}/edit")
+async def update_scenario(request: Request, scenario_id: str):
+    """シナリオテンプレートを更新する（プレイ中のセッションには影響しない）。"""
+    form = await request.form()
+    update_kwargs = {
+        "title": (form.get("title") or "").strip(),
+        "user_alias": (form.get("user_alias") or "").strip() or "プレイヤー",
+        "gm_preset_id": (form.get("gm_preset_id") or "").strip(),
+        "scenario": (form.get("scenario") or "") or None,
+        "intro": (form.get("intro") or "") or None,
+        "history_max_turns": _coalesce_optional_int(form, "history_max_turns"),
+        "history_max_chars": _coalesce_optional_int(form, "history_max_chars"),
+    }
+    request.app.state.sqlite.update_zeta_scenario(scenario_id, **update_kwargs)
+    return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+
+
+@router.post("/scenarios/{scenario_id}/delete")
+async def delete_scenario(request: Request, scenario_id: str):
+    """シナリオテンプレートを削除する（紐づくセッション・ターンも一括削除）。"""
+    request.app.state.sqlite.delete_zeta_scenario(scenario_id)
+    return RedirectResponse(url="/ui/scenarios", status_code=303)
+
+
+@router.post("/scenarios/{scenario_id}/npcs/new")
+async def add_npc_form(request: Request, scenario_id: str):
+    """NPC を追加する。multipart/form-data 経由でアバター画像も受け取る。"""
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    if not name:
+        return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+    sqlite = request.app.state.sqlite
+    existing = [n for n in sqlite.list_zeta_npcs(scenario_id) if n.name == name]
+    if existing:
+        return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+    image_data = await _read_image_data(form)
+    sqlite.create_zeta_npc(
+        npc_id=str(uuid.uuid4()),
+        scenario_id=scenario_id,
+        name=name,
+        description=(form.get("description") or "") or None,
+        image_data=image_data,
+    )
+    return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+
+
+@router.post("/scenarios/{scenario_id}/npcs/{npc_id}/edit")
+async def edit_npc_form(request: Request, scenario_id: str, npc_id: str):
+    """NPC を更新する。画像未指定なら既存画像を維持、remove_image チェック時はクリア。"""
+    form = await request.form()
+    update_kwargs: dict = {
+        "name": (form.get("name") or "").strip(),
+        "description": (form.get("description") or "") or None,
+    }
+    if not update_kwargs["name"]:
+        return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+
+    new_image = await _read_image_data(form)
+    if new_image:
+        update_kwargs["image_data"] = new_image
+    elif form.get("remove_image"):
+        update_kwargs["image_data"] = None
+
+    request.app.state.sqlite.update_zeta_npc(npc_id, **update_kwargs)
+    return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+
+
+@router.post("/scenarios/{scenario_id}/npcs/{npc_id}/delete")
+async def delete_npc_form(request: Request, scenario_id: str, npc_id: str):
+    """NPC を削除する（過去の発話履歴は残る）。"""
+    request.app.state.sqlite.delete_zeta_npc(npc_id)
+    return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+
+
 # --- Settings ---
 
 @router.get("/settings", response_class=HTMLResponse)
