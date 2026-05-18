@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.adapters.openai import router as openai_router
-from backend.api import characters, memories, chat as chat_module, chat_images as chat_images_module, chat_drifts as chat_drifts_module, group_chat as group_chat_module, scenario_chat as scenario_chat_module
+from backend.api import characters, memories, chat as chat_module, chat_images as chat_images_module, group_chat as group_chat_module, scenario_chat as scenario_chat_module
 from backend.api import ui as ui_module
 from backend.api import logs_ui as logs_ui_module
 from backend.api import translation as translation_module
@@ -23,9 +23,9 @@ from backend.services.chat.service import ChatService
 from backend.lib.log_context import setup_logging
 from backend.repositories.lance.store import LanceStore
 from backend.batch.chronicle_job import run_pending_chronicles
-from backend.services.memory.drift_manager import DriftManager
 from backend.batch.forget_job import run_pending_forget
 from backend.services.memory.manager import MemoryManager
+from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
 
 load_dotenv()
@@ -68,13 +68,16 @@ async def lifespan(app: FastAPI):
     _log.info("ベクトルストア: LanceStore (path=%s)", LANCE_DB_PATH)
 
     memory_manager = MemoryManager(sqlite=sqlite, vector_store=vector_store)
-    drift_manager = DriftManager(sqlite=sqlite)
+    working_memory_manager = WorkingMemoryManager(sqlite=sqlite, vector_store=vector_store)
 
     app.state.sqlite = sqlite
     app.state.vector_store = vector_store
     app.state.memory_manager = memory_manager
-    app.state.drift_manager = drift_manager
-    app.state.chat_service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
+    app.state.working_memory_manager = working_memory_manager
+    app.state.chat_service = ChatService(
+        memory_manager=memory_manager,
+        working_memory_manager=working_memory_manager,
+    )
     app.state.uploads_dir = UPLOADS_DIR
 
     # Seed optional Tavily key from environment if not already set
@@ -126,7 +129,12 @@ async def _chronicle_scheduler(app: FastAPI) -> None:
             _log.info("chronicle スケジューラー 起動 設定時刻=%s", chronicle_time_str)
             app.state.sqlite.set_setting("chronicle_last_run_date", today_str)
             try:
-                await run_pending_chronicles(app.state.sqlite, vector_store=app.state.vector_store, memory_manager=app.state.memory_manager)
+                await run_pending_chronicles(
+                    app.state.sqlite,
+                    vector_store=app.state.vector_store,
+                    memory_manager=app.state.memory_manager,
+                    working_memory_manager=app.state.working_memory_manager,
+                )
             except Exception:
                 _log.exception("chronicle スケジューラー 実行エラー")
 
@@ -176,7 +184,6 @@ app.include_router(memories.router)
 app.include_router(ui_module.router)
 app.include_router(chat_module.router)
 app.include_router(chat_images_module.router)
-app.include_router(chat_drifts_module.router)
 app.include_router(group_chat_module.router)
 app.include_router(scenario_chat_module.router)
 app.include_router(logs_ui_module.router)

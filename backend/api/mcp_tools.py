@@ -24,11 +24,11 @@ from backend.character_actions.inscriber import (
     INSCRIBE_MEMORY_SCHEMA,
     INSCRIBE_MEMORY_TOOL_DESCRIPTION,
 )
-from backend.character_actions.drifter import (
-    DRIFT_SCHEMA,
-    DRIFT_RESET_SCHEMA,
-    DRIFT_TOOL_DESCRIPTION,
-    DRIFT_RESET_TOOL_DESCRIPTION,
+from backend.character_actions.threader import (
+    POST_THREAD_SCHEMA,
+    POST_THREAD_TOOL_DESCRIPTION,
+    OPEN_THREAD_SCHEMA,
+    OPEN_THREAD_TOOL_DESCRIPTION,
 )
 from backend.character_actions.carver import (
     CARVE_NARRATIVE_SCHEMA,
@@ -105,14 +105,14 @@ def _build_tool_definitions() -> list[ToolDefinition]:
             inputSchema=INSCRIBE_MEMORY_SCHEMA,
         ),
         ToolDefinition(
-            name="drift",
-            description=DRIFT_TOOL_DESCRIPTION,
-            inputSchema=DRIFT_SCHEMA,
+            name="post_thread",
+            description=POST_THREAD_TOOL_DESCRIPTION,
+            inputSchema=POST_THREAD_SCHEMA,
         ),
         ToolDefinition(
-            name="drift_reset",
-            description=DRIFT_RESET_TOOL_DESCRIPTION,
-            inputSchema=DRIFT_RESET_SCHEMA,
+            name="open_thread",
+            description=OPEN_THREAD_TOOL_DESCRIPTION,
+            inputSchema=OPEN_THREAD_SCHEMA,
         ),
         ToolDefinition(
             name="carve_narrative",
@@ -138,7 +138,7 @@ async def list_tools(request: Request) -> ToolListResponse:
 async def call_tool(request: Request, payload: ToolCallRequest) -> ToolCallResponse:
     """ToolExecutor.execute() を HTTP 経由で実行する。
 
-    backend の app.state に保持された MemoryManager / DriftManager を流用し、
+    backend の app.state に保持された MemoryManager / WorkingMemoryManager を流用し、
     リクエストごとにキャラ／セッションを束ねた ToolExecutor を生成する。
     ``execute`` 自体が文字列を返す素直なインターフェースなので、
     そのまま ``result`` フィールドに乗せる。
@@ -149,7 +149,7 @@ async def call_tool(request: Request, payload: ToolCallRequest) -> ToolCallRespo
         character_id=payload.character_id,
         session_id=payload.session_id,
         memory_manager=state.memory_manager,
-        drift_manager=state.drift_manager,
+        working_memory_manager=state.working_memory_manager,
     )
     try:
         result_text = executor.execute(payload.name, payload.arguments)

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Thread: {{ thread.summary }} &mdash; Chotgor{% endblock %}
+
+{% block head %}
+<style>
+    .badge-atmosphere {
+        background: rgba(255, 255, 255, .07);
+        color: #cfd3da;
+        white-space: normal;
+        font-weight: 400;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{{ thread.summary or "（無題）" }}</h1>
+    <a href="/ui/working-memory/{{ character.id }}" class="btn btn-secondary">Back</a>
+</div>
+
+<div class="memory-card">
+    <div class="memory-header">
+        <span class="badge badge-{{ thread.type }}">{{ thread.type }}</span>
+        {% if thread.atmosphere %}
+        <span class="badge badge-atmosphere">{{ thread.atmosphere }}</span>
+        {% endif %}
+        {% if not thread.is_open %}
+        <span class="badge badge-deleted">Archived</span>
+        {% endif %}
+        {% if thread.relation_target %}
+        <span class="badge badge-user">{{ thread.relation_target }}</span>
+        {% endif %}
+    </div>
+    <div class="memory-meta">
+        <span>重要度 {{ "%.2f"|format(thread.importance) }}</span>
+        <span>作成 {{ thread.created_at[:16] if thread.created_at else "—" }}</span>
+        <span>更新 {{ thread.updated_at[:16] if thread.updated_at else "—" }}</span>
+        <span class="memory-preset">{{ thread.id }}</span>
+    </div>
+</div>
+
+<h2 style="margin-top:1.5rem">Posts ({{ thread.posts|length }})</h2>
+{% if thread.posts %}
+<div class="memory-list">
+    {% for p in thread.posts %}
+    <div class="memory-card">
+        <div class="memory-header">
+            <span class="memory-date">{{ p.created_at[:16] if p.created_at else "—" }}</span>
+        </div>
+        <div class="memory-content">{{ p.content }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>ポストがありません。</p>
+</div>
+{% endif %}
+{% endblock %}

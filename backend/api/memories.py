@@ -58,7 +58,8 @@ async def trigger_chronicle(
 ):
     """指定キャラクターの chronicle 処理を手動実行する。
 
-    self_history / relationship_state の更新をキャラクター自身に判断させる。
+    ワーキングメモリの棚卸し（スレッド更新・新規・統合・Close）と、
+    長期記憶・inner_narrative への蒸留をキャラクター自身に判断させる。
     target_date を省略した場合、未処理（chronicled_at IS NULL）のメッセージをすべて対象とする。
     """
     char = request.app.state.sqlite.get_character(character_id)
@@ -70,6 +71,8 @@ async def trigger_chronicle(
         character_id=character_id,
         sqlite=request.app.state.sqlite,
         target_date=target_date,
+        vector_store=request.app.state.vector_store,
         memory_manager=request.app.state.memory_manager,
+        working_memory_manager=request.app.state.working_memory_manager,
     )
     return result

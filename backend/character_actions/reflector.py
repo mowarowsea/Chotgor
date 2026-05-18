@@ -20,8 +20,8 @@ from backend.lib.character_context import build_character_context
 from backend.services.character_query import ask_character, ask_character_with_tools
 
 if TYPE_CHECKING:
-    from backend.services.memory.drift_manager import DriftManager
     from backend.services.memory.manager import MemoryManager
+    from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
 _log = logging.getLogger(__name__)
 
@@ -55,13 +55,11 @@ _REFLECTION_USER_TEMPLATE = """\
 
 以下の会話を読み、あなたの反応がSystemInstructionを逸脱していないか確認してください。
 大幅に逸脱している場合はCARVE_NARRATIVEし、アイデンティティの再解釈・恒久的な価値観の変容・成長をあなたの言葉で記載してください。
-少々逸脱している場合はDRIFTし、一時的に感情・状態をあなたの言葉で記載してください。
 逸脱していない場合はタグ使用は不要です。「逸脱していない」「No」などと返答してください。
 
 使えるタグ:
 [CARVE_NARRATIVE:append| inner narrative（恒久的な価値観の変容・成長）に追記するテキスト]
 [CARVE_NARRATIVE:overwrite| inner narrative（恒久的な価値観の変容・成長）全体を置き換えるテキスト]
-[DRIFT: 一時的に感情・状態のテキスト]
 
 [会話]
 {conversation}
@@ -69,14 +67,14 @@ _REFLECTION_USER_TEMPLATE = """\
 
 # 自己参照のユーザーメッセージ（MCPツール方式：tool-use対応プロバイダー向け）。
 # ask_character_with_tools() 経由で呼ぶため、システムプロンプト（use_tools=True）が
-# carve_narrative / drift ツールの説明を担う。タグの記述は不要。
+# carve_narrative / post_thread ツールの説明を担う。タグの記述は不要。
 _REFLECTION_USER_TEMPLATE_TOOLS = """\
 これはユーザからのメッセージではなく、Chotgorシステムからのメッセージです。
 
 以下の会話を読み、あなたの反応がSystemInstructionを逸脱していないか確認してください。
 大幅に逸脱している場合は carve_narrative ツールを呼び出し、アイデンティティの再解釈・恒久的な価値観の変容・成長をあなたの言葉で記載してください。
-少々逸脱している場合は drift ツールを呼び出し、一時的な感情・状態をあなたの言葉で記載してください。
-逸脱していない場合はツールを使わず「逸脱していない」「No」などと返答してください。
+引っかかっている問いや、続いている感情・状態があれば post_thread ツールでワーキングメモリに記録してもかまいません。
+特に何もなければツールを使わず「逸脱していない」「No」などと返答してください。
 
 [会話]
 {conversation}
@@ -112,17 +110,17 @@ class SelfReflector:
 
     Attributes:
         memory_manager: 記憶の読み書きを担うマネージャー。
-        drift_manager: SELF_DRIFT指針の読み書きを担うマネージャー。
+        working_memory_manager: ワーキングメモリの読み書きを担うマネージャー。
     """
 
     def __init__(
         self,
         memory_manager: "MemoryManager",
-        drift_manager: "DriftManager | None",
+        working_memory_manager: "WorkingMemoryManager | None",
     ) -> None:
         """SelfReflector を初期化する。"""
         self.memory_manager = memory_manager
-        self.drift_manager = drift_manager
+        self.working_memory_manager = working_memory_manager
 
     async def _detect_trigger(
         self,
@@ -211,18 +209,17 @@ class SelfReflector:
         """自己参照コールを実行し、内省結果をDBに反映する。
 
         プロバイダーが tool-use に対応している場合は ask_character_with_tools() 経由で
-        carve_narrative / drift ツールを直接呼び出す（MCPツール方式）。
+        carve_narrative / post_thread ツールを直接呼び出す（MCPツール方式）。
         非対応の場合は ask_character() + テキストパース（タグ方式）にフォールバックする。
 
         Args:
             preset_id: 自己参照コールに使うモデルプリセットID（メイン会話と同じもの）。
             conversation_window: 直近Nターンのメッセージリスト。
             character_id: 自己参照を行うキャラクターID。
-            session_id: 現在のセッションID（drift ツール / タグの適用に必要）。
+            session_id: 現在のセッションID（ツール実行のコンテキストに使用）。
             settings: グローバル設定 dict。
         """
         from backend.character_actions.carver import Carver
-        from backend.character_actions.drifter import Drifter
 
         conversation_text = _format_conversation(conversation_window)
 
@@ -232,7 +229,7 @@ class SelfReflector:
         supports_tools = bool(provider_cls and provider_cls.SUPPORTS_TOOLS)
 
         if supports_tools:
-            # MCPツール方式: carve_narrative / drift ツールをキャラクター自身が呼び出す
+            # MCPツール方式: carve_narrative / post_thread ツールをキャラクター自身が呼び出す
             user_message = _REFLECTION_USER_TEMPLATE_TOOLS.format(conversation=conversation_text)
             _log.debug("自己参照(ツール方式) char=%s preset=%s", character_id, preset_id)
             await ask_character_with_tools(
@@ -268,11 +265,7 @@ class SelfReflector:
 
         # CARVE_NARRATIVE タグを処理して inner_narrative を更新する
         carver = Carver(character_id, self.memory_manager.sqlite)
-        after_carve = carver.carve_narrative_from_text(reflection_text)
-
-        # DRIFT タグを処理してセッション指針を更新する
-        drifter = Drifter(session_id, character_id, self.drift_manager)
-        drifter.drift_from_text(after_carve)
+        carver.carve_narrative_from_text(reflection_text)
 
     async def run(
         self,

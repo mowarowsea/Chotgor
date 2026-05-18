@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 async def migrate_embeddings(
     sqlite: SQLiteStore,
     old_vector_store: LanceStore,
-    drift_manager,
+    working_memory_manager,
     new_provider: str,
     new_model: str,
     new_api_key: str,
@@ -48,7 +48,7 @@ async def migrate_embeddings(
     Args:
         sqlite: SQLite ストアインスタンス。
         old_vector_store: 現在の LanceStore インスタンス（embedding fn が差し替えられて再利用される）。
-        drift_manager: DriftManager インスタンス（ChatService 再生成に使用）。
+        working_memory_manager: WorkingMemoryManager インスタンス（ChatService 再生成に使用）。
         new_provider: 新しい embedding プロバイダー（``"infinity"`` / ``"google"``）。
         new_model: 新しい embedding モデル ID（空の場合はプロバイダーのデフォルト）。
         new_api_key: 新しい API キー。
@@ -75,6 +75,6 @@ async def migrate_embeddings(
     new_memory_manager = MemoryManager(sqlite=sqlite, vector_store=old_vector_store)
     new_chat_service = ChatService(
         memory_manager=new_memory_manager,
-        drift_manager=drift_manager,
+        working_memory_manager=working_memory_manager,
     )
     return old_vector_store, new_memory_manager, new_chat_service

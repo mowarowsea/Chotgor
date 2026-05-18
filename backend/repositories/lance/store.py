@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 _TABLE_MEMORIES = "memories"
 _TABLE_CHAT_TURNS = "chat_turns"
 _TABLE_DEFINITIONS = "definitions"
+_TABLE_WM_THREADS = "wm_threads"
 
 
 def _where_dict_to_sql(where: dict) -> str:
@@ -285,6 +286,22 @@ class LanceStore:
             pa.field("status", pa.string()),
         ])
 
+    def _schema_wm_threads(self, dim: int) -> pa.Schema:
+        """ワーキングメモリスレッドテーブルのスキーマ。
+
+        ``content`` には embedding の素材（summary + 最新ポスト本文の結合）を格納する。
+        heat 想起時に type / is_open でフィルタするため、両者をカラムに持つ。
+        """
+        return pa.schema([
+            pa.field("id", pa.string()),  # = WorkingMemoryThread.id
+            pa.field("character_id", pa.string()),
+            pa.field("content", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), dim)),
+            pa.field("type", pa.string()),
+            pa.field("importance", pa.float32()),
+            pa.field("is_open", pa.int32()),  # 1=Open, 0=Archived
+        ])
+
     def _ensure_table(self, name: str):
         """指定テーブルを open する。存在しなければ schema を決めて新規作成する。
 
@@ -314,6 +331,8 @@ class LanceStore:
                 schema = self._schema_chat_turns(dim)
             elif name == _TABLE_DEFINITIONS:
                 schema = self._schema_definitions(dim)
+            elif name == _TABLE_WM_THREADS:
+                schema = self._schema_wm_threads(dim)
             else:
                 raise ValueError(f"未知のテーブル名: {name}")
             tbl = self._db.create_table(name, schema=schema)
@@ -727,6 +746,130 @@ class LanceStore:
                     character_id, e,
                 )
 
+    # ─── ワーキングメモリスレッド ────────────────────────────────────
+
+    def upsert_wm_thread(
+        self,
+        thread_id: str,
+        index_text: str,
+        character_id: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """ワーキングメモリスレッドを ``wm_threads`` テーブルに upsert する。
+
+        ``index_text`` は embedding の素材。スレッドの summary 単独では中身に
+        強く関連するが summary に出てこない語の想起精度が落ちるため、
+        ``summary + 最新ポスト本文`` を結合したテキストを渡すこと。
+        summary 更新時・ポスト追加時のどちらでも呼ばれる。
+
+        Args:
+            thread_id: スレッドの一意 ID（SQLite の WorkingMemoryThread.id と同一）。
+            index_text: embedding する素材テキスト（summary + 最新ポスト本文）。
+            character_id: キャラクター ID。
+            metadata: ``type`` / ``importance`` / ``is_open`` を読み取る。
+        """
+        meta = metadata or {}
+        with self._write_lock:
+            tbl = self._ensure_table(_TABLE_WM_THREADS)
+            vec = self._embed_documents([index_text])[0]
+            row = {
+                "id": thread_id,
+                "character_id": character_id,
+                "content": index_text,
+                "vector": vec,
+                "type": str(meta.get("type", "")),
+                "importance": float(meta.get("importance", 0.5)),
+                "is_open": int(meta.get("is_open", 1)),
+            }
+            (
+                tbl.merge_insert("id")
+                .when_matched_update_all()
+                .when_not_matched_insert_all()
+                .execute([row])
+            )
+
+    def recall_wm_threads(
+        self,
+        query: str,
+        character_id: str,
+        top_k: int = 5,
+        where: Optional[dict] = None,
+    ) -> list[dict]:
+        """類似度検索でワーキングメモリスレッドを取得する（heat 想起用）。
+
+        戻り値の ``distance`` は cosine 距離。呼び出し側（WorkingMemoryManager）が
+        ``relevance`` に変換し、importance × 時間減衰と乗じて heat を算出する。
+
+        Args:
+            query: 検索クエリテキスト（直近のユーザー発言など）。
+            character_id: キャラクター ID。
+            top_k: 取得する最大件数。
+            where: 追加 where 辞書（``{"type": {"$in": [...]}, "is_open": 1}`` 等）。
+
+        Returns:
+            id / content / distance / metadata（type / importance / is_open）のリスト。
+        """
+        if _TABLE_WM_THREADS not in self._list_table_names():
+            return []
+        tbl = self._db.open_table(_TABLE_WM_THREADS)
+        if tbl.count_rows() == 0:
+            return []
+
+        vec = self._embed_query(query)
+        sql_clauses = [f"character_id = {_quote_id(character_id)}"]
+        if where:
+            extra = _where_dict_to_sql(where)
+            if extra:
+                sql_clauses.append(f"({extra})")
+        full_where = " AND ".join(sql_clauses)
+
+        try:
+            results = (
+                tbl.search(vec)
+                .metric("cosine")
+                .where(full_where, prefilter=True)
+                .limit(top_k)
+                .to_arrow()
+                .to_pylist()
+            )
+        except Exception as e:
+            logger.warning(
+                "LanceStore.recall_wm_threads 失敗 char=%s where=%s error=%s",
+                character_id, where, e,
+            )
+            return []
+
+        threads = []
+        for r in results:
+            threads.append({
+                "id": r["id"],
+                "content": r["content"],
+                "distance": float(r.get("_distance", 0.0)),
+                "metadata": {
+                    "character_id": r["character_id"],
+                    "type": r.get("type", ""),
+                    "importance": r.get("importance"),
+                    "is_open": r.get("is_open"),
+                },
+            })
+        return threads
+
+    def delete_wm_thread(self, thread_id: str) -> None:
+        """指定 ID のワーキングメモリスレッドを物理削除する（スレッド削除時に使用）。"""
+        if _TABLE_WM_THREADS not in self._list_table_names():
+            return
+        with self._write_lock:
+            tbl = self._db.open_table(_TABLE_WM_THREADS)
+            tbl.delete(f"id = {_quote_id(thread_id)}")
+
+    def delete_all_wm_threads(self, character_id: str) -> None:
+        """指定キャラクターの全スレッドを削除する（キャラクター削除時に使用）。"""
+        if _TABLE_WM_THREADS not in self._list_table_names():
+            return
+        with self._write_lock:
+            tbl = self._db.open_table(_TABLE_WM_THREADS)
+            tbl.delete(f"character_id = {_quote_id(character_id)}")
+
     # ─── 全件再インデックス（embedding model 変更時） ─────────────
 
     def reindex_all(
@@ -743,19 +886,20 @@ class LanceStore:
         - memories       : SQLite ``Memory`` テーブルから全アクティブ記憶を取得して再 embed
         - chat_turns     : SQLite ``chat_messages`` から全メッセージを取得して再 embed
         - definitions    : SQLite ``characters`` から system_prompt_block1 を取得して再 embed
+        - wm_threads     : SQLite ``wm_threads`` から全スレッドを取得し summary + 最新ポストで再 embed
 
         Args:
             new_embedding_fn: 新しい embedding function（``__call__`` を持つ）。
             sqlite: SQLiteStore インスタンス。
 
         Returns:
-            ``{"memories": int, "chat_turns": int, "definitions": int}`` の件数辞書。
+            ``{"memories": int, "chat_turns": int, "definitions": int, "wm_threads": int}`` の件数辞書。
         """
         from backend.services.chat.indexer import build_chat_doc_and_metadata, get_participant_char_ids
 
         with self._write_lock:
             # 1. 既存テーブルを全 drop（vector 次元が変わる可能性があるため）
-            for name in (_TABLE_MEMORIES, _TABLE_CHAT_TURNS, _TABLE_DEFINITIONS):
+            for name in (_TABLE_MEMORIES, _TABLE_CHAT_TURNS, _TABLE_DEFINITIONS, _TABLE_WM_THREADS):
                 if name in self._list_table_names():
                     self._db.drop_table(name)
                     logger.info("LanceStore.reindex_all: drop %s", name)
@@ -764,7 +908,7 @@ class LanceStore:
             self._embedding_fn = new_embedding_fn
             self._vector_dim = None  # 次元を再決定させる
 
-            counts = {"memories": 0, "chat_turns": 0, "definitions": 0}
+            counts = {"memories": 0, "chat_turns": 0, "definitions": 0, "wm_threads": 0}
 
             # 3. memories 再構築
             characters = sqlite.list_characters()
@@ -816,6 +960,28 @@ class LanceStore:
                 status = getattr(char, "relationship_status", "active") or "active"
                 self.upsert_character_definition(char.id, text, status=status)
                 counts["definitions"] += 1
+
+            # 6. wm_threads 再構築（summary + 最新ポスト本文を embedding 素材とする）
+            for char in characters:
+                threads = sqlite.list_wm_threads(char.id)
+                for t in threads:
+                    latest = sqlite.get_latest_wm_post(t.id)
+                    index_text = (t.summary or "").strip()
+                    if latest and latest.content:
+                        index_text = (index_text + "\n" + latest.content).strip()
+                    if not index_text:
+                        continue
+                    self.upsert_wm_thread(
+                        thread_id=t.id,
+                        index_text=index_text,
+                        character_id=char.id,
+                        metadata={
+                            "type": t.type,
+                            "importance": t.importance,
+                            "is_open": t.is_open,
+                        },
+                    )
+                    counts["wm_threads"] += 1
 
             logger.info("LanceStore.reindex_all 完了 counts=%s", counts)
             return counts

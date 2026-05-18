@@ -4,13 +4,12 @@ Architecture:
   Adapter → ChatService → LLM provider
 
 Flow:
-  1. 記憶を想起 (ChromaDB RAG)
-  1b. SELF_DRIFT指針をDBからロード
+  1. 記憶を想起 (長期記憶 RAG)
+  1b. ワーキングメモリ（スレッド）を取得
   2. URL自動fetch
   3. システムプロンプト構築
   4. プロバイダーへディスパッチ
   5. 応答から記憶を刻み込み (Inscriber.inscribe_memory_from_text)
-  5b. SELF_DRIFTマーカーを処理してDBに保存
   5c. inner_narrativeマーカーを処理してDBに保存 (Carver.carve_narrative_from_text)
   6. デバッグログ
 """
@@ -30,17 +29,16 @@ if TYPE_CHECKING:
 
 from backend.lib.debug_logger import logger
 from backend.lib.log_context import current_log_feature
-from backend.services.memory.drift_manager import DriftManager
 from backend.character_actions.carver import Carver
 from backend.character_actions.inscriber import Inscriber
 from backend.services.memory.manager import MemoryManager
+from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.providers.base import LLMApiError
 from backend.providers.registry import create_provider
 from backend.services.chat.request_builder import build_system_prompt
 from backend.lib.tag_parser import StreamingTagStripper
 from backend.character_actions.executor import ToolExecutor
 from backend.lib.web_fetch import fetch_urls, find_urls
-from backend.character_actions.drifter import Drifter
 from backend.services.chat.models import ChatRequest, Message
 from backend.character_actions.recaller import Recaller, format_power_recall_turn
 from backend.character_actions.reflector import SelfReflector
@@ -180,36 +178,29 @@ class _Context:
     messages: list[dict]
     recalled_identity: list[dict]
     recalled: list[dict]
+    wm_fixed: list[dict]
+    wm_recalled: list[dict]
     provider_impl: object
     system_prompt: str
 
 
 class ChatService:
-    def __init__(self, memory_manager: MemoryManager, drift_manager: DriftManager | None = None) -> None:
+    def __init__(
+        self,
+        memory_manager: MemoryManager,
+        working_memory_manager: WorkingMemoryManager | None = None,
+    ) -> None:
         """ChatService を初期化する。
 
         Args:
-            memory_manager: 記憶の読み書きを担うマネージャー。
-            drift_manager: SELF_DRIFT指針の読み書きを担うマネージャー。
-                           None の場合は SELF_DRIFT 処理をスキップする。
+            memory_manager: 長期記憶の読み書きを担うマネージャー。
+            working_memory_manager: ワーキングメモリ（スレッド）の読み書きを担うマネージャー。
+                                    None の場合はワーキングメモリ注入をスキップする。
         """
         self.memory_manager = memory_manager
-        self.drift_manager = drift_manager
+        self.working_memory_manager = working_memory_manager
 
     # --- 内部ヘルパー ---
-
-    def _apply_drifts(self, text: str, request: ChatRequest) -> str:
-        """テキストから [DRIFT:...] / [DRIFT_RESET] マーカーを抽出しDBに反映する。
-
-        Args:
-            text: [INSCRIBE_MEMORY:...] 除去済みの応答テキスト。
-            request: セッションID・キャラクターIDを含むリクエスト。
-
-        Returns:
-            マーカーを除去したクリーンなテキスト。
-        """
-        drifter = Drifter(request.session_id, request.character_id, self.drift_manager)
-        return drifter.drift_from_text(text)
 
     def _extract_switch_info(
         self, tool_executor: "ToolExecutor | None", clean_text: str, has_angle_presets: bool
@@ -238,6 +229,7 @@ class ChatService:
             original: 元のリクエスト。
             preset_name: 切り替え先プリセット名。
             self_instruction: 切り替え後モデルへの自己指針。
+                プロバイダー固有追記（Block 5）に畳み込んで切り替え先に伝える。
             first_response_text: 第1プロバイダーが生成したテキスト。
                 空でなければ assistant ターンとして messages に追加し、
                 第2プロバイダーが会話の流れを引き継げるようにする。
@@ -250,15 +242,15 @@ class ChatService:
             _log.warning("switch_angle プリセット未発見 char=%s@%s preset=%s", original.character_name, original.current_preset_name, preset_name)
             return None
 
-        if self.drift_manager and original.session_id:
-            try:
-                self.drift_manager.reset_drifts(original.session_id, original.character_id)
-                if self_instruction:
-                    self.drift_manager.add_drift(
-                        original.session_id, original.character_id, self_instruction
-                    )
-            except Exception:
-                pass
+        # 切り替え後モデルへの自己指針は、プロバイダー固有追記の末尾に畳み込む。
+        # （旧来は SELF_DRIFT として保存・注入していたが、ワーキングメモリ移行に伴い廃止）
+        extra_instructions = preset.get("additional_instructions", "") or ""
+        if self_instruction:
+            extra_instructions = (
+                f"{extra_instructions}\n\n{self_instruction}".strip()
+                if extra_instructions.strip()
+                else self_instruction
+            )
 
         # 第1プロバイダーの応答を assistant ターンとして追加し、第2プロバイダーへ文脈を引き継ぐ
         new_messages = list(original.messages)
@@ -269,11 +261,10 @@ class ChatService:
             original,
             provider=preset["provider"],
             model=preset.get("model_id", ""),
-            provider_additional_instructions=preset.get("additional_instructions", ""),
+            provider_additional_instructions=extra_instructions,
             thinking_level=preset.get("thinking_level", "default"),
             current_preset_name=preset_name,
             current_preset_id=preset.get("preset_id", ""),
-            active_drifts=[self_instruction] if self_instruction else [],
             available_presets=[],
             messages=new_messages,
         )
@@ -282,8 +273,8 @@ class ChatService:
         """execute() / execute_stream() 共通の前処理を実行する。
 
         以下を順番に行い、_Context にまとめて返す:
-          1. 記憶の想起
-          1b. SELF_DRIFT指針のロード
+          1. 長期記憶の想起
+          1b. ワーキングメモリ（スレッド）の取得
           2. URLの自動fetch
           3（4）. プロバイダー決定とシステムプロンプト構築
 
@@ -312,13 +303,29 @@ class ChatService:
             except Exception as e:
                 _log.warning("記憶想起失敗 char=%s error=%s", request.character_id, e)
 
-        # --- 1b. SELF_DRIFT指針をDBからロード ---
-        active_drifts = request.active_drifts or []
-        if self.drift_manager and request.session_id and not active_drifts:
+        # --- 1b. ワーキングメモリ（スレッド）を取得 ---
+        # 全スレッド一覧（self_history 代替）／emotion・body・relation の固定注入／
+        # task・topic の heat 上位想起、の3系統を取得する。
+        wm_all_threads: list[dict] | None = None
+        wm_fixed_threads: list[dict] | None = None
+        wm_recalled_threads: list[dict] | None = None
+        if self.working_memory_manager:
             try:
-                active_drifts = self.drift_manager.list_active_drifts(request.session_id, request.character_id)
-            except Exception:
-                pass
+                wm_all_threads = (
+                    self.working_memory_manager.list_all_threads(request.character_id) or None
+                )
+                wm_fixed_threads = (
+                    self.working_memory_manager.get_fixed_threads(request.character_id) or None
+                )
+                if last_user_msg:
+                    wm_recalled_threads = (
+                        self.working_memory_manager.recall_threads(
+                            request.character_id, last_user_msg
+                        )
+                        or None
+                    )
+            except Exception as e:
+                _log.warning("ワーキングメモリ取得失敗 char=%s error=%s", request.character_id, e)
 
         # --- 2. URLの自動fetch ---
         fetched_contents = []
@@ -349,14 +356,14 @@ class ChatService:
             recalled_identity_memories=recalled_identity or None,
             recalled_memories=recalled or None,
             fetched_contents=fetched_contents,
-            self_history=request.self_history,
-            relationship_state=request.relationship_state,
             inner_narrative=request.inner_narrative,
             provider_additional_instructions=request.provider_additional_instructions,
             enable_time_awareness=request.enable_time_awareness,
             current_time_str=request.current_time_str,
             time_since_last_interaction=request.time_since_last_interaction,
-            active_drifts=active_drifts or None,
+            wm_all_threads=wm_all_threads,
+            wm_fixed_threads=wm_fixed_threads,
+            wm_recalled_threads=wm_recalled_threads,
             use_tools=provider_impl.SUPPORTS_TOOLS,
             available_presets=request.available_presets or None,
             current_preset_name=request.current_preset_name,
@@ -366,6 +373,8 @@ class ChatService:
             messages=messages,
             recalled_identity=recalled_identity,
             recalled=recalled,
+            wm_fixed=wm_fixed_threads or [],
+            wm_recalled=wm_recalled_threads or [],
             provider_impl=provider_impl,
             system_prompt=system_prompt,
         )
@@ -394,7 +403,7 @@ class ChatService:
                 character_id=request.character_id,
                 session_id=request.session_id,
                 memory_manager=self.memory_manager,
-                drift_manager=self.drift_manager,
+                working_memory_manager=self.working_memory_manager,
             )
             try:
                 # thinking は非ストリーミングパスでは捨てる（execute はテキスト返却のみ）
@@ -417,7 +426,6 @@ class ChatService:
             inscriber = Inscriber(request.character_id, self.memory_manager)
             clean_text = inscriber.inscribe_memory_from_text(response_text, request.current_preset_id)
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
-            clean_text = self._apply_drifts(clean_text, request)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -447,6 +455,19 @@ class ChatService:
         all_recalled = ctx.recalled_identity + ctx.recalled
         if all_recalled:
             yield ("memories", all_recalled)
+        # ワーキングメモリスレッドをyield。
+        # 固定注入（emotion/body/relation）と heat 想起（task/topic）の両方を
+        # まとめて送り、フロントの想起セクションに全スレッドを表示させる。id で重複排除する。
+        wm_threads_payload: list[dict] = []
+        _seen_thread_ids: set = set()
+        for t in [*ctx.wm_fixed, *ctx.wm_recalled]:
+            tid = t.get("id")
+            if tid in _seen_thread_ids:
+                continue
+            _seen_thread_ids.add(tid)
+            wm_threads_payload.append(t)
+        if wm_threads_payload:
+            yield ("wm_threads", wm_threads_payload)
 
         # タグ方式でリアルタイムストリーミングした場合 True。
         # True の場合、最終 yield ("text", clean_text) をスキップする。
@@ -457,7 +478,7 @@ class ChatService:
                 character_id=request.character_id,
                 session_id=request.session_id,
                 memory_manager=self.memory_manager,
-                drift_manager=self.drift_manager,
+                working_memory_manager=self.working_memory_manager,
             )
             try:
                 clean_text, thinking_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
@@ -533,12 +554,11 @@ class ChatService:
                     yield event
                 return
 
-            # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み・drift適用）
+            # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み）
             # テキスト表示は済んでいるため、clean_text は副作用処理とログ用途にのみ使う。
             inscriber = Inscriber(request.character_id, self.memory_manager)
             clean_text = inscriber.inscribe_memory_from_text(full_text, request.current_preset_id)
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
-            clean_text = self._apply_drifts(clean_text, request)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -566,7 +586,7 @@ class ChatService:
         if request.self_reflection_mode != "disabled" and request.session_id:
             # キャラクター応答を末尾に追加して渡す。ウィンドウ切り出しは reflector 内で行う。
             reflection_messages = [*ctx.messages, {"role": "assistant", "content": clean_text}]
-            reflector = SelfReflector(self.memory_manager, self.drift_manager)
+            reflector = SelfReflector(self.memory_manager, self.working_memory_manager)
             asyncio.create_task(
                 reflector.run(
                     request_mode=request.self_reflection_mode,

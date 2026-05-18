@@ -1,7 +1,7 @@
-"""Chotgor MCPツール定義 — 記憶・SELF_DRIFT・アングル切り替えのツールスキーマとexecutor。
+"""Chotgor MCPツール定義 — 記憶・ワーキングメモリ・アングル切り替えのツールスキーマとexecutor。
 
 タグ方式（[INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] マーカー）に代わり、LLMのtool-use（function calling）で
-記憶・SELF_DRIFT・switch_angle を操作するための定義を提供する。
+記憶・ワーキングメモリ・switch_angle を操作するための定義を提供する。
 
 対応プロバイダー: Anthropic API、OpenAI API（xAI含む）
 非対応プロバイダー（Claude CLI、Ollama）は従来のマーカー方式にフォールバックする。
@@ -9,8 +9,10 @@
 各ツールのスキーマ・説明文は対応モジュールに定義する:
 - inscribe_memory: inscriber.py
 - carve_narrative: carver.py
+- post_thread / open_thread: threader.py
 
 退席機能（end_session）は廃止。FarewellDetector によるシステム側判定に置き換えた。
+旧 SELF_DRIFT（drift / drift_reset）はワーキングメモリへ統合され廃止された。
 """
 
 from __future__ import annotations
@@ -20,14 +22,20 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .memory.drift_manager import DriftManager
-    from .memory.manager import MemoryManager
+    from backend.services.memory.manager import MemoryManager
+    from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
-from backend.character_actions.drifter import Drifter, DRIFT_SCHEMA, DRIFT_RESET_SCHEMA, DRIFT_TOOL_DESCRIPTION, DRIFT_RESET_TOOL_DESCRIPTION
 from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
 from backend.character_actions.switcher import Switcher, SWITCH_ANGLE_SCHEMA, SWITCH_ANGLE_TOOL_DESCRIPTION
 from backend.character_actions.carver import Carver, CARVE_NARRATIVE_SCHEMA, CARVE_NARRATIVE_TOOL_DESCRIPTION
 from backend.character_actions.inscriber import Inscriber, INSCRIBE_MEMORY_SCHEMA, INSCRIBE_MEMORY_TOOL_DESCRIPTION
+from backend.character_actions.threader import (
+    Threader,
+    POST_THREAD_SCHEMA,
+    POST_THREAD_TOOL_DESCRIPTION,
+    OPEN_THREAD_SCHEMA,
+    OPEN_THREAD_TOOL_DESCRIPTION,
+)
 
 # Anthropic形式のツール定義リスト
 ANTHROPIC_TOOLS: list[dict] = [
@@ -37,14 +45,14 @@ ANTHROPIC_TOOLS: list[dict] = [
         "input_schema": INSCRIBE_MEMORY_SCHEMA,
     },
     {
-        "name": "drift",
-        "description": DRIFT_TOOL_DESCRIPTION,
-        "input_schema": DRIFT_SCHEMA,
+        "name": "post_thread",
+        "description": POST_THREAD_TOOL_DESCRIPTION,
+        "input_schema": POST_THREAD_SCHEMA,
     },
     {
-        "name": "drift_reset",
-        "description": DRIFT_RESET_TOOL_DESCRIPTION,
-        "input_schema": DRIFT_RESET_SCHEMA,
+        "name": "open_thread",
+        "description": OPEN_THREAD_TOOL_DESCRIPTION,
+        "input_schema": OPEN_THREAD_SCHEMA,
     },
     {
         "name": "carve_narrative",
@@ -83,7 +91,7 @@ class ToolCall:
 
     Attributes:
         id: プロバイダーが発行するツール呼び出しID。
-        name: ツール名（inscribe_memory / drift / drift_reset / carve_narrative / switch_angle）。
+        name: ツール名（inscribe_memory / post_thread / open_thread / carve_narrative / switch_angle / power_recall）。
         input: ツールに渡す引数 dict。
     """
 
@@ -115,16 +123,16 @@ class ToolTurnResult:
 class ToolExecutor:
     """LLMからのツール呼び出しを実際に実行するクラス。
 
-    inscribe_memory / drift / drift_reset / carve_narrative / switch_angle の各ツールを受け取り、
-    Inscriber / Drifter / Carver / Switcher を通じてDBへ反映する。
+    inscribe_memory / post_thread / open_thread / carve_narrative / switch_angle / power_recall の
+    各ツールを受け取り、Inscriber / Threader / Carver / Switcher を通じてDBへ反映する。
 
     Attributes:
         character_id: 操作対象のキャラクターID。
-        session_id: 現在のセッションID（SELF_DRIFT操作に必要）。
+        session_id: 現在のセッションID。
         memory_manager: 記憶の読み書きを担うマネージャー。
-        drift_manager: SELF_DRIFT指針の読み書きを担うマネージャー。
+        working_memory_manager: ワーキングメモリの読み書きを担うマネージャー。
         _inscriber: 記憶書き込みを担う Inscriber インスタンス。
-        _drifter: SELF_DRIFT指針の適用を担う Drifter インスタンス。
+        _threader: ワーキングメモリスレッド操作を担う Threader インスタンス。
         _carver: inner_narrative の彫り込みを担う Carver インスタンス。
         _switcher: アングル切り替えリクエストを記録する Switcher インスタンス。
     """
@@ -137,15 +145,15 @@ class ToolExecutor:
         character_id: str,
         session_id: str | None,
         memory_manager: MemoryManager,
-        drift_manager: DriftManager | None,
+        working_memory_manager: WorkingMemoryManager | None,
     ) -> None:
         """ToolExecutorを初期化する。"""
         self.character_id = character_id
         self.session_id = session_id
         self.memory_manager = memory_manager
-        self.drift_manager = drift_manager
+        self.working_memory_manager = working_memory_manager
         self._inscriber = Inscriber(character_id, memory_manager)
-        self._drifter = Drifter(session_id, character_id, drift_manager)
+        self._threader = Threader(character_id, working_memory_manager)
         self._carver = Carver(character_id, memory_manager.sqlite)
         self._switcher = Switcher()
 
@@ -158,7 +166,7 @@ class ToolExecutor:
         """ツール名と入力を受け取り実行して結果テキストを返す。
 
         Args:
-            tool_name: ツール名（"inscribe_memory" / "drift" / "drift_reset" / "carve_narrative" / "switch_angle"）。
+            tool_name: ツール名（"inscribe_memory" / "post_thread" / "open_thread" / "carve_narrative" / "switch_angle" / "power_recall"）。
             tool_input: ツールの入力パラメータ dict。
 
         Returns:
@@ -171,10 +179,12 @@ class ToolExecutor:
                 category=str(tool_input.get("category", "contextual")),
                 impact=float(tool_input.get("impact", 1.0)),
             )
-        if tool_name == "drift":
-            return self._drifter.drift(content=str(tool_input.get("content", "")))
-        if tool_name == "drift_reset":
-            return self._drifter.drift_reset()
+        if tool_name == "post_thread":
+            return self._post_thread(tool_input)
+        if tool_name == "open_thread":
+            return self._threader.open_thread(
+                thread_id=str(tool_input.get("thread_id", "")),
+            )
         if tool_name == "carve_narrative":
             return self._carve_narrative(
                 mode=str(tool_input.get("mode", "append")),
@@ -205,6 +215,28 @@ class ToolExecutor:
         except Exception as e:
             self.logger.exception("エラー char=%s", self.character_id)
             return f"[inscribe_memory error: {e}]"
+
+    def _post_thread(self, tool_input: dict) -> str:
+        """post_thread ツールの実装。Threader.post_thread() に委譲する。
+
+        importance は省略可能なため、キー不在時は None を渡して
+        WorkingMemoryManager 側のデフォルト（新規=0.5／更新=変更なし）に委ねる。
+        """
+        importance = tool_input.get("importance", None)
+        if importance is not None:
+            try:
+                importance = float(importance)
+            except (TypeError, ValueError):
+                importance = None
+        return self._threader.post_thread(
+            thread_id=str(tool_input.get("thread_id", "")),
+            type=str(tool_input.get("type", "")),
+            summary=str(tool_input.get("summary", "")),
+            atmosphere=str(tool_input.get("atmosphere", "")),
+            importance=importance,
+            content=str(tool_input.get("content", "")),
+            relation_target=str(tool_input.get("relation_target", "")),
+        )
 
     def _carve_narrative(self, mode: str, content: str) -> str:
         """carve_narrative ツールの実装。Carver.carve_narrative() に委譲して inner_narrative を更新する。"""

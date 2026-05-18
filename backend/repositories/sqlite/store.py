@@ -3,12 +3,13 @@
 SQLiteStore はドメイン別 Mixin を多重継承したファサードクラス。
 各ドメインの実装は backend/core/memory/stores/ 以下を参照。
 
-  SettingsStoreMixin  — グローバル設定 (key/value)
-  CharacterStoreMixin — キャラクター管理
-  MemoryStoreMixin    — 記憶レコード
-  PresetStoreMixin    — LLMモデルプリセット
-  ChatStoreMixin      — セッション・メッセージ・画像
-  DriftStoreMixin     — SELF_DRIFT指針
+  SettingsStoreMixin          — グローバル設定 (key/value)
+  CharacterStoreMixin         — キャラクター管理
+  MemoryStoreMixin            — 記憶レコード
+  PresetStoreMixin            — LLMモデルプリセット
+  ChatStoreMixin              — セッション・メッセージ・画像
+  DriftStoreMixin             — SELF_DRIFT指針
+  WorkingMemoryStoreMixin     — ワーキングメモリ（スレッド・ポスト）
 """
 
 import os
@@ -36,6 +37,9 @@ from backend.repositories.sqlite.stores.memory_store import MemoryStoreMixin
 from backend.repositories.sqlite.stores.preset_store import PresetStoreMixin
 from backend.repositories.sqlite.stores.scenario_store import ScenarioChatStoreMixin
 from backend.repositories.sqlite.stores.settings_store import SettingsStoreMixin
+from backend.repositories.sqlite.stores.working_memory_store import (
+    WorkingMemoryStoreMixin,
+)
 
 
 class Base(DeclarativeBase):
@@ -165,6 +169,51 @@ class Memory(Base):
     updated_at = Column(DateTime, nullable=True)  # content/importance変更時のみ更新
     deleted_at = Column(DateTime, nullable=True)  # ソフト削除
 
+
+
+class WorkingMemoryThread(Base):
+    """ワーキングメモリスレッド — キャラクターの並行する認知ストリームの1本。
+
+    BBS/チケット管理に似た「スレッド方式」で、task/topic/emotion/body/relation の
+    並走する認知ストリームを表現する。各スレッドは時系列に連なる WorkingMemoryPost を持つ。
+    旧来の self_history / afterglow / drift / relationship_state を統合的に置き換える層であり、
+    キャラクターの短期・中期記憶（ワーキングメモリ）を担う。
+
+    type 別の制約（emotion/body は1本のみ、relation は相手ごとに1本など）は
+    DB ではなくアプリ層（WorkingMemoryManager）で担保する。
+    """
+
+    __tablename__ = "wm_threads"
+
+    id = Column(String, primary_key=True)  # UUID
+    character_id = Column(String, ForeignKey("characters.id"), nullable=False)
+    type = Column(String, nullable=False)  # emotion / body / task / topic / relation
+    summary = Column(Text, nullable=False, default="")      # タイトル相当。embedding index の素材
+    atmosphere = Column(Text, nullable=False, default="")   # 質感の自由テキスト（Active時:温度感／Close時:終わり方）
+    importance = Column(Float, nullable=False, default=0.5)  # 0.0 - 1.0
+    is_open = Column(Integer, nullable=False, default=1)     # 1=Open（運用中・一覧表示対象）, 0=Archived
+    # relation 型のみ使用: 関係相手の識別子（ユーザ名・他キャラ名など）。重複作成防止のキーにもなる。
+    relation_target = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(),
+    )
+    # heat の時間減衰の起点。Post 追加・スレッド更新時に明示的に更新する。
+    # updated_at は onupdate で勝手に動くため、decay 起点としては流用せず別カラムで管理する。
+    last_touched_at = Column(DateTime, nullable=True)
+
+
+class WorkingMemoryPost(Base):
+    """ワーキングメモリポスト — スレッド内に時系列順で連なる1書き込み。"""
+
+    __tablename__ = "wm_posts"
+
+    id = Column(String, primary_key=True)  # UUID
+    thread_id = Column(String, ForeignKey("wm_threads.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now())
 
 
 class SessionDrift(Base):
@@ -302,6 +351,7 @@ class SQLiteStore(
     PresetStoreMixin,
     ChatStoreMixin,
     DriftStoreMixin,
+    WorkingMemoryStoreMixin,
     ScenarioChatStoreMixin,
 ):
     """SQLite永続化ストア — 全テーブルへのCRUD操作を提供するファサードクラス。

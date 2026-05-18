@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Working Memory: {{ character.name }} &mdash; Chotgor{% endblock %}
+
+{% block head %}
+<style>
+    /* スレッドカードを丸ごとクリック可能なリンクにする */
+    .wm-card-link {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        transition: transform .08s ease, box-shadow .12s ease, border-color .12s ease;
+    }
+    .wm-card-link:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
+        border-color: rgba(255, 255, 255, .22);
+    }
+    .wm-card-link .memory-card { margin: 0; }
+    .wm-thread-title { font-weight: 600; font-size: 1.02rem; }
+    .wm-thread-title::after { content: " ›"; opacity: .45; }
+    /* atmosphere バッジ：自由テキストのため折り返しを許可する */
+    .badge-atmosphere {
+        background: rgba(255, 255, 255, .07);
+        color: #cfd3da;
+        white-space: normal;
+        font-weight: 400;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{{ character.name }} — Working Memory</h1>
+    <a href="/ui/characters/{{ character.id }}" class="btn btn-secondary">Edit Character</a>
+</div>
+
+<div class="filter-bar">
+    <form method="get" action="/ui/working-memory/{{ character.id }}" class="filter-form">
+        <select name="type" class="form-control select-inline" onchange="this.form.submit()">
+            <option value="">All Types</option>
+            {% for t in types %}
+            <option value="{{ t }}" {% if selected_type == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+        <label class="checkbox-label">
+            <input type="checkbox" name="archived" value="true"
+                   {% if archived %}checked{% endif %}
+                   onchange="this.form.submit()">
+            Archived only
+        </label>
+    </form>
+    <span class="memory-count">{{ threads|length }}</span>
+</div>
+
+{% if threads %}
+<div class="memory-list">
+    {% for t in threads %}
+    <a class="wm-card-link" href="/ui/working-memory/{{ character.id }}/{{ t.id }}">
+        <div class="memory-card {% if not t.is_open %}memory-deleted{% endif %}">
+            <div class="memory-header">
+                <span class="badge badge-{{ t.type }}">{{ t.type }}</span>
+                {% if t.atmosphere %}
+                <span class="badge badge-atmosphere">{{ t.atmosphere }}</span>
+                {% endif %}
+                {% if not t.is_open %}
+                <span class="badge badge-deleted">Archived</span>
+                {% endif %}
+                {% if t.relation_target %}
+                <span class="badge badge-user">{{ t.relation_target }}</span>
+                {% endif %}
+                <span class="memory-date">{{ t.updated_at[:10] if t.updated_at else "—" }}</span>
+            </div>
+            <div class="memory-content wm-thread-title">{{ t.summary or "（無題）" }}</div>
+            {% if t.latest_post %}
+            <div class="memory-content" style="opacity:0.6;font-size:0.9em">&rarr; {{ t.latest_post }}</div>
+            {% endif %}
+            <div class="memory-meta">
+                <span title="Importance">重要度 {{ "%.2f"|format(t.importance) }}</span>
+                <span class="memory-preset">{{ t.id }}</span>
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>スレッドがありません。</p>
+</div>
+{% endif %}
+{% endblock %}

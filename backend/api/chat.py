@@ -25,6 +25,7 @@ from backend.lib.time_awareness import compute_time_awareness
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from backend.api.utils import build_1on1_history, build_available_presets, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 from backend.services.chat.content import apply_context_window
+from backend.services.memory.format import format_recalled_threads
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -475,6 +476,12 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             async for chunk_type, content in state.chat_service.execute_stream(chat_request):
                 if chunk_type == "memories":
                     display = format_memories_for_sse(content)
+                    if display:
+                        accumulated_reasoning += display
+                        data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
+                elif chunk_type == "wm_threads":
+                    display = format_recalled_threads(content)
                     if display:
                         accumulated_reasoning += display
                         data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)

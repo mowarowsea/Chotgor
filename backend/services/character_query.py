@@ -104,8 +104,6 @@ async def ask_character(
         character_system_prompt=char.system_prompt_block1 or "",
         recalled_memories=recalled,
         recalled_identity_memories=recalled_identity,
-        self_history=char.self_history or "",
-        relationship_state=char.relationship_state or "",
         inner_narrative=char.inner_narrative or "",
     )
 
@@ -149,14 +147,14 @@ async def ask_character_with_tools(
         settings: グローバル設定 dict。
         memory_manager: 記憶の読み書きに使用するマネージャー。
         feature_label: ログ識別用のフィーチャーラベル。
-        session_id: セッションID。drift ツール使用時にセッションと指針を紐付ける。空文字列の場合は drift を無効化。
+        session_id: セッションID。ツール実行のコンテキストとして使用する。
 
     Returns:
         True: tool-use ループを正常に実行した。
         False: プロバイダーが tool-use に非対応、またはエラー発生（呼び出し元でフォールバック）。
     """
     from backend.character_actions.executor import ToolExecutor
-    from backend.services.memory.drift_manager import DriftManager
+    from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
     char = sqlite.get_character(character_id)
     if not char:
@@ -201,8 +199,6 @@ async def ask_character_with_tools(
         character_system_prompt=char.system_prompt_block1 or "",
         recalled_memories=[],
         recalled_identity_memories=[],
-        self_history=char.self_history or "",
-        relationship_state=char.relationship_state or "",
         inner_narrative=char.inner_narrative or "",
         use_tools=True,
     )
@@ -211,7 +207,9 @@ async def ask_character_with_tools(
         character_id=character_id,
         session_id=session_id or None,
         memory_manager=memory_manager,
-        drift_manager=DriftManager(sqlite=sqlite),
+        working_memory_manager=WorkingMemoryManager(
+            sqlite=sqlite, vector_store=memory_manager.vector_store
+        ),
     )
 
     try:

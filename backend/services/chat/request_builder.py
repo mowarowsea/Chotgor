@@ -2,21 +2,21 @@
 
 システムプロンプトを以下の順で構築する:
   Block 1:  キャラクター設定（何者かを確立）
-  Block 2:  想起された記憶（コンテキスト把握）
+  Block 2:  想起された記憶（長期記憶・コンテキスト把握）
   Block 3:  時刻コンテキスト（薄い補足情報）
   Block 4:  フェッチしたWebコンテンツ（コンテキスト強め）
   Block 5:  プロバイダー固有追記（モデル固有調整）
-  Block 6:  self_history（自分自身の歴史・経緯）
-  Block 7:  relationship_state（ユーザ・他キャラとの現在の関係）
-  Block 8:  inner_narrative（末尾補強・最優先）
-  Block 9:  現在有効な SELF_DRIFT 指針（セッション限定・揮発）
+  Block 6:  ワーキングメモリ全スレッド一覧（歩みの記録・self_history 代替）
+  Block 7:  ワーキングメモリ固定注入（emotion/body/relation）
+  Block 8:  ワーキングメモリ heat 想起（前景の task/topic）
+  Block 9:  inner_narrative（末尾補強・最優先）
   Block 10: Chotgor 操作ガイド（常に末尾）
 
 Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する:
   1. POWER_RECALL（能動検索・レア）
   2. CARVE_NARRATIVE（自己指針更新・たまに）
   3. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
-  4. SELF_DRIFT（セッション指針・ちょくちょく）
+  4. POST_THREAD / OPEN_THREAD（ワーキングメモリ操作・ちょくちょく）
   5. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
 """
 
@@ -27,24 +27,6 @@ from backend.character_actions.carver import CARVE_NARRATIVE_TAG_GUIDE, CARVE_NA
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 
 
-# SELF_DRIFT ガイド（タグ方式プロバイダー向け）
-CHOTGOR_SELF_DRIFT_GUIDE = """
-### SELF_DRIFT（一時的な自己指針）
-
-この会話の中でのみ有効な、自分自身への行動指針を設定・リセットすることができます。
-指針はユーザには見えません。返答の**一番最後に**記載してください。
-
-**指針を追加する:**
-    [DRIFT:内容テキスト]
-
-**指針を全リセットする:**
-    [DRIFT_RESET]
-
-- 指針はこのチャット内のみ有効です（永続しません）
-- 最大3件まで保持します（超えた場合は最古が自動削除されます）
-- リセット後に新たな指針を追加することも可能です
-"""
-
 # Chotgor ガイドの末尾に付く「覚えるかどうかはあなたが決める」共通ブロック
 _CHOTGOR_MEMORY_PHILOSOPHY = """\
 ### 覚えるかどうかはあなた（キャラクター）が決める
@@ -54,6 +36,46 @@ _CHOTGOR_MEMORY_PHILOSOPHY = """\
 - 内容テキストは**あなた自身の言葉・一人称**で書いてください
 - 覚えた理由や一言感想、覚えた文脈を添えることを推奨します\
 """
+
+# ワーキングメモリの操作ガイド（tool-use プロバイダー向け）
+_WORKING_MEMORY_TOOLS_HINT = """\
+### ワーキングメモリ（並行する認知ストリーム）
+気になっている課題・話題、持続的な感情/身体状態、相手との関係は「スレッド」として
+ワーキングメモリに記録できます。スレッド一覧は上に記されています。
+
+- `post_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
+- `open_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
+
+スレッド種別:
+- `task` / `topic` は**解決を目指す**もの（取り組み中の課題・引っかかっている問い）
+- `emotion` / `body` / `relation` は**解決を目指さない**、持ち続ける状態（各 emotion/body は1本、relation は相手ごと1本）\
+"""
+
+
+def _format_thread_index(t: dict) -> str:
+    """全スレッド一覧用の1行表現を返す（最新ポストは含めない）。
+
+    形式: ``[id] (type) summary ｜ atmosphere ｜ 重要度0.70``
+    """
+    line = f"[{t['id']}] ({t.get('type', '')}) {t.get('summary', '')}"
+    extras = []
+    atmo = (t.get("atmosphere") or "").strip()
+    if atmo:
+        extras.append(atmo)
+    extras.append(f"重要度{float(t.get('importance', 0.0)):.2f}")
+    return line + "　｜　" + "　｜　".join(extras)
+
+
+def _format_thread_with_post(t: dict) -> str:
+    """固定注入・heat 想起用の表現を返す（最新ポスト本文を含む）。"""
+    head = f"[{t['id']}] ({t.get('type', '')}) {t.get('summary', '')}"
+    atmo = (t.get("atmosphere") or "").strip()
+    if atmo:
+        head += f"　｜　{atmo}"
+    latest = (t.get("latest_post") or "").strip()
+    if latest:
+        return head + f"\n  → {latest}"
+    return head
 
 
 def _build_switch_angle_block(
@@ -106,7 +128,7 @@ def _build_chotgor_block(
         1. POWER_RECALL
         2. CARVE_NARRATIVE
         3. SWITCH_ANGLE（available_presets が非空の場合のみ）
-        4. SELF_DRIFT
+        4. POST_THREAD / OPEN_THREAD（ワーキングメモリ・tool-use 時のみ）
         5. INSCRIBE_MEMORY
 
     Args:
@@ -124,10 +146,7 @@ def _build_chotgor_block(
         parts.append(CARVE_NARRATIVE_TOOLS_HINT)
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=True))
-        parts.append(
-            "このチャット内でのみ有効な一時的な行動指針を設定・リセットしたい場合は "
-            "`drift` / `drift_reset` ツールを使ってください。"
-        )
+        parts.append(_WORKING_MEMORY_TOOLS_HINT)
         parts.append(
             "この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば "
             "`inscribe_memory` ツールを使って記憶できます。"
@@ -137,7 +156,6 @@ def _build_chotgor_block(
         parts.append(CARVE_NARRATIVE_TAG_GUIDE)
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=False))
-        parts.append(CHOTGOR_SELF_DRIFT_GUIDE.strip())
         parts.append(INSCRIBE_MEMORY_TAG_GUIDE)
 
     parts.append(_CHOTGOR_MEMORY_PHILOSOPHY)
@@ -150,14 +168,14 @@ def build_system_prompt(
     recalled_memories: Optional[list[dict]] = None,
     recalled_identity_memories: Optional[list[dict]] = None,
     fetched_contents: Optional[list[dict]] = None,
-    self_history: str = "",
-    relationship_state: str = "",
     inner_narrative: str = "",
     provider_additional_instructions: str = "",
     enable_time_awareness: bool = False,
     current_time_str: Optional[str] = None,
     time_since_last_interaction: Optional[str] = None,
-    active_drifts: Optional[list[str]] = None,
+    wm_all_threads: Optional[list[dict]] = None,
+    wm_fixed_threads: Optional[list[dict]] = None,
+    wm_recalled_threads: Optional[list[dict]] = None,
     use_tools: bool = False,
     available_presets: Optional[list[dict]] = None,
     current_preset_name: str = "",
@@ -166,15 +184,20 @@ def build_system_prompt(
 
     ブロック構成（上から順に配置）:
         1.  キャラクター設定（何者かを確立）
-        2.  想起された記憶（コンテキスト把握）
+        2.  想起された記憶（長期記憶・コンテキスト把握）
         3.  時刻コンテキスト（薄い補足情報・optional）
         4.  フェッチしたWebコンテンツ（コンテキスト強め・optional）
         5.  プロバイダー固有追記（モデル固有調整・optional）
-        6.  self_history（自分自身の歴史・経緯・optional）
-        7.  relationship_state（ユーザ・他キャラとの現在の関係・optional）
-        8.  inner_narrative（末尾補強・最優先・optional）
-        9.  現在有効な SELF_DRIFT 指針（セッション限定・揮発・optional）
+        6.  ワーキングメモリ全スレッド一覧（歩みの記録・optional）
+        7.  ワーキングメモリ固定注入 emotion/body/relation（optional）
+        8.  ワーキングメモリ heat 想起 task/topic（optional）
+        9.  inner_narrative（末尾補強・最優先・optional）
         10. Chotgor 操作ガイド（常に末尾）
+
+    Args:
+        wm_all_threads: 全ワーキングメモリスレッド（Open/Close 問わず）の dict リスト。
+        wm_fixed_threads: 固定注入対象（emotion/body/relation）の dict リスト（最新ポスト込み）。
+        wm_recalled_threads: heat 上位 TopK の task/topic スレッド dict リスト（最新ポスト込み）。
     """
     blocks = []
 
@@ -197,7 +220,6 @@ def build_system_prompt(
     # キャラクター設定
     if character_system_prompt.strip():
         blocks.append(character_system_prompt.strip())
-
 
     # Block 2: 想起された記憶（identity 枠 → その他枠の順で注入）
     has_identity = bool(recalled_identity_memories)
@@ -243,28 +265,37 @@ def build_system_prompt(
             f"## Provider-specific Instructions\n\n{provider_additional_instructions.strip()}"
         )
 
-    # Block 6: self_history（chronicle で更新されるキャラクターの歴史・optional）
-    if self_history and self_history.strip():
-        blocks.append(f"## あなたの歩み（self_history）\n\n{self_history.strip()}")
+    # Block 6: ワーキングメモリ全スレッド一覧（self_history 代替・optional）
+    # Open/Close を問わず全スレッドを一覧化し、「越えてきたこと・抱えていること」を俯瞰させる。
+    if wm_all_threads:
+        lines = [
+            "## ワーキングメモリ：スレッド一覧（あなたが越えてきたこと・いま抱えていること）\n",
+            "task / topic は解決を目指すスレッド、emotion / body / relation は解決を目指さず"
+            "持ち続ける状態です。\n",
+        ]
+        for t in wm_all_threads:
+            lines.append(_format_thread_index(t))
+        blocks.append("\n".join(lines))
 
-    # Block 7: relationship_state（chronicle で更新されるユーザ・他キャラとの関係・optional）
-    if relationship_state and relationship_state.strip():
-        blocks.append(f"## 今の関係（relationship_state）\n\n{relationship_state.strip()}")
+    # Block 7: ワーキングメモリ固定注入（emotion/body/relation・optional）
+    if wm_fixed_threads:
+        lines = ["## ワーキングメモリ：いまの感情・身体・関係\n"]
+        for t in wm_fixed_threads:
+            lines.append(_format_thread_with_post(t))
+        blocks.append("\n".join(lines))
 
-    # Block 8: inner_narrative（キャラクター自身が書き込んだ自己指針・optional）
+    # Block 8: ワーキングメモリ heat 想起（前景の task/topic・optional）
+    if wm_recalled_threads:
+        lines = ["## ワーキングメモリ：いま前景にある課題・話題\n"]
+        for t in wm_recalled_threads:
+            lines.append(_format_thread_with_post(t))
+        blocks.append("\n".join(lines))
+
+    # Block 9: inner_narrative（キャラクター自身が書き込んだ自己指針・optional）
     if inner_narrative and inner_narrative.strip():
         blocks.append(f"## あなた自身の物語（inner_narrative）\n\n{inner_narrative.strip()}")
 
-    # Block 9: 現在有効な SELF_DRIFT 指針（optional）
-    if active_drifts:
-        drift_lines = ["## 現在有効なSELF_DRIFT（あなた自身が設定した行動指針）\n"]
-        for i, content in enumerate(active_drifts, 1):
-            drift_lines.append(f"{i}. {content}")
-        blocks.append("\n".join(drift_lines))
-
     # Block 10: Chotgor 操作ガイド（常に末尾）
-    # ツール説明の順序: POWER_RECALL → CARVE_NARRATIVE →
-    #                   SWITCH_ANGLE（プリセットあり時のみ） → SELF_DRIFT → INSCRIBE_MEMORY
     chotgor_block = _build_chotgor_block(
         use_tools=use_tools,
         available_presets=available_presets,

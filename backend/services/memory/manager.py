@@ -12,13 +12,17 @@ HNSW バイナリ破損のような失敗モードが構造的に発生しない
 """
 
 import logging
-import math
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from backend.repositories.lance.store import LanceStore
 from backend.repositories.sqlite.store import SQLiteStore
+from backend.services.memory.decay import (
+    distance_to_similarity,
+    elapsed_days_since,
+    exp_decay,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,18 +61,13 @@ class MemoryManager:
             now = datetime.now()
 
         base_time = memory.last_accessed_at or memory.created_at
-        hours_passed = (now - base_time).total_seconds() / 3600.0
-        days_passed = hours_passed / 24.0
-        if days_passed < 0:
-            days_passed = 0.0
+        days_passed = elapsed_days_since(base_time, now)
 
-        # Math: e^(-lambda * t) where lambda = ln(2) / half_life
-        ln2 = 0.69314718
-
-        decay_contextual = memory.contextual_importance * math.exp(-(ln2 / 4.0) * days_passed)
-        decay_user = memory.user_importance * math.exp(-(ln2 / 10.0) * days_passed)
-        decay_semantic = memory.semantic_importance * math.exp(-(ln2 / 20.0) * days_passed)
-        decay_identity = memory.identity_importance * math.exp(-(ln2 / 90.0) * days_passed)
+        # 指数減衰 e^(-λt)（λ = ln2 / half_life）は decay.exp_decay に共通化済み
+        decay_contextual = exp_decay(memory.contextual_importance, days_passed, 4.0)
+        decay_user = exp_decay(memory.user_importance, days_passed, 10.0)
+        decay_semantic = exp_decay(memory.semantic_importance, days_passed, 20.0)
+        decay_identity = exp_decay(memory.identity_importance, days_passed, 90.0)
 
         # Weighted sum
         score = (
@@ -267,7 +266,7 @@ class MemoryManager:
                 decayed_score = self.calculate_decayed_score(m, now)
 
                 # cosine distance: 0=identical, 2=opposite。distance を similarity に変換する
-                semantic_similarity = max(0.0, 1.0 - (mem.get("distance", 1.0) / 2.0))
+                semantic_similarity = distance_to_similarity(mem.get("distance", 1.0))
 
                 # Hybrid score: Semantic Similarity + Decayed Score
                 hybrid_score = (semantic_similarity * 0.5) + (decayed_score * 0.5)

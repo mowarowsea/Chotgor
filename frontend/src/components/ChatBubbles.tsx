@@ -54,6 +54,35 @@ function isMemoryLine(line: string): boolean {
   return /^\[[\w_]+\] .+\(score: [\d.]+\)$/.test(line);
 }
 
+/** 想起したワーキングメモリスレッド行の先頭マーカー。 */
+const THREAD_LINE_PREFIX = "⟦thread⟧ ";
+
+function isThreadLine(line: string): boolean {
+  return line.startsWith(THREAD_LINE_PREFIX);
+}
+
+/**
+ * 想起したワーキングメモリスレッド1行を描画する。
+ * バックエンドの ``⟦thread⟧ [type] summary 〈atmosphere〉 → post`` 形式をパースする。
+ */
+function ThreadLine({ line }: { line: string }) {
+  const match = /^⟦thread⟧ \[([\w_]+)\] (.*)$/.exec(line);
+  if (!match) {
+    return <div className="text-ch-t3 whitespace-pre-wrap text-xs">{line}</div>;
+  }
+  const type = match[1] as string;
+  const rest = match[2];
+  return (
+    <div
+      className="flex items-start gap-1.5 rounded px-2 py-0.5 my-0.5 text-xs"
+      style={{ background: "rgba(255,255,255,0.05)", color: "#b8bcc4" }}
+    >
+      <span className="shrink-0 font-medium">[{type}]</span>
+      <span>{rest}</span>
+    </div>
+  );
+}
+
 /**
  * 思考ブロック・想起記憶を折りたたみ表示するコンポーネント。
  * ストリーミング中は自動展開する。
@@ -88,7 +117,8 @@ export function ThinkingBlock({
 
   const lines = content.split("\n").filter((l) => l !== "");
   const memoryLines = lines.filter(isMemoryLine);
-  const sketchLines = lines.filter((l) => !isMemoryLine(l));
+  const threadLines = lines.filter(isThreadLine);
+  const sketchLines = lines.filter((l) => !isMemoryLine(l) && !isThreadLine(l));
 
   return (
     <div className="rounded-lg overflow-hidden text-xs mb-1" style={{ border: "1px solid rgba(255,255,255,0.07)" }}>
@@ -125,6 +155,20 @@ export function ThinkingBlock({
               <div className="mb-1.5">
                 {memoryLines.map((line, i) => (
                   <ReasoningLine key={i} line={line} />
+                ))}
+              </div>
+            </>
+          )}
+          {threadLines.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 my-1.5">
+                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <span className="text-ch-t4 shrink-0 text-[10px]">想起したスレッド</span>
+                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+              </div>
+              <div className="mb-1.5">
+                {threadLines.map((line, i) => (
+                  <ThreadLine key={i} line={line} />
                 ))}
               </div>
             </>

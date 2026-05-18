@@ -282,6 +282,64 @@ async def delete_memory(request: Request, character_id: str, memory_id: str):
     return RedirectResponse(url=f"/ui/memories/{character_id}", status_code=303)
 
 
+@router.get("/working-memory/{character_id}", response_class=HTMLResponse)
+async def working_memory_view(
+    request: Request,
+    character_id: str,
+    type: Optional[str] = None,
+    archived: bool = False,
+):
+    """ワーキングメモリのスレッド一覧ページ（読み取り専用）。
+
+    type 指定でスレッド種別を絞り込み、archived=True でアーカイブ済みのみ表示する。
+    記憶の取捨選択はキャラクター自身が行うため、UI からの編集機能は設けない。
+    """
+    char = request.app.state.sqlite.get_character(character_id)
+    if not char:
+        return RedirectResponse(url="/ui/", status_code=303)
+
+    wm = request.app.state.working_memory_manager
+    threads = wm.list_threads_by_type(
+        character_id,
+        type=type or None,
+        is_open=(False if archived else None),
+    )
+    types = ["emotion", "body", "task", "topic", "relation"]
+    return get_templates().TemplateResponse(
+        "working_memory.html",
+        {
+            "request": request,
+            "character": char,
+            "threads": threads,
+            "types": types,
+            "selected_type": type,
+            "archived": archived,
+        },
+    )
+
+
+@router.get("/working-memory/{character_id}/{thread_id}", response_class=HTMLResponse)
+async def working_memory_thread_view(request: Request, character_id: str, thread_id: str):
+    """ワーキングメモリのスレッド詳細ページ（全ポストを時系列表示）。"""
+    char = request.app.state.sqlite.get_character(character_id)
+    if not char:
+        return RedirectResponse(url="/ui/", status_code=303)
+
+    wm = request.app.state.working_memory_manager
+    thread = wm.get_thread_detail(thread_id)
+    if thread is None or thread.get("character_id") != character_id:
+        return RedirectResponse(url=f"/ui/working-memory/{character_id}", status_code=303)
+
+    return get_templates().TemplateResponse(
+        "working_memory_thread.html",
+        {
+            "request": request,
+            "character": char,
+            "thread": thread,
+        },
+    )
+
+
 # --- Model Presets ---
 
 @router.get("/model-presets", response_class=HTMLResponse)
@@ -592,7 +650,7 @@ async def save_settings(
             new_vector_store, new_memory_manager, new_chat_service = await migrate_embeddings(
                 sqlite=state.sqlite,
                 old_vector_store=state.vector_store,
-                drift_manager=state.drift_manager,
+                working_memory_manager=state.working_memory_manager,
                 new_provider=embedding_provider,
                 new_model=embedding_model,
                 new_api_key=current_google_key,
@@ -626,7 +684,7 @@ async def reindex_memories(request: Request):
         new_vector_store, new_memory_manager, new_chat_service = await migrate_embeddings(
             sqlite=state.sqlite,
             old_vector_store=state.vector_store,
-            drift_manager=state.drift_manager,
+            working_memory_manager=state.working_memory_manager,
             new_provider=current_provider,
             new_model=current_model,
             new_api_key=current_api_key,
