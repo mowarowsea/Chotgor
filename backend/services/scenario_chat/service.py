@@ -397,7 +397,8 @@ def parse_intro_to_turns(
                 rest = line[colon + 1 :]
                 if rest.startswith(" "):
                     rest = rest[1:]
-                cur_buffer.append(rest + "\n")
+                if rest:
+                    cur_buffer.append(rest + "\n")
                 continue
         # 通常本文行（@ なしまたは `:` なし）。現在話者にぶら下げる。
         cur_buffer.append(line + "\n")

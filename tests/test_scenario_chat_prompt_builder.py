@@ -128,7 +128,7 @@ class TestBasicStructure:
         out = build_gm_system_prompt(
             session, npcs=[], history_text="", user_message="どうも"
         )
-        assert "@勇者: どうも" in out
+        assert "@勇者:\nどうも" in out
         assert "プレイヤーの発話" in out
 
     def test_user_message_omitted_when_none(self):

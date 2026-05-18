@@ -95,6 +95,22 @@ class TestBasicParsing:
         text = "".join(d.content_delta for d in nar_deltas)
         assert "雨音" in text
 
+    def test_header_only_known_npc_block(self):
+        parser = ScenarioChatParser(known_npc_names={"Reika": "id-r"})
+        deltas = parser.feed("@Reika:\nhello\nsecond line\n")
+        deltas += parser.flush()
+        assert _ordered_speakers(deltas) == ["Reika"]
+        text = "".join(d.content_delta for d in deltas if d.speaker_name == "Reika")
+        assert text == "hello\nsecond line\n"
+
+    def test_header_only_narrator_block(self):
+        parser = ScenarioChatParser()
+        deltas = parser.feed("@Narrator:\nrain falls\nquietly\n")
+        deltas += parser.flush()
+        assert _ordered_speakers(deltas) == ["Narrator"]
+        text = "".join(d.content_delta for d in deltas if d.speaker_type == "narrator")
+        assert text == "rain falls\nquietly\n"
+
     def test_multiple_speakers_order(self):
         """複数話者が交互に登場するときの順序が正しいこと。"""
         parser = ScenarioChatParser(
@@ -321,6 +337,16 @@ class TestChunkBoundaries:
         deltas += parser.flush()
         speakers = _ordered_speakers(deltas)
         assert "レイカ" in speakers
+
+    def test_split_after_colon_before_header_only_newline(self):
+        parser = ScenarioChatParser(known_npc_names={"Reika": "id-r"})
+        deltas = []
+        deltas += parser.feed("@Reika:")
+        deltas += parser.feed("\nhello\n")
+        deltas += parser.flush()
+        assert _ordered_speakers(deltas) == ["Reika"]
+        text = "".join(d.content_delta for d in deltas if d.speaker_name == "Reika")
+        assert text == "hello\n"
 
     def test_split_mid_body(self):
         """本文途中で分割しても、同じ話者の delta が複数届くこと。"""

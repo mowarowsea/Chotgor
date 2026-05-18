@@ -179,7 +179,7 @@ def format_turn_for_gm(
         name = getattr(turn, "speaker_name", "") or narrator_name
 
     # markdown 等の整形は加えない。本文はそのまま（複数行可）。
-    return f"@{name}: {content}"
+    return f"@{name}:\n{content}"
 
 
 def format_history_for_gm(

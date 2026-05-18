@@ -212,43 +212,43 @@ class TestFormatTurnForGm:
         """user 発話は user_alias を `@名前:` に使うこと。"""
         t = _turn(speaker_type="user", speaker_name="生の名前", content="やぁ")
         out = format_turn_for_gm(t, user_alias="勇者")
-        assert out == "@勇者: やぁ"
+        assert out == "@勇者:\nやぁ"
 
     def test_narrator_uses_narrator_tag(self):
         """narrator は Narrator 名を使う。speaker_name の値は無視される。"""
         t = _turn(speaker_type="narrator", speaker_name="その他", content="雨")
         out = format_turn_for_gm(t, user_alias="勇者")
-        assert out == "@Narrator: 雨"
+        assert out == "@Narrator:\n雨"
 
     def test_narrator_custom_name(self):
         """narrator_name 引数を変えれば違う名前を使えること。"""
         t = _turn(speaker_type="narrator", speaker_name="X", content="夜")
         out = format_turn_for_gm(t, user_alias="勇者", narrator_name="語り部")
-        assert "@語り部: 夜" == out
+        assert "@語り部:\n夜" == out
 
     def test_npc_uses_speaker_name(self):
         """npc は speaker_name をそのまま `@名前:` に使うこと。"""
         t = _turn(speaker_type="npc", speaker_name="レイカ", content="来た")
         out = format_turn_for_gm(t, user_alias="勇者")
-        assert out == "@レイカ: 来た"
+        assert out == "@レイカ:\n来た"
 
     def test_character_uses_speaker_name(self):
         """character（P2 予約）も speaker_name を使う。"""
         t = _turn(speaker_type="character", speaker_name="ハル", content="…")
         out = format_turn_for_gm(t, user_alias="勇者")
-        assert out == "@ハル: …"
+        assert out == "@ハル:\n…"
 
     def test_empty_content(self):
         """空本文も例外を出さず `@名前: ` になること。"""
         t = _turn(speaker_type="user", content="")
         out = format_turn_for_gm(t, user_alias="勇者")
-        assert out == "@勇者: "
+        assert out == "@勇者:\n"
 
     def test_unknown_speaker_type_falls_to_name(self):
         """予期しない speaker_type は speaker_name にフォールバックすること。"""
         t = _turn(speaker_type="???", speaker_name="モブ", content="ｺﾞﾜｺﾞﾜ")
         out = format_turn_for_gm(t, user_alias="勇者")
-        assert out == "@モブ: ｺﾞﾜｺﾞﾜ"
+        assert out == "@モブ:\nｺﾞﾜｺﾞﾜ"
 
 
 # ─── format_history_for_gm ───────────────────────────────────────────────────
@@ -273,7 +273,7 @@ class TestFormatHistoryForGm:
             _turn(speaker_type="npc", speaker_name="レイカ", content="来た"),
         ]
         out = format_history_for_gm(turns, user_alias="勇者")
-        expected = "@勇者: やぁ\n\n@Narrator: 雨\n\n@レイカ: 来た"
+        expected = "@勇者:\nやぁ\n\n@Narrator:\n雨\n\n@レイカ:\n来た"
         assert out == expected
 
     def test_multiline_content_keeps_turn_boundary(self):
@@ -284,7 +284,7 @@ class TestFormatHistoryForGm:
         ]
         out = format_history_for_gm(turns, user_alias="勇者")
         expected = (
-            "@勇者: こんにちは。\n今日はいい天気だね。\n\n@レイカ: そうね。"
+            "@勇者:\nこんにちは。\n今日はいい天気だね。\n\n@レイカ:\nそうね。"
         )
         assert out == expected
 
@@ -294,7 +294,7 @@ class TestFormatHistoryForGm:
             yield _turn(speaker_type="user", content="a")
             yield _turn(speaker_type="narrator", content="b")
         out = format_history_for_gm(gen(), user_alias="X")
-        assert "@X: a\n\n@Narrator: b" == out
+        assert "@X:\na\n\n@Narrator:\nb" == out
 
 
 # ─── dropped_history ─────────────────────────────────────────────────────────

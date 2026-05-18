@@ -217,7 +217,7 @@ def build_gm_system_prompt(
         user_turn_block = (
             "---\n"
             "プレイヤーの発話:\n"
-            f"@{user_alias}: {user_message.strip()}"
+            f"@{user_alias}:\n{user_message.strip()}"
         )
     else:
         user_turn_block = ""

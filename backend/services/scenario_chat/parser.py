@@ -107,6 +107,8 @@ class ScenarioChatParser:
         # 話者切替直後の単一スペースを除去するフラグ（`@名前: 本文` の慣用対応）。
         # チャンク境界をまたいでも 1 文字目のスペースを 1 度だけ除去できる。
         self._strip_next_space: bool = False
+        # `@名前:\n本文` 形式では、次の話者タグまで非タグ行を同じ話者の本文として扱う。
+        self._block_mode: bool = False
 
     # --- パブリックAPI ---
 
@@ -193,21 +195,35 @@ class ScenarioChatParser:
                         break
 
                 # `:` が見つかった → 話者宣言確定
+                if not eof and line_end == -1 and colon_pos == len(self._buffer) - 1:
+                    break
                 name = self._buffer[1:colon_pos].strip()
                 # 話者宣言ヘッダ部 `@名前:` を捨てる
                 self._buffer = self._buffer[colon_pos + 1 :]
                 self._switch_speaker(name)
-                # 次に出る本文の先頭スペース 1 文字を除去するフラグを立てる
-                self._strip_next_space = True
-                # 話者切替後の続きは「本文」として続行（行頭ではない）
-                self._at_line_start = False
+                if self._buffer.startswith("\r\n"):
+                    self._buffer = self._buffer[2:]
+                    self._strip_next_space = False
+                    self._at_line_start = True
+                    self._block_mode = True
+                elif self._buffer.startswith("\n"):
+                    self._buffer = self._buffer[1:]
+                    self._strip_next_space = False
+                    self._at_line_start = True
+                    self._block_mode = True
+                else:
+                    # 次に出る本文の先頭スペース 1 文字を除去するフラグを立てる
+                    self._strip_next_space = True
+                    # 話者切替後の続きは「本文」として続行（行頭ではない）
+                    self._at_line_start = False
+                    self._block_mode = False
                 continue
 
             # 行頭で @ で始まらない地の文は Narrator にフォールバック。
             # suppress 中（@user_alias 後）の地の文も Narrator に戻す。
             # ただし「空白/改行のみの行」は話者切替を発生させない
             # （LLM が `@A: ...\n\n@B: ...` のようにブロック間に空行を挟むケース対策）。
-            if self._at_line_start and (
+            if self._at_line_start and not self._block_mode and (
                 self._suppress or self._cur_name != self._narrator_name
             ):
                 nl_pos = self._buffer.find("\n")

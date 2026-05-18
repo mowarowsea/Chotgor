@@ -418,8 +418,8 @@ class TestHistoryInPrompt:
         sp = provider.received_system_prompt
         assert sp is not None
         # 履歴は `@名前: 本文` 規約で整形される（GM 出力形式と一致）
-        assert "@プレイヤー: 導入" in sp
-        assert "@Narrator: 夜" in sp
+        assert "@プレイヤー:\n導入" in sp
+        assert "@Narrator:\n夜" in sp
         # 直近の流れブロックがあること
         assert "直近の流れ" in sp
 
