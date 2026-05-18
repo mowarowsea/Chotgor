@@ -131,15 +131,16 @@ async def maybe_update_auto_synopsis(
     *,
     force: bool = False,
 ) -> Optional[dict]:
-    """履歴のうち今回 LLM に渡らない古いターン群を `synopsis_auto` に追記する。
+    """履歴のうち今回 LLM に渡らない古いターン群を `synopsis_auto` へ蒸留統合する。
 
     呼び出しタイミング:
         - 通常チャットフロー: 各ターン直前に best-effort で呼ぶ（force=False）。
           dropped ターンの累積文字数が SYNOPSIS_AUTO_TRIGGER_CHARS 未満なら何もしない。
         - 手動 regenerate API: force=True で呼ぶ。閾値判定をスキップする。
 
-    既存の synopsis_auto は**書き換えない**（追記のみ）。`synopsis_last_turn_index`
-    によって、すでに要約反映済みのターンは再度対象に含めない。
+    既存の synopsis_auto は単純追記せず、新ターンと統合して**全体を再蒸留**する
+    （肥大化を防ぐ）。`synopsis_last_turn_index` によって、すでに蒸留へ
+    反映済みのターンは再度対象に含めない。`synopsis_manual` には触らない。
 
     Returns:
         更新した場合は新しい synopsis dict、何もしなかった場合は None。

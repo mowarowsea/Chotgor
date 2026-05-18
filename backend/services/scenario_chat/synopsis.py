@@ -1,20 +1,22 @@
-"""シナリオチャット用 「あらすじ」自動要約モジュール。
+"""シナリオチャット用 「あらすじ」自動蒸留モジュール。
 
 ScenarioChat は長く続けると、スライディングウィンドウで履歴が切り捨てられて
 GM (LLM) が経緯を忘れ、存在しない過去を捏造してしまう問題がある。
 これへの対策として、本モジュールは「これから LLM に渡らなくなるターン群」を
-LLM 自身に要約させ、`zeta_sessions.synopsis_auto` に**追記**していく。
+既存のあらすじと統合し、物語全体を 1 つのあらすじへ**再蒸留**する。
 
 設計方針:
-    - 自動更新は `synopsis_auto` のみ。`synopsis_manual` には一切触らない。
-    - `synopsis_auto` は**追記モード**で書き込む（既存テキスト + 新規要約）。
-      ユーザが手編集した auto の既存記述を破壊しない。
-    - 既存 auto は要約 LLM に「コンテキスト」として渡すが、それを書き換えるよう
-      指示しない（あくまで「続きを書く」発想）。
+    - 自動更新は `synopsis_auto` のみ。`synopsis_manual`（プレイヤー手書きメモ）
+      には一切触らない。プレイヤーの補足はそちらで保持される。
+    - `synopsis_auto` は**全体再蒸留モード**で書き換える。単純な追記ではなく、
+      既存あらすじ + 新ターンを LLM に渡し、全体を蒸留し直した結果で置き換える。
+      これにより追記による肥大化を防ぐ。
+    - 蒸留は「直近を厚く・古い経緯は薄く」。ただし古い経緯でも
+      「誰が・何をして・何が確定したか」の事実関係は省かない（薄くしても消さない）。
     - 失敗時は None を返し、呼び出し元で best-effort 扱い（チャット本体は継続）。
 """
 
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Callable, Optional
 
 from backend.providers.registry import create_provider
 from backend.services.scenario_chat.context import format_history_for_gm
@@ -25,10 +27,11 @@ def build_synopsis_system_prompt(
     existing_auto: str,
     narrator_name: str = "Narrator",
 ) -> str:
-    """あらすじ自動要約用の system prompt を組み立てる。
+    """あらすじ蒸留用の system prompt を組み立てる。
 
-    既存の synopsis_auto をコンテキストとして渡し、その「続きとして」新ターン分の
-    要約だけを生成させる方針のプロンプト。既存文の書き換えは禁止する。
+    既存のあらすじ（前回までの蒸留結果）と新しい発話履歴を統合し、
+    物語全体を 1 つのあらすじへ再蒸留させる方針のプロンプト。
+    単純な追記ではなく、古い経緯を圧縮しつつ全体を作り直させる。
 
     Args:
         scenario: ZetaScenario ORM 風オブジェクト（user_alias / scenario を使う）。
@@ -42,17 +45,22 @@ def build_synopsis_system_prompt(
     scenario_text = (getattr(scenario, "scenario", "") or "").strip()
 
     parts = [
-        "あなたは物語の語り手が過去のセッション流れを記録するための「あらすじ作成役」です。",
-        "与えられた発話履歴を、誰が何を言い・どう動き・何が決まったかが分かる",
-        "簡潔なあらすじ文に圧縮してください。",
+        "あなたは物語の経緯を「あらすじ」として蒸留・更新する記録役です。",
+        "「これまでのあらすじ」と「新しく加わった発話履歴」が与えられます。",
+        "両者を統合し、物語全体を 1 つのあらすじへ作り直してください。",
+        "既存あらすじを丸ごとコピーして末尾に足すのではなく、",
+        "全体を 1 本のあらすじとして蒸留し直すこと。",
         "",
         "規則:",
-        f"- 主役は @{user_alias}（プレイヤー）。プレイヤーの意思決定と行動を中心に描写",
-        "- NPCの重要な台詞・提案、状況変化、決定的な情報の開示は漏らさず含める",
-        "- 履歴に無い情報を補わない（推測・創作禁止）",
-        "- 簡潔な平文で。箇条書きや markdown 記法は使わない",
-        "- 200〜500文字を目安。長さは内容次第で前後してよい",
+        f"- 主役は @{user_alias}（プレイヤー）。プレイヤーの意思決定と行動を軸に描写",
+        "- 直近の展開は具体的に、古い経緯は要点だけに圧縮する（新しいほど厚く）",
+        "- ただし古い経緯でも「誰が・何をして・何が確定したか」の",
+        "  事実関係は省かない（薄くはしても消さない）",
+        "- NPC の重要な決定・約束・状況変化・決定的な情報の開示は事実として残す",
+        "- 履歴・既存あらすじに無い情報を補わない（推測・創作禁止）",
+        "- 時系列順の簡潔な箇条書きでよい（地の文でも可）",
         "- メタ言及（「以上をまとめると」等）禁止",
+        "- 全体が長くなってきたら古い経緯をさらに圧縮し、肥大化させないこと",
     ]
     if scenario_text:
         parts.append("")
@@ -61,30 +69,9 @@ def build_synopsis_system_prompt(
 
     if existing_auto and existing_auto.strip():
         parts.append("")
-        parts.append("# これまでのあらすじ（既存。書き換え禁止・繰り返し禁止）")
+        parts.append("# これまでのあらすじ（前回までの蒸留結果。これも再蒸留の対象）")
         parts.append(existing_auto.strip())
-        parts.append("")
-        parts.append(
-            "上記の「これまでのあらすじ」の続きとして、"
-            "次に与えられる新ターン分だけのあらすじを生成してください。"
-            "既存の文章を繰り返したり書き直したりしないこと。"
-        )
     return "\n".join(parts)
-
-
-def append_auto_synopsis(existing_auto: str, new_summary: str) -> str:
-    """既存 synopsis_auto に新規要約を追記する。
-
-    既存が空ならそのまま、内容があれば空行で区切って末尾に連結する。
-    ユーザの手編集記述を保護するため、上書きは絶対に行わない。
-    """
-    new_summary = (new_summary or "").strip()
-    if not new_summary:
-        return existing_auto
-    existing = (existing_auto or "").rstrip()
-    if not existing:
-        return new_summary
-    return f"{existing}\n\n{new_summary}"
 
 
 async def update_auto_synopsis(
@@ -97,11 +84,11 @@ async def update_auto_synopsis(
     provider_factory: Callable[..., Any] = create_provider,
     narrator_name: str = "Narrator",
 ) -> Optional[str]:
-    """`dropped_turns` を LLM で要約し、既存 `existing_auto` に追記した結果を返す。
+    """既存 `existing_auto` と `dropped_turns` を統合し、全体を再蒸留した結果を返す。
 
-    呼び出し元 (engine.py) は本関数の戻り値（None でなければ）を
+    呼び出し元 (service.py) は本関数の戻り値（None でなければ）を
     `update_zeta_session_synopsis(..., auto=戻り値, last_turn_index=...)` で
-    SQLite に書き込む。
+    SQLite に書き込む。戻り値は既存 auto への追記ではなく、全体の置き換え版。
 
     Args:
         scenario: ZetaScenario ORM。user_alias / scenario / gm_preset_id を使う。
@@ -113,8 +100,8 @@ async def update_auto_synopsis(
         narrator_name: Narrator のタグ名。
 
     Returns:
-        追記後の synopsis_auto 文字列。dropped_turns が空、または要約生成に
-        失敗した場合は None を返す（その場合は SQLite を更新しないこと）。
+        再蒸留後の synopsis_auto 文字列（全体置き換え版）。dropped_turns が空、
+        または蒸留生成に失敗した場合は None を返す（その場合は SQLite を更新しない）。
     """
     if not dropped_turns:
         return None
@@ -145,8 +132,9 @@ async def update_auto_synopsis(
         narrator_name=narrator_name,
     )
     user_content = (
-        "以下が、今回新たにあらすじに加えるべき発話履歴です。\n"
-        "この区間だけを要約してください（既存あらすじは繰り返さない）。\n\n"
+        "以下が、今回新しくあらすじへ統合すべき発話履歴です。\n"
+        "「これまでのあらすじ」とこの履歴を統合し、"
+        "物語全体のあらすじを蒸留し直してください。\n\n"
         f"{history_text}"
     )
     messages = [{"role": "user", "content": user_content}]
@@ -162,8 +150,8 @@ async def update_auto_synopsis(
     except Exception:
         return None
 
-    new_summary = "".join(chunks).strip()
-    if not new_summary:
+    new_synopsis = "".join(chunks).strip()
+    if not new_synopsis:
         return None
 
-    return append_auto_synopsis(existing_auto or "", new_summary)
+    return new_synopsis
