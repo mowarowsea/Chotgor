@@ -205,27 +205,24 @@ class ScenarioChatParser:
                     self._buffer = self._buffer[2:]
                     self._strip_next_space = False
                     self._at_line_start = True
-                    self._block_mode = True
                 elif self._buffer.startswith("\n"):
                     self._buffer = self._buffer[1:]
                     self._strip_next_space = False
                     self._at_line_start = True
-                    self._block_mode = True
                 else:
                     # 次に出る本文の先頭スペース 1 文字を除去するフラグを立てる
                     self._strip_next_space = True
                     # 話者切替後の続きは「本文」として続行（行頭ではない）
                     self._at_line_start = False
-                    self._block_mode = False
                 continue
 
-            # 行頭で @ で始まらない地の文は Narrator にフォールバック。
-            # suppress 中（@user_alias 後）の地の文も Narrator に戻す。
+            # suppress 中（@user_alias 後）の地の文のみ Narrator に戻す。
+            # suppress 中でない場合は、行頭 @ が来るまで現在の話者を保持する。
+            # これにより `@CharacterA:` から `@CharacterB:` まで改行を挟んでも
+            # CharacterA の発話として扱い続ける。
             # ただし「空白/改行のみの行」は話者切替を発生させない
             # （LLM が `@A: ...\n\n@B: ...` のようにブロック間に空行を挟むケース対策）。
-            if self._at_line_start and not self._block_mode and (
-                self._suppress or self._cur_name != self._narrator_name
-            ):
+            if self._at_line_start and self._suppress:
                 nl_pos = self._buffer.find("\n")
                 end_of_line = nl_pos + 1 if nl_pos != -1 else len(self._buffer)
                 if self._buffer[:end_of_line].strip():

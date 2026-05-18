@@ -464,16 +464,15 @@ class TestStateAcrossFeed:
     """
 
     def test_speaker_persists_across_feeds(self):
-        """同じ話者の連続発話は feed 境界でも 1 つの話者として扱われること。"""
+        """@話者: から次の @別話者: まで改行を挟んでも同じ話者を継続すること。"""
         parser = ScenarioChatParser(known_npc_names={"レイカ": "id-r"})
         parser.feed("@レイカ: 最初\n")
         deltas2 = parser.feed("そのまま2行目に続く\n")
-        # 2 行目は前の話者(レイカ)が継続するわけではなく、
-        # 行頭`@`が無いので Narrator にフォールバックする。
-        # ※ ただし「直前の話者」を引き継ぐ仕様もありうる。
-        # 本実装では行頭 `@名前:` が無ければ Narrator として扱う設計。
-        # ※ ここでは Narrator になることを期待する。
-        assert any(d.speaker_type == "narrator" for d in deltas2)
+        # 行頭で @ がない場合でも、次の @別話者: が来るまで
+        # 直前の話者(レイカ)を継続する。suppress 中の場合のみ Narrator に戻す。
+        assert all(d.speaker_name == "レイカ" for d in deltas2)
+        assert all(d.speaker_type == "npc" for d in deltas2)
+        assert deltas2[0].speaker_id == "id-r"
 
     def test_suppress_persists_until_next_speaker(self):
         """user_alias の suppress 状態が次の真の話者切替まで維持されること。"""
