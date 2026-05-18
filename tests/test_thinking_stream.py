@@ -556,6 +556,41 @@ async def test_google_generate_stream_typed_parts_fallback_to_chunk_text():
 
 
 @pytest.mark.asyncio
+async def test_google_generate_stream_typed_logs_missing_candidates_diagnostic():
+    """candidates=None のチャンクは落とさず、原因調査用情報を Response ログへ残す。"""
+    from backend.providers.google_provider import GoogleProvider
+
+    chunk = MagicMock()
+    chunk.candidates = None
+    chunk.text = ""
+    chunk.prompt_feedback = {"block_reason": "OTHER"}
+    chunk.usage_metadata = {"prompt_token_count": 123}
+    chunk.model_version = "gemini-test"
+    chunk.response_id = "response-1"
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content_stream.return_value = iter([chunk])
+
+    provider = GoogleProvider(api_key="dummy", model="gemini-2.0-flash", thinking_level="default")
+
+    with (
+        _patch_google_module(mock_client),
+        patch("backend.lib.debug_logger.ChotgorLogger.log_provider_response") as log_response,
+    ):
+        result = []
+        async for item in provider.generate_stream_typed("sys", [{"role": "user", "content": "hi"}]):
+            result.append(item)
+
+    assert result == []
+    logged = log_response.call_args.args[-1]
+    assert "Google stream diagnostic" in logged
+    assert '"reason": "missing_candidates"' in logged
+    assert '"block_reason": "OTHER"' in logged
+    assert '"prompt_token_count": 123' in logged
+    assert "NoneType" not in logged
+
+
+@pytest.mark.asyncio
 async def test_google_generate_stream_typed_include_thoughts_set_when_thinking():
     """thinking_level != "default" のとき ThinkingConfig が include_thoughts=True で呼ばれること。"""
     from backend.providers.google_provider import GoogleProvider

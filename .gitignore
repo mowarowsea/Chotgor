@@ -215,3 +215,14 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# エディタ設定（個人環境）
+.vscode/
+
+# Ollama 関連（SSH 秘密鍵を含むためコミット禁止）
+ollama/
+
+# アーカイブ・作業メモ（リポジトリ管理対象外）
+Chotgor.zip
+フロント仕様案.txt
+フロント起動.txt
