@@ -594,6 +594,7 @@ async def save_settings(
     embedding_model: str = Form(""),
     infinity_base_url: str = Form("http://localhost:7997"),
     translation_preset_id: str = Form(""),
+    group_director_preset_id: str = Form(""),
 ):
     """設定を保存し、embeddingモデルが変更された場合は記憶を再インデックスする。"""
     store = request.app.state.sqlite
@@ -635,6 +636,9 @@ async def save_settings(
 
     # 翻訳モデル設定の保存
     store.set_setting("translation_preset_id", translation_preset_id)
+
+    # 司会モデル設定の保存（グループチャットの次発言者判断に使用）
+    store.set_setting("group_director_preset_id", group_director_preset_id)
 
     # embeddingモデルが変更された場合は全記憶を再インデックスする
     embedding_changed = (

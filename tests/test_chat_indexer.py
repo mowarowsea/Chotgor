@@ -43,12 +43,13 @@ def _make_1on1_session(char_name: str, preset_name: str = "default") -> MagicMoc
     return s
 
 
-def _make_group_session(participants: list[dict], director_char_name: str) -> MagicMock:
+def _make_group_session(participants: list[dict]) -> MagicMock:
     """グループセッションのスタブを作成する。
+
+    司会はキャラクターではなくシステムモデルのため group_config には含めない。
 
     Args:
         participants: [{"char_name": str, "preset_id": str}] のリスト。
-        director_char_name: 司会キャラクター名。
 
     Returns:
         session_type="group"、group_config が JSON化されたMagicMock。
@@ -57,7 +58,6 @@ def _make_group_session(participants: list[dict], director_char_name: str) -> Ma
     s.session_type = "group"
     s.group_config = json.dumps({
         "participants": participants,
-        "director_char_name": director_char_name,
     })
     return s
 
@@ -131,8 +131,7 @@ class TestGetParticipantCharIds:
     def test_group_resolves_all_participant_ids(self, sqlite_store):
         """グループセッションで全参加キャラのIDが解決されることを確認する。
 
-        participants に含まれる全キャラと director を含む一意のIDリストが
-        返されることを検証する。director が participants と重複する場合は1件のみ。
+        participants に含まれる全キャラの一意のIDリストが返されることを検証する。
         """
         id_alice = str(uuid.uuid4())
         id_bob = str(uuid.uuid4())
@@ -144,12 +143,10 @@ class TestGetParticipantCharIds:
                 {"char_name": "Alice", "preset_id": "p1"},
                 {"char_name": "Bob",   "preset_id": "p2"},
             ],
-            director_char_name="Alice",  # 重複
         )
 
         result = get_participant_char_ids(session, sqlite_store)
 
-        # Alice は participants と director で重複するが1件のみ
         assert sorted(result) == sorted([id_alice, id_bob])
 
     def test_group_excludes_unknown_chars(self, sqlite_store):
@@ -166,7 +163,6 @@ class TestGetParticipantCharIds:
                 {"char_name": "Alice", "preset_id": "p1"},
                 {"char_name": "NotExist", "preset_id": "p2"},
             ],
-            director_char_name="Alice",
         )
 
         result = get_participant_char_ids(session, sqlite_store)

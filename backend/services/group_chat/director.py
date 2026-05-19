@@ -117,7 +117,6 @@ async def decide_next_speakers(
     participants: list[dict],
     sqlite,
     settings: dict,
-    director_char_name: str,
     director_preset_id: str,
     user_name: str = "ユーザ",
     timeout: int = 30,
@@ -125,15 +124,16 @@ async def decide_next_speakers(
 ) -> list[str] | None:
     """会話履歴を元に次の発言者リストを決定する。
 
-    司会キャラクターのプロバイダーを通じてLLMを呼び出し、次の発言者を判断する。
+    システム設定で指定された司会モデル（プリセット）のプロバイダーを通じて
+    LLMを呼び出し、次の発言者を判断する。司会はキャラクターではなく、
+    翻訳モデルと同様のシステム設定上のユーティリティモデルである。
 
     Args:
         history: ChatMessageオブジェクトのリスト（時系列順）。
         participants: 参加者情報リスト [{"char_name": str, "preset_id": str}]。
         sqlite: キャラクター情報取得用のSQLiteStoreインスタンス。
         settings: グローバル設定辞書（APIキー等）。
-        director_char_name: 司会役キャラクターの名前。
-        director_preset_id: 司会役が使用するモデルプリセットのID。
+        director_preset_id: 司会役が使用するモデルプリセットのID（システム設定値）。
         user_name: ユーザーの表示名（選択肢として提示し、選ばれたらユーザーターン）。
         timeout: タイムアウト秒数（将来拡張用）。
         exited_chars: 退席済みキャラクター情報リスト [{"char_name": str, "reason": str}]。
@@ -161,10 +161,10 @@ async def decide_next_speakers(
         history_text, participants, sqlite, user_name=user_name, exited_chars=exited_chars
     )
 
-    # 司会キャラクターのプリセットをIDで取得してプロバイダーを生成する
+    # 司会モデルのプリセットをIDで取得してプロバイダーを生成する
     preset = sqlite.get_model_preset(director_preset_id)
     if not preset:
-        logger.warning("プリセット未発見 director=%s preset_id=%s", director_char_name, director_preset_id)
+        logger.warning("司会プリセット未発見 preset_id=%s", director_preset_id)
         return None
 
     current_log_feature.set("group_chat")
@@ -176,9 +176,9 @@ async def decide_next_speakers(
             [{"role": "user", "content": user_message}],
         )
     except Exception:
-        logger.exception("LLM呼び出し失敗 director=%s", director_char_name)
+        logger.exception("司会LLM呼び出し失敗 preset=%s", preset.name)
         return None
 
     result = _parse_director_response(raw, participant_names, user_name=user_name)
-    logger.debug("判定結果 director=%s next_speakers=%s", director_char_name, result)
+    logger.debug("司会判定結果 preset=%s next_speakers=%s", preset.name, result)
     return result

@@ -29,8 +29,6 @@ class TestGroupChatSession:
                 {"char_name": "はる", "preset_id": "preset-sonnet"},
                 {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
             ],
-            "director_char_name": "はる",
-            "director_preset_id": "preset-sonnet",
             "max_auto_turns": 3,
             "turn_timeout_sec": 30,
         }

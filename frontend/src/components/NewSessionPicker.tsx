@@ -22,8 +22,8 @@ interface Props {
   onClose: () => void;
   /** 1on1 チャット作成コールバック。 */
   onNewChat: (modelId: string, afterglow: boolean) => void;
-  /** グループチャット作成コールバック。 */
-  onNewGroupChat: (participants: string[], directorModelId: string, maxAutoTurns: number) => void;
+  /** グループチャット作成コールバック（司会モデルはシステム設定で管理するため引数に含まない）。 */
+  onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオ起動コールバック。 */
   onStartScenario: (scenarioId: string, title?: string) => void;
 }
@@ -78,7 +78,6 @@ export default function NewSessionPicker({
 
   /* ── group 用 state ── */
   const [groupSelected, setGroupSelected] = useState<Set<string>>(new Set());
-  const [directorModelId, setDirectorModelId] = useState("");
   const [maxAutoTurns, setMaxAutoTurns] = useState(3);
 
   /* ── scenario 用 state ── */
@@ -136,7 +135,7 @@ export default function NewSessionPicker({
     type === "1on1"
       ? !!selChar && !!selPreset
       : type === "group"
-        ? groupSelected.size >= 2 && !!directorModelId
+        ? groupSelected.size >= 2
         : !!scId;
 
   /** 作成を確定する。 */
@@ -145,7 +144,7 @@ export default function NewSessionPicker({
     if (type === "1on1") {
       onNewChat(`${selChar}@${selPreset}`, afterglow);
     } else if (type === "group") {
-      onNewGroupChat([...groupSelected], directorModelId, maxAutoTurns);
+      onNewGroupChat([...groupSelected], maxAutoTurns);
     } else {
       onStartScenario(scId, scTitle.trim() || undefined);
     }
@@ -308,22 +307,6 @@ export default function NewSessionPicker({
                     })}
                   </div>
                 )}
-              </div>
-              <div>
-                <SectionLabel>DIRECTOR · 司会役</SectionLabel>
-                <select
-                  value={directorModelId}
-                  onChange={(e) => setDirectorModelId(e.target.value)}
-                  className="w-full bg-ch-s3 text-ch-t1 text-xs rounded-md px-2 py-1.5 focus:outline-none"
-                  style={{ border: "1px solid var(--ch-sep2)" }}
-                >
-                  <option value="">司会役を選択...</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {charNameOf(m.id)} @{presetNameOf(m.id)}
-                    </option>
-                  ))}
-                </select>
               </div>
               <div>
                 <SectionLabel>

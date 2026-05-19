@@ -59,10 +59,13 @@ export interface ChatMessage {
   created_at: string;
 }
 
-/** グループチャット設定オブジェクト（group_config のデシリアライズ後）。 */
+/** グループチャット設定オブジェクト（group_config のデシリアライズ後）。
+ *
+ * 司会モデルはセッション単位ではなくシステム設定で一括管理するため
+ * group_config には含まれない（古いセッションには director_preset_id が残るが未使用）。
+ */
 export interface GroupConfig {
   participants: Array<{ char_name: string; preset_name: string }>;
-  director_model_id: string;  // "{char_name}@{preset_name}" 形式
   max_auto_turns: number;
   turn_timeout_sec: number;
 }
@@ -79,6 +82,8 @@ export type GroupStreamEvent =
   | { type: "character_chunk"; character: string; content: string }
   /** DB保存完了（確定済みメッセージ） */
   | { type: "character_done"; character: string; message: ChatMessage }
+  /** 司会エラー（手動再試行・手動指名で復帰可能） */
+  | { type: "director_error"; message: string }
   | { type: "user_turn"; auto_turns_used: number }
   | { type: "error"; message: string; character?: string }
   | { type: "done" };
@@ -263,10 +268,12 @@ export async function fetchUserName(): Promise<string> {
   return data.user_name ?? "ユーザ";
 }
 
-/** グループチャットセッションを作成する。 */
+/** グループチャットセッションを作成する。
+ *
+ * 司会モデルはシステム設定（Settings画面）で一括管理するため引数に含まない。
+ */
 export async function createGroupSession(
   participants: string[],
-  directorModelId: string,
   maxAutoTurns: number,
   turnTimeoutSec: number,
 ): Promise<Session & { warning?: string }> {
@@ -275,7 +282,6 @@ export async function createGroupSession(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       participants: participants.map((id) => ({ model_id: id })),
-      director_model_id: directorModelId,
       max_auto_turns: maxAutoTurns,
       turn_timeout_sec: turnTimeoutSec,
     }),
@@ -325,12 +331,14 @@ export async function resetDrifts(sessionId: string, characterId: string): Promi
 /** グループチャットメッセージをSSEでストリーミング送信し、イベントをyieldする。
  *
  * @param skip - true の場合、ユーザメッセージを保存せず司会へ直接ターンを委譲する（ユーザターンスキップ）。
+ * @param targetCharacter - 指定した場合、司会を介さずそのキャラクターを手動指名して発言させる。
  */
 export async function* streamGroupMessage(
   sessionId: string,
   content: string,
   imageIds?: string[],
   skip?: boolean,
+  targetCharacter?: string | null,
 ): AsyncGenerator<GroupStreamEvent> {
   const res = await fetch(`/api/group/sessions/${sessionId}/messages/stream`, {
     method: "POST",
@@ -339,6 +347,7 @@ export async function* streamGroupMessage(
       content,
       ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
       ...(skip ? { skip: true } : {}),
+      ...(targetCharacter ? { target_character: targetCharacter } : {}),
     }),
   });
   if (!res.ok) throw new Error("グループメッセージの送信に失敗しました");

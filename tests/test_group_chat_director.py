@@ -230,7 +230,6 @@ class TestDecideNextSpeakers:
                 participants=participants,
                 sqlite=sqlite,
                 settings={},
-                director_char_name="司会",
                 director_preset_id="Gemini",
                 timeout=5,
             )
@@ -256,7 +255,6 @@ class TestDecideNextSpeakers:
                 participants=participants,
                 sqlite=sqlite,
                 settings={},
-                director_char_name="司会",
                 director_preset_id="Gemini",
             )
 
@@ -278,7 +276,6 @@ class TestDecideNextSpeakers:
                 participants=participants,
                 sqlite=sqlite,
                 settings={},
-                director_char_name="司会",
                 director_preset_id="Gemini",
             )
 
@@ -306,7 +303,6 @@ class TestDecideNextSpeakers:
                 participants=participants,
                 sqlite=sqlite,
                 settings={},
-                director_char_name="司会",
                 director_preset_id="Gemini",
             )
 
@@ -331,7 +327,6 @@ class TestDecideNextSpeakers:
                 participants=participants,
                 sqlite=sqlite,
                 settings={},
-                director_char_name="司会",
                 director_preset_id="Gemini",
                 timeout=1,
             )
@@ -357,7 +352,6 @@ class TestDecideNextSpeakers:
                 participants=participants,
                 sqlite=sqlite,
                 settings={},
-                director_char_name="司会",
                 director_preset_id="Gemini",
             )
 
@@ -387,7 +381,6 @@ class TestDecideNextSpeakers:
                 participants=participants,
                 sqlite=sqlite,
                 settings={},
-                director_char_name="司会",
                 director_preset_id="Gemini",
             )
 
@@ -411,7 +404,6 @@ class TestDecideNextSpeakers:
             participants=participants,
             sqlite=sqlite,
             settings={},
-            director_char_name="司会",
             director_preset_id="存在しないプリセット",
         )
 

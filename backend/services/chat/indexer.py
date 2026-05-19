@@ -68,7 +68,8 @@ def get_participant_char_ids(session, sqlite) -> list[str]:
     """セッションに参加しているキャラクターのIDリストを返す。
 
     1on1セッション: model_id から char_name を取得してIDを解決する。
-    グループセッション: group_config の participants と director から解決する。
+    グループセッション: group_config の participants から解決する。
+    （司会はキャラクターではなくシステムモデルのため対象外）
     重複キャラ名は除外する。
 
     Args:
@@ -88,13 +89,10 @@ def get_participant_char_ids(session, sqlite) -> list[str]:
         except Exception:
             return []
 
-        # participants + director をまとめて重複除去しながら解決する
+        # participants を重複除去しながら解決する
         seen_names: set[str] = set()
         char_ids: list[str] = []
         names = [p["char_name"] for p in cfg.get("participants", [])]
-        director = cfg.get("director_char_name")
-        if director:
-            names.append(director)
 
         for name in names:
             if name in seen_names:

@@ -33,8 +33,8 @@ interface Props {
    * @param afterglow - Afterglow（感情継続機構）を有効にする場合は true。
    */
   onNewChat: (modelId: string, afterglow: boolean) => void;
-  /** 新規グループチャット作成時のコールバック */
-  onNewGroupChat: (participants: string[], directorModelId: string, maxAutoTurns: number) => void;
+  /** 新規グループチャット作成時のコールバック（司会モデルはシステム設定で管理） */
+  onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオテンプレートからプレイセッションを起動するコールバック */
   onStartScenario: (scenarioId: string, title?: string) => void;
   /** セッション削除時のコールバック（session_type に応じて呼び出し側が分岐） */

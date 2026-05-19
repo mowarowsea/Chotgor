@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.group_chat.service import run_group_turn
-from backend.api.resource_resolver import parse_model_id, require_character, require_preset
+from backend.api.resource_resolver import require_character, require_preset
 from backend.api.utils import message_to_dict, session_to_dict
 
 router = APIRouter(prefix="/api/group", tags=["group_chat"])
@@ -36,16 +36,17 @@ class ParticipantModel(BaseModel):
 class GroupSessionCreate(BaseModel):
     """グループセッション作成リクエスト。
 
+    司会モデルはセッション単位ではなくシステム設定（`group_director_preset_id`）で
+    一括管理されるため、作成リクエストには含めない。
+
     Attributes:
         participants: 参加者モデルIDのリスト（最低2名）。
-        director_model_id: 司会役キャラクターのモデルID（"{char_name}@{preset_name}" 形式）。
         max_auto_turns: キャラクター同士の最大連続発言回数（1〜10）。
         turn_timeout_sec: 司会AI・各キャラクターへのタイムアウト秒数。
         title: セッションタイトル（省略時は自動生成）。
     """
 
     participants: list[ParticipantModel] = Field(min_length=2)
-    director_model_id: str  # "{char_name}@{preset_name}" 形式
     max_auto_turns: int = Field(default=3, ge=1, le=10)
     turn_timeout_sec: int = Field(default=30, ge=10, le=120)
     title: Optional[str] = None
@@ -55,14 +56,17 @@ class GroupMessageCreate(BaseModel):
     """グループチャットメッセージ送信リクエスト。
 
     Attributes:
-        content: メッセージ本文。skip=True の場合は無視される。
+        content: メッセージ本文。skip=True / target_character 指定時は無視される。
         image_ids: 添付画像IDリスト。
         skip: True の場合、ユーザメッセージを保存せずに司会へ直接ターンを委譲する（ユーザターンスキップ機能）。
+        target_character: 指定された場合、司会を介さずこのキャラクターを強制的に発言させる
+                          （ユーザによる手動指名）。司会エラー時の代替手段として使う。
     """
 
     content: str
     image_ids: Optional[List[str]] = None
     skip: bool = False
+    target_character: Optional[str] = None
 
 
 def _parse_participant(model_id: str) -> dict:
@@ -96,11 +100,6 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
     """
     state = request.app.state
 
-    # 司会キャラクターをパースして存在チェック
-    director_char_name, director_preset_key = parse_model_id(body.director_model_id)
-    director_char = require_character(state.sqlite, director_char_name)
-    director_preset = require_preset(state.sqlite, director_preset_key)
-
     # 参加者をパースして存在チェックし、preset_id を解決する
     try:
         parsed = [_parse_participant(p.model_id) for p in body.participants]
@@ -115,10 +114,9 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
         participants.append({"char_name": p["char_name"], "preset_id": preset.id})
 
     # グループ設定を構築してDBに保存する（IDで保存）
+    # 司会モデルはシステム設定で一括管理するため group_config には含めない。
     group_config = {
         "participants": participants,
-        "director_char_name": director_char_name,
-        "director_preset_id": director_preset.id,
         "max_auto_turns": body.max_auto_turns,
         "turn_timeout_sec": body.turn_timeout_sec,
     }
@@ -157,10 +155,14 @@ async def get_group_session(request: Request, session_id: str):
 async def stream_group_message(request: Request, session_id: str, body: GroupMessageCreate):
     """ユーザーメッセージを送信し、グループターンの経過をSSEでストリーミング返却する。
 
+    body.skip=True でユーザターンをスキップして司会へ委譲できる。
+    body.target_character 指定時は司会を介さずそのキャラクターを手動指名する。
+
     SSEイベント形式:
         {"type": "user_saved",       "message": {...}}           — ユーザーメッセージ保存完了
         {"type": "speaker_decided",  "speakers": [...]}          — 司会AIが次発言者を決定
         {"type": "character_message","character": "...", "message": {...}} — キャラクター応答完了
+        {"type": "director_error",   "message": "..."}            — 司会エラー（手動再試行・手動指名で復帰可能）
         {"type": "user_turn",        "auto_turns_used": N}       — ユーザーターン開始
         {"type": "error",            "message": "...", "character": "..."} — エラー発生
         {"type": "done"}                                          — ストリーム終了
@@ -182,9 +184,18 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
 
     settings = state.sqlite.get_all_settings()
 
-    # スキップ時はユーザメッセージを保存せずに司会へ直接ターンを委譲する
+    # 手動指名キャラクターは参加者に含まれているか検証する
+    if body.target_character is not None:
+        participant_names = {p["char_name"] for p in group_config.get("participants", [])}
+        if body.target_character not in participant_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{body.target_character}' はこのグループの参加者ではありません",
+            )
+
+    # スキップ・手動指名時はユーザメッセージを保存せずに直接ターンへ委譲する
     saved_user_msg = None
-    if not body.skip:
+    if not body.skip and body.target_character is None:
         # チャット履歴インデックス登録用にセッション参加キャラIDとユーザ名を解決する
         _chat_char_ids = get_participant_char_ids(session, state.sqlite)
         _chat_user_name = state.sqlite.get_setting("user_name", "ユーザ")
@@ -225,6 +236,7 @@ async def stream_group_message(request: Request, session_id: str, body: GroupMes
                 message_to_dict=message_to_dict,
                 uploads_dir=state.uploads_dir,
                 vector_store=state.vector_store,
+                forced_speaker=body.target_character,
             ):
                 data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
                 yield f"data: {data}\n\n"

@@ -186,6 +186,8 @@ export default function App() {
   const [groupReasoningMap, setGroupReasoningMap] = useState<Record<string, string>>({});
   /** グループチャットがユーザターン待ち状態かどうか。スキップボタンの表示制御に使用する。 */
   const [isGroupUserTurn, setIsGroupUserTurn] = useState(false);
+  /** 直近のグループターンで司会がエラーになったかどうか。司会再試行ボタンの表示に使用する。 */
+  const [groupDirectorErrored, setGroupDirectorErrored] = useState(false);
   /** char_msg_id → log_message_id（8桁hex）のマッピング。バブルのログ折りたたみに使用する。 */
   const [msgLogIds, setMsgLogIds] = useState<Record<string, string>>({});
 
@@ -277,6 +279,7 @@ export default function App() {
     setGroupStreamingContent(null);
     setGroupStreamingReasoning(null);
     setIsGroupUserTurn(false);
+    setGroupDirectorErrored(false);
     // シナリオ関連の状態もリセット
     setActiveScenarioSession(null);
     setActiveScenarioTemplate(null);
@@ -363,15 +366,14 @@ export default function App() {
     }
   }, []);
 
-  /** 新規グループチャット作成。 */
+  /** 新規グループチャット作成（司会モデルはシステム設定で管理）。 */
   const handleNewGroupChat = useCallback(async (
     participants: string[],
-    directorModelId: string,
     maxAutoTurns: number,
   ) => {
     setError(null);
     try {
-      const session = await createGroupSession(participants, directorModelId, maxAutoTurns, 30);
+      const session = await createGroupSession(participants, maxAutoTurns, 30);
       setSessions((prev) => [session, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
@@ -638,16 +640,24 @@ export default function App() {
    * 受信完了後に全メッセージをサーバーから再取得して確定する。
    *
    * @param skip - true の場合、ユーザメッセージを保存せず司会へ直接ターンを委譲する（ユーザターンスキップ）。
+   * @param targetCharacter - 指定した場合、司会を介さずそのキャラクターを手動指名して発言させる。
    */
-  const _doGroupStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = [], skip = false) => {
+  const _doGroupStream = useCallback(async (
+    sessionId: string,
+    content: string,
+    imageIds: string[] = [],
+    skip = false,
+    targetCharacter: string | null = null,
+  ) => {
     setError(null);
     setSending(true);
     setIsGroupUserTurn(false);
+    setGroupDirectorErrored(false);
     setGroupWaitingCharacter(null);
 
     const optimisticId = `optimistic-${Date.now()}`;
-    // スキップ時は楽観的ユーザメッセージを追加しない
-    if (!skip) {
+    // スキップ時・手動指名時はユーザメッセージを保存しないため楽観的表示も行わない
+    if (!skip && !targetCharacter) {
       const optimisticUserMsg: ChatMessage = {
         id: optimisticId,
         session_id: sessionId,
@@ -660,7 +670,7 @@ export default function App() {
     }
 
     try {
-      for await (const event of streamGroupMessage(sessionId, content, imageIds, skip)) {
+      for await (const event of streamGroupMessage(sessionId, content, imageIds, skip, targetCharacter)) {
         const ev = event as GroupStreamEvent;
         if (ev.type === "user_saved") {
           // optimisticメッセージを確定済みユーザーメッセージで差し替える
@@ -685,6 +695,15 @@ export default function App() {
           setGroupStreamingContent(null);
           setGroupStreamingReasoning(null);
           // waitingCharacter は次の character_start か user_turn まで維持する
+        } else if (ev.type === "director_error") {
+          // 司会エラー：エラー表示しユーザターンへ戻す。司会再試行・手動指名で復帰可能。
+          setGroupWaitingCharacter(null);
+          setGroupStreamingContent(null);
+          setGroupStreamingReasoning(null);
+          setError(ev.message);
+          setGroupDirectorErrored(true);
+          setIsGroupUserTurn(true);
+          break;
         } else if (ev.type === "user_turn" || ev.type === "done") {
           setGroupWaitingCharacter(null);
           setGroupStreamingContent(null);
@@ -749,6 +768,24 @@ export default function App() {
   const handleGroupSkip = useCallback(async () => {
     if (!activeSessionId || sending) return;
     _doGroupStream(activeSessionId, "", [], true);
+  }, [activeSessionId, sending, _doGroupStream]);
+
+  /**
+   * グループチャットの司会を手動で再試行する。
+   * 司会エラー後にユーザがもう一度司会へ次発言者の判断を依頼する。
+   */
+  const handleGroupRetryDirector = useCallback(async () => {
+    if (!activeSessionId || sending) return;
+    _doGroupStream(activeSessionId, "", [], true);
+  }, [activeSessionId, sending, _doGroupStream]);
+
+  /**
+   * グループチャットで任意の参加者を手動指名して発言させる。
+   * 司会を介さず指定キャラクターに直接リクエストする（司会エラー時の代替手段）。
+   */
+  const handleGroupRequestCharacter = useCallback(async (charName: string) => {
+    if (!activeSessionId || sending) return;
+    _doGroupStream(activeSessionId, "", [], false, charName);
   }, [activeSessionId, sending, _doGroupStream]);
 
   /**
@@ -1126,6 +1163,9 @@ export default function App() {
             onHeaderVisibilityChange={setHeaderVisible}
             isUserTurn={isGroupUserTurn}
             onSkip={handleGroupSkip}
+            directorErrored={groupDirectorErrored}
+            onRetryDirector={handleGroupRetryDirector}
+            onRequestCharacter={handleGroupRequestCharacter}
           />
         ) : activeSessionId ? (
           <ChatView

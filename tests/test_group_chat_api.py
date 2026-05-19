@@ -49,8 +49,6 @@ def _fake_group_session(
             {"char_name": "はる", "preset_id": "preset-sonnet"},
             {"char_name": "Chotgor君", "preset_id": "preset-gemini"},
         ],
-        "director_char_name": "はる",
-        "director_preset_id": "preset-sonnet",
         "max_auto_turns": 3,
         "turn_timeout_sec": 30,
     }
@@ -148,7 +146,6 @@ class TestCreateGroupSession:
                 {"model_id": "はる@Sonnet"},
                 {"model_id": "Chotgor君@Gemini"},
             ],
-            "director_model_id": "はる@Sonnet",
             "max_auto_turns": 3,
         })
 
@@ -183,7 +180,6 @@ class TestCreateGroupSession:
                 {"model_id": "存在しない@Preset"},
                 {"model_id": "はる@Sonnet"},
             ],
-            "director_model_id": "存在しない@Preset",
         })
 
         assert res.status_code == 404
@@ -198,7 +194,6 @@ class TestCreateGroupSession:
                 {"model_id": "はるだけ"},
                 {"model_id": "Chotgor君@Gemini"},
             ],
-            "director_model_id": "はる@Sonnet",
         })
 
         assert res.status_code == 400
@@ -213,7 +208,6 @@ class TestCreateGroupSession:
                 {"model_id": "はる@Sonnet"},
                 {"model_id": "Chotgor君@Gemini"},
             ],
-            "director_model_id": "はる@Sonnet",
             "max_auto_turns": 5,
         })
 
@@ -230,7 +224,6 @@ class TestCreateGroupSession:
                 {"model_id": "はる@Sonnet"},
                 {"model_id": "Chotgor君@Gemini"},
             ],
-            "director_model_id": "はる@Sonnet",
             "max_auto_turns": 4,
         })
 
@@ -500,6 +493,96 @@ class TestStreamGroupMessage:
         events = _parse_sse(res.text)
         types = [e["type"] for e in events]
         assert "error" in types
+
+    def test_target_character_not_participant_returns_400(self):
+        """参加者でないキャラクターを target_character に指定したとき 400 を返すこと。
+
+        手動指名は参加者リストに含まれるキャラクターのみ許可される。
+        存在しないキャラを指名した場合、バリデーションで弾かれることを確認する。
+        """
+        sid = str(uuid.uuid4())
+        session = _fake_group_session(sid=sid)
+
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = session
+        sqlite.get_all_settings.return_value = {}
+
+        client = TestClient(_make_app(sqlite))
+        res = client.post(
+            f"/api/group/sessions/{sid}/messages/stream",
+            json={"content": "", "target_character": "部外者"},
+        )
+
+        assert res.status_code == 400
+
+    def test_target_character_forwards_forced_speaker_without_saving_user_msg(self):
+        """target_character 指定時、run_group_turn に forced_speaker が渡され、
+        ユーザメッセージは保存されない（user_saved イベントが出ない）こと。
+
+        手動指名はユーザ発話を伴わない介入のため、ユーザメッセージを保存せず
+        指定キャラクターを強制発言させることを検証する。
+        """
+        sid = str(uuid.uuid4())
+        session = _fake_group_session(sid=sid)
+
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = session
+        sqlite.list_chat_messages.return_value = []
+        sqlite.update_chat_session.return_value = session
+        sqlite.get_all_settings.return_value = {}
+
+        captured: dict = {}
+
+        async def fake_group_turn(*args, **kwargs):
+            captured.update(kwargs)
+            yield ("user_turn", {"auto_turns_used": 1})
+
+        with patch("backend.api.group_chat.run_group_turn", side_effect=fake_group_turn):
+            client = TestClient(_make_app(sqlite))
+            res = client.post(
+                f"/api/group/sessions/{sid}/messages/stream",
+                json={"content": "", "target_character": "はる"},
+            )
+
+        # 手動指名キャラクターが forced_speaker として run_group_turn に渡ること
+        assert captured.get("forced_speaker") == "はる"
+        # ユーザメッセージは保存されないこと
+        sqlite.create_chat_message.assert_not_called()
+        # user_saved イベントが含まれないこと
+        types = [e["type"] for e in _parse_sse(res.text)]
+        assert "user_saved" not in types
+
+    def test_director_error_event_is_passed_through(self):
+        """run_group_turn が director_error を yield したとき、SSEに含まれること。
+
+        司会エラーがフロントエンドへ伝播し、ユーザが再試行・手動指名できるよう
+        にするためのイベントが欠落しないことを検証する。
+        """
+        sid = str(uuid.uuid4())
+        session = _fake_group_session(sid=sid)
+        user_msg = self._make_user_msg(sid)
+
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = session
+        sqlite.create_chat_message.return_value = user_msg
+        sqlite.list_chat_messages.return_value = [user_msg]
+        sqlite.update_chat_session.return_value = session
+        sqlite.get_all_settings.return_value = {}
+
+        async def fake_group_turn(*args, **kwargs):
+            yield ("director_error", {"message": "司会モデルの応答に失敗しました。"})
+
+        with patch("backend.api.group_chat.run_group_turn", side_effect=fake_group_turn):
+            client = TestClient(_make_app(sqlite))
+            res = client.post(
+                f"/api/group/sessions/{sid}/messages/stream",
+                json={"content": "こんにちは"},
+            )
+
+        events = _parse_sse(res.text)
+        director_err = next((e for e in events if e["type"] == "director_error"), None)
+        assert director_err is not None
+        assert "司会" in director_err["message"]
 
 
 # ---------------------------------------------------------------------------

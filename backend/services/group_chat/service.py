@@ -185,19 +185,25 @@ async def run_group_turn(
     message_to_dict,
     uploads_dir: str = "",
     vector_store=None,
+    forced_speaker: str | None = None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザー発言後の自動ターンを実行し、SSEイベントをyieldする非同期ジェネレーター。
 
     各キャラクターを順番にストリーミング処理する（1on1を複数回行う形）。
 
+    司会モデルはシステム設定 `group_director_preset_id`（翻訳モデルと同様の
+    ユーティリティモデル）を使用する。未設定・古いセッションの場合は
+    group_config 内の旧 `director_preset_id` をフォールバックとして使う。
+
     Yields:
-        ("speaker_decided",     {"speakers": [str]})                              — 司会AIが発言者を一括決定
+        ("speaker_decided",     {"speakers": [str]})                              — 司会が発言者を一括決定
         ("character_start",     {"character": str})                               — キャラクター応答開始
         ("character_reasoning", {"character": str, "content": str})               — 思考・想起記憶（リアルタイム）
         ("character_chunk",     {"character": str, "content": str})               — 応答テキスト
         ("character_done",      {"character": str, "message": dict})              — 応答完了・DB保存済み
         ("character_exited",    {"character": str, "system_message": dict})       — キャラクター退席・システムメッセージ保存済み
         ("all_exited",          {"system_message": dict})                         — 全員退席・システムメッセージ保存済み
+        ("director_error",      {"message": str})                                — 司会エラー（ユーザーが手動再試行できる）
         ("user_turn",           {"auto_turns_used": int})                         — ユーザーターンへ戻す
         ("error",               {"message": str, "character": str})               — エラー
 
@@ -209,10 +215,16 @@ async def run_group_turn(
         chat_service: 各キャラクターのLLM呼び出しに使用するChatServiceインスタンス。
         message_to_dict: ChatMessage ORM を dict に変換する関数（循環インポート回避のため外部から注入）。
         uploads_dir: 画像ファイルの保存ディレクトリパス。
+        forced_speaker: 指定された場合、最初のターンは司会を介さずこのキャラクターを
+                        強制的に発言させる（ユーザーによる手動指名）。発言後は通常通り
+                        司会が引き継いで自動ターンを継続する。
     """
     participants = group_config.get("participants", [])
-    director_char_name = group_config.get("director_char_name", "")
-    director_preset_id = group_config.get("director_preset_id", "")
+    # 司会プリセットはシステム設定を優先し、古いセッションのみ group_config をフォールバックする
+    director_preset_id = (
+        settings.get("group_director_preset_id")
+        or group_config.get("director_preset_id", "")
+    )
     max_auto_turns = int(group_config.get("max_auto_turns", 3))
     user_name = settings.get("user_name", "ユーザ")
     all_char_names = {p["char_name"] for p in participants}
@@ -225,6 +237,7 @@ async def run_group_turn(
             _participant_char_ids = get_participant_char_ids(current_session, sqlite)
 
     auto_turn_count = 0
+    first_turn = True
 
     while True:
         # 最新の会話履歴・セッション退席状態を取得する
@@ -238,39 +251,56 @@ async def run_group_turn(
             yield ("user_turn", {"auto_turns_used": auto_turn_count})
             return
 
-        # 司会AIに次の発言者を問い合わせる（退席済みキャラクターを除外して渡す）
-        next_speakers = await decide_next_speakers(
-            history=history,
-            participants=participants,
-            sqlite=sqlite,
-            settings=settings,
-            director_char_name=director_char_name,
-            director_preset_id=director_preset_id,
-            user_name=user_name,
-            exited_chars=exited_chars,
-        )
+        if first_turn and forced_speaker:
+            # ユーザーによる手動指名: 司会を介さず指定キャラクターを発言させる
+            if forced_speaker in exited_set:
+                logger.info("手動指名キャラクターは退席済み session=%s char=%s", session_id, forced_speaker)
+                yield ("user_turn", {"auto_turns_used": auto_turn_count})
+                return
+            logger.info("手動指名ターン session=%s char=%s", session_id, forced_speaker)
+            next_speakers = [forced_speaker]
+        else:
+            # 司会モデルに次の発言者を問い合わせる（退席済みキャラクターを除外して渡す）
+            if not director_preset_id:
+                logger.warning("司会モデル未設定 session=%s", session_id)
+                yield ("director_error", {
+                    "message": "司会モデルが設定されていません。Settings画面で司会モデルを設定してください。",
+                })
+                return
 
-        # None はエラー（プリセット未発見・LLM障害）→ユーザーターンへ戻す
-        if next_speakers is None:
-            logger.warning("director エラーによりユーザーターンへ session=%s", session_id)
-            yield ("user_turn", {"auto_turns_used": auto_turn_count})
-            return
+            next_speakers = await decide_next_speakers(
+                history=history,
+                participants=participants,
+                sqlite=sqlite,
+                settings=settings,
+                director_preset_id=director_preset_id,
+                user_name=user_name,
+                exited_chars=exited_chars,
+            )
 
-        # [] は司会の意図的なユーザーターン指示、または上限超過
-        if not next_speakers:
-            logger.debug("ユーザーターン指示 session=%s auto_turns=%d", session_id, auto_turn_count)
-            yield ("user_turn", {"auto_turns_used": auto_turn_count})
-            return
-        if auto_turn_count >= max_auto_turns:
-            logger.info("最大自動ターン数到達 session=%s auto_turns=%d", session_id, auto_turn_count)
-            yield ("user_turn", {"auto_turns_used": auto_turn_count})
-            return
+            # None はエラー（プリセット未発見・LLM障害）→司会エラーとしてユーザーへ通知
+            if next_speakers is None:
+                logger.warning("司会エラー session=%s", session_id)
+                yield ("director_error", {
+                    "message": "司会モデルの応答に失敗しました。手動で再試行するか、発言者を直接指名してください。",
+                })
+                return
 
-        # 退席済みキャラクターを次発言者リストから除外する（司会の誤指名対策）
-        next_speakers = [s for s in next_speakers if s not in exited_set]
-        if not next_speakers:
-            yield ("user_turn", {"auto_turns_used": auto_turn_count})
-            return
+            # [] は司会の意図的なユーザーターン指示
+            if not next_speakers:
+                logger.debug("ユーザーターン指示 session=%s auto_turns=%d", session_id, auto_turn_count)
+                yield ("user_turn", {"auto_turns_used": auto_turn_count})
+                return
+            if auto_turn_count >= max_auto_turns:
+                logger.info("最大自動ターン数到達 session=%s auto_turns=%d", session_id, auto_turn_count)
+                yield ("user_turn", {"auto_turns_used": auto_turn_count})
+                return
+
+            # 退席済みキャラクターを次発言者リストから除外する（司会の誤指名対策）
+            next_speakers = [s for s in next_speakers if s not in exited_set]
+            if not next_speakers:
+                yield ("user_turn", {"auto_turns_used": auto_turn_count})
+                return
 
         # 司会AIの決定を一括通知する
         logger.info("発言者決定 session=%s turn=%d speakers=%s", session_id, auto_turn_count + 1, next_speakers)
@@ -317,3 +347,4 @@ async def run_group_turn(
             return
 
         auto_turn_count += 1
+        first_turn = False
