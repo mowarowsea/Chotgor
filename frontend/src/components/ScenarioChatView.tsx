@@ -246,7 +246,6 @@ interface UserBubbleRowProps {
   /** 表示する発話本体。再ストリーム後に親が turns を入れ替えると変わる。 */
   content: string;
   speaker_name: string;
-  avatarSrc: string | null;
   /** 編集アイコンを表示するか（送信中・終了セッション時は無効）。 */
   canEdit: boolean;
   /** 編集確定時のコールバック。新しい本文を受け取る。 */
@@ -259,7 +258,7 @@ interface UserBubbleRowProps {
  *   - 鉛筆クリックでインライン textarea に切り替わる
  *   - textarea で Shift+Enter で送信、Esc でキャンセル
  *
- * シナリオ固有の差分はアバター（右側に小さい円形）のみ。
+ * ユーザ発話はアバターを表示しない（右寄せのバブルのみ）。
  *
  * パフォーマンス: 末尾の `React.memo` でラップされる（同名定数を後段で再代入）。
  * 親から inline closure で渡る `onCommit` を比較対象から外し、
@@ -268,7 +267,6 @@ interface UserBubbleRowProps {
 function UserBubbleRowImpl({
   content,
   speaker_name,
-  avatarSrc,
   canEdit,
   onCommit,
 }: UserBubbleRowProps) {
@@ -309,10 +307,10 @@ function UserBubbleRowImpl({
     // スクロール時のフレーム落ちを軽減する目的。contain-intrinsic-size は概算プレース
     // ホルダーで、レンダリング後は実寸に置き換わる（スクロールバー長の予測精度向上）。
     <div
-      className="flex justify-end gap-2.5 group"
+      className="flex justify-end group"
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
     >
-      <div className="flex flex-col items-end max-w-[70%] w-full">
+      <div className="flex flex-col items-end max-w-[75%] w-full">
         <span className="text-[11px] text-ch-t4 mb-0.5 pr-1">{speaker_name}</span>
         {editing ? (
           <div className="flex flex-col gap-2 w-full">
@@ -365,7 +363,6 @@ function UserBubbleRowImpl({
           </div>
         )}
       </div>
-      <Avatar name={speaker_name} src={avatarSrc} />
     </div>
   );
 }
@@ -523,7 +520,6 @@ const UserBubbleRow = React.memo(UserBubbleRowImpl, (prev, next) => {
   return (
     prev.content === next.content &&
     prev.speaker_name === next.speaker_name &&
-    prev.avatarSrc === next.avatarSrc &&
     prev.canEdit === next.canEdit
   );
 });
@@ -669,7 +665,6 @@ export default function ScenarioChatView({
                 key={t.id}
                 content={t.content}
                 speaker_name={t.speaker_name}
-                avatarSrc={resolveAvatar(t.speaker_type, t.speaker_name)}
                 canEdit={session.status === "active" && !sending}
                 onCommit={(newContent) => onEditUserTurn(t.id, newContent)}
               />
