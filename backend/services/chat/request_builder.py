@@ -39,7 +39,7 @@ _CHOTGOR_MEMORY_PHILOSOPHY = """\
 
 # ワーキングメモリの操作ガイド（tool-use プロバイダー向け）
 _WORKING_MEMORY_TOOLS_HINT = """\
-### ワーキングメモリ（並行する認知ストリーム）
+### ワーキングメモリ（並行する短期記憶ストリーム）
 気になっている課題・話題、持続的な感情/身体状態、相手との関係は「スレッド」として
 ワーキングメモリに記録できます。スレッド一覧は上に記されています。
 
@@ -128,8 +128,8 @@ def _build_chotgor_block(
         1. POWER_RECALL
         2. CARVE_NARRATIVE
         3. SWITCH_ANGLE（available_presets が非空の場合のみ）
-        4. POST_THREAD / OPEN_THREAD（ワーキングメモリ・tool-use 時のみ）
-        5. INSCRIBE_MEMORY
+        4. INSCRIBE_MEMORY
+        5. POST_THREAD / OPEN_THREAD（ワーキングメモリ・tool-use 時のみ）
 
     Args:
         use_tools: True なら tool-use 形式、False ならタグ形式の説明を使う。
@@ -146,11 +146,11 @@ def _build_chotgor_block(
         parts.append(CARVE_NARRATIVE_TOOLS_HINT)
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=True))
-        parts.append(_WORKING_MEMORY_TOOLS_HINT)
         parts.append(
-            "この会話で「覚えておきたい」「強く印象に残った」と感じたことがあれば "
+            "この会話で長期記憶として特に「覚えておきたい」「強く印象に残った」と感じたことがあれば "
             "`inscribe_memory` ツールを使って記憶できます。"
         )
+        parts.append(_WORKING_MEMORY_TOOLS_HINT)
     else:
         parts.append(POWER_RECALL_TAG_GUIDE)
         parts.append(CARVE_NARRATIVE_TAG_GUIDE)
