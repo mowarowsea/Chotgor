@@ -88,6 +88,7 @@ import ScenarioChatView from "./components/ScenarioChatView";
 import type { PendingBubble } from "./components/ScenarioChatView";
 import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
+import { useTheme } from "./hooks/useTheme";
 
 /** アプリ全体のルートコンポーネント。 */
 export default function App() {
@@ -113,6 +114,8 @@ export default function App() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   /** スクロール下方向でヘッダーを隠す。上スクロールまたはセッション未選択時は表示する。 */
   const [headerVisible, setHeaderVisible] = useState(true);
+  /** ライト/ダークテーマの状態と切り替え関数。 */
+  const { dark, toggle: toggleTheme } = useTheme();
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -894,7 +897,7 @@ export default function App() {
       <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
         {/* トップバー: ハンバーガートグル + セッション情報。スクロール方向に応じて表示切り替え。 */}
         <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${headerVisible ? "max-h-20" : "max-h-0"}`}>
-          <div className="flex items-center gap-3 px-3 py-2 bg-ch-bg/95 backdrop-blur-sm" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="flex items-center gap-3 px-3 py-2 bg-ch-bg/95 backdrop-blur-sm" style={{ borderBottom: "1px solid var(--ch-sep)" }}>
             <button
               onClick={() => setSidebarOpen((o) => !o)}
               className="text-ch-t3 p-1.5 rounded hover:text-ch-t1 transition-colors shrink-0"
@@ -947,29 +950,49 @@ export default function App() {
               <span className="text-ch-t2 text-sm tracking-widest uppercase" style={{ letterSpacing: "0.2em", fontSize: "0.7rem" }}>Chotgor</span>
             ) : null}
 
-            {/* エクスポートボタン */}
-            {activeSessionId &&
-              ((isScenarioSession && scenarioTurns.length > 0) ||
-                (!isScenarioSession && messages.length > 0)) && (
+            {/* 右側ボタン群: テーマ切り替え + エクスポート */}
+            <div className="ml-auto flex items-center gap-1">
               <button
-                onClick={() => setExportDialogOpen(true)}
-                title="会話をエクスポート"
-                className="ml-auto text-ch-t3 hover:text-ch-t2 p-1.5 rounded transition-colors"
-                aria-label="会話をエクスポート"
+                onClick={toggleTheme}
+                title={dark ? "ライトテーマに切り替え" : "ダークテーマに切り替え"}
+                className="text-ch-t3 hover:text-ch-t2 p-1.5 rounded transition-colors"
+                aria-label="テーマを切り替え"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                </svg>
+                {dark ? (
+                  /* 太陽アイコン（ライトへ） */
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
+                  </svg>
+                ) : (
+                  /* 月アイコン（ダークへ） */
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
+                  </svg>
+                )}
               </button>
-            )}
+              {activeSessionId &&
+                ((isScenarioSession && scenarioTurns.length > 0) ||
+                  (!isScenarioSession && messages.length > 0)) && (
+                <button
+                  onClick={() => setExportDialogOpen(true)}
+                  title="会話をエクスポート"
+                  className="text-ch-t3 hover:text-ch-t2 p-1.5 rounded transition-colors"
+                  aria-label="会話をエクスポート"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
         {/* エラーバナー */}
         {error && (
-          <div className="bg-red-950/50 text-red-300 text-xs px-4 py-2 flex justify-between items-center shrink-0" style={{ borderBottom: "1px solid rgba(220,60,60,0.15)" }}>
+          <div className="bg-red-500/10 text-red-600 dark:text-red-300 text-xs px-4 py-2 flex justify-between items-center shrink-0" style={{ borderBottom: "1px solid rgba(220,60,60,0.2)" }}>
             <span>{error}</span>
-            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-200 ml-4">✕</button>
+            <button onClick={() => setError(null)} className="text-red-500 hover:text-red-400 ml-4">✕</button>
           </div>
         )}
 

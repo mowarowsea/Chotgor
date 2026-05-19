@@ -96,7 +96,7 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
         title="SELF_DRIFT"
         className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-colors text-ch-accent-t"
         style={{
-          background: "rgba(77,140,103,0.12)",
+          background: "oklch(50% 0.13 226 / 0.12)",
           border: "1px solid rgba(72,130,96,0.22)",
         }}
       >
@@ -117,7 +117,7 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
           style={{
             top: panelPos.top,
             left: panelPos.left,
-            border: "1px solid rgba(255,255,255,0.10)",
+            border: "1px solid var(--ch-sep)",
           }}
         >
           <div className="flex items-center justify-between">
@@ -140,8 +140,8 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
                   onClick={() => handleToggle(drift)}
                   className="mt-0.5 shrink-0 w-8 h-4 rounded-full transition-colors"
                   style={{
-                    background: drift.enabled ? "rgba(77,140,103,0.55)" : "rgba(255,255,255,0.08)",
-                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: drift.enabled ? "oklch(50% 0.13 226 / 0.55)" : "var(--ch-sep)",
+                    border: "1px solid var(--ch-sep)",
                   }}
                   title={drift.enabled ? "OFFにする" : "ONにする"}
                 >

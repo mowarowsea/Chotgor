@@ -4,24 +4,7 @@
  */
 import { useEffect, useRef } from "react";
 import type { ChatMessage } from "../api";
-import { CharacterBubble, CharacterAvatar, UserBubble, ThinkingBlock } from "./ChatBubbles";
-
-/**
- * キャラクターごとのカラーパレット。
- * バックエンドのバッジカラーに合わせた霧中の翡翠系。
- */
-/**
- * キャラクターごとのカラーパレット。
- * キャラクター名にのみ使用する色。背景はすべてニュートラルサーフェス (bg-ch-s2) を共用する。
- */
-const CHAR_COLORS = [
-  { bg: "bg-ch-s2", text: "text-ch-accent-t" },         // jade green (アクセント)
-  { bg: "bg-ch-s2", text: "text-[#6090c0]" },           // steel blue
-  { bg: "bg-ch-s2", text: "text-[#a878c8]" },           // muted violet
-  { bg: "bg-ch-s2", text: "text-[#c89060]" },           // amber
-  { bg: "bg-ch-s2", text: "text-[#c87090]" },           // rose
-  { bg: "bg-ch-s2", text: "text-[#60a8c0]" },           // cyan
-];
+import { CharacterBubble, CharacterAvatar, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
 
 interface Props {
     /** 表示するメッセージ一覧 */
@@ -96,14 +79,11 @@ export default function MessageList({
         return id ? `/api/characters/${id}/image` : undefined;
     };
 
-    /** キャラクター名からカラーパレットのインデックスを返す。 */
-    const getCharColor = (charName: string) => {
-        if (participantNames.length === 0) {
-            return CHAR_COLORS[0];
-        }
-        const idx = participantNames.indexOf(charName);
-        return CHAR_COLORS[idx >= 0 ? idx % CHAR_COLORS.length : 0];
-    };
+    /**
+     * キャラクター別配色バブル（cb0〜cb9）を使うかどうか。
+     * グループチャット（参加者名リストあり）でのみ true。1on1 はニュートラル面。
+     */
+    const colored = participantNames.length > 0;
 
     /** メッセージ追加・ストリーミング・待機中は最下部へスクロールする。 */
     useEffect(() => {
@@ -149,7 +129,8 @@ export default function MessageList({
     };
 
     return (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-8 py-6 space-y-6" onScroll={handleScroll}>
+        <div className="flex-1 overflow-y-auto overflow-x-hidden" onScroll={handleScroll}>
+          <div className="max-w-[760px] mx-auto px-4 sm:px-6 py-6 space-y-5">
             {messages.length === 0 && !sending && !waitingCharacter && (
                 <p className="text-ch-t4 text-xs text-center mt-20">
                     {emptyMessage}
@@ -171,17 +152,15 @@ export default function MessageList({
                 }
 
                 const charName = msg.character_name ?? characterName;
-                const displayName = msg.preset_name ? `${charName}@${msg.preset_name}` : charName;
-                const color = getCharColor(charName);
 
                 return (
                     <CharacterBubble
                         key={msg.id}
-                        characterName={displayName}
+                        characterName={charName}
+                        presetName={msg.preset_name}
                         content={msg.content}
                         reasoning={reasoningMap[msg.id]}
-                        avatarBg={color.bg}
-                        nameColor={color.text}
+                        colored={colored}
                         sending={sending}
                         imageUrl={getCharImageUrl(charName)}
                         logMessageId={msgLogIds[msg.id]}
@@ -201,24 +180,21 @@ export default function MessageList({
             {/* ストリーミング中 */}
             {sending && (streamingReasoning || (streamingContent !== null && streamingContent.trim().length > 0)) && (() => {
                 const streamCharName = waitingCharacter ?? characterName;
-                const color = getCharColor(streamCharName);
                 return (
-                    <div>
-                        {/* ヘッダー行 */}
-                        <div className="flex items-center gap-3 mb-2">
-                            <CharacterAvatar characterName={streamCharName} imageUrl={getCharImageUrl(streamCharName)} bgClass={color.bg} />
-                            <span className={`text-xs font-medium ${color.text}`}>{streamCharName}</span>
-                        </div>
-                        {/* コンテンツ */}
-                        <div className="pl-[12px] space-y-1">
+                    <div className="flex gap-2.5 max-w-[88%]">
+                        <CharacterAvatar characterName={streamCharName} imageUrl={getCharImageUrl(streamCharName)} size={28} />
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1 text-[11px]">
+                                <span className="font-semibold text-ch-t2">{streamCharName}</span>
+                            </div>
                             {streamingReasoning && (
-                                <ThinkingBlock content={streamingReasoning} streaming />
+                                <div className="mb-1"><ThinkingBlock content={streamingReasoning} streaming /></div>
                             )}
                             {streamingContent !== null && streamingContent.trim().length > 0 && (
-                                <div className="text-ch-t1 text-sm leading-relaxed whitespace-pre-wrap">
-                                    {streamingContent}
-                                    <span className="animate-pulse inline-block ml-0.5 text-ch-accent-t">▌</span>
-                                </div>
+                                <Bubble kind="character" colored={colored} characterName={streamCharName}>
+                                    <span className="whitespace-pre-wrap">{streamingContent}</span>
+                                    <span className="animate-pulse inline-block ml-0.5 text-ch-accent">▌</span>
+                                </Bubble>
                             )}
                         </div>
                     </div>
@@ -228,14 +204,13 @@ export default function MessageList({
             {/* 応答待機インジケーター */}
             {(waitingCharacter || sending) && !streamingReasoning && (streamingContent === null || streamingContent.trim().length === 0) && (() => {
                 const charName = waitingCharacter ?? characterName;
-                const color = getCharColor(charName);
                 return (
-                    <div>
-                        <div className="flex items-center gap-2 mb-1.5">
-                            <CharacterAvatar characterName={charName} imageUrl={getCharImageUrl(charName)} bgClass={color.bg} />
-                            <span className={`text-xs font-medium ${color.text}`}>{charName}</span>
-                        </div>
-                        <div className="pl-[12px]">
+                    <div className="flex gap-2.5">
+                        <CharacterAvatar characterName={charName} imageUrl={getCharImageUrl(charName)} size={28} />
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1 text-[11px]">
+                                <span className="font-semibold text-ch-t2">{charName}</span>
+                            </div>
                             <span className="text-ch-t3 text-sm animate-pulse">…</span>
                         </div>
                     </div>
@@ -243,6 +218,7 @@ export default function MessageList({
             })()}
 
             <div ref={bottomRef} />
+          </div>
         </div>
     );
 }

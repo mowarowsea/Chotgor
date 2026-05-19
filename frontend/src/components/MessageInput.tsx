@@ -19,6 +19,11 @@ interface Props {
     allowImages?: boolean;
     /** ユーザターンスキップコールバック。指定時はスキップボタンを表示する。 */
     onSkip?: () => void;
+    /**
+     * 空文字の送信を許可するかどうか（デフォルト: false）。
+     * シナリオの「空欄送信で GM が無言のまま物語を進める」モード用。
+     */
+    allowEmptySend?: boolean;
 }
 
 /** ユーザのメッセージ入力を受け付けるコンポーネント。 */
@@ -29,6 +34,7 @@ export default function MessageInput({
     placeholder = "メッセージを入力… (Ctrl+Enter で送信)",
     allowImages = true,
     onSkip,
+    allowEmptySend = false,
 }: Props) {
     // 下書きの localStorage 連携は useDraft hook に集約済み。
     // setInput("") を呼ぶと hook 内の useEffect が走り、localStorage の該当キーも削除される。
@@ -56,7 +62,8 @@ export default function MessageInput({
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const text = input.trim();
-        if (!text || sending) return;
+        if (sending) return;
+        if (!text && !allowEmptySend) return;
 
         const files = [...pendingFiles];
         // setInput("") は useDraft の useEffect 経由で localStorage キーも削除する。
@@ -91,109 +98,112 @@ export default function MessageInput({
         setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
     };
 
+    /** 送信可能かどうか。送信ボタンの配色に使う（空送信許可時は常に点灯）。 */
+    const canSend = !sending && (!!input.trim() || allowEmptySend);
+
     return (
         <form
             onSubmit={handleSubmit}
-            className="px-4 sm:px-8 py-3 sm:py-4 flex flex-col gap-2"
-            style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
+            style={{ borderTop: "1px solid var(--ch-sep)" }}
         >
-            {/* 添付画像サムネイルプレビュー */}
-            {allowImages && pendingFiles.length > 0 && (
-                <div className="flex gap-2 flex-wrap">
-                    {pendingFiles.map((file, idx) => (
-                        <div key={idx} className="relative group/thumb">
-                            <img
-                                src={URL.createObjectURL(file)}
-                                alt={file.name}
-                                className="w-14 h-14 object-cover rounded-lg"
-                                style={{ border: "1px solid rgba(255,255,255,0.12)" }}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => removePendingFile(idx)}
-                                className="absolute -top-1 -right-1 w-4 h-4 bg-ch-s3 hover:bg-ch-s2 rounded-full text-[10px] text-ch-t2 flex items-center justify-center leading-none"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            )}
+            {/* 中央寄せ・最大幅 760px のコンテナ */}
+            <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-2.5 pb-3.5 flex flex-col gap-2">
+                {/* 添付画像サムネイルプレビュー */}
+                {allowImages && pendingFiles.length > 0 && (
+                    <div className="flex gap-2 flex-wrap">
+                        {pendingFiles.map((file, idx) => (
+                            <div key={idx} className="relative group/thumb">
+                                <img
+                                    src={URL.createObjectURL(file)}
+                                    alt={file.name}
+                                    className="w-14 h-11 object-cover rounded-md"
+                                    style={{ border: "1px solid var(--ch-sep2)" }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => removePendingFile(idx)}
+                                    className="absolute -top-1 -right-1 w-4 h-4 bg-ch-s3 hover:bg-ch-s2 rounded-full text-[10px] text-ch-t2 flex items-center justify-center leading-none"
+                                    style={{ border: "1px solid var(--ch-sep2)" }}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
 
-            {/* テキストエリアとオーバーレイボタンのコンテナ */}
-            <div className="relative">
-                <textarea
-                    ref={textareaRef}
-                    value={input}
-                    onChange={handleChange}
-                    onKeyDown={handleKeyDown}
-                    placeholder={placeholder}
-                    rows={1}
-                    disabled={sending}
-                    className="w-full bg-ch-s1 text-ch-t1 placeholder-ch-t4 rounded-xl px-4 pt-3 pb-9 text-sm resize-none focus:outline-none disabled:opacity-40 overflow-y-auto"
-                    style={{
-                        minHeight: "50px",
-                        maxHeight: "240px",
-                        border: "1px solid rgba(255,255,255,0.08)",
-                    }}
-                    onFocus={(e) => {
-                        e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
-                        e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255,255,255,0.03)";
-                    }}
-                    onBlur={(e) => {
-                        e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
-                        e.currentTarget.style.boxShadow = "none";
-                    }}
-                />
+                {/* 入力行: 下線スタイルのテキストエリア + ツールボタン */}
+                <div className="flex gap-2 items-end">
+                    <textarea
+                        ref={textareaRef}
+                        value={input}
+                        onChange={handleChange}
+                        onKeyDown={handleKeyDown}
+                        placeholder={placeholder}
+                        rows={1}
+                        disabled={sending}
+                        className="flex-1 bg-transparent text-ch-t1 placeholder-ch-t3 text-sm resize-none focus:outline-none disabled:opacity-40 overflow-y-auto py-1.5 leading-relaxed"
+                        style={{
+                            minHeight: "32px",
+                            maxHeight: "240px",
+                            borderBottom: "1px solid var(--ch-sep)",
+                            transition: "border-color .2s",
+                        }}
+                        onFocus={(e) => {
+                            e.currentTarget.style.borderBottomColor = "var(--ch-accent)";
+                        }}
+                        onBlur={(e) => {
+                            e.currentTarget.style.borderBottomColor = "var(--ch-sep)";
+                        }}
+                    />
 
-                {/* テキストエリア内下部のオーバーレイツールバー */}
-                <div className="absolute bottom-2 left-2 right-2 flex items-center">
-                    {/* ファイル添付ボタン（左端） */}
-                    {allowImages && (
-                        <>
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*"
-                                multiple
-                                className="hidden"
-                                onChange={handleFileChange}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={sending}
-                                title="画像を添付"
-                                className="text-ch-t3 hover:text-ch-t2 disabled:opacity-30 transition-colors p-1 rounded shrink-0"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
-                                </svg>
-                            </button>
-                        </>
-                    )}
-
-                    {/* 送信ボタン・スキップボタン（右端） */}
-                    <div className="ml-auto flex items-center gap-2">
+                    {/* ツールボタン群（右端・下揃え） */}
+                    <div className="flex items-center gap-1.5 shrink-0 pb-1">
+                        {allowImages && (
+                            <>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    className="hidden"
+                                    onChange={handleFileChange}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={sending}
+                                    title="画像を添付"
+                                    className="text-ch-t3 hover:text-ch-t2 disabled:opacity-30 transition-colors p-0.5 rounded"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={17} height={17}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
+                                    </svg>
+                                </button>
+                            </>
+                        )}
                         {onSkip && (
                             <button
                                 type="button"
                                 onClick={onSkip}
                                 disabled={sending}
                                 className="text-xs text-ch-t3 hover:text-ch-t2 disabled:opacity-30 rounded px-2 py-0.5 transition-colors"
-                                style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+                                style={{ border: "1px solid var(--ch-sep2)" }}
                             >
                                 スキップ
                             </button>
                         )}
-                        {/* 送信ボタン — 緑アクセントを使う唯一の構造UI */}
+                        {/* 送信ボタン: 入力がある時のみアクセント色で点灯する */}
                         <button
                             type="submit"
-                            disabled={!input.trim() || sending}
-                            className="text-ch-accent-t bg-ch-accent-dim rounded px-3 py-0.5 text-xs font-medium transition-colors disabled:opacity-25"
-                            style={{ border: "1px solid rgba(77,140,103,0.35)" }}
+                            disabled={!canSend}
+                            title="送信 (Ctrl+Enter)"
+                            className="p-0.5 rounded transition-colors disabled:cursor-not-allowed"
+                            style={{ color: canSend ? "var(--ch-accent)" : "var(--ch-t3)" }}
                         >
-                            送信
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width={18} height={18}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5M5 12l7-7 7 7" />
+                            </svg>
                         </button>
                     </div>
                 </div>

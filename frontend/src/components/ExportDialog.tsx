@@ -92,7 +92,7 @@ export default function ExportDialog({
 
   /** テキストエリアの共通スタイル */
   const textareaStyle = {
-    border: "1px solid rgba(255,255,255,0.16)",
+    border: "1px solid var(--ch-sep2)",
     outline: "none",
   };
 
@@ -103,13 +103,13 @@ export default function ExportDialog({
     >
       <div
         className="bg-ch-s1 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col"
-        style={{ border: "1px solid rgba(255,255,255,0.16)" }}
+        style={{ border: "1px solid var(--ch-sep2)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ヘッダー */}
         <div
           className="flex items-center justify-between px-5 py-4 shrink-0"
-          style={{ borderBottom: "1px solid rgba(255,255,255,0.09)" }}
+          style={{ borderBottom: "1px solid var(--ch-sep)" }}
         >
           <h2 className="text-ch-t1 font-medium text-sm">会話をエクスポート</h2>
           <button
@@ -157,7 +157,7 @@ export default function ExportDialog({
           </div>
 
           {/* フォーマットカスタマイズ（折りたたみ） */}
-          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.12)" }}>
+          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--ch-sep2)" }}>
             <button
               className="w-full flex items-center gap-2 px-4 py-2.5 text-ch-t3 hover:text-ch-t2 hover:bg-ch-s2/60 transition-colors text-left text-xs"
               onClick={() => setFormatOpen((o) => !o)}
@@ -166,7 +166,7 @@ export default function ExportDialog({
               <span>フォーマットをカスタマイズ</span>
             </button>
             {formatOpen && (
-              <div className="px-4 py-3 space-y-3" style={{ borderTop: "1px solid rgba(255,255,255,0.09)" }}>
+              <div className="px-4 py-3 space-y-3" style={{ borderTop: "1px solid var(--ch-sep)" }}>
                 <p className="text-ch-t3 text-xs leading-relaxed">
                   使用できる変数:{" "}
                   {[
@@ -193,8 +193,8 @@ export default function ExportDialog({
                     spellCheck={false}
                     className="w-full bg-ch-bg text-ch-t1 text-xs font-mono rounded-lg px-3 py-2 resize-y focus:outline-none"
                     style={textareaStyle}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.35)"; }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.16)"; }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = "var(--ch-sep2)"; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = "var(--ch-sep2)"; }}
                   />
                 </div>
                 <div className="space-y-1">
@@ -206,14 +206,14 @@ export default function ExportDialog({
                     spellCheck={false}
                     className="w-full bg-ch-bg text-ch-t1 text-xs font-mono rounded-lg px-3 py-2 resize-y focus:outline-none"
                     style={textareaStyle}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.35)"; }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.16)"; }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = "var(--ch-sep2)"; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = "var(--ch-sep2)"; }}
                   />
                 </div>
                 <button
                   onClick={resetFormat}
                   className="text-ch-t3 hover:text-ch-t2 text-xs px-2 py-1 rounded transition-colors"
-                  style={{ border: "1px solid rgba(255,255,255,0.12)" }}
+                  style={{ border: "1px solid var(--ch-sep2)" }}
                 >
                   デフォルトに戻す
                 </button>
@@ -228,7 +228,7 @@ export default function ExportDialog({
             </p>
             <pre
               className="bg-ch-bg rounded-xl px-4 py-3 text-ch-t2 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed"
-              style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+              style={{ border: "1px solid var(--ch-sep)" }}
             >
               {previewText || "（メッセージなし）"}
             </pre>
@@ -238,7 +238,7 @@ export default function ExportDialog({
         {/* フッター */}
         <div
           className="px-5 py-4 flex justify-end gap-2 shrink-0"
-          style={{ borderTop: "1px solid rgba(255,255,255,0.09)" }}
+          style={{ borderTop: "1px solid var(--ch-sep)" }}
         >
           <button
             onClick={onClose}
@@ -252,7 +252,7 @@ export default function ExportDialog({
             className="text-ch-accent-t text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-30"
             style={{
               background: "rgba(22,22,22,0.9)",
-              border: "1px solid rgba(255,255,255,0.32)",
+              border: "1px solid var(--ch-sep2)",
             }}
           >
             {copied ? (

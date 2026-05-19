@@ -23,8 +23,8 @@ import type {
   ZetaNpc,
   ZetaTurn,
 } from "../api";
-import { useDraft } from "../hooks/useDraft";
-import { CopyButton, MarkdownContent } from "./ChatBubbles";
+import { CopyButton, MarkdownContent, charHue, Bubble } from "./ChatBubbles";
+import MessageInput from "./MessageInput";
 
 /** ストリーミング中の未確定吹き出し情報。
  *
@@ -95,13 +95,15 @@ function Avatar(props: {
   size?: number;
   onClick?: () => void;
 }) {
-  const size = props.size ?? 32;
+  const size = props.size ?? 28;
   const common = {
     width: size,
     height: size,
     borderRadius: "50%",
     flexShrink: 0,
   } as const;
+  // 配色はキャラクター名から導出した色相を使い、1on1 チャットのアバターと揃える。
+  const h = charHue(props.name);
   const inner = props.src ? (
     <img
       src={props.src}
@@ -116,9 +118,11 @@ function Avatar(props: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: size * 0.45,
+        fontSize: size * 0.38,
+        fontWeight: 600,
+        background: `oklch(56% 0.12 ${h} / 0.15)`,
+        color: `oklch(44% 0.14 ${h})`,
       }}
-      className="bg-ch-s2 text-ch-t2"
     >
       {avatarInitial(props.name)}
     </div>
@@ -169,7 +173,7 @@ function NpcDetailDialog({
     >
       <div
         className="bg-ch-bg rounded-xl w-full max-w-md overflow-hidden"
-        style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+        style={{ border: "1px solid var(--ch-sep)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 画像エリア（あれば大きめ） */}
@@ -218,31 +222,6 @@ function NpcDetailDialog({
       </div>
     </div>
   );
-}
-
-
-/**
- * 吹き出し本体の外観クラス。
- *
- * 改行表示は `MarkdownContent` 内部の `remarkBreaks` プラグインが `\n` → `<br>`
- * に変換して担うため、ここでは `whitespace-pre-wrap` を付けない。
- * 付けると CRLF 入力（Windows のテキストエリア）で `\r` が余計な見かけ上の
- * 空白行を生んで 1on1 チャットと見た目が変わってしまう。
- */
-function bubbleClass(speaker_type: string, is_known: boolean | null): string {
-  // text-sm は 1on1 チャットのバブル（CharacterBubble / UserBubble）と本文サイズを揃えるため。
-  if (speaker_type === "user") {
-    return "bg-ch-accent-dim text-ch-t1 px-3 py-2 rounded-lg break-words text-sm";
-  }
-  if (speaker_type === "narrator") {
-    return "text-ch-t2 px-3 py-1.5 border-l-2 border-ch-s3 break-words text-sm bg-ch-s1/40";
-  }
-  const base =
-    "bg-ch-s2 text-ch-t1 px-3 py-2 rounded-lg break-words text-sm";
-  if (is_known === false) {
-    return base + " border border-dashed border-ch-s3 opacity-90";
-  }
-  return base;
 }
 
 /**
@@ -336,11 +315,11 @@ function UserBubbleRowImpl({
     // スクロール時のフレーム落ちを軽減する目的。contain-intrinsic-size は概算プレース
     // ホルダーで、レンダリング後は実寸に置き換わる（スクロールバー長の予測精度向上）。
     <div
-      className="flex justify-end gap-2 group"
+      className="flex justify-end gap-2.5 group"
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
     >
-      <div className="flex flex-col items-end max-w-[80%] w-full">
-        <span className="text-[11px] text-ch-t3 mb-0.5 pr-1">{speaker_name}</span>
+      <div className="flex flex-col items-end max-w-[70%] w-full">
+        <span className="text-[11px] text-ch-t4 mb-0.5 pr-1">{speaker_name}</span>
         {editing ? (
           <div className="flex flex-col gap-2 w-full">
             <textarea
@@ -349,8 +328,8 @@ function UserBubbleRowImpl({
               onKeyDown={onKeyDown}
               rows={3}
               autoFocus
-              className="bg-ch-s2 text-ch-t1 rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none w-full"
-              style={{ border: "1px solid rgba(255,255,255,0.14)" }}
+              className="rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none w-full"
+              style={{ background: "rgb(var(--ch-ub))", color: "rgb(var(--ch-ut))" }}
             />
             <div className="flex gap-2 justify-end">
               <button
@@ -362,8 +341,8 @@ function UserBubbleRowImpl({
               <button
                 onClick={submit}
                 disabled={!editText.trim()}
-                className="text-ch-accent-t bg-ch-accent-dim text-xs px-3 py-1.5 rounded transition-colors disabled:opacity-30"
-                style={{ border: "1px solid rgba(77,140,103,0.30)" }}
+                className="text-white text-xs px-3 py-1.5 rounded font-medium transition-colors disabled:opacity-30"
+                style={{ background: "var(--ch-accent)" }}
               >
                 送信
               </button>
@@ -374,9 +353,9 @@ function UserBubbleRowImpl({
           </div>
         ) : (
           <div className="flex items-end gap-1 flex-row-reverse min-w-0">
-            <div className={bubbleClass("user", true)}>
+            <Bubble kind="user">
               <MarkdownContent content={trimEnd(content)} />
-            </div>
+            </Bubble>
             <div className="flex items-center gap-0.5">
               <CopyButton text={content} />
               {canEdit && (
@@ -450,14 +429,18 @@ function GMBubbleRowImpl({
   // Narrator は地の文寄せ（アバターなし、見出しなし）。
   // content-visibility: auto はビューポート外のレイアウト・ペイントをスキップ（DOM 肥大対策）。
   if (speaker_type === "narrator") {
+    // Narrator は地の文寄せ（アバターなし、見出しなし）。バブル枠を持たず斜体で流す。
     return (
       <div
-        className="flex justify-start gap-2 group"
+        className="flex justify-start gap-2.5 group"
         style={{ contentVisibility: "auto", containIntrinsicSize: "auto 100px" }}
       >
-        <div style={{ width: 32, flexShrink: 0 }} />
-        <div className="flex flex-col items-start max-w-[80%]">
-          <div className={bubbleClass(speaker_type, is_known)}>
+        <div style={{ width: 28, flexShrink: 0 }} />
+        <div className="flex flex-col items-start max-w-[88%]">
+          <div
+            className="text-sm leading-relaxed italic text-ch-t2 break-words"
+            style={{ textWrap: "pretty" }}
+          >
             <MarkdownContent content={displayContent} />
           </div>
           {actions}
@@ -470,20 +453,25 @@ function GMBubbleRowImpl({
   // content-visibility: auto はビューポート外のレイアウト・ペイントをスキップ（DOM 肥大対策）。
   return (
     <div
-      className="flex justify-start gap-2 group"
+      className="flex justify-start gap-2.5 group"
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 130px" }}
     >
       <Avatar name={speaker_name} src={avatarSrc} onClick={onAvatarClick} />
-      <div className="flex flex-col items-start max-w-[80%]">
-        <div className="text-[11px] text-ch-t3 mb-0.5">
-          {speaker_name}
+      <div className="flex flex-col items-start max-w-[88%] min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap mb-1 text-[11px]">
+          <span className="font-semibold text-ch-t2">{speaker_name}</span>
           {is_known === false && (
-            <span className="ml-1 text-[10px] text-ch-t4">(ephemeral)</span>
+            <span className="text-[10px] text-ch-t4">(ephemeral)</span>
           )}
         </div>
-        <div className={bubbleClass(speaker_type, is_known)}>
+        <Bubble
+          kind="character"
+          colored
+          characterName={speaker_name}
+          dashed={is_known === false}
+        >
           <MarkdownContent content={displayContent} />
-        </div>
+        </Bubble>
         {actions}
       </div>
     </div>
@@ -634,7 +622,7 @@ function SynopsisPanel({
   return (
     <div
       className="shrink-0 px-3 py-2 bg-ch-bg"
-      style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+      style={{ borderBottom: "1px solid var(--ch-sep)" }}
     >
       <button
         onClick={toggleOpen}
@@ -655,7 +643,7 @@ function SynopsisPanel({
                   onClick={regenerate}
                   disabled={disabled || regenerating}
                   className="text-ch-t3 hover:text-ch-t1 text-[11px] px-2 py-0.5 rounded disabled:opacity-30"
-                  style={{ border: "1px solid rgba(255,255,255,0.12)" }}
+                  style={{ border: "1px solid var(--ch-sep2)" }}
                   title="今すぐ古い履歴を要約して追記する"
                 >
                   {regenerating ? "生成中…" : "追記更新"}
@@ -664,7 +652,7 @@ function SynopsisPanel({
                   onClick={saveAuto}
                   disabled={disabled || savingAuto || autoDraft === (synopsis?.auto ?? "")}
                   className="text-ch-accent-t bg-ch-accent-dim text-[11px] px-2 py-0.5 rounded disabled:opacity-30"
-                  style={{ border: "1px solid rgba(77,140,103,0.30)" }}
+                  style={{ border: "1px solid oklch(50% 0.13 226 / 0.30)" }}
                   title="編集内容を保存（捏造記述を削除・修正するのに使う）"
                 >
                   {savingAuto ? "保存中…" : "保存"}
@@ -677,7 +665,7 @@ function SynopsisPanel({
               rows={6}
               placeholder="（履歴が上限を超えると LLM が自動で要約・追記します）"
               className="bg-ch-s1 text-ch-t1 rounded px-3 py-2 text-sm resize-y focus:outline-none"
-              style={{ border: "1px solid rgba(255,255,255,0.12)" }}
+              style={{ border: "1px solid var(--ch-sep2)" }}
             />
           </div>
           {/* manual: プレイヤー手書きの補足メモ */}
@@ -690,7 +678,7 @@ function SynopsisPanel({
                 onClick={saveManual}
                 disabled={disabled || savingManual || manualDraft === (synopsis?.manual ?? "")}
                 className="text-ch-accent-t bg-ch-accent-dim text-[11px] px-2 py-0.5 rounded disabled:opacity-30"
-                style={{ border: "1px solid rgba(77,140,103,0.30)" }}
+                style={{ border: "1px solid oklch(50% 0.13 226 / 0.30)" }}
               >
                 {savingManual ? "保存中…" : "保存"}
               </button>
@@ -701,7 +689,7 @@ function SynopsisPanel({
               rows={4}
               placeholder="例: 主人公はレイカと「絶対に裏切らない」と約束した。"
               className="bg-ch-s1 text-ch-t1 rounded px-3 py-2 text-sm resize-y focus:outline-none"
-              style={{ border: "1px solid rgba(255,255,255,0.12)" }}
+              style={{ border: "1px solid var(--ch-sep2)" }}
             />
           </div>
         </div>
@@ -737,10 +725,6 @@ export default function ScenarioChatView({
   onSynopsisChange,
   onSynopsisRegenerate,
 }: Props) {
-  // 入力下書きはセッション別に localStorage に永続化する（リロードで復元）。
-  // 1on1 の MessageInput と共通の `useDraft` hook を使う。
-  // setInput("") を呼ぶと hook 内の useEffect が走り、該当 localStorage キーも削除される。
-  const [input, setInput] = useDraft(session.id);
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
   const [npcDialogTarget, setNpcDialogTarget] = useState<ZetaNpc | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -817,24 +801,20 @@ export default function ScenarioChatView({
   };
 
   /**
-   * 送信処理。
+   * 共通 `MessageInput` からの送信を受ける。
    *
    * 入力が空の場合は「ユーザは無言で続きを促す」モード（auto_advance）で送る。
    * user turn は保存されず履歴に痕跡が残らない一方、GM プロンプトには
    * 「プレイヤーは今ターン何も発言していない」旨が OOC 指示として伝わる。
-   * sending 中は二重送信を抑止する。
+   * 画像添付はシナリオでは未対応のため第2引数（files）は無視する。
    */
-  const handleSend = () => {
-    if (sending) return;
-    const trimmed = input.trim();
+  const handleScenarioInput = (content: string) => {
+    const trimmed = content.trim();
     if (trimmed === "") {
-      // 空白のみの下書きが localStorage に残らないよう、空送信時もクリアする。
-      setInput("");
       onSend("", true);
-      return;
+    } else {
+      onSend(trimmed, false);
     }
-    setInput("");
-    onSend(trimmed, false);
   };
 
   const userPlaceholder = scenario?.user_alias ?? "プレイヤー";
@@ -848,11 +828,9 @@ export default function ScenarioChatView({
         onRegenerate={onSynopsisRegenerate}
         disabled={sending}
       />
-      {/* チャットスクロール */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3"
-      >
+      {/* チャットスクロール（1on1 と同じく最大幅 760px 中央寄せ） */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+       <div className="max-w-[760px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-5">
         {turns.length === 0 && pendingBubbles.length === 0 && (
           <div className="text-ch-t3 text-sm text-center mt-8">
             {scenario?.scenario ? (
@@ -928,43 +906,23 @@ export default function ScenarioChatView({
             GM が考えています…
           </div>
         )}
+       </div>
       </div>
 
-      {/* 入力欄 */}
+      {/* 入力欄（1on1 / グループと共通の MessageInput を使う） */}
       {session.status === "active" ? (
-        <div
-          className="shrink-0 p-3 bg-ch-bg"
-          style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
-        >
-          <div className="flex gap-2">
-            <textarea
-              className="flex-1 bg-ch-s1 text-ch-t1 rounded px-3 py-2 text-sm focus:outline-none resize-none"
-              style={{ border: "1px solid rgba(255,255,255,0.12)" }}
-              rows={2}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder={`${userPlaceholder} として発話 (Ctrl+Enter で送信 / *手を握る* で行動描写 / 空欄送信で GM が無言のまま物語を進める)`}
-              disabled={sending}
-            />
-            <button
-              onClick={handleSend}
-              disabled={sending}
-              className="bg-ch-accent-dim border border-ch-accent/30 text-ch-accent-t text-sm font-medium rounded px-4 self-stretch hover:bg-ch-accent/20 disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              送信
-            </button>
-          </div>
-        </div>
+        <MessageInput
+          sessionId={session.id}
+          sending={sending}
+          onSend={handleScenarioInput}
+          allowImages={false}
+          allowEmptySend
+          placeholder={`${userPlaceholder} として発話 (Ctrl+Enter で送信 / *手を握る* で行動描写 / 空欄送信で GM が無言のまま物語を進める)`}
+        />
       ) : (
         <div
           className="shrink-0 px-3 py-3 text-ch-t3 text-sm text-center"
-          style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
+          style={{ borderTop: "1px solid var(--ch-sep)" }}
         >
           このセッションは終了しています
         </div>

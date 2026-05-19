@@ -1,33 +1,134 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
 
 /* ================================================================
    Chotgor Front — Visual Identity 2026
-   モノクローム基調 + ジェードアクセント
+   ブルーグレー基調 + ブルーアクセント / ライト・ダーク両対応
+   配色は CSS 変数で定義し、tailwind.config.js から rgb(var(--ch-*)) 経由で参照する。
+   ダークテーマは <html data-dark> 属性で切り替える。
    ================================================================ */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── ライトテーマ（デフォルト） ──
+   グレー系トークンは Tailwind の alpha 修飾子と併用するため空白区切りの RGB チャンネルで保持する。 */
+:root {
+  --ch-bg: 244 246 249;          /* 背景 */
+  --ch-s1: 235 238 244;          /* 第1サーフェス（サイドバー・キャラバブル・入力欄） */
+  --ch-s2: 226 230 238;          /* 第2サーフェス（ホバー等） */
+  --ch-s3: 255 255 255;          /* 第3サーフェス（インプット内・パネル） */
+  --ch-t1: 24 36 58;             /* 最強テキスト */
+  --ch-t2: 106 125 148;          /* 中間テキスト */
+  --ch-t3: 176 190 202;          /* 弱テキスト */
+  --ch-t4: 198 210 220;          /* 最弱テキスト（区切り・ラベル等） */
+  --ch-accent-dim: 227 234 246;  /* 淡いアクセント背景（ボタン用） */
+  --ch-ub: 30 45 71;             /* ユーザバブル背景 */
+  --ch-ut: 221 232 242;          /* ユーザバブル文字色 */
+  --ch-emphasis: 97 102 160;            /* 強調（斜体）テキスト */
+  --ch-emphasis-mobile: 85 96 160;      /* 強調（斜体）テキスト・モバイル用 */
+
+  /* インライン style で使う完成形カラー（区切り線・コード等） */
+  --ch-sep: rgba(24, 36, 58, 0.07);
+  --ch-sep2: rgba(24, 36, 58, 0.12);
+  --ch-code-bg: rgba(24, 36, 58, 0.05);
+  --ch-code-border: rgba(24, 36, 58, 0.09);
+  --ch-overlay: rgba(10, 16, 28, 0.55);
+  --ch-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
+  --ch-accent: oklch(50% 0.13 226);
+
+  /* JSON シンタックスハイライト（RAW ログモーダル用） */
+  --json-str: #3a7e55;
+  --json-num: #2a8a80;
+  --json-null: #b05830;
+  --json-key: #8050c0;
+  --json-hl-key: #4060d8;
+  --json-hl-bg: rgba(70, 100, 210, 0.07);
+  --json-punct: #8899aa;
+}
+
+/* ── ダークテーマ ── */
+:root[data-dark] {
+  --ch-bg: 19 27 38;
+  --ch-s1: 14 22 32;
+  --ch-s2: 28 39 53;
+  --ch-s3: 26 36 51;
+  --ch-t1: 196 212 228;
+  --ch-t2: 124 142 162;
+  --ch-t3: 78 100 120;
+  --ch-t4: 52 70 92;
+  --ch-accent-dim: 26 39 64;
+  --ch-ub: 30 48 72;
+  --ch-ut: 196 212 228;
+  --ch-emphasis: 129 133 179;
+  --ch-emphasis-mobile: 129 133 179;
+
+  --ch-sep: rgba(196, 212, 228, 0.07);
+  --ch-sep2: rgba(196, 212, 228, 0.13);
+  --ch-code-bg: rgba(0, 0, 0, 0.25);
+  --ch-code-border: rgba(196, 212, 228, 0.10);
+  --ch-overlay: rgba(4, 8, 14, 0.7);
+  --ch-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+
+  --json-str: #5ab87a;
+  --json-num: #4ab8aa;
+  --json-null: #e08050;
+  --json-key: #b090e0;
+  --json-hl-key: #7090f0;
+  --json-hl-bg: rgba(90, 120, 240, 0.10);
+  --json-punct: #4e6478;
+}
+
 body {
   height: 100dvh;
   overflow: hidden;
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #090909;
+  background-color: rgb(var(--ch-bg));
+  color: rgb(var(--ch-t1));
+  transition: background-color 0.2s, color 0.2s;
 }
 
 /* カスタムスクロールバー（PC のみ） */
 @media (hover: hover) {
   ::-webkit-scrollbar       { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 999px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+  ::-webkit-scrollbar-thumb { background: var(--ch-sep2); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ch-sep2); }
   ::-webkit-scrollbar-corner { background: transparent; }
 }
 
 /* react-syntax-highlighter のコードブロックスタイル上書き */
 .markdown-code pre {
   margin: 0 !important;
+}
+
+/* ── キャラクター別バブル配色（10 色相） ──
+   キャラクター名のハッシュで安定的に .cb0〜.cb9 を割り当てる。 */
+.cb0{background:oklch(96% 0.03 212);border-color:oklch(85% 0.06 212 / 0.55)}
+.cb1{background:oklch(96% 0.03 155);border-color:oklch(85% 0.06 155 / 0.55)}
+.cb2{background:oklch(96% 0.03 38) ;border-color:oklch(85% 0.06 38  / 0.55)}
+.cb3{background:oklch(96% 0.03 290);border-color:oklch(85% 0.06 290 / 0.55)}
+.cb4{background:oklch(96% 0.03 18) ;border-color:oklch(85% 0.06 18  / 0.55)}
+.cb5{background:oklch(96% 0.03 250);border-color:oklch(85% 0.06 250 / 0.55)}
+.cb6{background:oklch(96% 0.03 180);border-color:oklch(85% 0.06 180 / 0.55)}
+.cb7{background:oklch(96% 0.03 100);border-color:oklch(85% 0.06 100 / 0.55)}
+.cb8{background:oklch(96% 0.03 330);border-color:oklch(85% 0.06 330 / 0.55)}
+.cb9{background:oklch(96% 0.03 60) ;border-color:oklch(85% 0.06 60  / 0.55)}
+:root[data-dark] .cb0{background:oklch(26% 0.04 212);border-color:oklch(38% 0.05 212 / 0.55)}
+:root[data-dark] .cb1{background:oklch(26% 0.04 155);border-color:oklch(38% 0.05 155 / 0.55)}
+:root[data-dark] .cb2{background:oklch(26% 0.04 38) ;border-color:oklch(38% 0.05 38  / 0.55)}
+:root[data-dark] .cb3{background:oklch(26% 0.04 290);border-color:oklch(38% 0.05 290 / 0.55)}
+:root[data-dark] .cb4{background:oklch(26% 0.04 18) ;border-color:oklch(38% 0.05 18  / 0.55)}
+:root[data-dark] .cb5{background:oklch(26% 0.04 250);border-color:oklch(38% 0.05 250 / 0.55)}
+:root[data-dark] .cb6{background:oklch(26% 0.04 180);border-color:oklch(38% 0.05 180 / 0.55)}
+:root[data-dark] .cb7{background:oklch(26% 0.04 100);border-color:oklch(38% 0.05 100 / 0.55)}
+:root[data-dark] .cb8{background:oklch(26% 0.04 330);border-color:oklch(38% 0.05 330 / 0.55)}
+:root[data-dark] .cb9{background:oklch(26% 0.04 60) ;border-color:oklch(38% 0.05 60  / 0.55)}
+
+/* perf: 画面外メッセージのレイアウト/描画をスキップ */
+.msg-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }

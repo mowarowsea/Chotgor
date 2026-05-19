@@ -18,6 +18,86 @@ import { fetchLogEntry, fetchRawLog, translateText } from "../api";
 import type { LogEntry, LogToolCall } from "../api";
 
 // ---------------------------------------------------------------------------
+// キャラクター配色ユーティリティ
+// ---------------------------------------------------------------------------
+
+/** キャラクター名から安定的なハッシュ値（符号なし32bit）を生成する。 */
+function nameHash(name: string): number {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+/** キャラクター名から安定的な色相（0–359）を返す。アバター配色に使う。 */
+export function charHue(name: string): number {
+  if (!name) return 200;
+  return nameHash(name) % 360;
+}
+
+/** キャラクター名から安定的なバブル配色クラス（cb0〜cb9）を返す。 */
+export function bubbleClassFor(name: string): string {
+  if (!name) return "cb5";
+  return "cb" + (nameHash(name) % 10);
+}
+
+// ---------------------------------------------------------------------------
+// Bubble — 吹き出しの「箱」だけを担う共通プリミティブ
+// ---------------------------------------------------------------------------
+
+/**
+ * 吹き出しの外観（背景・角丸・枠線）を担う共通プリミティブ。
+ * 1on1 / グループ / シナリオの全モードで同じ見た目を共有するために使う。
+ *
+ * - kind="user": 紺地・右下角を欠いた角丸
+ * - kind="character": 左上角を欠いた角丸。colored 時はキャラクター別配色（cb0〜cb9）、
+ *   それ以外はニュートラル面（bg-ch-s1）。
+ */
+export function Bubble({
+  kind,
+  characterName = "",
+  colored = false,
+  dashed = false,
+  children,
+}: {
+  kind: "user" | "character";
+  /** colored=true のときの配色決定に使うキャラクター名。 */
+  characterName?: string;
+  /** true でキャラクター別配色バブル（cb0〜cb9）。グループ/シナリオ向け。 */
+  colored?: boolean;
+  /** true で枠線を破線にする（シナリオの ephemeral NPC 用）。 */
+  dashed?: boolean;
+  children: React.ReactNode;
+}) {
+  if (kind === "user") {
+    return (
+      <div
+        className="inline-block max-w-full px-3.5 py-2 text-sm leading-relaxed overflow-hidden break-words"
+        style={{
+          background: "rgb(var(--ch-ub))",
+          color: "rgb(var(--ch-ut))",
+          borderRadius: "14px 14px 4px 14px",
+        }}
+      >
+        {children}
+      </div>
+    );
+  }
+  return (
+    <div
+      className={`inline-block max-w-full px-3.5 py-2.5 text-ch-t1 text-sm leading-relaxed break-words ${colored ? bubbleClassFor(characterName) : "bg-ch-s1"}`}
+      style={{
+        borderRadius: "4px 14px 14px 14px",
+        border: dashed ? "1px dashed" : "1px solid",
+        // colored 時は cb クラスの border-color を活かすため未指定にする。
+        borderColor: colored ? undefined : "var(--ch-sep)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ThinkingBlock
 // ---------------------------------------------------------------------------
 
@@ -75,7 +155,7 @@ function ThreadLine({ line }: { line: string }) {
   return (
     <div
       className="flex items-start gap-1.5 rounded px-2 py-0.5 my-0.5 text-xs"
-      style={{ background: "rgba(255,255,255,0.05)", color: "#b8bcc4" }}
+      style={{ background: "var(--ch-sep)", color: "#b8bcc4" }}
     >
       <span className="shrink-0 font-medium">[{type}]</span>
       <span>{rest}</span>
@@ -121,7 +201,7 @@ export function ThinkingBlock({
   const sketchLines = lines.filter((l) => !isMemoryLine(l) && !isThreadLine(l));
 
   return (
-    <div className="rounded-lg overflow-hidden text-xs mb-1" style={{ border: "1px solid rgba(255,255,255,0.07)" }}>
+    <div className="rounded-lg overflow-hidden text-xs mb-1" style={{ border: "1px solid var(--ch-sep)" }}>
       <div className="flex items-center">
         <button
           className="flex-1 flex items-center gap-1.5 px-3 py-1.5 text-ch-t3 hover:text-ch-t2 transition-colors text-left"
@@ -134,7 +214,7 @@ export function ThinkingBlock({
         {expanded && !streaming && (
           <button
             className="px-2 py-1 mr-1 text-[10px] text-ch-t4 hover:text-ch-t2 transition-colors shrink-0 rounded"
-            style={{ border: "1px solid rgba(255,255,255,0.1)" }}
+            style={{ border: "1px solid var(--ch-sep)" }}
             onClick={handleTranslate}
             disabled={translating}
             title="日本語に翻訳"
@@ -144,13 +224,13 @@ export function ThinkingBlock({
         )}
       </div>
       {expanded && (
-        <div className="px-3 py-2 font-mono leading-relaxed" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        <div className="px-3 py-2 font-mono leading-relaxed" style={{ borderTop: "1px solid var(--ch-sep)" }}>
           {memoryLines.length > 0 && (
             <>
               <div className="flex items-center gap-2 mb-1.5">
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
                 <span className="text-ch-t4 shrink-0 text-[10px]">想起した記憶</span>
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
               </div>
               <div className="mb-1.5">
                 {memoryLines.map((line, i) => (
@@ -162,9 +242,9 @@ export function ThinkingBlock({
           {threadLines.length > 0 && (
             <>
               <div className="flex items-center gap-2 my-1.5">
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
                 <span className="text-ch-t4 shrink-0 text-[10px]">想起したスレッド</span>
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
               </div>
               <div className="mb-1.5">
                 {threadLines.map((line, i) => (
@@ -176,9 +256,9 @@ export function ThinkingBlock({
           {sketchLines.length > 0 && (
             <>
               <div className="flex items-center gap-2 my-1.5">
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
                 <span className="text-ch-t4 shrink-0 text-[10px]">スケッチ</span>
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
               </div>
               <div className="text-ch-t3 whitespace-pre-wrap">
                 {sketchLines.join("\n")}
@@ -193,9 +273,9 @@ export function ThinkingBlock({
           {translation && (
             <>
               <div className="flex items-center gap-2 mt-2 mb-1.5">
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
                 <span className="text-ch-t4 shrink-0 text-[10px]">翻訳</span>
-                <hr className="flex-1" style={{ borderColor: "rgba(255,255,255,0.07)" }} />
+                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
               </div>
               <div className="text-ch-t3 whitespace-pre-wrap">
                 {translation}
@@ -258,23 +338,36 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
 /**
  * キャラクターアバター。
  * imageUrl が指定されている場合は画像を表示し、未指定またはロード失敗時はイニシャルを表示する。
+ * 配色はキャラクター名から導出した色相（hue）を使う。
  */
 export function CharacterAvatar({
   characterName,
   imageUrl,
-  bgClass = "bg-ch-s2",
+  size = 28,
+  hue,
 }: {
   characterName: string;
   imageUrl?: string;
-  bgClass?: string;
+  /** アバターの直径（px）。デフォルト 28。 */
+  size?: number;
+  /** 色相（0–359）。省略時はキャラクター名から導出する。 */
+  hue?: number;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
+  const h = hue ?? charHue(characterName);
+  const showImg = imageUrl && !imgFailed;
   return (
     <div
-      className={`w-[50px] h-[50px] rounded-full ${bgClass} flex items-center justify-center text-xl font-semibold shrink-0 overflow-hidden`}
-      style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+      className="rounded-full flex items-center justify-center font-semibold shrink-0 overflow-hidden"
+      style={{
+        width: size,
+        height: size,
+        fontSize: size * 0.38,
+        background: showImg ? undefined : `oklch(56% 0.12 ${h} / 0.15)`,
+        color: `oklch(44% 0.14 ${h})`,
+      }}
     >
-      {imageUrl && !imgFailed ? (
+      {showImg ? (
         <img
           src={imageUrl}
           alt=""
@@ -282,7 +375,7 @@ export function CharacterAvatar({
           onError={() => setImgFailed(true)}
         />
       ) : (
-        <span className="text-ch-t2">{characterName.charAt(0)}</span>
+        characterName.charAt(0)
       )}
     </div>
   );
@@ -318,7 +411,7 @@ function ToolCallRow({
   const [tagExpanded, setTagExpanded] = useState(false);
 
   return (
-    <div className="rounded px-2 py-1.5 text-[11px]" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+    <div className="rounded px-2 py-1.5 text-[11px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
       {/* ヘッダー: feature / preset */}
       <div className="flex items-center gap-1.5 mb-1 text-ch-t3">
         {tc.feature && <span className="font-mono">{tc.feature}</span>}
@@ -368,7 +461,7 @@ function ToolCallRow({
       {tagExpanded && tc.tags.length > 0 && (
         <div className="mt-1.5 space-y-1">
           {tc.tags.map((tag, i) => (
-            <div key={i} className="rounded px-2 py-1 text-[10px]" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+            <div key={i} className="rounded px-2 py-1 text-[10px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
               <div className="text-ch-t3 font-mono mb-0.5">{tag.tag_name}</div>
               {Object.entries(tag.fields).map(([k, v]) => (
                 <div key={k} className="flex gap-1.5 text-ch-t3">
@@ -536,11 +629,11 @@ function RawLogModal({ messageId, filename, onClose }: { messageId: string; file
     >
       <div
         className="bg-ch-s1 rounded-lg w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden"
-        style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+        style={{ border: "1px solid var(--ch-sep)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ヘッダー */}
-        <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+        <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ borderBottom: "1px solid var(--ch-sep)" }}>
           <span className="text-ch-t3 text-xs font-mono truncate">{filename}</span>
           <button onClick={onClose} className="text-ch-t3 hover:text-ch-t1 ml-4 text-sm">✕</button>
         </div>
@@ -589,7 +682,7 @@ function LogPanel({ logMessageId }: { logMessageId: string }) {
     : [];
 
   return (
-    <div className="mt-1.5" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+    <div className="mt-1.5" style={{ borderTop: "1px solid var(--ch-sep)" }}>
       {/* トリガー行 */}
       <button
         onClick={handleToggle}
@@ -671,25 +764,31 @@ function LogPanel({ logMessageId }: { logMessageId: string }) {
 // ---------------------------------------------------------------------------
 
 /**
- * キャラクターのチャットメッセージ（ドキュメントスタイル）。
- * バブルボックスなし。アバター+名前ヘッダーの下にインデントされたテキストを流す。
+ * キャラクターのチャットメッセージ（バブルスタイル）。
+ * 小型アバター + 名前行（@プリセット）の右に、左上角を欠いた角丸バブルを表示する。
+ * グループ/シナリオではキャラクター別の配色（cb0〜cb9）を、1on1 ではニュートラル面を使う。
  */
 export function CharacterBubble({
   characterName,
+  presetName,
   content,
   reasoning,
-  avatarBg = "bg-ch-s2",
-  nameColor = "text-ch-accent-t",
+  colored = false,
+  hue,
   sending = false,
   onRegenerate,
   imageUrl,
   logMessageId,
 }: {
   characterName: string;
+  /** プリセット名。指定時は名前行に @プリセット を表示する。 */
+  presetName?: string;
   content: string;
   reasoning?: string;
-  avatarBg?: string;
-  nameColor?: string;
+  /** true のときキャラクター別配色バブル（cb0〜cb9）を使う（グループ/シナリオ向け）。 */
+  colored?: boolean;
+  /** アバターの色相。省略時はキャラクター名から導出する。 */
+  hue?: number;
   sending?: boolean;
   onRegenerate?: () => void;
   imageUrl?: string;
@@ -697,19 +796,25 @@ export function CharacterBubble({
   logMessageId?: string;
 }) {
   return (
-    <div className="group" data-testid="character-bubble">
-      {/* ヘッダー行: アバター + キャラクター名 */}
-      <div className="flex items-center gap-3 mb-2">
-        <CharacterAvatar characterName={characterName} imageUrl={imageUrl} bgClass={avatarBg} />
-        <span className={`text-xs font-medium ${nameColor}`}>{characterName}</span>
-      </div>
+    <div className="group flex gap-2.5 max-w-[88%]" data-testid="character-bubble">
+      <CharacterAvatar characterName={characterName} imageUrl={imageUrl} hue={hue} size={28} />
 
-      {/* コンテンツ: gap12px インデント */}
-      <div className="pl-[12px] space-y-1">
-        {reasoning && <ThinkingBlock content={reasoning} />}
-        <div className="text-ch-t1 text-sm leading-relaxed">
-          <MarkdownContent content={content} />
+      <div className="flex-1 min-w-0">
+        {/* 名前行: キャラクター名 + @プリセット */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-1 text-[11px]">
+          <span className="font-semibold text-ch-t2">{characterName}</span>
+          {presetName && (
+            <span className="font-mono text-ch-t3 text-[0.95em]">@{presetName}</span>
+          )}
         </div>
+
+        {reasoning && <div className="mb-1"><ThinkingBlock content={reasoning} /></div>}
+
+        {/* バブル本体 */}
+        <Bubble kind="character" colored={colored} characterName={characterName}>
+          <MarkdownContent content={content} />
+        </Bubble>
+
         {!sending && (
           <div className="flex items-center gap-0.5 -ml-1 mt-0.5">
             <CopyButton text={content} />
@@ -774,7 +879,7 @@ export function UserBubble({
   };
 
   return (
-    <div className="group flex flex-col items-end gap-0.5">
+    <div className="group flex flex-col items-end gap-0.5 max-w-[70%] ml-auto">
       {/* ユーザー名ラベル */}
       <span className="text-[11px] text-ch-t4 pr-1">{userName}</span>
 
@@ -782,15 +887,15 @@ export function UserBubble({
       {images && images.length > 0 && <ImageGrid imageIds={images} />}
 
       {editing ? (
-        <div className="flex flex-col gap-2 w-full max-w-[80%]">
+        <div className="flex flex-col gap-2 w-full">
           <textarea
             value={editText}
             onChange={(e) => setEditText(e.target.value)}
             onKeyDown={handleEditKeyDown}
             rows={3}
             autoFocus
-            className="bg-ch-s2 text-ch-t1 rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none w-full"
-            style={{ border: "1px solid rgba(255,255,255,0.14)" }}
+            className="rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none w-full"
+            style={{ background: "rgb(var(--ch-ub))", color: "rgb(var(--ch-ut))" }}
           />
           <div className="flex gap-2 justify-end">
             <button
@@ -802,24 +907,18 @@ export function UserBubble({
             <button
               onClick={handleEditSubmit}
               disabled={!editText.trim()}
-              className="text-ch-accent-t bg-ch-accent-dim text-xs px-3 py-1.5 rounded transition-colors disabled:opacity-30"
-              style={{ border: "1px solid rgba(77,140,103,0.30)" }}
+              className="text-white text-xs px-3 py-1.5 rounded font-medium transition-colors disabled:opacity-30"
+              style={{ background: "var(--ch-accent)" }}
             >
               送信
             </button>
           </div>
         </div>
       ) : (
-        <div className="flex items-end gap-1 flex-row-reverse min-w-0 max-w-[80%]">
-          <div
-            className="rounded-xl px-4 py-2 text-ch-t1 text-sm overflow-hidden"
-            style={{
-              background: "rgba(22,22,22,0.95)",
-              border: "1px solid rgba(255,255,255,0.08)",
-            }}
-          >
+        <div className="flex items-end gap-1 flex-row-reverse min-w-0 w-full">
+          <Bubble kind="user">
             <MarkdownContent content={content} />
-          </div>
+          </Bubble>
           {!sending && (
             <div className="flex items-center gap-0.5">
               <CopyButton text={content} />
@@ -861,7 +960,7 @@ export function ImageGrid({ imageIds }: { imageIds: string[] }) {
             type="button"
             onClick={() => setModalSrc(`/api/chat/images/${id}`)}
             className="block rounded-lg overflow-hidden transition-opacity hover:opacity-80"
-            style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+            style={{ border: "1px solid var(--ch-sep)" }}
           >
             <img
               src={`/api/chat/images/${id}`}
@@ -1006,7 +1105,7 @@ function MarkdownContentImpl({ content }: { content: string }) {
           if (isBlock) {
             return (
               <CodeBlock codeText={codeText}>
-                <div className="bg-ch-bg rounded-lg p-3 overflow-x-auto" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div className="bg-ch-bg rounded-lg p-3 overflow-x-auto" style={{ border: "1px solid var(--ch-sep)" }}>
                   <code className="font-mono text-[0.78rem] text-ch-t1 whitespace-pre">{codeText}</code>
                 </div>
               </CodeBlock>
@@ -1023,7 +1122,9 @@ function MarkdownContentImpl({ content }: { content: string }) {
           return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>;
         },
         strong({ children }) {
-          return <strong className="font-semibold text-ch-t1">{children}</strong>;
+          // 色は指定せず親から継承する。キャラバブル（text-ch-t1）でも
+          // ユーザバブル（紺地・var(--ut)）でも正しい文字色になる。
+          return <strong className="font-semibold">{children}</strong>;
         },
         em({ children }) {
           // 斜体は行動描写・強調として使われるので青みグレーの emphasis 色を当てる。
@@ -1034,15 +1135,15 @@ function MarkdownContentImpl({ content }: { content: string }) {
             </em>
           );
         },
-        h1({ children }) { return <h1 className="text-base font-semibold mt-3 mb-1 text-ch-t1">{children}</h1>; },
-        h2({ children }) { return <h2 className="text-sm font-semibold mt-3 mb-1 text-ch-t1">{children}</h2>; },
-        h3({ children }) { return <h3 className="text-sm font-medium mt-2 mb-1 text-ch-t1">{children}</h3>; },
-        ul({ children }) { return <ul className="list-disc list-inside mb-2 space-y-0.5 text-ch-t1">{children}</ul>; },
-        ol({ children }) { return <ol className="list-decimal list-inside mb-2 space-y-0.5 text-ch-t1">{children}</ol>; },
-        hr() { return <hr className="my-3" style={{ borderColor: "rgba(255,255,255,0.10)" }} />; },
+        h1({ children }) { return <h1 className="text-base font-semibold mt-3 mb-1">{children}</h1>; },
+        h2({ children }) { return <h2 className="text-sm font-semibold mt-3 mb-1">{children}</h2>; },
+        h3({ children }) { return <h3 className="text-sm font-medium mt-2 mb-1">{children}</h3>; },
+        ul({ children }) { return <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>; },
+        ol({ children }) { return <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>; },
+        hr() { return <hr className="my-3" style={{ borderColor: "var(--ch-sep)" }} />; },
         blockquote({ children }) {
           return (
-            <blockquote className="pl-3 text-ch-t2 my-2 italic" style={{ borderLeft: "2px solid rgba(255,255,255,0.15)" }}>
+            <blockquote className="pl-3 text-ch-t2 my-2 italic" style={{ borderLeft: "2px solid var(--ch-sep2)" }}>
               {children}
             </blockquote>
           );

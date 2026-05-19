@@ -214,15 +214,15 @@ export default function Sidebar({
         transition-transform duration-200 ease-in-out
         ${isOpen ? "translate-x-0" : "-translate-x-full sm:hidden"}
       `}
-      style={{ borderRight: "1px solid rgba(255,255,255,0.09)" }}
+      style={{ borderRight: "1px solid var(--ch-sep)" }}
     >
       {/* ヘッダー */}
-      <div className="px-4 pt-4 pb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.09)" }}>
+      <div className="px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--ch-sep)" }}>
         {/* ブランド */}
         <div className="mb-3">
           <span
-            className="text-ch-accent-t text-xs font-semibold tracking-widest uppercase"
-            style={{ textShadow: "0 0 20px rgba(106,168,130,0.35)", letterSpacing: "0.22em" }}
+            className="text-ch-t1 text-[15px] font-bold"
+            style={{ letterSpacing: "-0.02em" }}
           >
             Chotgor
           </span>
@@ -235,7 +235,7 @@ export default function Sidebar({
           disabled={isGroupSession}
           className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 mb-2 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed appearance-none"
           style={{
-            border: "1px solid rgba(255,255,255,0.16)",
+            border: "1px solid var(--ch-sep2)",
             backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234a5e55'/%3E%3C/svg%3E\")",
             backgroundRepeat: "no-repeat",
             backgroundPosition: "right 0.5rem center",
@@ -264,7 +264,7 @@ export default function Sidebar({
 
         {/* 新規チャット作成パネル（Afterglow設定） */}
         {newChatPanelOpen && (
-          <div className="mt-1 space-y-2 rounded p-2.5" style={{ border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,10,0.7)" }}>
+          <div className="mt-1 space-y-2 rounded p-2.5" style={{ border: "1px solid var(--ch-sep2)", background: "rgb(var(--ch-s3))" }}>
             <label className="flex items-start gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -303,7 +303,7 @@ export default function Sidebar({
 
         {/* グループチャット作成パネル */}
         {groupPanelOpen && (
-          <div className="mt-1 space-y-2.5 rounded p-2.5" style={{ border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,10,0.7)" }}>
+          <div className="mt-1 space-y-2.5 rounded p-2.5" style={{ border: "1px solid var(--ch-sep2)", background: "rgb(var(--ch-s3))" }}>
             <p className="text-ch-t3 text-xs">参加者を選択（2名以上）</p>
             <div className="space-y-1 max-h-32 overflow-y-auto">
               {models.length === 0 && (
@@ -331,7 +331,7 @@ export default function Sidebar({
                 value={directorModelId}
                 onChange={(e) => setDirectorModelId(e.target.value)}
                 className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 focus:outline-none appearance-none"
-                style={{ border: "1px solid rgba(255,255,255,0.16)" }}
+                style={{ border: "1px solid var(--ch-sep2)" }}
               >
                 <option value="">司会役を選択...</option>
                 {models.map((m) => (
@@ -389,7 +389,7 @@ export default function Sidebar({
         {scenarioPanelOpen && (
           <div
             className="mt-1 space-y-2 rounded p-2.5"
-            style={{ border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,10,0.7)" }}
+            style={{ border: "1px solid var(--ch-sep2)", background: "rgb(var(--ch-s3))" }}
           >
             <div>
               <p className="text-ch-t3 text-xs mb-1">シナリオを選択</p>
@@ -397,7 +397,7 @@ export default function Sidebar({
                 value={scSelectedId}
                 onChange={(e) => setScSelectedId(e.target.value)}
                 className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 focus:outline-none appearance-none"
-                style={{ border: "1px solid rgba(255,255,255,0.16)" }}
+                style={{ border: "1px solid var(--ch-sep2)" }}
               >
                 <option value="">— select scenario —</option>
                 {templates.map((t) => (
@@ -427,7 +427,7 @@ export default function Sidebar({
                 onChange={(e) => setScTitle(e.target.value)}
                 placeholder="空欄ならシナリオ名をコピー"
                 className="w-full bg-ch-bg text-ch-t1 text-xs rounded px-2 py-1.5 focus:outline-none"
-                style={{ border: "1px solid rgba(255,255,255,0.16)" }}
+                style={{ border: "1px solid var(--ch-sep2)" }}
               />
             </div>
             <button
@@ -487,7 +487,7 @@ export default function Sidebar({
               <input
                 ref={editInputRef}
                 className="flex-1 bg-ch-s3 text-ch-t1 text-xs rounded px-1.5 outline-none min-w-0"
-                style={{ border: "1px solid rgba(255,255,255,0.25)" }}
+                style={{ border: "1px solid var(--ch-sep2)" }}
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
                 onBlur={() => handleTitleEditCommit(s.id)}
