@@ -44,10 +44,16 @@ export default function MessageInput({
     const fileInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    /** テキストエリアの高さをコンテンツに合わせて調整する。 */
+    /**
+     * テキストエリアの高さをコンテンツに合わせて調整する。
+     * 内容が最大高さ（240px）に収まる間は overflow を hidden にして
+     * 不要なスクロールバーを出さない。超えたときだけ auto で表示する。
+     */
     const adjustHeight = (el: HTMLTextAreaElement) => {
         el.style.height = "auto";
-        el.style.height = Math.min(el.scrollHeight, 240) + "px";
+        const full = el.scrollHeight;
+        el.style.height = Math.min(full, 240) + "px";
+        el.style.overflowY = full > 240 ? "auto" : "hidden";
     };
 
     // 復元された下書きに合わせて textarea の高さを調整する。
@@ -142,10 +148,12 @@ export default function MessageInput({
                         placeholder={placeholder}
                         rows={1}
                         disabled={sending}
-                        className="flex-1 bg-transparent text-ch-t1 placeholder-ch-t3 text-sm resize-none focus:outline-none disabled:opacity-40 overflow-y-auto py-1.5 leading-relaxed"
+                        className="flex-1 bg-transparent text-ch-t1 placeholder-ch-t3 text-sm resize-none focus:outline-none disabled:opacity-40 py-1.5 leading-relaxed"
                         style={{
                             minHeight: "32px",
                             maxHeight: "240px",
+                            // 初期は hidden。内容が 240px を超えたら adjustHeight が auto にする。
+                            overflowY: "hidden",
                             borderBottom: "1px solid var(--ch-sep)",
                             transition: "border-color .2s",
                         }}
