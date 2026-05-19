@@ -18,7 +18,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ScenarioSession,
-  ScenarioSynopsis,
   ScenarioTemplate,
   ZetaNpc,
   ZetaTurn,
@@ -65,12 +64,6 @@ interface Props {
   onEditUserTurn: (turnId: string, newContent: string) => void;
   /** 最後のユーザターン以降を削除して同内容で再ストリーム。 */
   onRegenerate: () => void;
-  /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
-  synopsis: ScenarioSynopsis | null;
-  /** あらすじを部分更新（auto / manual のどちらか / 両方）。 */
-  onSynopsisChange: (patch: { auto?: string; manual?: string }) => Promise<void>;
-  /** synopsis_auto への自動追記フローを手動起動する。 */
-  onSynopsisRegenerate: () => Promise<void>;
 }
 
 /** 文字列の末尾空白・改行を取り除く（表示時のノイズ除去）。 */
@@ -535,169 +528,6 @@ const UserBubbleRow = React.memo(UserBubbleRowImpl, (prev, next) => {
   );
 });
 
-/**
- * あらすじパネル — セッション単位の自動要約 (auto) と手動補足 (manual) の編集 UI。
- *
- * 記憶捏造対策として導入:
- *   - synopsis_auto: LLM が古い経緯を自動で要約・追記したもの。GM プロンプトのメイン。
- *     ユーザは UI からここを自由編集できる（捏造記述を発見したら削除・修正できる）。
- *   - synopsis_manual: プレイヤーが手で書き留めた補足メモ。自動更新で破壊されない。
- *     GM への補正指示として機能する（auto と矛盾するときは manual が優先される）。
- *
- * 折りたたみ式で、デフォルトは閉じている（ターン履歴を遮らないため）。
- */
-function SynopsisPanel({
-  synopsis,
-  onChange,
-  onRegenerate,
-  disabled,
-}: {
-  synopsis: ScenarioSynopsis | null;
-  onChange: (patch: { auto?: string; manual?: string }) => Promise<void>;
-  onRegenerate: () => Promise<void>;
-  disabled: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [autoDraft, setAutoDraft] = useState("");
-  const [manualDraft, setManualDraft] = useState("");
-  const [savingAuto, setSavingAuto] = useState(false);
-  const [savingManual, setSavingManual] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
-
-  // synopsis（サーバ最新値）が変わったら、未編集の draft を同期する。
-  // 編集中の値はパネルを閉じない限り保持される（誤って巻き戻されないため）。
-  useEffect(() => {
-    if (!open) {
-      setAutoDraft(synopsis?.auto ?? "");
-      setManualDraft(synopsis?.manual ?? "");
-    }
-  }, [synopsis, open]);
-
-  const toggleOpen = () => {
-    if (!open) {
-      // 開く瞬間にサーバ最新値で draft を初期化（前回の draft が残らないように）
-      setAutoDraft(synopsis?.auto ?? "");
-      setManualDraft(synopsis?.manual ?? "");
-    }
-    setOpen(!open);
-  };
-
-  const saveAuto = async () => {
-    if (savingAuto) return;
-    setSavingAuto(true);
-    try {
-      await onChange({ auto: autoDraft });
-    } finally {
-      setSavingAuto(false);
-    }
-  };
-
-  const saveManual = async () => {
-    if (savingManual) return;
-    setSavingManual(true);
-    try {
-      await onChange({ manual: manualDraft });
-    } finally {
-      setSavingManual(false);
-    }
-  };
-
-  const regenerate = async () => {
-    if (regenerating) return;
-    setRegenerating(true);
-    try {
-      await onRegenerate();
-    } finally {
-      setRegenerating(false);
-    }
-  };
-
-  const autoLen = (synopsis?.auto ?? "").length;
-  const manualLen = (synopsis?.manual ?? "").length;
-  const summary = open
-    ? ""
-    : autoLen + manualLen === 0
-      ? "（未生成）"
-      : `自動 ${autoLen} 文字 / 補足 ${manualLen} 文字`;
-
-  return (
-    <div
-      className="shrink-0 px-3 py-2 bg-ch-bg"
-      style={{ borderBottom: "1px solid var(--ch-sep)" }}
-    >
-      <button
-        onClick={toggleOpen}
-        className="text-ch-t2 hover:text-ch-t1 text-xs flex items-center gap-2 w-full"
-      >
-        <span>{open ? "▼" : "▶"}</span>
-        <span className="font-medium">これまでのあらすじ</span>
-        <span className="text-ch-t4 ml-auto">{summary}</span>
-      </button>
-      {open && (
-        <div className="mt-2 flex flex-col gap-3">
-          {/* auto: メインのあらすじ（LLM 自動生成・追記） */}
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[11px] text-ch-t3">
-              <span>自動あらすじ（メイン。LLM が古い履歴を要約・追記）</span>
-              <div className="flex gap-2">
-                <button
-                  onClick={regenerate}
-                  disabled={disabled || regenerating}
-                  className="text-ch-t3 hover:text-ch-t1 text-[11px] px-2 py-0.5 rounded disabled:opacity-30"
-                  style={{ border: "1px solid var(--ch-sep2)" }}
-                  title="今すぐ古い履歴を要約して追記する"
-                >
-                  {regenerating ? "生成中…" : "追記更新"}
-                </button>
-                <button
-                  onClick={saveAuto}
-                  disabled={disabled || savingAuto || autoDraft === (synopsis?.auto ?? "")}
-                  className="text-ch-accent-t bg-ch-accent-dim text-[11px] px-2 py-0.5 rounded disabled:opacity-30"
-                  style={{ border: "1px solid oklch(50% 0.13 226 / 0.30)" }}
-                  title="編集内容を保存（捏造記述を削除・修正するのに使う）"
-                >
-                  {savingAuto ? "保存中…" : "保存"}
-                </button>
-              </div>
-            </div>
-            <textarea
-              value={autoDraft}
-              onChange={(e) => setAutoDraft(e.target.value)}
-              rows={6}
-              placeholder="（履歴が上限を超えると LLM が自動で要約・追記します）"
-              className="bg-ch-s1 text-ch-t1 rounded px-3 py-2 text-sm resize-y focus:outline-none"
-              style={{ border: "1px solid var(--ch-sep2)" }}
-            />
-          </div>
-          {/* manual: プレイヤー手書きの補足メモ */}
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[11px] text-ch-t3">
-              <span>
-                補足メモ（手書き。自動更新では破壊されない・GM への補正指示）
-              </span>
-              <button
-                onClick={saveManual}
-                disabled={disabled || savingManual || manualDraft === (synopsis?.manual ?? "")}
-                className="text-ch-accent-t bg-ch-accent-dim text-[11px] px-2 py-0.5 rounded disabled:opacity-30"
-                style={{ border: "1px solid oklch(50% 0.13 226 / 0.30)" }}
-              >
-                {savingManual ? "保存中…" : "保存"}
-              </button>
-            </div>
-            <textarea
-              value={manualDraft}
-              onChange={(e) => setManualDraft(e.target.value)}
-              rows={4}
-              placeholder="例: 主人公はレイカと「絶対に裏切らない」と約束した。"
-              className="bg-ch-s1 text-ch-t1 rounded px-3 py-2 text-sm resize-y focus:outline-none"
-              style={{ border: "1px solid var(--ch-sep2)" }}
-            />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
   return (
@@ -722,9 +552,6 @@ export default function ScenarioChatView({
   onSend,
   onEditUserTurn,
   onRegenerate,
-  synopsis,
-  onSynopsisChange,
-  onSynopsisRegenerate,
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
   const [npcDialogTarget, setNpcDialogTarget] = useState<ZetaNpc | null>(null);
@@ -822,16 +649,9 @@ export default function ScenarioChatView({
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
-      {/* あらすじパネル（記憶捏造対策・折りたたみ式） */}
-      <SynopsisPanel
-        synopsis={synopsis}
-        onChange={onSynopsisChange}
-        onRegenerate={onSynopsisRegenerate}
-        disabled={sending}
-      />
-      {/* チャットスクロール（1on1 と同じく最大幅 760px 中央寄せ） */}
+      {/* チャットスクロール（1on1 と同じく最大幅 760px 中央寄せ・浮遊ヘッダー分の上余白） */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
-       <div className="max-w-[760px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-5">
+       <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 flex flex-col gap-5">
         {turns.length === 0 && pendingBubbles.length === 0 && (
           <div className="text-ch-t3 text-sm text-center mt-8">
             {scenario?.scenario ? (

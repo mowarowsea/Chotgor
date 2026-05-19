@@ -37,8 +37,6 @@ interface Props {
    * 1on1チャットと同じシグネチャ（imageIds には再送する画像IDリスト）。
    */
   onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
-  /** スクロール方向変化コールバック。MessageList から App へ伝播する。 */
-  onHeaderVisibilityChange?: (visible: boolean) => void;
   /** ユーザターン待ち状態かどうか。true のときスキップボタンを表示する。 */
   isUserTurn?: boolean;
   /** ユーザターンスキップコールバック。スキップボタン押下時に呼ばれる。 */
@@ -58,7 +56,6 @@ export default function GroupChatView({
   reasoningMap,
   onSend,
   onRetry,
-  onHeaderVisibilityChange,
   isUserTurn = false,
   onSkip,
 }: Props) {
@@ -75,7 +72,6 @@ export default function GroupChatView({
         streamingReasoning={streamingReasoning}
         emptyMessage="グループチャットを始めましょう"
         onRetry={onRetry}
-        onHeaderVisibilityChange={onHeaderVisibilityChange}
       />
       <MessageInput
         sessionId={sessionId}

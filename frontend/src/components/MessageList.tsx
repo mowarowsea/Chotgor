@@ -11,8 +11,6 @@ interface Props {
     messages: ChatMessage[];
     /** ユーザ名（表示用） */
     userName: string;
-    /** スクロール方向変化コールバック。下スクロールで false、上スクロールで true を渡す。 */
-    onHeaderVisibilityChange?: (visible: boolean) => void;
     /** 送信処理中フラグ */
     sending: boolean;
     /** 完了済みメッセージIDと reasoning テキストの対応マップ */
@@ -49,26 +47,10 @@ export default function MessageList({
     waitingCharacter = null,
     characterName = "キャラクター",
     emptyMessage = "メッセージを送ってみてください",
-    onHeaderVisibilityChange,
     onRetry,
     msgLogIds = {},
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
-    /** スクロール方向検知用: 直前のスクロール位置を記録する。 */
-    const lastScrollYRef = useRef(0);
-    /** 自動スクロール中フラグ。プログラム起因のスクロールイベントでヘッダーが暴れないよう抑制する。 */
-    const autoScrollingRef = useRef(false);
-    /** 自動スクロール終了タイマーID。 */
-    const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    /**
-     * ヘッダーアニメーション中フラグ。
-     * ヘッダー表示切り替え後 400ms はスクロール判定をロックし、
-     * アニメーションによるレイアウトリフロー → スクロールイベント → ヘッダー再切り替えの
-     * フィードバックループを断ち切る。
-     */
-    const headerTransitioningRef = useRef(false);
-    /** ヘッダーアニメーションロック解除タイマーID。 */
-    const headerTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     /**
      * キャラクター別配色バブル（cb0〜cb9）を使うかどうか。
@@ -78,50 +60,13 @@ export default function MessageList({
 
     /** メッセージ追加・ストリーミング・待機中は最下部へスクロールする。 */
     useEffect(() => {
-        autoScrollingRef.current = true;
-        if (autoScrollTimerRef.current) clearTimeout(autoScrollTimerRef.current);
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-        autoScrollTimerRef.current = setTimeout(() => {
-            autoScrollingRef.current = false;
-        }, 600);
     }, [messages, sending, streamingContent, waitingCharacter]);
 
-    /**
-     * ヘッダー表示切り替えをトリガーし、アニメーション完了まで再トリガーをロックする。
-     */
-    const triggerHeaderChange = (visible: boolean) => {
-        headerTransitioningRef.current = true;
-        if (headerTransitionTimerRef.current) clearTimeout(headerTransitionTimerRef.current);
-        headerTransitionTimerRef.current = setTimeout(() => {
-            headerTransitioningRef.current = false;
-        }, 400);
-        onHeaderVisibilityChange!(visible);
-    };
-
-    /** スクロール方向を検知してヘッダー表示状態をコールバックに通知する。 */
-    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-        if (!onHeaderVisibilityChange) return;
-        if (autoScrollingRef.current) return;
-        if (headerTransitioningRef.current) return;
-        const currentY = e.currentTarget.scrollTop;
-        if (currentY < 30) {
-            triggerHeaderChange(true);
-            lastScrollYRef.current = currentY;
-            return;
-        }
-        if (currentY < lastScrollYRef.current) {
-            triggerHeaderChange(true);
-        } else if (currentY > lastScrollYRef.current + 30) {
-            triggerHeaderChange(false);
-        } else {
-            return;
-        }
-        lastScrollYRef.current = currentY;
-    };
-
     return (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden" onScroll={handleScroll}>
-          <div className="max-w-[760px] mx-auto px-4 sm:px-6 py-6 space-y-5">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          {/* pt-16: 浮遊ヘッダー分の上余白。 */}
+          <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 space-y-5">
             {messages.length === 0 && !sending && !waitingCharacter && (
                 <p className="text-ch-t4 text-xs text-center mt-20">
                     {emptyMessage}

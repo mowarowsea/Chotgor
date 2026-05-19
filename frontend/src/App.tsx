@@ -90,6 +90,7 @@ import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
 import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
 import CharPresetMenu from "./components/CharPresetMenu";
+import SynopsisModal from "./components/SynopsisModal";
 import { useTheme } from "./hooks/useTheme";
 
 /** アプリ全体のルートコンポーネント。 */
@@ -114,12 +115,12 @@ export default function App() {
   const [drifts, setDrifts] = useState<Drift[]>([]);
   /** エクスポートダイアログの開閉状態。 */
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  /** スクロール下方向でヘッダーを隠す。上スクロールまたはセッション未選択時は表示する。 */
-  const [headerVisible, setHeaderVisible] = useState(true);
   /** ライト/ダークテーマの状態と切り替え関数。 */
   const { dark, toggle: toggleTheme } = useTheme();
   /** ヘッダーのモデル切り替えメニューの開閉状態。 */
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  /** あらすじモーダルの開閉状態（シナリオセッション用）。 */
+  const [synopsisModalOpen, setSynopsisModalOpen] = useState(false);
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -260,7 +261,6 @@ export default function App() {
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
-    setHeaderVisible(true);
     setDrifts([]);
     setError(null);
     // ストリーミング中だった場合の状態をリセットする
@@ -874,6 +874,31 @@ export default function App() {
     }
   }, [activeSessionId, sending, selectedModel, _doStream]);
 
+  /** あらすじの部分更新（auto/manual）。SynopsisModal から呼ばれる。 */
+  const handleSynopsisChange = useCallback(
+    async (patch: { auto?: string; manual?: string }) => {
+      if (!activeScenarioSession) return;
+      try {
+        const updated = await patchScenarioSynopsis(activeScenarioSession.id, patch);
+        setScenarioSynopsis(updated);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession],
+  );
+
+  /** あらすじの自動追記フローを手動起動する。SynopsisModal から呼ばれる。 */
+  const handleSynopsisRegenerate = useCallback(async () => {
+    if (!activeScenarioSession) return;
+    try {
+      const updated = await regenerateScenarioSynopsis(activeScenarioSession.id);
+      setScenarioSynopsis(updated);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [activeScenarioSession]);
+
   return (
     /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。 */
     <CharacterImageProvider resolve={resolveCharImage}>
@@ -902,14 +927,15 @@ export default function App() {
         onRenameSession={handleRenameSession}
       />
 
-      <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
-        {/* トップバー: 浮遊型ピル状チップ。スクロール方向に応じて表示切り替え。 */}
-        <div className={`shrink-0 overflow-visible transition-all duration-300 ease-in-out ${headerVisible ? "max-h-20" : "max-h-0"}`}>
+      <main className="relative flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        {/* 浮遊ヘッダー: 常時表示・背景は透過。コンテンツはこの下をスクロールする。
+            バー自体は pointer-events-none で、操作可能なピルだけ pointer-events-auto。 */}
+        <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
           <div className="flex items-center gap-2 px-3 py-2.5">
             {/* サイドバートグル（ピルボタン） */}
             <button
               onClick={() => setSidebarOpen((o) => !o)}
-              className="shrink-0 flex items-center justify-center rounded-lg bg-ch-bg text-ch-t3 hover:text-ch-t1 transition-colors"
+              className="pointer-events-auto shrink-0 flex items-center justify-center rounded-lg bg-ch-bg text-ch-t3 hover:text-ch-t1 transition-colors"
               style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "6px 8px" }}
               aria-label="サイドバーを開閉"
             >
@@ -921,7 +947,7 @@ export default function App() {
             {/* タイトルチップ（角丸ピル）。セッション種別に応じて内容を切り替える。 */}
             {activeSessionId && isScenarioSession && activeScenarioSession ? (
               <div
-                className="flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
+                className="pointer-events-auto flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
                 style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
               >
                 <span className="shrink-0 w-6 h-6 rounded-full bg-ch-s1 flex items-center justify-center text-ch-t2 text-xs">✦</span>
@@ -932,7 +958,7 @@ export default function App() {
               </div>
             ) : activeSessionId && isGroupSession ? (
               <div
-                className="flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[64%]"
+                className="pointer-events-auto flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[64%]"
                 style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
               >
                 {/* 参加者アバターを重ねて表示 */}
@@ -965,7 +991,7 @@ export default function App() {
               </div>
             ) : activeSessionId && !isGroupSession ? (
               <div
-                className="relative flex items-center gap-1.5 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
+                className="pointer-events-auto relative flex items-center gap-1.5 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
                 style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
               >
                 {/* モデル名チップ。クリックでモデル切り替えメニューを開く。 */}
@@ -997,11 +1023,24 @@ export default function App() {
                 )}
               </div>
             ) : !sidebarOpen ? (
-              <span className="text-ch-t1 font-bold text-[15px]" style={{ letterSpacing: "-0.02em" }}>Chotgor</span>
+              <span className="pointer-events-auto text-ch-t1 font-bold text-[15px]" style={{ letterSpacing: "-0.02em" }}>Chotgor</span>
             ) : null}
 
-            {/* 右側ボタン群: テーマ切り替え + エクスポート（ピルボタン） */}
-            <div className="ml-auto flex items-center gap-1.5">
+            {/* 右側ボタン群: あらすじ（シナリオ時）+ テーマ切り替え + エクスポート（ピルボタン） */}
+            <div className="pointer-events-auto ml-auto flex items-center gap-1.5">
+              {activeSessionId && isScenarioSession && activeScenarioSession && (
+                <button
+                  onClick={() => setSynopsisModalOpen(true)}
+                  title="これまでのあらすじ"
+                  className="flex items-center gap-1 rounded-lg bg-ch-bg text-ch-t2 hover:text-ch-t1 transition-colors text-xs"
+                  style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 10px" }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={14} height={14}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                  </svg>
+                  あらすじ
+                </button>
+              )}
               <button
                 onClick={toggleTheme}
                 title={dark ? "ライトテーマに切り替え" : "ダークテーマに切り替え"}
@@ -1038,15 +1077,15 @@ export default function App() {
               )}
             </div>
           </div>
-        </div>
 
-        {/* エラーバナー */}
-        {error && (
-          <div className="bg-red-500/10 text-red-600 dark:text-red-300 text-xs px-4 py-2 flex justify-between items-center shrink-0" style={{ borderBottom: "1px solid rgba(220,60,60,0.2)" }}>
-            <span>{error}</span>
-            <button onClick={() => setError(null)} className="text-red-500 hover:text-red-400 ml-4">✕</button>
-          </div>
-        )}
+          {/* エラーバナー（浮遊ヘッダー内・ヘッダーバーの下に表示） */}
+          {error && (
+            <div className="pointer-events-auto mx-3 mb-1 rounded-lg bg-red-500/10 text-red-600 dark:text-red-300 text-xs px-3 py-2 flex justify-between items-center" style={{ border: "1px solid rgba(220,60,60,0.25)" }}>
+              <span>{error}</span>
+              <button onClick={() => setError(null)} className="text-red-500 hover:text-red-400 ml-4">✕</button>
+            </div>
+          )}
+        </div>
 
         {activeSessionId && isScenarioSession && activeScenarioSession ? (
           <ScenarioChatView
@@ -1059,25 +1098,6 @@ export default function App() {
             onSend={handleScenarioSend}
             onEditUserTurn={handleScenarioEditUserTurn}
             onRegenerate={handleScenarioRegenerate}
-            synopsis={scenarioSynopsis}
-            onSynopsisChange={async (patch) => {
-              try {
-                const sid = activeScenarioSession.id;
-                const updated = await patchScenarioSynopsis(sid, patch);
-                setScenarioSynopsis(updated);
-              } catch (e) {
-                setError(String(e));
-              }
-            }}
-            onSynopsisRegenerate={async () => {
-              try {
-                const sid = activeScenarioSession.id;
-                const updated = await regenerateScenarioSynopsis(sid);
-                setScenarioSynopsis(updated);
-              } catch (e) {
-                setError(String(e));
-              }
-            }}
           />
         ) : activeSessionId && isGroupSession ? (
           <GroupChatView
@@ -1092,7 +1112,6 @@ export default function App() {
             reasoningMap={groupReasoningMap}
             onSend={handleSend}
             onRetry={handleGroupRetry}
-            onHeaderVisibilityChange={setHeaderVisible}
             isUserTurn={isGroupUserTurn}
             onSkip={handleGroupSkip}
           />
@@ -1108,7 +1127,6 @@ export default function App() {
             reasoningMap={reasoningMap}
             onSend={handleSend}
             onRetry={handleRetry}
-            onHeaderVisibilityChange={setHeaderVisible}
             msgLogIds={msgLogIds}
           />
         ) : (
@@ -1138,6 +1156,17 @@ export default function App() {
               : activeSession?.title
           }
           onClose={() => setExportDialogOpen(false)}
+        />
+      )}
+
+      {/* あらすじモーダル（シナリオセッション用） */}
+      {synopsisModalOpen && isScenarioSession && activeScenarioSession && (
+        <SynopsisModal
+          synopsis={scenarioSynopsis}
+          onChange={handleSynopsisChange}
+          onRegenerate={handleSynopsisRegenerate}
+          disabled={sending}
+          onClose={() => setSynopsisModalOpen(false)}
         />
       )}
     </div>

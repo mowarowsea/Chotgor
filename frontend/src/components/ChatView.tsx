@@ -35,8 +35,6 @@ interface Props {
    * imageIds には再送する画像IDリストを渡す（再生成時は元メッセージの画像を引き継ぐ）。
    */
   onRetry: (fromMessageId: string, content: string, imageIds: string[]) => void;
-  /** スクロール方向変化コールバック。MessageList から App へ伝播する。 */
-  onHeaderVisibilityChange?: (visible: boolean) => void;
   /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
   msgLogIds?: Record<string, string>;
 }
@@ -53,7 +51,6 @@ export default function ChatView({
   reasoningMap,
   onSend,
   onRetry,
-  onHeaderVisibilityChange,
   msgLogIds,
 }: Props) {
   return (
@@ -67,7 +64,6 @@ export default function ChatView({
         streamingReasoning={streamingReasoning}
         characterName={characterName}
         onRetry={onRetry}
-        onHeaderVisibilityChange={onHeaderVisibilityChange}
         msgLogIds={msgLogIds}
       />
       <MessageInput
