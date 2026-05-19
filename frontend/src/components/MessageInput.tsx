@@ -187,8 +187,7 @@ export default function MessageInput({
                                 type="button"
                                 onClick={onSkip}
                                 disabled={sending}
-                                className="text-xs text-ch-t3 hover:text-ch-t2 disabled:opacity-30 rounded px-2 py-0.5 transition-colors"
-                                style={{ border: "1px solid var(--ch-sep2)" }}
+                                className="text-xs text-ch-t3 hover:text-ch-t2 disabled:opacity-30 rounded px-1.5 py-0.5 transition-colors"
                             >
                                 スキップ
                             </button>
