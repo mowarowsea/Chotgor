@@ -168,12 +168,13 @@ function NpcDetailDialog({
   if (!npc) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center px-4"
+      style={{ background: "var(--ch-overlay)" }}
       onClick={onClose}
     >
       <div
         className="bg-ch-bg rounded-xl w-full max-w-md overflow-hidden"
-        style={{ border: "1px solid var(--ch-sep)" }}
+        style={{ border: "1px solid var(--ch-sep2)", boxShadow: "var(--ch-shadow)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 画像エリア（あれば大きめ） */}

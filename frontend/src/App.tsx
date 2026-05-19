@@ -88,6 +88,7 @@ import ScenarioChatView from "./components/ScenarioChatView";
 import type { PendingBubble } from "./components/ScenarioChatView";
 import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
+import { CharacterAvatar } from "./components/ChatBubbles";
 import { useTheme } from "./hooks/useTheme";
 
 /** アプリ全体のルートコンポーネント。 */
@@ -116,6 +117,8 @@ export default function App() {
   const [headerVisible, setHeaderVisible] = useState(true);
   /** ライト/ダークテーマの状態と切り替え関数。 */
   const { dark, toggle: toggleTheme } = useTheme();
+  /** ヘッダーのモデル切り替えメニューの開閉状態。 */
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -882,8 +885,6 @@ export default function App() {
         characters={characters}
         sessions={combinedSessions}
         activeSessionId={activeSessionId}
-        selectedModel={selectedModel}
-        onModelChange={setSelectedModel}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen((o) => !o)}
         onSelectSession={(id) => { handleSelectSession(id); setSidebarOpen(window.innerWidth >= 640); }}
@@ -895,48 +896,81 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
-        {/* トップバー: ハンバーガートグル + セッション情報。スクロール方向に応じて表示切り替え。 */}
-        <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${headerVisible ? "max-h-20" : "max-h-0"}`}>
-          <div className="flex items-center gap-3 px-3 py-2 bg-ch-bg/95 backdrop-blur-sm" style={{ borderBottom: "1px solid var(--ch-sep)" }}>
+        {/* トップバー: 浮遊型ピル状チップ。スクロール方向に応じて表示切り替え。 */}
+        <div className={`shrink-0 overflow-visible transition-all duration-300 ease-in-out ${headerVisible ? "max-h-20" : "max-h-0"}`}>
+          <div className="flex items-center gap-2 px-3 py-2.5">
+            {/* サイドバートグル（ピルボタン） */}
             <button
               onClick={() => setSidebarOpen((o) => !o)}
-              className="text-ch-t3 p-1.5 rounded hover:text-ch-t1 transition-colors shrink-0"
+              className="shrink-0 flex items-center justify-center rounded-lg bg-ch-bg text-ch-t3 hover:text-ch-t1 transition-colors"
+              style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "6px 8px" }}
               aria-label="サイドバーを開閉"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={18} height={18}>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
               </svg>
             </button>
 
-            {/* セッション種別に応じてヘッダ内容を切り替える */}
+            {/* タイトルチップ（角丸ピル）。セッション種別に応じて内容を切り替える。 */}
             {activeSessionId && isScenarioSession && activeScenarioSession ? (
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-ch-t3 text-xs">📖</span>
-                <span className="text-ch-t1 text-sm font-medium truncate">{activeScenarioSession.title}</span>
+              <div
+                className="flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
+                style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
+              >
+                <span className="shrink-0 w-6 h-6 rounded-full bg-ch-s1 flex items-center justify-center text-ch-t2 text-xs">✦</span>
+                <div className="min-w-0">
+                  <div className="text-ch-t1 text-[13px] font-semibold truncate leading-tight">{activeScenarioSession.title}</div>
+                  <div className="text-ch-t3 text-[10px] font-mono leading-tight">scenario</div>
+                </div>
               </div>
             ) : activeSessionId && isGroupSession ? (
-              <div className="flex items-center gap-3 flex-wrap min-w-0">
-                {groupParticipants.map(({ charName, presetName, characterId }) => {
-                  const charDrifts = drifts.filter((d) => d.character_id === characterId);
-                  return (
-                    <div key={charName} className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-ch-t1 text-sm font-medium">{charName}</span>
-                      <span className="text-ch-t3 text-xs">@{presetName}</span>
-                      {charDrifts.length > 0 && characterId && (
-                        <DriftBadge
-                          drifts={charDrifts}
-                          sessionId={activeSessionId}
-                          characterId={characterId}
-                          onDriftsChange={() => refreshDrifts(activeSessionId)}
-                        />
-                      )}
+              <div
+                className="flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[64%]"
+                style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
+              >
+                {/* 参加者アバターを重ねて表示 */}
+                <div className="flex shrink-0">
+                  {groupParticipants.map(({ charName }, i) => (
+                    <div key={charName} style={{ marginLeft: i ? -8 : 0, zIndex: 10 - i }}>
+                      <CharacterAvatar characterName={charName} size={24} />
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
+                <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+                  {groupParticipants.map(({ charName, presetName, characterId }) => {
+                    const charDrifts = drifts.filter((d) => d.character_id === characterId);
+                    return (
+                      <div key={charName} className="flex items-center gap-1 shrink-0">
+                        <span className="text-ch-t1 text-[13px] font-semibold">{charName}</span>
+                        <span className="text-ch-t3 text-[10px] font-mono">@{presetName}</span>
+                        {charDrifts.length > 0 && characterId && (
+                          <DriftBadge
+                            drifts={charDrifts}
+                            sessionId={activeSessionId}
+                            characterId={characterId}
+                            onDriftsChange={() => refreshDrifts(activeSessionId)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ) : activeSessionId && !isGroupSession ? (
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-ch-t1 text-sm font-medium truncate">{activeSession?.model_id ?? characterName}</span>
+              <div
+                className="relative flex items-center gap-1.5 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
+                style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
+              >
+                {/* モデル名チップ。クリックでモデル切り替えメニューを開く。 */}
+                <button
+                  onClick={() => setModelMenuOpen((o) => !o)}
+                  className="flex items-center gap-1.5 min-w-0"
+                  title="モデルを切り替え"
+                >
+                  <CharacterAvatar characterName={charNameOf(selectedModel || activeSession?.model_id || characterName)} size={24} />
+                  <span className="text-ch-t1 text-[13px] font-semibold truncate">{selectedModel || activeSession?.model_id || characterName}</span>
+                  <span className="text-ch-t3 text-[9px] shrink-0">▾</span>
+                </button>
                 {activeCharacterId && (
                   <DriftBadge
                     drifts={drifts}
@@ -945,17 +979,40 @@ export default function App() {
                     onDriftsChange={() => refreshDrifts(activeSessionId)}
                   />
                 )}
+                {/* モデル切り替えメニュー */}
+                {modelMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setModelMenuOpen(false)} />
+                    <div
+                      className="absolute left-0 top-[calc(100%+6px)] z-50 bg-ch-bg rounded-lg py-1 max-h-72 overflow-y-auto"
+                      style={{ border: "1px solid var(--ch-sep2)", boxShadow: "var(--ch-shadow)", minWidth: 200 }}
+                    >
+                      {models.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => { setSelectedModel(m.id); setModelMenuOpen(false); }}
+                          className={`block w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-ch-s2 ${
+                            m.id === selectedModel ? "text-ch-accent font-medium" : "text-ch-t2"
+                          }`}
+                        >
+                          {m.id}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             ) : !sidebarOpen ? (
-              <span className="text-ch-t2 text-sm tracking-widest uppercase" style={{ letterSpacing: "0.2em", fontSize: "0.7rem" }}>Chotgor</span>
+              <span className="text-ch-t1 font-bold text-[15px]" style={{ letterSpacing: "-0.02em" }}>Chotgor</span>
             ) : null}
 
-            {/* 右側ボタン群: テーマ切り替え + エクスポート */}
-            <div className="ml-auto flex items-center gap-1">
+            {/* 右側ボタン群: テーマ切り替え + エクスポート（ピルボタン） */}
+            <div className="ml-auto flex items-center gap-1.5">
               <button
                 onClick={toggleTheme}
                 title={dark ? "ライトテーマに切り替え" : "ダークテーマに切り替え"}
-                className="text-ch-t3 hover:text-ch-t2 p-1.5 rounded transition-colors"
+                className="flex items-center justify-center rounded-lg bg-ch-bg text-ch-t3 hover:text-ch-t1 transition-colors"
+                style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "6px 8px" }}
                 aria-label="テーマを切り替え"
               >
                 {dark ? (
@@ -976,7 +1033,8 @@ export default function App() {
                 <button
                   onClick={() => setExportDialogOpen(true)}
                   title="会話をエクスポート"
-                  className="text-ch-t3 hover:text-ch-t2 p-1.5 rounded transition-colors"
+                  className="flex items-center justify-center rounded-lg bg-ch-bg text-ch-t3 hover:text-ch-t1 transition-colors"
+                  style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "6px 8px" }}
                   aria-label="会話をエクスポート"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>

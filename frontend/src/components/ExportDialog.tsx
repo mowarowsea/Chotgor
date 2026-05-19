@@ -98,12 +98,13 @@ export default function ExportDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      style={{ background: "var(--ch-overlay)" }}
       onClick={onClose}
     >
       <div
-        className="bg-ch-s1 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col"
-        style={{ border: "1px solid var(--ch-sep2)" }}
+        className="bg-ch-bg rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col"
+        style={{ border: "1px solid var(--ch-sep2)", boxShadow: "var(--ch-shadow)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ヘッダー */}
@@ -132,7 +133,7 @@ export default function ExportDialog({
                 checked={includeReasoning}
                 onChange={(e) => setIncludeReasoning(e.target.checked)}
                 className="rounded w-4 h-4"
-                style={{ accentColor: "#4d8c67" }}
+                style={{ accentColor: "var(--ch-accent)" }}
               />
               <span className="text-ch-t2 text-sm">Reasoning を含む</span>
             </label>
@@ -146,7 +147,7 @@ export default function ExportDialog({
                     checked={destination === dest}
                     onChange={() => setDestination(dest)}
                     className="w-4 h-4"
-                    style={{ accentColor: "#4d8c67" }}
+                    style={{ accentColor: "var(--ch-accent)" }}
                   />
                   <span className="text-ch-t2 text-sm">
                     {dest === "clipboard" ? "クリップボード" : "ファイル (.md)"}
@@ -249,11 +250,8 @@ export default function ExportDialog({
           <button
             onClick={handleExport}
             disabled={messages.length === 0 || copied}
-            className="text-ch-accent-t text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-30"
-            style={{
-              background: "rgba(22,22,22,0.9)",
-              border: "1px solid var(--ch-sep2)",
-            }}
+            className="text-white text-sm font-medium px-4 py-2 rounded-lg transition-opacity flex items-center gap-1.5 disabled:opacity-30"
+            style={{ background: "var(--ch-accent)" }}
           >
             {copied ? (
               <>

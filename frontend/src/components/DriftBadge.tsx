@@ -97,7 +97,7 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
         className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-colors text-ch-accent-t"
         style={{
           background: "oklch(50% 0.13 226 / 0.12)",
-          border: "1px solid rgba(72,130,96,0.22)",
+          border: "1px solid oklch(50% 0.13 226 / 0.25)",
         }}
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width={13} height={13}>
@@ -113,11 +113,12 @@ export default function DriftBadge({ drifts, sessionId, characterId, onDriftsCha
       {open && createPortal(
         <div
           ref={panelRef}
-          className="fixed z-[9999] w-72 bg-ch-s2 rounded-xl shadow-2xl p-3 flex flex-col gap-2"
+          className="fixed z-[9999] w-72 bg-ch-bg rounded-xl p-3 flex flex-col gap-2"
           style={{
             top: panelPos.top,
             left: panelPos.left,
-            border: "1px solid var(--ch-sep)",
+            border: "1px solid var(--ch-sep2)",
+            boxShadow: "var(--ch-shadow)",
           }}
         >
           <div className="flex items-center justify-between">

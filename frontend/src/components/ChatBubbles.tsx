@@ -583,9 +583,9 @@ function HighlightedJson({ raw }: { raw: string }) {
               return (
                 <span key={i}>
                   {indent}
-                  <span style={{ color: "#79c0ff" }}>"{key}"</span>
+                  <span style={{ color: "var(--json-hl-key)" }}>"{key}"</span>
                   {sep}
-                  <mark style={{ background: "#2a3820", color: "#a5d6a7", borderRadius: "3px", padding: "0 2px", whiteSpace: "pre-wrap" }}>
+                  <mark style={{ background: "var(--json-hl-bg)", color: "var(--json-hl-key)", borderRadius: "3px", padding: "0 2px", whiteSpace: "pre-wrap" }}>
                     {displayValue}
                   </mark>
                   {trailing}
@@ -623,13 +623,13 @@ function RawLogModal({ messageId, filename, onClose }: { messageId: string; file
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
-      style={{ backdropFilter: "blur(8px)" }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      style={{ background: "var(--ch-overlay)", backdropFilter: "blur(4px)" }}
       onClick={onClose}
     >
       <div
-        className="bg-ch-s1 rounded-lg w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden"
-        style={{ border: "1px solid var(--ch-sep)" }}
+        className="bg-ch-bg rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden"
+        style={{ border: "1px solid var(--ch-sep2)", boxShadow: "var(--ch-shadow)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ヘッダー */}
@@ -1044,7 +1044,7 @@ function CodeBlock({
           onClick={handleCopy}
           title="コピー"
           className="opacity-0 group-hover/code:opacity-100 transition-opacity text-ch-t3 hover:text-ch-t2 rounded p-1"
-          style={{ background: "rgba(15,15,15,0.85)" }}
+          style={{ background: "rgb(var(--ch-s1))" }}
         >
           {copied ? (
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" width={12} height={12}>
