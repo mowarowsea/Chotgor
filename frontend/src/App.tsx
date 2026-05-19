@@ -28,6 +28,7 @@ import {
   fetchScenarioSynopsis,
   patchScenarioSynopsis,
   regenerateScenarioSynopsis,
+  fetchScenarioPresets,
 } from "./api";
 import type {
   Model,
@@ -40,6 +41,7 @@ import type {
   ScenarioSession,
   ScenarioSynopsis,
   ScenarioTemplate,
+  ScenarioPreset,
   ZetaNpc,
   ZetaTurn,
 } from "./api";
@@ -163,10 +165,25 @@ export default function App() {
   })();
   /** グループチャット参加者名リスト（色割り当て用）。 */
   const groupParticipantNames = groupParticipantEntries.map((p) => p.char_name);
+  /**
+   * グループメッセージから char_name → preset_name のフォールバックマップを作る。
+   * group_config に preset_name を持たない旧セッション向けの救済。
+   * 各キャラクター発言メッセージは preset_name を持つため、それを参照する。
+   */
+  const groupPresetFallback = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const msg of messages) {
+      if (msg.role !== "user" && msg.character_name && msg.preset_name) {
+        m.set(msg.character_name, msg.preset_name);
+      }
+    }
+    return m;
+  }, [messages]);
   /** グループチャット参加者のキャラクター名+ID+プリセット名リスト（ヘッダのDriftBadge用）。 */
   const groupParticipants = groupParticipantEntries.map(({ char_name, preset_name }) => ({
     charName: char_name,
-    presetName: preset_name,
+    // group_config の preset_name（新セッション）→ 旧セッションはメッセージから補完。
+    presetName: preset_name || groupPresetFallback.get(char_name) || "",
     characterId: characters.find((c) => c.name === char_name)?.id ?? "",
   }));
   /**
@@ -204,6 +221,14 @@ export default function App() {
   const [activeScenarioSession, setActiveScenarioSession] = useState<ScenarioSession | null>(null);
   /** 元シナリオテンプレ（GM 設定や場所表示に使う）。 */
   const [activeScenarioTemplate, setActiveScenarioTemplate] = useState<ScenarioTemplate | null>(null);
+  /** GM プリセット一覧（シナリオヘッダーの gm_preset_id → 表示名解決に使う）。 */
+  const [scenarioPresets, setScenarioPresets] = useState<ScenarioPreset[]>([]);
+  /** アクティブなシナリオの gm_preset_id を表示用プリセット名に解決する。 */
+  const scenarioPresetName = useMemo(() => {
+    const id = activeScenarioTemplate?.gm_preset_id;
+    if (!id) return null;
+    return scenarioPresets.find((p) => p.id === id)?.name ?? null;
+  }, [activeScenarioTemplate, scenarioPresets]);
   const [scenarioNpcs, setScenarioNpcs] = useState<ZetaNpc[]>([]);
   const [scenarioTurns, setScenarioTurns] = useState<ZetaTurn[]>([]);
   /** ストリーミング中の未確定吹き出し列。 */
@@ -230,14 +255,16 @@ export default function App() {
       fetchUserName(),
       fetchCharacters(),
       fetchScenarioSessions().catch(() => [] as ScenarioSession[]),
+      fetchScenarioPresets().catch(() => [] as ScenarioPreset[]),
     ])
-      .then(([m, s, u, c, sc]) => {
+      .then(([m, s, u, c, sc, sp]) => {
         setModels(m);
         if (m.length > 0) setSelectedModel(m[0].id);
         setSessions(s);
         setUserName(u);
         setCharacters(c);
         setScenarioSessions(sc);
+        setScenarioPresets(sp);
         // ref も即座に更新する。次行の handleSelectSession() がこの ref を
         // 読みに来るため、setState の非同期反映を待たずに同期反映が必要。
         scenarioSessionsRef.current = sc;
@@ -537,6 +564,14 @@ export default function App() {
           } catch {
             // 取得失敗は無視
           }
+          // GM プリセット等の設定変更をヘッダーに反映するためテンプレを取り直す。
+          fetchScenarioSession(sessionId)
+            .then((d) => {
+              if (sessionId === activeSessionIdRef.current) {
+                setActiveScenarioTemplate(d.scenario);
+              }
+            })
+            .catch(() => {});
           // セッション一覧も最新化（updated_at 反映）
           fetchScenarioSessions().then(setScenarioSessions).catch(() => {});
         }
@@ -1000,7 +1035,10 @@ export default function App() {
                 <span className="shrink-0 w-6 h-6 rounded-full bg-ch-s1 flex items-center justify-center text-ch-t2 text-xs">✦</span>
                 <div className="min-w-0">
                   <div className="text-ch-t1 text-[13px] font-semibold truncate leading-tight">{activeScenarioSession.title}</div>
-                  <div className="text-ch-t3 text-[10px] font-mono leading-tight">scenario</div>
+                  {/* GM プリセット名（チャット中の変更に追従するためレスポンス毎に再取得）。 */}
+                  <div className="text-ch-t3 text-[10px] font-mono leading-tight truncate">
+                    {scenarioPresetName ? `@${scenarioPresetName}` : "scenario"}
+                  </div>
                 </div>
               </div>
             ) : activeSessionId && isGroupSession ? (
@@ -1022,7 +1060,9 @@ export default function App() {
                     return (
                       <div key={charName} className="flex items-center gap-1 shrink-0">
                         <span className="text-ch-t1 text-[13px] font-semibold">{charName}</span>
-                        <span className="text-ch-t3 text-[10px] font-mono">@{presetName}</span>
+                        {presetName && (
+                          <span className="text-ch-t3 text-[10px] font-mono">@{presetName}</span>
+                        )}
                         {charDrifts.length > 0 && characterId && (
                           <DriftBadge
                             drifts={charDrifts}

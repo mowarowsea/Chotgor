@@ -22,7 +22,15 @@ import type {
   ZetaNpc,
   ZetaTurn,
 } from "../api";
-import { CopyButton, MarkdownContent, charHue, Bubble } from "./ChatBubbles";
+import {
+  MarkdownContent,
+  charHue,
+  Bubble,
+  CharacterMessageRow,
+  MessageActionBar,
+  UserMessageActions,
+  mobileBubbleExtendClass,
+} from "./ChatBubbles";
 import MessageInput from "./MessageInput";
 import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
 
@@ -221,30 +229,6 @@ function NpcDetailDialog({
   );
 }
 
-/**
- * 鉛筆アイコン（編集ボタン）。1on1 の UserBubble と同じ svg を流用する。
- * UI の一貫性のため、別コンポーネントながら見た目を完全に揃えている。
- */
-function PencilIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-      width={12}
-      height={12}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
-      />
-    </svg>
-  );
-}
-
 interface UserBubbleRowProps {
   /** 表示する発話本体。再ストリーム後に親が turns を入れ替えると変わる。 */
   content: string;
@@ -313,7 +297,7 @@ function UserBubbleRowImpl({
       className="flex justify-end group"
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
     >
-      <div className="flex flex-col items-end max-w-[75%] w-full">
+      <div className="flex flex-col items-end max-w-full sm:max-w-[75%] w-full">
         <span className="text-[11px] text-ch-t4 mb-0.5 pr-1">{speaker_name}</span>
         {editing ? (
           <div className="flex flex-col gap-2 w-full">
@@ -347,23 +331,16 @@ function UserBubbleRowImpl({
             </p>
           </div>
         ) : (
-          <div className="flex items-end gap-1 flex-row-reverse min-w-0">
+          <>
+            {/* バブル本体（可変幅）。操作ボタンは下部に配置する。 */}
             <Bubble kind="user">
               <MarkdownContent content={trimEnd(content)} />
             </Bubble>
-            <div className="flex items-center gap-0.5">
-              <CopyButton text={content} />
-              {canEdit && (
-                <button
-                  onClick={() => setEditing(true)}
-                  title="編集"
-                  className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0"
-                >
-                  <PencilIcon />
-                </button>
-              )}
-            </div>
-          </div>
+            <UserMessageActions
+              copyText={content}
+              onEdit={canEdit ? () => setEditing(true) : undefined}
+            />
+          </>
         )}
       </div>
     </div>
@@ -412,95 +389,64 @@ function GMBubbleRowImpl({
   onAvatarClick,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
-  const actions = (
-    <BubbleActions
+  // 操作バー（コピー / 再生成）。ターン末尾の GM バブルにのみ表示する。
+  // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
+  const actions = isLastGM ? (
+    <MessageActionBar
       copyText={copyText ?? content}
-      isLastGM={isLastGM}
       onRegenerate={onRegenerate}
+      regenerateTitle="このターンを再生成"
     />
-  );
+  ) : null;
 
-  // Narrator は地の文寄せ（アバターなし、見出しなし）。
+  // Narrator は地の文寄せ（アバターなし、見出しなし）。バブル枠を持たず斜体で流す。
+  // 行幅・スマホ時の左拡張は他モードと揃える（アバター列ぶんのスペーサーを置く）。
   // content-visibility: auto はビューポート外のレイアウト・ペイントをスキップ（DOM 肥大対策）。
   if (speaker_type === "narrator") {
-    // Narrator は地の文寄せ（アバターなし、見出しなし）。バブル枠を持たず斜体で流す。
     return (
       <div
-        className="flex justify-start gap-2.5 group"
+        className="group flex gap-2.5 max-w-full sm:max-w-[88%]"
         style={{ contentVisibility: "auto", containIntrinsicSize: "auto 100px" }}
       >
         <div style={{ width: 28, flexShrink: 0 }} />
-        <div className="flex flex-col items-start max-w-[88%]">
-          <div
-            className="text-sm leading-relaxed italic text-ch-t2 break-words"
-            style={{ textWrap: "pretty" }}
-          >
-            <MarkdownContent content={displayContent} />
+        <div className="flex-1 min-w-0">
+          <div className={mobileBubbleExtendClass}>
+            <div
+              className="text-sm leading-relaxed italic text-ch-t2 break-words"
+              style={{ textWrap: "pretty" }}
+            >
+              <MarkdownContent content={displayContent} />
+            </div>
+            {actions}
           </div>
-          {actions}
         </div>
       </div>
     );
   }
 
-  // NPC / character: 左寄せ + アバター
+  // NPC / character: 左寄せ + アバター。共通の CharacterMessageRow に委譲する。
   // content-visibility: auto はビューポート外のレイアウト・ペイントをスキップ（DOM 肥大対策）。
   return (
-    <div
-      className="flex justify-start gap-2.5 group"
+    <CharacterMessageRow
+      avatar={<Avatar name={speaker_name} src={avatarSrc} onClick={onAvatarClick} />}
+      name={speaker_name}
+      nameSuffix={
+        is_known === false ? (
+          <span className="text-[10px] text-ch-t4">(ephemeral)</span>
+        ) : undefined
+      }
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 130px" }}
     >
-      <Avatar name={speaker_name} src={avatarSrc} onClick={onAvatarClick} />
-      <div className="flex flex-col items-start max-w-[88%] min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap mb-1 text-[11px]">
-          <span className="font-semibold text-ch-t2">{speaker_name}</span>
-          {is_known === false && (
-            <span className="text-[10px] text-ch-t4">(ephemeral)</span>
-          )}
-        </div>
-        <Bubble
-          kind="character"
-          colored
-          characterName={speaker_name}
-          dashed={is_known === false}
-        >
-          <MarkdownContent content={displayContent} />
-        </Bubble>
-        {actions}
-      </div>
-    </div>
-  );
-}
-
-/**
- * GM バブル下に並ぶ操作アイコン列。
- * Copy と ↺ 再生成は「ターンの末尾バブル」に対してのみ表示する。
- * Copy はターン全体（複数バブル分）の本文をまとめてコピーするため、
- * 末尾バブル単体のテキストではなく親が計算した copyText を渡している。
- */
-function BubbleActions({
-  copyText,
-  isLastGM,
-  onRegenerate,
-}: {
-  copyText: string;
-  isLastGM: boolean;
-  onRegenerate?: () => void;
-}) {
-  if (!isLastGM) return null;
-  return (
-    <div className="flex items-center gap-0.5 -ml-1 mt-0.5">
-      <CopyButton text={copyText} />
-      {onRegenerate && (
-        <button
-          onClick={onRegenerate}
-          title="このターンを再生成"
-          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 text-xs transition-all p-1 rounded"
-        >
-          ↺
-        </button>
-      )}
-    </div>
+      <Bubble
+        kind="character"
+        colored
+        characterName={speaker_name}
+        dashed={is_known === false}
+      >
+        <MarkdownContent content={displayContent} />
+      </Bubble>
+      {actions}
+    </CharacterMessageRow>
   );
 }
 

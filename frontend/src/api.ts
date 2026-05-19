@@ -474,6 +474,22 @@ export async function fetchScenarioTemplates(): Promise<ScenarioTemplate[]> {
   return res.json();
 }
 
+/** GM プリセット情報。シナリオの `gm_preset_id` を表示名に解決するために使う。 */
+export interface ScenarioPreset {
+  id: string;
+  name: string;
+  provider: string;
+  model_id: string;
+  thinking_level: string;
+}
+
+/** GM プリセット一覧を取得する。シナリオヘッダーの `gm_preset_id` → 表示名解決に使う。 */
+export async function fetchScenarioPresets(): Promise<ScenarioPreset[]> {
+  const res = await fetch("/api/scenario_chat/presets");
+  if (!res.ok) throw new Error("GM プリセット一覧の取得に失敗しました");
+  return res.json();
+}
+
 // ─── プレイセッション ──────────────────────────────────────────────────────
 
 /** プレイセッション一覧を取得する。 */

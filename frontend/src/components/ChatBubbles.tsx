@@ -361,6 +361,77 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
 }
 
 // ---------------------------------------------------------------------------
+// RegenerateButton
+// ---------------------------------------------------------------------------
+
+/**
+ * バブル下部の再生成（↺）ボタン。
+ *
+ * 誤クリック防止のため、呼び出し側で `ml-auto` 等によりバブルの右端へ
+ * 寄せて使うことを想定している。1on1 / グループ / シナリオの全モードで
+ * 同じ見た目を共有するための共通部品。
+ */
+export function RegenerateButton({
+  onClick,
+  title = "再生成",
+  className = "",
+}: {
+  /** クリック時のコールバック。 */
+  onClick: () => void;
+  /** ホバー時のツールチップ。 */
+  title?: string;
+  /** 追加クラス（右端寄せの `ml-auto` 等）。 */
+  className?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 text-xs transition-all p-1 rounded ${className}`}
+    >
+      ↺
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// UserMessageActions
+// ---------------------------------------------------------------------------
+
+/**
+ * ユーザー発話バブル下部の操作バー（コピー / 編集）。
+ *
+ * バブルの直下に置き、親の `items-end` により右寄せされる前提。
+ * 1on1 / シナリオのユーザーバブルで見た目・並びを共有する（DRY）。
+ */
+export function UserMessageActions({
+  copyText,
+  onEdit,
+}: {
+  /** コピー対象テキスト。 */
+  copyText: string;
+  /** 編集開始コールバック（無指定で編集ボタン非表示）。 */
+  onEdit?: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-0.5 mt-0.5">
+      <CopyButton text={copyText} />
+      {onEdit && (
+        <button
+          onClick={onEdit}
+          title="編集"
+          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={12} height={12}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CharacterAvatar
 // ---------------------------------------------------------------------------
 
@@ -418,7 +489,7 @@ export function CharacterAvatar({
 }
 
 // ---------------------------------------------------------------------------
-// LogPanel（デバッグログ折りたたみ表示）
+// MessageActionBar / ログ表示部品（ToolCallRow・RawLogModal 等）
 // ---------------------------------------------------------------------------
 
 /** タグ種別 cls → Tailwindクラスのマッピング。 */
@@ -687,29 +758,50 @@ function RawLogModal({ messageId, filename, onClose }: { messageId: string; file
 }
 
 /**
- * デバッグログの折りたたみ表示コンポーネント。
- * 初回展開時にログを取得する（遅延取得）。
+ * バブル下部の操作バー。
+ *
+ * コピー / ログ折りたたみ（1on1 のみ）/ 再生成 を 1 行に並べる共通部品。
+ * 1on1・グループ・シナリオの全モードで同じ並び・見た目を共有する（DRY）。
+ * 再生成は誤クリック防止のため `ml-auto` で右端（バブル右端）へ寄せる。
+ *
+ * `logMessageId` が渡されたときのみログ折りたたみを表示する
+ * （CHOTGOR_DEBUG=1 時の 1on1 チャット用）。トリガーは操作行内に置き、
+ * 展開コンテンツは操作行の下にぶら下げる。
  */
-function LogPanel({ logMessageId }: { logMessageId: string }) {
-  const [expanded, setExpanded] = useState(false);
+export function MessageActionBar({
+  copyText,
+  onRegenerate,
+  regenerateTitle = "再生成",
+  logMessageId,
+}: {
+  /** コピーボタンがコピーするテキスト。 */
+  copyText: string;
+  /** 再生成コールバック（無指定で再生成ボタン非表示）。 */
+  onRegenerate?: () => void;
+  /** 再生成ボタンのツールチップ。 */
+  regenerateTitle?: string;
+  /** デバッグログフォルダ名（8桁hex）。指定時のみログ折りたたみを表示する。 */
+  logMessageId?: string;
+}) {
+  const [logExpanded, setLogExpanded] = useState(false);
   const [entry, setEntry] = useState<LogEntry | null>(null);
   const [loading, setLoading] = useState(false);
   const [rawModal, setRawModal] = useState<string | null>(null);
 
-  /** 展開時に初回ロードする。 */
-  const handleToggle = async () => {
-    if (!expanded && !entry && !loading) {
+  /** ログ折りたたみのトグル。初回展開時にログを遅延取得する。 */
+  const handleLogToggle = async () => {
+    if (!logMessageId) return;
+    if (!logExpanded && !entry && !loading) {
       setLoading(true);
       try {
-        const data = await fetchLogEntry(logMessageId);
-        setEntry(data);
+        setEntry(await fetchLogEntry(logMessageId));
       } catch {
         // ロード失敗時はエントリなしのまま表示する
       } finally {
         setLoading(false);
       }
     }
-    setExpanded((e) => !e);
+    setLogExpanded((e) => !e);
   };
 
   /** ユニークなタグ cls を収集してバッジ用リストを返す。 */
@@ -718,28 +810,36 @@ function LogPanel({ logMessageId }: { logMessageId: string }) {
     : [];
 
   return (
-    <div className="mt-1.5" style={{ borderTop: "1px solid var(--ch-sep)" }}>
-      {/* トリガー行 */}
-      <button
-        onClick={handleToggle}
-        className="flex items-center gap-1.5 pt-1 text-[11px] text-ch-t4 hover:text-ch-t3 transition-colors w-full text-left"
-      >
-        <span className="text-[9px] opacity-50">{expanded ? "▼" : "▶"}</span>
-        <span>ログ</span>
-        {loading && <span className="animate-pulse text-[10px]">…</span>}
-        {entry?.has_error && (
-          <span className="text-red-400 text-[10px] font-medium">⚠ エラー</span>
+    <>
+      {/* 操作行: コピー / ログ / 再生成（再生成のみ右端へ） */}
+      <div className="flex items-center gap-0.5 -ml-1 mt-0.5 w-full">
+        <CopyButton text={copyText} />
+        {logMessageId && (
+          <button
+            onClick={handleLogToggle}
+            className="flex items-center gap-1.5 text-[11px] text-ch-t4 hover:text-ch-t3 transition-colors p-1 rounded"
+          >
+            <span className="text-[9px] opacity-50">{logExpanded ? "▼" : "▶"}</span>
+            <span>ログ</span>
+            {loading && <span className="animate-pulse text-[10px]">…</span>}
+            {entry?.has_error && (
+              <span className="text-red-400 text-[10px] font-medium">⚠ エラー</span>
+            )}
+            {!loading && allTagCls.map((cls, i) => (
+              <span key={i} className={`px-1 py-0.5 rounded text-[9px] ${TAG_COLORS[cls] ?? TAG_COLORS["tag-unknown"]}`}>
+                {entry?.tool_calls.flatMap((tc) => tc.tags).find((t) => t.meta.cls === cls)?.meta.label ?? cls}
+              </span>
+            ))}
+          </button>
         )}
-        {!loading && allTagCls.map((cls, i) => (
-          <span key={i} className={`px-1 py-0.5 rounded text-[9px] ${TAG_COLORS[cls] ?? TAG_COLORS["tag-unknown"]}`}>
-            {entry?.tool_calls.flatMap((tc) => tc.tags).find((t) => t.meta.cls === cls)?.meta.label ?? cls}
-          </span>
-        ))}
-      </button>
+        {onRegenerate && (
+          <RegenerateButton onClick={onRegenerate} title={regenerateTitle} className="ml-auto" />
+        )}
+      </div>
 
-      {/* 展開コンテンツ */}
-      {expanded && (
-        <div className="pt-1.5 space-y-1.5">
+      {/* ログ展開コンテンツ */}
+      {logMessageId && logExpanded && (
+        <div className="pt-1.5 mt-1 space-y-1.5" style={{ borderTop: "1px solid var(--ch-sep)" }}>
           {loading && (
             <div className="text-ch-t4 text-[11px] animate-pulse px-1">読み込み中...</div>
           )}
@@ -784,13 +884,82 @@ function LogPanel({ logMessageId }: { logMessageId: string }) {
       )}
 
       {/* Raw ログモーダル */}
-      {rawModal && (
+      {rawModal && logMessageId && (
         <RawLogModal
           messageId={logMessageId}
           filename={rawModal}
           onClose={() => setRawModal(null)}
         />
       )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CharacterMessageRow — キャラクター発話の共通行レイアウト
+// ---------------------------------------------------------------------------
+
+/**
+ * バブル領域をスマホ幅で左へ広げ、左端をアバター左端に揃えるためのクラス。
+ *
+ * アバター幅(28px) + 余白(gap-2.5 = 10px) = 38px ぶん左へ拡張する。
+ * sm 以上では従来どおりアバター右のインデント表示に戻す。
+ * 1on1 / グループ / シナリオの全モードで共有する。
+ */
+export const mobileBubbleExtendClass =
+  "-ml-[38px] w-[calc(100%_+_38px)] sm:ml-0 sm:w-full";
+
+/**
+ * キャラクター発話の共通行レイアウト（アバター + 名前行 + バブル領域）。
+ *
+ * 1on1 / グループ / シナリオ（NPC・character）でバブルの寸法・揃えを統一する
+ * ための共通部品。各モードで重複していた flex 構造をここに集約している（DRY）。
+ *
+ * - アバターは常に上端揃え（`self-start`）。
+ * - 行全体の最大幅は 88%（アバター込み）。
+ * - `children`（バブル本体・操作バー等）はスマホ幅で左端をアバター左端に揃える。
+ */
+export function CharacterMessageRow({
+  avatar,
+  name,
+  nameSuffix,
+  style,
+  testId,
+  children,
+}: {
+  /** アバター要素（CharacterAvatar や NPC 用クリック可能アバター等）。 */
+  avatar: React.ReactNode;
+  /** 名前行に表示するキャラクター名。 */
+  name: string;
+  /** 名前の右に添える要素（@プリセット名・(ephemeral) ラベル等）。 */
+  nameSuffix?: React.ReactNode;
+  /** 行外側 div への追加 style（content-visibility 最適化用）。 */
+  style?: React.CSSProperties;
+  /** 行外側 div の data-testid。 */
+  testId?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="group flex gap-2.5 max-w-full sm:max-w-[88%]"
+      style={style}
+      data-testid={testId}
+    >
+      {/* アバターは上端揃え（全モードで位置を統一）。 */}
+      <div className="self-start">{avatar}</div>
+      <div className="flex-1 min-w-0">
+        {/*
+         * 名前行: キャラクター名 + 補足。
+         * スマホ幅では下のバブル領域を左へ広げる（左端をアバター左端に揃える）ため、
+         * 名前行にアバターと同じ高さ(28px)を確保し、バブルがアバターへ重ならないようにする。
+         */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-1 text-[11px] min-h-[28px] sm:min-h-0">
+          <span className="font-semibold text-ch-t2">{name}</span>
+          {nameSuffix}
+        </div>
+        {/* バブル領域: スマホ幅では左端をアバター左端に揃える */}
+        <div className={mobileBubbleExtendClass}>{children}</div>
+      </div>
     </div>
   );
 }
@@ -803,6 +972,8 @@ function LogPanel({ logMessageId }: { logMessageId: string }) {
  * キャラクターのチャットメッセージ（バブルスタイル）。
  * 小型アバター + 名前行（@プリセット）の右に、左上角を欠いた角丸バブルを表示する。
  * グループ/シナリオではキャラクター別の配色（cb0〜cb9）を、1on1 ではニュートラル面を使う。
+ *
+ * 行レイアウトは共通の CharacterMessageRow、操作バーは共通の MessageActionBar に委譲する。
  */
 export function CharacterBubble({
   characterName,
@@ -830,44 +1001,33 @@ export function CharacterBubble({
   logMessageId?: string;
 }) {
   return (
-    <div className="group flex gap-2.5 max-w-[88%]" data-testid="character-bubble">
-      {/* アバター画像は CharacterAvatar が CharacterImageContext から自動解決する。 */}
-      <CharacterAvatar characterName={characterName} hue={hue} size={28} />
+    <CharacterMessageRow
+      testId="character-bubble"
+      // アバター画像は CharacterAvatar が CharacterImageContext から自動解決する。
+      avatar={<CharacterAvatar characterName={characterName} hue={hue} size={28} />}
+      name={characterName}
+      nameSuffix={
+        presetName ? (
+          <span className="font-mono text-ch-t3 text-[0.95em]">@{presetName}</span>
+        ) : undefined
+      }
+    >
+      {reasoning && <div className="mb-1"><ThinkingBlock content={reasoning} /></div>}
 
-      <div className="flex-1 min-w-0">
-        {/* 名前行: キャラクター名 + @プリセット */}
-        <div className="flex items-center gap-1.5 flex-wrap mb-1 text-[11px]">
-          <span className="font-semibold text-ch-t2">{characterName}</span>
-          {presetName && (
-            <span className="font-mono text-ch-t3 text-[0.95em]">@{presetName}</span>
-          )}
-        </div>
+      {/* バブル本体 */}
+      <Bubble kind="character" colored={colored} characterName={characterName}>
+        <MarkdownContent content={content} />
+      </Bubble>
 
-        {reasoning && <div className="mb-1"><ThinkingBlock content={reasoning} /></div>}
-
-        {/* バブル本体 */}
-        <Bubble kind="character" colored={colored} characterName={characterName}>
-          <MarkdownContent content={content} />
-        </Bubble>
-
-        {!sending && (
-          <div className="flex items-center gap-0.5 -ml-1 mt-0.5">
-            <CopyButton text={content} />
-            {onRegenerate && (
-              <button
-                onClick={onRegenerate}
-                title="再生成"
-                className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 text-xs transition-all p-1 rounded"
-              >
-                ↺
-              </button>
-            )}
-          </div>
-        )}
-        {/* デバッグログ折りたたみ（CHOTGOR_DEBUG=1 時のみ logMessageId が渡される） */}
-        {logMessageId && <LogPanel logMessageId={logMessageId} />}
-      </div>
-    </div>
+      {/* 操作バー（コピー / ログ折りたたみ / 再生成）。logMessageId は CHOTGOR_DEBUG=1 時のみ。 */}
+      {!sending && (
+        <MessageActionBar
+          copyText={content}
+          onRegenerate={onRegenerate}
+          logMessageId={logMessageId}
+        />
+      )}
+    </CharacterMessageRow>
   );
 }
 
@@ -914,7 +1074,7 @@ export function UserBubble({
   };
 
   return (
-    <div className="group flex flex-col items-end gap-0.5 max-w-[70%] ml-auto">
+    <div className="group flex flex-col items-end gap-0.5 max-w-full sm:max-w-[70%] ml-auto">
       {/* ユーザー名ラベル */}
       <span className="text-[11px] text-ch-t4 pr-1">{userName}</span>
 
@@ -950,27 +1110,18 @@ export function UserBubble({
           </div>
         </div>
       ) : (
-        <div className="flex items-end gap-1 flex-row-reverse min-w-0 w-full">
+        <>
+          {/* バブル本体（インデント無し・可変幅）。操作ボタンは下部に配置する。 */}
           <Bubble kind="user">
             <MarkdownContent content={content} />
           </Bubble>
           {!sending && (
-            <div className="flex items-center gap-0.5">
-              <CopyButton text={content} />
-              {onEdit && (
-                <button
-                  onClick={() => setEditing(true)}
-                  title="編集"
-                  className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={12} height={12}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-                  </svg>
-                </button>
-              )}
-            </div>
+            <UserMessageActions
+              copyText={content}
+              onEdit={onEdit ? () => setEditing(true) : undefined}
+            />
           )}
-        </div>
+        </>
       )}
     </div>
   );

@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef } from "react";
 import type { ChatMessage } from "../api";
-import { CharacterBubble, CharacterAvatar, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
+import { CharacterBubble, CharacterAvatar, CharacterMessageRow, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
 import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
 
 interface Props {
@@ -122,23 +122,20 @@ export default function MessageList({
             {sending && (streamingReasoning || (streamingContent !== null && streamingContent.trim().length > 0)) && (() => {
                 const streamCharName = waitingCharacter ?? characterName;
                 return (
-                    <div className="flex gap-2.5 max-w-[88%]">
-                        <CharacterAvatar characterName={streamCharName} size={28} />
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 mb-1 text-[11px]">
-                                <span className="font-semibold text-ch-t2">{streamCharName}</span>
-                            </div>
-                            {streamingReasoning && (
-                                <div className="mb-1"><ThinkingBlock content={streamingReasoning} streaming /></div>
-                            )}
-                            {streamingContent !== null && streamingContent.trim().length > 0 && (
-                                <Bubble kind="character" colored={colored} characterName={streamCharName}>
-                                    <span className="whitespace-pre-wrap">{streamingContent}</span>
-                                    <span className="animate-pulse inline-block ml-0.5 text-ch-accent">▌</span>
-                                </Bubble>
-                            )}
-                        </div>
-                    </div>
+                    <CharacterMessageRow
+                        avatar={<CharacterAvatar characterName={streamCharName} size={28} />}
+                        name={streamCharName}
+                    >
+                        {streamingReasoning && (
+                            <div className="mb-1"><ThinkingBlock content={streamingReasoning} streaming /></div>
+                        )}
+                        {streamingContent !== null && streamingContent.trim().length > 0 && (
+                            <Bubble kind="character" colored={colored} characterName={streamCharName}>
+                                <span className="whitespace-pre-wrap">{streamingContent}</span>
+                                <span className="animate-pulse inline-block ml-0.5 text-ch-accent">▌</span>
+                            </Bubble>
+                        )}
+                    </CharacterMessageRow>
                 );
             })()}
 
@@ -146,15 +143,12 @@ export default function MessageList({
             {(waitingCharacter || sending) && !streamingReasoning && (streamingContent === null || streamingContent.trim().length === 0) && (() => {
                 const charName = waitingCharacter ?? characterName;
                 return (
-                    <div className="flex gap-2.5">
-                        <CharacterAvatar characterName={charName} size={28} />
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 mb-1 text-[11px]">
-                                <span className="font-semibold text-ch-t2">{charName}</span>
-                            </div>
-                            <span className="text-ch-t3 text-sm animate-pulse">…</span>
-                        </div>
-                    </div>
+                    <CharacterMessageRow
+                        avatar={<CharacterAvatar characterName={charName} size={28} />}
+                        name={charName}
+                    >
+                        <span className="text-ch-t3 text-sm animate-pulse">…</span>
+                    </CharacterMessageRow>
                 );
             })()}
 

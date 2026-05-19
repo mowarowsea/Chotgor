@@ -110,8 +110,15 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
     for p in parsed:
         char = require_character(state.sqlite, p["char_name"])
         preset = require_preset(state.sqlite, p["preset_key"])
-        # 名前ではなくIDで保存することで、プリセット名変更の影響を受けないようにする
-        participants.append({"char_name": p["char_name"], "preset_id": preset.id})
+        # 実体参照は ID（プリセット名変更の影響を受けない）。
+        # preset_name はヘッダー表示用のスナップショット（多少古くても表示にしか使わない）。
+        participants.append(
+            {
+                "char_name": p["char_name"],
+                "preset_id": preset.id,
+                "preset_name": preset.name,
+            }
+        )
 
     # グループ設定を構築してDBに保存する（IDで保存）
     # 司会モデルはシステム設定で一括管理するため group_config には含めない。
