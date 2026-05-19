@@ -5,12 +5,15 @@
 import { useEffect, useRef } from "react";
 import type { ChatMessage } from "../api";
 import { CharacterBubble, CharacterAvatar, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
+import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
 
 interface Props {
     /** 表示するメッセージ一覧 */
     messages: ChatMessage[];
     /** ユーザ名（表示用） */
     userName: string;
+    /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
+    onHeaderVisibilityChange?: (visible: boolean) => void;
     /** 送信処理中フラグ */
     sending: boolean;
     /** 完了済みメッセージIDと reasoning テキストの対応マップ */
@@ -47,10 +50,13 @@ export default function MessageList({
     waitingCharacter = null,
     characterName = "キャラクター",
     emptyMessage = "メッセージを送ってみてください",
+    onHeaderVisibilityChange,
     onRetry,
     msgLogIds = {},
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
+    /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
+    const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
 
     /**
      * キャラクター別配色バブル（cb0〜cb9）を使うかどうか。
@@ -64,7 +70,7 @@ export default function MessageList({
     }, [messages, sending, streamingContent, waitingCharacter]);
 
     return (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden" onScroll={handleScroll}>
           {/* pt-16: 浮遊ヘッダー分の上余白。 */}
           <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 space-y-5">
             {messages.length === 0 && !sending && !waitingCharacter && (

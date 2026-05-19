@@ -121,6 +121,11 @@ export default function App() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   /** あらすじモーダルの開閉状態（シナリオセッション用）。 */
   const [synopsisModalOpen, setSynopsisModalOpen] = useState(false);
+  /**
+   * 浮遊ヘッダーの表示状態。
+   * 上スクロール（過去ログ閲覧）で隠れ、下スクロール・最下部・1画面に収まる場合は表示する。
+   */
+  const [headerVisible, setHeaderVisible] = useState(true);
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -261,6 +266,7 @@ export default function App() {
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
+    setHeaderVisible(true);
     setDrifts([]);
     setError(null);
     // ストリーミング中だった場合の状態をリセットする
@@ -931,7 +937,11 @@ export default function App() {
         {/* 浮遊ヘッダー: 常時表示・背景は透過。コンテンツはこの下をスクロールする。
             バー自体は pointer-events-none で、操作可能なピルだけ pointer-events-auto。 */}
         <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
-          <div className="flex items-center gap-2 px-3 py-2.5">
+          <div
+            className={`flex items-center gap-2 px-3 py-2.5 transition-all duration-300 ${
+              headerVisible ? "opacity-100 translate-y-0 visible" : "opacity-0 -translate-y-3 invisible"
+            }`}
+          >
             {/* サイドバートグル（ピルボタン） */}
             <button
               onClick={() => setSidebarOpen((o) => !o)}
@@ -1098,6 +1108,7 @@ export default function App() {
             onSend={handleScenarioSend}
             onEditUserTurn={handleScenarioEditUserTurn}
             onRegenerate={handleScenarioRegenerate}
+            onHeaderVisibilityChange={setHeaderVisible}
           />
         ) : activeSessionId && isGroupSession ? (
           <GroupChatView
@@ -1112,6 +1123,7 @@ export default function App() {
             reasoningMap={groupReasoningMap}
             onSend={handleSend}
             onRetry={handleGroupRetry}
+            onHeaderVisibilityChange={setHeaderVisible}
             isUserTurn={isGroupUserTurn}
             onSkip={handleGroupSkip}
           />
@@ -1127,6 +1139,7 @@ export default function App() {
             reasoningMap={reasoningMap}
             onSend={handleSend}
             onRetry={handleRetry}
+            onHeaderVisibilityChange={setHeaderVisible}
             msgLogIds={msgLogIds}
           />
         ) : (

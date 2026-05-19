@@ -24,6 +24,7 @@ import type {
 } from "../api";
 import { CopyButton, MarkdownContent, charHue, Bubble } from "./ChatBubbles";
 import MessageInput from "./MessageInput";
+import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
 
 /** ストリーミング中の未確定吹き出し情報。
  *
@@ -64,6 +65,8 @@ interface Props {
   onEditUserTurn: (turnId: string, newContent: string) => void;
   /** 最後のユーザターン以降を削除して同内容で再ストリーム。 */
   onRegenerate: () => void;
+  /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
+  onHeaderVisibilityChange?: (visible: boolean) => void;
 }
 
 /** 文字列の末尾空白・改行を取り除く（表示時のノイズ除去）。 */
@@ -548,10 +551,13 @@ export default function ScenarioChatView({
   onSend,
   onEditUserTurn,
   onRegenerate,
+  onHeaderVisibilityChange,
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
   const [npcDialogTarget, setNpcDialogTarget] = useState<ZetaNpc | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
+  const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
 
   /** 自動スクロール: turns / pendingBubbles が変わるたびに最下端へ追従。 */
   useEffect(() => {
@@ -646,7 +652,7 @@ export default function ScenarioChatView({
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
       {/* チャットスクロール（1on1 と同じく最大幅 760px 中央寄せ・浮遊ヘッダー分の上余白） */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
        <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 flex flex-col gap-5">
         {turns.length === 0 && pendingBubbles.length === 0 && (
           <div className="text-ch-t3 text-sm text-center mt-8">
