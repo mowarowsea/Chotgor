@@ -94,6 +94,33 @@ async def _read_image_data(form) -> Optional[str]:
     return f"data:{content_type};base64,{b64}"
 
 
+def _is_ajax(request: Request) -> bool:
+    """fetch / XHR からのリクエストかどうかを X-Requested-With ヘッダで判定する。"""
+    return request.headers.get("x-requested-with", "").lower() in (
+        "fetch",
+        "xmlhttprequest",
+    )
+
+
+def _save_response(request: Request, redirect_url: str):
+    """保存完了レスポンスを返す。
+
+    自動保存（AJAX）の場合は JSON を、通常のフォーム送信の場合は
+    従来どおりリダイレクトを返す。これにより 1 つのハンドラが
+    「Save ボタン送信」と「フィールド変更ごとの自動保存」の両方に対応する。
+
+    Args:
+        request: リクエスト。AJAX 判定に使う。
+        redirect_url: 通常送信時のリダイレクト先。
+
+    Returns:
+        JSONResponse または RedirectResponse。
+    """
+    if _is_ajax(request):
+        return JSONResponse({"ok": True})
+    return RedirectResponse(url=redirect_url, status_code=303)
+
+
 def setup_templates(templates_dir: str) -> Jinja2Templates:
     return Jinja2Templates(directory=templates_dir)
 
@@ -205,7 +232,6 @@ async def update_character(request: Request, character_id: str):
     )
 
     update_kwargs: dict = dict(
-        name=(form.get("name") or "").strip(),
         system_prompt_block1=form.get("system_prompt_block1", ""),
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
@@ -216,6 +242,10 @@ async def update_character(request: Request, character_id: str):
         self_reflection_n_turns=self_reflection_n_turns,
         allowed_tools=allowed_tools,
     )
+    # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
+    name = (form.get("name") or "").strip()
+    if name:
+        update_kwargs["name"] = name
     new_image = await _read_image_data(form)
     if new_image:
         update_kwargs["image_data"] = new_image
@@ -224,7 +254,7 @@ async def update_character(request: Request, character_id: str):
         update_kwargs["image_data"] = None
 
     request.app.state.sqlite.update_character(character_id, **update_kwargs)
-    return RedirectResponse(url="/ui/", status_code=303)
+    return _save_response(request, "/ui/")
 
 
 @router.post("/characters/{character_id}/delete")
@@ -490,16 +520,21 @@ async def update_scenario(request: Request, scenario_id: str):
     """シナリオテンプレートを更新する（プレイ中のセッションには影響しない）。"""
     form = await request.form()
     update_kwargs = {
-        "title": (form.get("title") or "").strip(),
         "user_alias": (form.get("user_alias") or "").strip() or "プレイヤー",
-        "gm_preset_id": (form.get("gm_preset_id") or "").strip(),
         "scenario": (form.get("scenario") or "") or None,
         "intro": (form.get("intro") or "") or None,
         "history_max_turns": _coalesce_optional_int(form, "history_max_turns"),
         "history_max_chars": _coalesce_optional_int(form, "history_max_chars"),
     }
+    # タイトル・GMプリセットは必須項目。空欄なら更新しない（自動保存の空入力対策）。
+    title = (form.get("title") or "").strip()
+    if title:
+        update_kwargs["title"] = title
+    gm_preset_id = (form.get("gm_preset_id") or "").strip()
+    if gm_preset_id:
+        update_kwargs["gm_preset_id"] = gm_preset_id
     request.app.state.sqlite.update_zeta_scenario(scenario_id, **update_kwargs)
-    return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+    return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
 
 
 @router.post("/scenarios/{scenario_id}/delete")
@@ -536,11 +571,12 @@ async def edit_npc_form(request: Request, scenario_id: str, npc_id: str):
     """NPC を更新する。画像未指定なら既存画像を維持、remove_image チェック時はクリア。"""
     form = await request.form()
     update_kwargs: dict = {
-        "name": (form.get("name") or "").strip(),
         "description": (form.get("description") or "") or None,
     }
-    if not update_kwargs["name"]:
-        return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+    # 名前は必須項目。空欄なら名前以外だけ保存する（自動保存の空入力対策）。
+    name = (form.get("name") or "").strip()
+    if name:
+        update_kwargs["name"] = name
 
     new_image = await _read_image_data(form)
     if new_image:
@@ -549,7 +585,7 @@ async def edit_npc_form(request: Request, scenario_id: str, npc_id: str):
         update_kwargs["image_data"] = None
 
     request.app.state.sqlite.update_zeta_npc(npc_id, **update_kwargs)
-    return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
+    return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
 
 
 @router.post("/scenarios/{scenario_id}/npcs/{npc_id}/delete")
@@ -577,47 +613,33 @@ async def settings_form(request: Request):
     )
 
 
-@router.post("/settings")
-async def save_settings(
-    request: Request,
-    user_name: str = Form("ユーザ"),
-    anthropic_api_key: str = Form(""),
-    openai_api_key: str = Form(""),
-    xai_api_key: str = Form(""),
-    google_api_key: str = Form(""),
-    openrouter_api_key: str = Form(""),
-    tavily_api_key: str = Form(""),
-    chronicle_time: str = Form("03:00"),
-    enable_time_awareness: Optional[str] = Form(None),
-    context_window_max_chronicled: int = Form(10),
-    embedding_provider: str = Form("default"),
-    embedding_model: str = Form(""),
-    infinity_base_url: str = Form("http://localhost:7997"),
-    translation_preset_id: str = Form(""),
-    group_director_preset_id: str = Form(""),
-):
-    """設定を保存し、embeddingモデルが変更された場合は記憶を再インデックスする。"""
+@router.post("/settings/general")
+async def save_general_settings(request: Request):
+    """embedding 以外の設定を保存する（即時反映・再インデックスを伴わない）。
+
+    フィールド変更ごとの自動保存対象。embedding 設定はミス操作で全記憶の
+    再インデックスを招くため、ここでは扱わず save_embedding_settings に分離する。
+    """
+    form = await request.form()
     store = request.app.state.sqlite
 
-    # embedding設定の変更を検出（APIキー更新前に現在値を取得）
-    old_embedding_provider = store.get_setting("embedding_provider", "default")
-    old_embedding_model = store.get_setting("embedding_model", "")
-
     # ユーザ名は常に保存（マスク不要）
-    store.set_setting("user_name", user_name.strip() or "ユーザ")
+    store.set_setting("user_name", (form.get("user_name") or "").strip() or "ユーザ")
 
     # APIキーはマスク値（●のみ）でなければ更新する
-    for key, value in [
-        ("anthropic_api_key", anthropic_api_key),
-        ("openai_api_key", openai_api_key),
-        ("xai_api_key", xai_api_key),
-        ("google_api_key", google_api_key),
-        ("openrouter_api_key", openrouter_api_key),
-        ("tavily_api_key", tavily_api_key),
-    ]:
+    for key in (
+        "anthropic_api_key",
+        "openai_api_key",
+        "xai_api_key",
+        "google_api_key",
+        "openrouter_api_key",
+        "tavily_api_key",
+    ):
+        value = form.get(key) or ""
         if value and set(value) != {"●"}:
             store.set_setting(key, value)
 
+    chronicle_time = form.get("chronicle_time") or "03:00"
     try:
         h, m = map(int, chronicle_time.split(":"))
         assert 0 <= h <= 23 and 0 <= m <= 59
@@ -625,20 +647,45 @@ async def save_settings(
     except Exception:
         pass
 
-    store.set_setting("enable_time_awareness", bool(enable_time_awareness))
-    store.set_setting("context_window_max_chronicled", str(max(0, min(200, context_window_max_chronicled))))
+    store.set_setting("enable_time_awareness", bool(form.get("enable_time_awareness")))
 
-    # embedding設定の保存
+    try:
+        cw = int(form.get("context_window_max_chronicled") or 10)
+    except (TypeError, ValueError):
+        cw = 10
+    store.set_setting("context_window_max_chronicled", str(max(0, min(200, cw))))
+
+    # 翻訳モデル設定の保存
+    store.set_setting("translation_preset_id", form.get("translation_preset_id") or "")
+
+    # 司会モデル設定の保存（グループチャットの次発言者判断に使用）
+    store.set_setting("group_director_preset_id", form.get("group_director_preset_id") or "")
+
+    return _save_response(request, "/ui/settings?saved=1")
+
+
+@router.post("/settings/embedding")
+async def save_embedding_settings(
+    request: Request,
+    embedding_provider: str = Form("default"),
+    embedding_model: str = Form(""),
+    infinity_base_url: str = Form("http://localhost:7997"),
+):
+    """embedding 設定を保存し、変更時は全記憶を再インデックスする。
+
+    再インデックスは重い処理かつ後戻りしにくいため、自動保存ではなく
+    明示的なボタン操作（通常のフォーム送信）でのみ実行する。
+    """
+    store = request.app.state.sqlite
+
+    # embedding設定の変更を検出（保存前に現在値を取得）
+    old_embedding_provider = store.get_setting("embedding_provider", "default")
+    old_embedding_model = store.get_setting("embedding_model", "")
+
     store.set_setting("embedding_provider", embedding_provider)
     store.set_setting("embedding_model", embedding_model)
     if infinity_base_url.strip():
         store.set_setting("infinity_base_url", infinity_base_url.strip())
-
-    # 翻訳モデル設定の保存
-    store.set_setting("translation_preset_id", translation_preset_id)
-
-    # 司会モデル設定の保存（グループチャットの次発言者判断に使用）
-    store.set_setting("group_director_preset_id", group_director_preset_id)
 
     # embeddingモデルが変更された場合は全記憶を再インデックスする
     embedding_changed = (
@@ -646,7 +693,6 @@ async def save_settings(
         or embedding_model != old_embedding_model
     )
     if embedding_changed:
-        # APIキー・Ollama URL 保存後の最新値を使用する
         current_google_key = store.get_setting("google_api_key", "")
         current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
         try:

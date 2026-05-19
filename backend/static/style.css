@@ -1184,3 +1184,46 @@ hr {
   font-family: var(--mono);
   font-size: 0.78rem;
 }
+
+/* ── フォーム自動保存ステータス表示 ─────────────────────────── */
+/* data-autosave フォームの保存状態を画面右下にトースト表示する。 */
+.autosave-status {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border-2);
+  background: var(--bg-alt);
+  color: var(--t1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+}
+
+.autosave-status.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.autosave-status[data-kind="saved"] {
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.autosave-status[data-kind="error"],
+.autosave-status[data-kind="invalid"] {
+  color: #d98a8a;
+  border-color: var(--danger-bd);
+}
+
+/* 自動保存フォームであることを示す案内テキスト。 */
+.autosave-note {
+  font-size: 0.78rem;
+  color: var(--t3);
+  margin-bottom: 0.75rem;
+}

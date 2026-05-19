@@ -18,7 +18,12 @@
 </div>
 
 <div class="form-card">
-    <form method="post" action="{{ action }}" enctype="multipart/form-data">
+    <form method="post" action="{{ action }}" enctype="multipart/form-data"
+          {% if character %}data-autosave{% endif %}>
+
+        {% if character %}
+        <p class="autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
+        {% endif %}
 
         <!-- アイコン -->
         <div class="form-group">
@@ -33,7 +38,9 @@
                     <div class="icon-placeholder">?</div>
                     {% endif %}
                 </div>
-                <input type="file" id="image-file-input" name="image" accept="image/*" style="display:none">
+                <!-- data-no-autosave: 生画像の選択では保存せず、クロップ確定時に保存する -->
+                <input type="file" id="image-file-input" name="image" accept="image/*"
+                    style="display:none" data-no-autosave>
                 <div style="display:flex;flex-direction:column;gap:5px">
                     <button type="button" class="btn btn-secondary btn-sm"
                         onclick="document.getElementById('image-file-input').click()">
@@ -279,10 +286,10 @@
         </script>
 
         <div class="form-actions">
-            <button type="submit" class="btn btn-primary">
-                {% if character %}Save Changes{% else %}Create Character{% endif %}
-            </button>
-            <a href="/ui/" class="btn btn-secondary">Cancel</a>
+            {% if not character %}
+            <button type="submit" class="btn btn-primary">Create Character</button>
+            {% endif %}
+            <a href="/ui/" class="btn btn-secondary">{% if character %}Back{% else %}Cancel{% endif %}</a>
             {% if character %}
             <a href="/ui/memories/{{ character.id }}" class="btn btn-secondary">Memories</a>
             {% endif %}
@@ -357,6 +364,8 @@
         const opt = document.querySelector(`#preset-select option[value="${presetId}"]`);
         if (opt) opt.disabled = false;
         updateSwitchAngleVisibility();
+        // モデルの削除は DOM 操作のみでイベントを伴わないため、明示的に保存する。
+        if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
 
     /** 選択したプリセットをアコーディオンに追加する。 */
@@ -403,6 +412,8 @@
         opt.disabled = true;
         sel.value = '';
         updateSwitchAngleVisibility();
+        // モデルの追加は DOM 操作のみでイベントを伴わないため、明示的に保存する。
+        if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
 
     // ページロード時の初期化
@@ -488,6 +499,8 @@
             document.getElementById('remove-image-btn').style.display = '';
 
             cancelCrop();
+            // クロップ確定はイベントを伴わないため、明示的に自動保存をトリガーする。
+            if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
         }, 'image/png');
     }
 
@@ -505,6 +518,8 @@
 
         document.getElementById('remove-image-flag').value = '1';
         document.getElementById('remove-image-btn').style.display = 'none';
+        // 画像削除はイベントを伴わないため、明示的に自動保存をトリガーする。
+        if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
 </script>
 

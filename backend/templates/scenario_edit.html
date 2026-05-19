@@ -8,7 +8,11 @@
 </div>
 
 <div class="form-card">
-    <form method="post" action="{{ action }}">
+    <form method="post" action="{{ action }}" {% if scenario %}data-autosave{% endif %}>
+
+        {% if scenario %}
+        <p class="autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
+        {% endif %}
 
         <!-- タイトル -->
         <div class="form-group">
@@ -84,9 +88,9 @@
             </div>
         </div>
 
-        <button type="submit" class="btn btn-primary">
-            {% if scenario %}Save{% else %}Create{% endif %}
-        </button>
+        {% if not scenario %}
+        <button type="submit" class="btn btn-primary">Create</button>
+        {% endif %}
     </form>
 </div>
 
@@ -103,7 +107,7 @@
     {% for n in npcs %}
     <div class="form-card" style="margin-bottom:0.75rem;padding:0.75rem">
         <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/edit"
-              enctype="multipart/form-data">
+              enctype="multipart/form-data" data-autosave>
             <div class="image-upload-row" style="margin-bottom:0.5rem">
                 <div>
                     {% if n.image_data %}
@@ -131,7 +135,6 @@
                           placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
             </div>
             <div style="display:flex;gap:0.5rem">
-                <button type="submit" class="btn btn-secondary">Save</button>
                 <button type="submit" formmethod="post"
                         formaction="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/delete"
                         formnovalidate

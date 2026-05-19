@@ -42,8 +42,10 @@
 <div class="alert alert-danger">再インデックスに失敗しました。APIキーとモデルIDを確認してください。記憶は SQLite に保全されています。</div>
 {% endif %}
 
+{# 一般設定: フィールド変更ごとに自動保存（embedding 以外）。 #}
 <div class="form-card">
-    <form method="post" action="/ui/settings">
+    <form method="post" action="/ui/settings/general" data-autosave>
+        <p class="autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
 
         <!-- ユーザ名 -->
         <div class="form-group">
@@ -138,11 +140,55 @@
 
         <hr>
 
-        <!-- Embedding Model -->
+        <!-- 翻訳モデル -->
         <div class="form-group">
-            <label for="embedding_provider">Embedding Model
-                <span class="label-hint">記憶のベクトル化に使用するモデル</span>
+            <label for="translation_preset_id">翻訳モデル
+                <span class="label-hint">ThinkingBlock / Thoughts の翻訳に使用するモデル</span>
             </label>
+            <select id="translation_preset_id" name="translation_preset_id" class="form-control">
+                <option value="" {% if not settings.get('translation_preset_id') %}selected{% endif %}>（未設定）</option>
+                {% for preset in model_presets %}
+                <option value="{{ preset.id }}"
+                        {% if settings.get('translation_preset_id') == preset.id %}selected{% endif %}>
+                    {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
+                </option>
+                {% endfor %}
+            </select>
+            <p class="form-hint">選択したモデルがチャット画面・ログ画面の翻訳ボタンで使用されます。</p>
+        </div>
+
+        <hr>
+
+        <!-- 司会モデル -->
+        <div class="form-group">
+            <label for="group_director_preset_id">司会モデル
+                <span class="label-hint">グループチャットで次の発言者を判断するモデル</span>
+            </label>
+            <select id="group_director_preset_id" name="group_director_preset_id" class="form-control">
+                <option value="" {% if not settings.get('group_director_preset_id') %}selected{% endif %}>（未設定）</option>
+                {% for preset in model_presets %}
+                <option value="{{ preset.id }}"
+                        {% if settings.get('group_director_preset_id') == preset.id %}selected{% endif %}>
+                    {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
+                </option>
+                {% endfor %}
+            </select>
+            <p class="form-hint">司会はキャラクターではなくシステム上のユーティリティモデルです。未設定の場合グループチャットは自動進行しません。</p>
+        </div>
+    </form>
+</div>
+
+{# Embedding 設定: 変更すると全記憶の再インデックスを伴うため、自動保存せず明示ボタンで保存する。 #}
+<div class="form-card" style="margin-top:1rem">
+    <form method="post" action="/ui/settings/embedding">
+        <h3 style="margin-bottom:0.5rem;font-size:1rem">Embedding Model</h3>
+        <p class="form-hint" style="margin-bottom:0.75rem">
+            記憶のベクトル化に使うモデル。変更すると全キャラクターの記憶が再インデックスされるため、
+            この項目だけは下のボタンで明示的に保存します。
+        </p>
+
+        <div class="form-group">
+            <label for="embedding_provider">Embedding Provider</label>
             <select id="embedding_provider" name="embedding_provider" class="form-control"
                     onchange="updateEmbeddingUI(this.value)">
                 <option value="default" {% if settings.get('embedding_provider', 'default') == 'default' %}selected{% endif %}>
@@ -191,58 +237,22 @@
         </div>
         {% endif %}
 
-        <hr>
-
-        <!-- 翻訳モデル -->
-        <div class="form-group">
-            <label for="translation_preset_id">翻訳モデル
-                <span class="label-hint">ThinkingBlock / Thoughts の翻訳に使用するモデル</span>
-            </label>
-            <select id="translation_preset_id" name="translation_preset_id" class="form-control">
-                <option value="" {% if not settings.get('translation_preset_id') %}selected{% endif %}>（未設定）</option>
-                {% for preset in model_presets %}
-                <option value="{{ preset.id }}"
-                        {% if settings.get('translation_preset_id') == preset.id %}selected{% endif %}>
-                    {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
-                </option>
-                {% endfor %}
-            </select>
-            <p class="form-hint">選択したモデルがチャット画面・ログ画面の翻訳ボタンで使用されます。</p>
-        </div>
-
-        <hr>
-
-        <!-- 司会モデル -->
-        <div class="form-group">
-            <label for="group_director_preset_id">司会モデル
-                <span class="label-hint">グループチャットで次の発言者を判断するモデル</span>
-            </label>
-            <select id="group_director_preset_id" name="group_director_preset_id" class="form-control">
-                <option value="" {% if not settings.get('group_director_preset_id') %}selected{% endif %}>（未設定）</option>
-                {% for preset in model_presets %}
-                <option value="{{ preset.id }}"
-                        {% if settings.get('group_director_preset_id') == preset.id %}selected{% endif %}>
-                    {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
-                </option>
-                {% endfor %}
-            </select>
-            <p class="form-hint">司会はキャラクターではなくシステム上のユーティリティモデルです。未設定の場合グループチャットは自動進行しません。</p>
-        </div>
-
         <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Save Settings</button>
+            <button type="submit" class="btn btn-primary"
+                    onclick="return confirm('Embedding 設定を保存します。プロバイダー／モデルを変更した場合は全記憶の再インデックスが走ります。続けますか？')">
+                保存して再インデックス
+            </button>
         </div>
     </form>
+</div>
 
-    <div class="form-card" style="margin-top:1rem">
-        <h3 style="margin-bottom:0.5rem;font-size:1rem">記憶の修復</h3>
-        <p class="form-hint">Embedding モデル変更後に記憶が想起されなくなった場合、現在の設定で全記憶を再インデックスします。SQLite に記憶データが残っていれば復元されます。</p>
-        <form method="post" action="/ui/settings/reindex"
-              onsubmit="return confirm('全キャラクターの記憶を再インデックスします。完了まで時間がかかる場合があります。続けますか？')">
-            <button type="submit" class="btn btn-secondary">記憶を再インデックス</button>
-        </form>
-    </div>
-
+<div class="form-card" style="margin-top:1rem">
+    <h3 style="margin-bottom:0.5rem;font-size:1rem">記憶の修復</h3>
+    <p class="form-hint">Embedding モデル変更後に記憶が想起されなくなった場合、現在の設定で全記憶を再インデックスします。SQLite に記憶データが残っていれば復元されます。</p>
+    <form method="post" action="/ui/settings/reindex"
+          onsubmit="return confirm('全キャラクターの記憶を再インデックスします。完了まで時間がかかる場合があります。続けますか？')">
+        <button type="submit" class="btn btn-secondary">記憶を再インデックス</button>
+    </form>
 </div>
 
 <script>
