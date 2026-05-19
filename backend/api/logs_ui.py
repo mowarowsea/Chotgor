@@ -351,6 +351,25 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
     return [_parse_tag_body(tn, body) for _, tn, body in flat]
 
 
+def _tc_label(tc: dict) -> str:
+    """tool_call を人間可読なラベル（feature/preset）に整形する。
+
+    warn_reason の組み立てなど、ログ表示用の識別名として使う。
+
+    Args:
+        tc: tool_call 辞書（feature / preset キーを持つ）。
+
+    Returns:
+        "feature/preset" 形式の文字列。どちらか欠ける場合は存在する方を、
+        いずれも無ければ "不明な処理" を返す。
+    """
+    feature = tc.get("feature") or ""
+    preset = tc.get("preset") or ""
+    if feature and preset:
+        return f"{feature}/{preset}"
+    return feature or preset or "不明な処理"
+
+
 def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
     """1リクエストフォルダの内容を解析してログエントリ辞書を返す。
 
@@ -363,8 +382,8 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
     Returns:
         ログエントリ辞書。以下のキーを含む:
             message_id, dt, dt_str, character, preset, model_id,
-            source, user_message, character_response,
-            tool_calls, files
+            source, user_message, character_response, reasoning_text,
+            tool_calls, warnings, files, has_error, warn_reason
     """
     try:
         dt = datetime.fromtimestamp(folder.stat().st_mtime)
@@ -478,13 +497,16 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
                 msg = ""
             warnings.append({"tag": tag, "message": msg, "file": f.name})
 
-    # --- エラー判定 ---
-    # いずれかの tool_call で Response が存在しない、または Response がエラー文字列の場合は警告扱い
+    # --- 警告（WARN）判定 ---
+    # いずれかの tool_call で Response が存在しない、または Response がエラー文字列の場合は
+    # 警告扱いとし、その理由を warn_reason に人間可読な文言で残す（Logs 画面で表示）。
     has_error = False
+    warn_reason = ""
     for tc in tool_calls:
         if tc["request_file"] and not tc["response_file"]:
             # Request はあるが Response が存在しない = エラーで中断したと判断
             has_error = True
+            warn_reason = f"{_tc_label(tc)} の応答が生成されず、処理が途中で中断しました"
             break
         if tc["response_file"]:
             # Response の先頭がエラー文字列パターンに一致する場合
@@ -493,6 +515,10 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
                 head = resp_path.read_text(encoding="utf-8", errors="replace")[:120]
                 if head.lstrip().startswith("[") and ("error" in head.lower() or "Error" in head):
                     has_error = True
+                    warn_reason = (
+                        f"{_tc_label(tc)} の応答がエラーを返しました"
+                        f"（{tc['response_file']} を参照）"
+                    )
                     break
             except Exception:
                 pass
@@ -512,6 +538,7 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
         "warnings": warnings,
         "files": file_names,
         "has_error": has_error,
+        "warn_reason": warn_reason,
     }
 
 

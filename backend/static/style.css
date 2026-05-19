@@ -1227,3 +1227,8 @@ hr {
   color: var(--t3);
   margin-bottom: 0.75rem;
 }
+
+/* Logs 画面で WARN になった理由を示すテキスト（一覧プレビュー・詳細行で共用）。 */
+.log-warn-reason {
+  color: #d09a55;
+}
