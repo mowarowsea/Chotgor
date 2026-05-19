@@ -5,6 +5,7 @@
  * 入力して作成する。旧来のサイドバー内アコーディオン方式を置き換える。
  */
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Character, Model, ScenarioTemplate } from "../api";
 import { charNameOf, presetNameOf, fetchScenarioTemplates } from "../api";
 import { CharacterAvatar } from "./ChatBubbles";
@@ -151,7 +152,10 @@ export default function NewSessionPicker({
     onClose();
   };
 
-  return (
+  // モーダルは createPortal で document.body 直下へ出す。
+  // サイドバー（transform を持つ）の内側でレンダリングすると position:fixed が
+  // サイドバー基準になり、画面中央ではなくサイドバー幅に固定されてしまうため。
+  return createPortal(
     <div
       onClick={onClose}
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
@@ -416,6 +420,7 @@ export default function NewSessionPicker({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

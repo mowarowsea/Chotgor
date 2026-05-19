@@ -89,6 +89,7 @@ import type { PendingBubble } from "./components/ScenarioChatView";
 import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
 import { CharacterAvatar } from "./components/ChatBubbles";
+import CharPresetMenu from "./components/CharPresetMenu";
 import { useTheme } from "./hooks/useTheme";
 
 /** アプリ全体のルートコンポーネント。 */
@@ -979,27 +980,14 @@ export default function App() {
                     onDriftsChange={() => refreshDrifts(activeSessionId)}
                   />
                 )}
-                {/* モデル切り替えメニュー */}
+                {/* モデル切り替えメニュー（キャラ/プリセット2段選択） */}
                 {modelMenuOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setModelMenuOpen(false)} />
-                    <div
-                      className="absolute left-0 top-[calc(100%+6px)] z-50 bg-ch-bg rounded-lg py-1 max-h-72 overflow-y-auto"
-                      style={{ border: "1px solid var(--ch-sep2)", boxShadow: "var(--ch-shadow)", minWidth: 200 }}
-                    >
-                      {models.map((m) => (
-                        <button
-                          key={m.id}
-                          onClick={() => { setSelectedModel(m.id); setModelMenuOpen(false); }}
-                          className={`block w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-ch-s2 ${
-                            m.id === selectedModel ? "text-ch-accent font-medium" : "text-ch-t2"
-                          }`}
-                        >
-                          {m.id}
-                        </button>
-                      ))}
-                    </div>
-                  </>
+                  <CharPresetMenu
+                    models={models}
+                    currentModelId={selectedModel || activeSession?.model_id || ""}
+                    onApply={setSelectedModel}
+                    onClose={() => setModelMenuOpen(false)}
+                  />
                 )}
               </div>
             ) : !sidebarOpen ? (

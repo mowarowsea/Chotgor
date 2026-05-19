@@ -5,7 +5,9 @@
  */
 import { useState, useRef } from "react";
 import type { Character, Model, ScenarioSession, Session } from "../api";
+import { charNameOf } from "../api";
 import NewSessionPicker from "./NewSessionPicker";
+import { CharacterAvatar } from "./ChatBubbles";
 
 /** サイドバーで表示する統合セッション型。1on1/group/scenario を判別可能にする。 */
 export type AnySession = Session | ScenarioSession;
@@ -39,6 +41,52 @@ interface Props {
   onDeleteSession: (sessionId: string) => void;
   /** セッションタイトル変更時のコールバック */
   onRenameSession: (sessionId: string, newTitle: string) => void;
+}
+
+/** グループセッションの group_config JSON から参加キャラクター名を取り出す。 */
+function groupCharNames(groupConfig?: string): string[] {
+  if (!groupConfig) return [];
+  try {
+    const cfg = JSON.parse(groupConfig);
+    return (cfg.participants ?? []).map((p: { char_name: string }) => p.char_name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * セッション行の先頭アイコン。
+ * 1on1 はキャラクターアバター、グループは参加者アバターの重ね、シナリオは ✦ 円。
+ */
+function SessionIcon({ session }: { session: AnySession }) {
+  if (session.session_type === "scenario") {
+    return (
+      <span className="shrink-0 w-[18px] h-[18px] rounded-full bg-ch-s3 flex items-center justify-center text-[10px] text-ch-t2">
+        ✦
+      </span>
+    );
+  }
+  if (session.session_type === "group") {
+    const names = groupCharNames((session as Session).group_config);
+    if (names.length === 0) {
+      return <span className="shrink-0 text-[11px] opacity-60">👥</span>;
+    }
+    return (
+      <span className="shrink-0 flex">
+        {names.slice(0, 3).map((n, i) => (
+          <span key={n + i} style={{ marginLeft: i ? -7 : 0, zIndex: 10 - i }}>
+            <CharacterAvatar characterName={n} size={16} />
+          </span>
+        ))}
+      </span>
+    );
+  }
+  // 1on1: model_id（"{char}@{preset}"）からキャラクター名を導出する。
+  return (
+    <span className="shrink-0">
+      <CharacterAvatar characterName={charNameOf((session as Session).model_id ?? "")} size={18} />
+    </span>
+  );
 }
 
 /** セッション一覧と新規作成UIを提供するサイドバー。モバイルはオーバーレイ表示、デスクトップはインライン表示。 */
@@ -159,12 +207,7 @@ export default function Sidebar({
               }`}
             >
               {/* セッション種別アイコン */}
-              {s.session_type === "group" && (
-                <span className="text-[11px] shrink-0 opacity-60">👥</span>
-              )}
-              {s.session_type === "scenario" && (
-                <span className="text-[11px] shrink-0 opacity-60">✦</span>
-              )}
+              <SessionIcon session={s} />
 
               {/* セッションタイトル（ダブルクリックでインライン編集） */}
               {editingSessionId === s.id ? (
