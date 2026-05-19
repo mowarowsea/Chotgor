@@ -39,8 +39,6 @@ interface Props {
   onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
   /** スクロール方向変化コールバック。MessageList から App へ伝播する。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
-  /** キャラクター名→IDのマップ。アバター画像の表示に使用する。 */
-  characterIdMap?: Record<string, string>;
   /** ユーザターン待ち状態かどうか。true のときスキップボタンを表示する。 */
   isUserTurn?: boolean;
   /** ユーザターンスキップコールバック。スキップボタン押下時に呼ばれる。 */
@@ -61,7 +59,6 @@ export default function GroupChatView({
   onSend,
   onRetry,
   onHeaderVisibilityChange,
-  characterIdMap,
   isUserTurn = false,
   onSkip,
 }: Props) {
@@ -79,7 +76,6 @@ export default function GroupChatView({
         emptyMessage="グループチャットを始めましょう"
         onRetry={onRetry}
         onHeaderVisibilityChange={onHeaderVisibilityChange}
-        characterIdMap={characterIdMap}
       />
       <MessageInput
         sessionId={sessionId}

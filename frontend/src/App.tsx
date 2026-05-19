@@ -88,7 +88,7 @@ import ScenarioChatView from "./components/ScenarioChatView";
 import type { PendingBubble } from "./components/ScenarioChatView";
 import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
-import { CharacterAvatar } from "./components/ChatBubbles";
+import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
 import CharPresetMenu from "./components/CharPresetMenu";
 import { useTheme } from "./hooks/useTheme";
 
@@ -134,13 +134,17 @@ export default function App() {
   /** アクティブセッションがグループチャットかどうか。 */
   const isGroupSession = activeSession?.session_type === "group";
   /**
-   * キャラクター名→IDのマップ。アバター画像URL生成用。
+   * キャラクター名→アバター画像URLのリゾルバ。
+   * CharacterImageProvider 経由でアプリ全体の CharacterAvatar が参照する。
    * characters が変わるたびに再計算するため useMemo でメモ化する。
    */
-  const characterIdMap = useMemo(
-    () => Object.fromEntries(characters.map((c) => [c.name, c.id])),
-    [characters],
-  );
+  const resolveCharImage = useMemo(() => {
+    const idByName = new Map(characters.map((c) => [c.name, c.id]));
+    return (name: string): string | undefined => {
+      const id = idByName.get(name);
+      return id ? `/api/characters/${id}/image` : undefined;
+    };
+  }, [characters]);
   /** グループチャット参加者情報（char_name・preset_name）。 */
   const groupParticipantEntries = (() => {
     if (!isGroupSession || !activeSession?.group_config) return [];
@@ -871,7 +875,9 @@ export default function App() {
   }, [activeSessionId, sending, selectedModel, _doStream]);
 
   return (
-    /* h-[100dvh]: モバイルブラウザのアドレスバーを除いた実際の表示領域に合わせる */
+    /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。 */
+    <CharacterImageProvider resolve={resolveCharImage}>
+    {/* h-[100dvh]: モバイルブラウザのアドレスバーを除いた実際の表示領域に合わせる */}
     <div className="flex h-[100dvh] overflow-hidden bg-ch-bg text-ch-t1 relative">
       {/* モバイル時: サイドバー背後のオーバーレイ。タップで閉じる。 */}
       {sidebarOpen && (
@@ -1087,7 +1093,6 @@ export default function App() {
             onSend={handleSend}
             onRetry={handleGroupRetry}
             onHeaderVisibilityChange={setHeaderVisible}
-            characterIdMap={characterIdMap}
             isUserTurn={isGroupUserTurn}
             onSkip={handleGroupSkip}
           />
@@ -1104,7 +1109,6 @@ export default function App() {
             onSend={handleSend}
             onRetry={handleRetry}
             onHeaderVisibilityChange={setHeaderVisible}
-            characterIdMap={characterIdMap}
             msgLogIds={msgLogIds}
           />
         ) : (
@@ -1137,5 +1141,6 @@ export default function App() {
         />
       )}
     </div>
+    </CharacterImageProvider>
   );
 }

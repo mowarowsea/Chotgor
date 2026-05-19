@@ -57,6 +57,9 @@ function groupCharNames(groupConfig?: string): string[] {
 /**
  * セッション行の先頭アイコン。
  * 1on1 はキャラクターアバター、グループは参加者アバターの重ね、シナリオは ✦ 円。
+ *
+ * アバター画像は CharacterAvatar が CharacterImageContext から自動解決する
+ * （キャラクター設定に登録された画像。未登録・取得失敗時はイニシャル表示）。
  */
 function SessionIcon({ session }: { session: AnySession }) {
   if (session.session_type === "scenario") {
@@ -82,9 +85,10 @@ function SessionIcon({ session }: { session: AnySession }) {
     );
   }
   // 1on1: model_id（"{char}@{preset}"）からキャラクター名を導出する。
+  const charName = charNameOf((session as Session).model_id ?? "");
   return (
     <span className="shrink-0">
-      <CharacterAvatar characterName={charNameOf((session as Session).model_id ?? "")} size={18} />
+      <CharacterAvatar characterName={charName} size={18} />
     </span>
   );
 }

@@ -8,7 +8,7 @@
  *   ユーザーメッセージ     — 右寄せ、ニュートラルなフラット背景。
  *   ボーダー/サーフェス    — すべてニュートラルグレー。緑はキャラ名・アクセントのみ。
  */
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, createContext, useContext } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -38,6 +38,35 @@ export function charHue(name: string): number {
 export function bubbleClassFor(name: string): string {
   if (!name) return "cb5";
   return "cb" + (nameHash(name) % 10);
+}
+
+// ---------------------------------------------------------------------------
+// CharacterImageContext — アバター画像URLの共通リゾルバ
+// ---------------------------------------------------------------------------
+
+/** キャラクター名 → アバター画像URL を解決する関数の型。 */
+export type CharImageResolver = (characterName: string) => string | undefined;
+
+/**
+ * キャラクター名からアバター画像URLを解決する Context。
+ * アプリ全体で 1 つのリゾルバを共有し、CharacterAvatar が自動参照する。
+ * これにより各呼び出し側は characterName を渡すだけで設定画像が表示される。
+ */
+const CharacterImageContext = createContext<CharImageResolver>(() => undefined);
+
+/** アバター画像リゾルバをツリーに供給するプロバイダ。App ルートで 1 度だけ使う。 */
+export function CharacterImageProvider({
+  resolve,
+  children,
+}: {
+  resolve: CharImageResolver;
+  children: React.ReactNode;
+}) {
+  return (
+    <CharacterImageContext.Provider value={resolve}>
+      {children}
+    </CharacterImageContext.Provider>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +366,10 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
 
 /**
  * キャラクターアバター。
- * imageUrl が指定されている場合は画像を表示し、未指定またはロード失敗時はイニシャルを表示する。
+ *
+ * 画像URLは原則 CharacterImageContext から自動解決する（キャラ設定の画像）。
+ * imageUrl を明示指定した場合のみそれを優先する（NPC など Context 外の用途向け）。
+ * 画像が無い・ロード失敗時はイニシャル＋色相背景にフォールバックする。
  * 配色はキャラクター名から導出した色相（hue）を使う。
  */
 export function CharacterAvatar({
@@ -347,6 +379,7 @@ export function CharacterAvatar({
   hue,
 }: {
   characterName: string;
+  /** 画像URLの明示指定（省略時は Context から解決）。 */
   imageUrl?: string;
   /** アバターの直径（px）。デフォルト 28。 */
   size?: number;
@@ -354,8 +387,11 @@ export function CharacterAvatar({
   hue?: number;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
+  const resolve = useContext(CharacterImageContext);
+  // imageUrl が明示指定されていればそれを、無ければ Context のリゾルバで解決する。
+  const src = imageUrl ?? resolve(characterName);
   const h = hue ?? charHue(characterName);
-  const showImg = imageUrl && !imgFailed;
+  const showImg = !!src && !imgFailed;
   return (
     <div
       className="rounded-full flex items-center justify-center font-semibold shrink-0 overflow-hidden"
@@ -369,7 +405,7 @@ export function CharacterAvatar({
     >
       {showImg ? (
         <img
-          src={imageUrl}
+          src={src}
           alt=""
           className="w-full h-full object-cover"
           onError={() => setImgFailed(true)}
@@ -777,7 +813,6 @@ export function CharacterBubble({
   hue,
   sending = false,
   onRegenerate,
-  imageUrl,
   logMessageId,
 }: {
   characterName: string;
@@ -791,13 +826,13 @@ export function CharacterBubble({
   hue?: number;
   sending?: boolean;
   onRegenerate?: () => void;
-  imageUrl?: string;
   /** デバッグログフォルダ名（8桁hex）。存在する場合はログ折りたたみを表示する。 */
   logMessageId?: string;
 }) {
   return (
     <div className="group flex gap-2.5 max-w-[88%]" data-testid="character-bubble">
-      <CharacterAvatar characterName={characterName} imageUrl={imageUrl} hue={hue} size={28} />
+      {/* アバター画像は CharacterAvatar が CharacterImageContext から自動解決する。 */}
+      <CharacterAvatar characterName={characterName} hue={hue} size={28} />
 
       <div className="flex-1 min-w-0">
         {/* 名前行: キャラクター名 + @プリセット */}

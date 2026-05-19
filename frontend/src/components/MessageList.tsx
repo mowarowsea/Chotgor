@@ -31,8 +31,6 @@ interface Props {
     emptyMessage?: string;
     /** メッセージ編集・再生成時のコールバック */
     onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
-    /** キャラクター名→IDのマップ。アバター画像URLの生成に使用する。 */
-    characterIdMap?: Record<string, string>;
     /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
     msgLogIds?: Record<string, string>;
 }
@@ -53,7 +51,6 @@ export default function MessageList({
     emptyMessage = "メッセージを送ってみてください",
     onHeaderVisibilityChange,
     onRetry,
-    characterIdMap = {},
     msgLogIds = {},
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
@@ -72,12 +69,6 @@ export default function MessageList({
     const headerTransitioningRef = useRef(false);
     /** ヘッダーアニメーションロック解除タイマーID。 */
     const headerTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    /** キャラクター名からアバター画像URLを生成する。IDが不明な場合は undefined を返す。 */
-    const getCharImageUrl = (charName: string): string | undefined => {
-        const id = characterIdMap[charName];
-        return id ? `/api/characters/${id}/image` : undefined;
-    };
 
     /**
      * キャラクター別配色バブル（cb0〜cb9）を使うかどうか。
@@ -162,7 +153,6 @@ export default function MessageList({
                         reasoning={reasoningMap[msg.id]}
                         colored={colored}
                         sending={sending}
-                        imageUrl={getCharImageUrl(charName)}
                         logMessageId={msgLogIds[msg.id]}
                         onRegenerate={onRetry ? () => {
                             const precedingUser = [...messages]
@@ -182,7 +172,7 @@ export default function MessageList({
                 const streamCharName = waitingCharacter ?? characterName;
                 return (
                     <div className="flex gap-2.5 max-w-[88%]">
-                        <CharacterAvatar characterName={streamCharName} imageUrl={getCharImageUrl(streamCharName)} size={28} />
+                        <CharacterAvatar characterName={streamCharName} size={28} />
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-1 text-[11px]">
                                 <span className="font-semibold text-ch-t2">{streamCharName}</span>
@@ -206,7 +196,7 @@ export default function MessageList({
                 const charName = waitingCharacter ?? characterName;
                 return (
                     <div className="flex gap-2.5">
-                        <CharacterAvatar characterName={charName} imageUrl={getCharImageUrl(charName)} size={28} />
+                        <CharacterAvatar characterName={charName} size={28} />
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-1 text-[11px]">
                                 <span className="font-semibold text-ch-t2">{charName}</span>

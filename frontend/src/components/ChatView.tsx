@@ -37,8 +37,6 @@ interface Props {
   onRetry: (fromMessageId: string, content: string, imageIds: string[]) => void;
   /** スクロール方向変化コールバック。MessageList から App へ伝播する。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
-  /** キャラクター名→IDのマップ。アバター画像の表示に使用する。 */
-  characterIdMap?: Record<string, string>;
   /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
   msgLogIds?: Record<string, string>;
 }
@@ -56,7 +54,6 @@ export default function ChatView({
   onSend,
   onRetry,
   onHeaderVisibilityChange,
-  characterIdMap,
   msgLogIds,
 }: Props) {
   return (
@@ -71,7 +68,6 @@ export default function ChatView({
         characterName={characterName}
         onRetry={onRetry}
         onHeaderVisibilityChange={onHeaderVisibilityChange}
-        characterIdMap={characterIdMap}
         msgLogIds={msgLogIds}
       />
       <MessageInput
