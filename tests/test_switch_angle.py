@@ -30,13 +30,13 @@ from backend.character_actions.executor import ANTHROPIC_TOOLS, OPENAI_TOOLS, To
 # ヘルパー
 # ---------------------------------------------------------------------------
 
-def _make_executor(memory_manager=None, drift_manager=None, session_id="sess-1"):
+def _make_executor(memory_manager=None, working_memory_manager=None, session_id="sess-1"):
     """テスト用 ToolExecutor を生成するヘルパー。"""
     return ToolExecutor(
         character_id="char-1",
         session_id=session_id,
         memory_manager=memory_manager or MagicMock(),
-        drift_manager=drift_manager or MagicMock(),
+        working_memory_manager=working_memory_manager or MagicMock(),
     )
 
 
@@ -114,14 +114,6 @@ class TestToolExecutorSwitchAngle:
         )
         assert executor.switch_request == ("fastModel", "軽くさっぱりと")
         assert "fastModel" in result
-
-    def test_switch_angle_does_not_touch_drift_manager(self):
-        """switch_angle はdrift_managerを呼び出さない（drift操作は再ディスパッチ後に行う）。"""
-        dm = MagicMock()
-        executor = _make_executor(drift_manager=dm)
-        executor.execute("switch_angle", {"preset_name": "p", "self_instruction": "i"})
-        dm.add_drift.assert_not_called()
-        dm.reset_drifts.assert_not_called()
 
     def test_switch_angle_does_not_touch_memory_manager(self):
         """switch_angle はmemory_managerを呼び出さない。"""
@@ -218,7 +210,7 @@ class TestExtractSwitchInfo:
 
     def _make_service(self):
         """テスト用 ChatService を生成するヘルパー。"""
-        return ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        return ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
 
     def test_tool_executor_with_switch_request(self):
         """SUPPORTS_TOOLS=True 方式: tool_executor.switch_request が設定されていれば返す。"""
@@ -284,10 +276,9 @@ class TestExtractSwitchInfo:
 class TestBuildSwitchedRequest:
     """ChatService._build_switched_request() の挙動を検証する。"""
 
-    def _make_service(self, drift_manager=None):
+    def _make_service(self):
         """テスト用 ChatService を生成するヘルパー。"""
-        dm = drift_manager or MagicMock()
-        return ChatService(memory_manager=MagicMock(), drift_manager=dm)
+        return ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
 
     def test_returns_none_when_preset_not_found(self):
         """存在しないプリセット名のとき None を返す。"""
@@ -313,7 +304,8 @@ class TestBuildSwitchedRequest:
         """切り替え後のリクエストが新プリセットの additional_instructions を持つ。"""
         service = self._make_service()
         request = _make_request(available_presets=_SAMPLE_PRESETS)
-        switched = service._build_switched_request(request, "fastModel", "軽く")
+        # self_instruction が空なら畳み込みは起きず、プリセットの追記がそのまま入る
+        switched = service._build_switched_request(request, "fastModel", "")
         assert switched is not None
         assert switched.provider_additional_instructions == "簡潔に"
 
@@ -325,21 +317,27 @@ class TestBuildSwitchedRequest:
         assert switched is not None
         assert switched.thinking_level == "high"
 
-    def test_active_drifts_set_to_self_instruction(self):
-        """切り替え後のリクエストの active_drifts に self_instruction が設定される。"""
+    def test_self_instruction_folded_into_additional_instructions(self):
+        """self_instruction はプロバイダー固有追記（Block 5）の末尾に畳み込まれる。
+
+        ワーキングメモリ移行で SELF_DRIFT / active_drifts は廃止され、
+        切り替え後モデルへの自己指針は additional_instructions に統合される。
+        """
         service = self._make_service()
         request = _make_request(available_presets=_SAMPLE_PRESETS)
+        # fastModel の additional_instructions は "簡潔に"
         switched = service._build_switched_request(request, "fastModel", "軽くさっぱり")
         assert switched is not None
-        assert switched.active_drifts == ["軽くさっぱり"]
+        assert switched.provider_additional_instructions == "簡潔に\n\n軽くさっぱり"
 
-    def test_active_drifts_empty_when_no_self_instruction(self):
-        """self_instruction が空文字の場合、active_drifts は空リストになる。"""
+    def test_self_instruction_alone_when_preset_has_no_instructions(self):
+        """プリセットに additional_instructions が無い場合、self_instruction だけが入る。"""
         service = self._make_service()
         request = _make_request(available_presets=_SAMPLE_PRESETS)
-        switched = service._build_switched_request(request, "fastModel", "")
+        # deepModel の additional_instructions は空文字
+        switched = service._build_switched_request(request, "deepModel", "深く考える")
         assert switched is not None
-        assert switched.active_drifts == []
+        assert switched.provider_additional_instructions == "深く考える"
 
     def test_available_presets_cleared_for_no_infinite_loop(self):
         """再ディスパッチでの無限ループ防止のため available_presets が空になる。"""
@@ -356,24 +354,6 @@ class TestBuildSwitchedRequest:
         switched = service._build_switched_request(request, "fastModel", "軽く")
         assert switched is not None
         assert switched.current_preset_name == "fastModel"
-
-    def test_drift_manager_reset_and_add_called(self):
-        """切り替え時に drift_manager.reset_drifts と add_drift が呼ばれる。"""
-        dm = MagicMock()
-        service = self._make_service(drift_manager=dm)
-        request = _make_request(available_presets=_SAMPLE_PRESETS, session_id="sess-abc")
-        service._build_switched_request(request, "fastModel", "軽く")
-        dm.reset_drifts.assert_called_once_with("sess-abc", "char-1")
-        dm.add_drift.assert_called_once_with("sess-abc", "char-1", "軽く")
-
-    def test_drift_manager_add_skipped_when_no_self_instruction(self):
-        """self_instruction が空の場合は add_drift を呼ばない（reset のみ）。"""
-        dm = MagicMock()
-        service = self._make_service(drift_manager=dm)
-        request = _make_request(available_presets=_SAMPLE_PRESETS, session_id="sess-abc")
-        service._build_switched_request(request, "fastModel", "")
-        dm.reset_drifts.assert_called_once()
-        dm.add_drift.assert_not_called()
 
     def test_original_messages_preserved_when_no_first_response(self):
         """first_response_text が空のとき元のメッセージリストがそのまま引き継がれる。"""
@@ -445,7 +425,7 @@ class TestChatServiceExecuteWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
         monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
-        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
         result = await service.execute(request)
 
@@ -494,7 +474,7 @@ class TestChatServiceExecuteWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
         monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
-        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
         result = await service.execute(request)
 
@@ -518,7 +498,7 @@ class TestChatServiceExecuteWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
         monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
-        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
         result = await service.execute(request)
 
@@ -574,7 +554,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
         monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
-        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(
             character_name="Alice",
             available_presets=_SAMPLE_PRESETS,
@@ -634,7 +614,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
         monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
-        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
 
         events = []
@@ -679,7 +659,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
         monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
 
-        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         # available_presets が空 = switch 無効
         request = _make_request(available_presets=[])
 
@@ -716,7 +696,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
         monkeypatch.setattr("backend.services.chat.service.Carver", lambda *_: mock_carver)
 
-        service = ChatService(memory_manager=MagicMock(), drift_manager=MagicMock())
+        service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         # available_presets が空 = switch 無効
         request = _make_request(available_presets=[])
 

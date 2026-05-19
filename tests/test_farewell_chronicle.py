@@ -61,6 +61,13 @@ def char_id_with_ghost(sqlite_store, ghost_preset_id):
 
 
 @pytest.fixture
+def working_memory_manager(sqlite_store):
+    """テスト用 WorkingMemoryManager（embedding 層の LanceStore のみ MagicMock）。"""
+    from backend.services.memory.working_memory_manager import WorkingMemoryManager
+    return WorkingMemoryManager(sqlite_store, MagicMock())
+
+
+@pytest.fixture
 def farewell_config_dict():
     """テスト用 farewell_config 辞書を返すフィクスチャ。"""
     return {
@@ -81,29 +88,30 @@ def farewell_config_dict():
 
 
 def _make_chronicle_response(
-    self_history_text: str | None = None,
-    relationship_text: str | None = None,
+    new_thread_summary: str | None = None,
+    carve_text: str | None = None,
     farewell_config: dict | None = None,
 ) -> str:
-    """chronicle LLM の JSON レスポンスを生成するヘルパー。
+    """chronicle LLM の JSON レスポンス（棚卸し＋蒸留スキーマ）を生成するヘルパー。
 
     Args:
-        self_history_text: self_history の更新テキスト（None なら update=false）。
-        relationship_text: relationship_state の更新テキスト（None なら update=false）。
+        new_thread_summary: 新規スレッドの summary（None なら new_threads は空）。
+        carve_text: inner_narrative 蒸留テキスト（None なら carve は null）。
         farewell_config: farewell_config の更新値（None なら null）。
 
     Returns:
         JSON 文字列。
     """
     payload = {
-        "self_history": {
-            "update": self_history_text is not None,
-            "text": self_history_text,
-        },
-        "relationship_state": {
-            "update": relationship_text is not None,
-            "text": relationship_text,
-        },
+        "thread_updates": [],
+        "new_threads": (
+            [{"type": "topic", "summary": new_thread_summary, "importance": 0.5}]
+            if new_thread_summary is not None
+            else []
+        ),
+        "merges": [],
+        "inscribe": [],
+        "carve": {"mode": "append", "text": carve_text} if carve_text is not None else None,
         "farewell_config": farewell_config,
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -231,7 +239,8 @@ class TestRunChronicleFarewellConfig:
     """run_chronicle() が farewell_config を正しく更新することを検証する。"""
 
     def test_farewell_config_in_response_is_saved_to_db(
-        self, sqlite_store, char_id_with_ghost, farewell_config_dict, ghost_preset_id
+        self, sqlite_store, char_id_with_ghost, farewell_config_dict, ghost_preset_id,
+        working_memory_manager,
     ):
         """LLM が farewell_config を含む JSON を返した場合、DBに保存されること。"""
         response = _make_chronicle_response(farewell_config=farewell_config_dict)
@@ -242,6 +251,7 @@ class TestRunChronicleFarewellConfig:
                     sqlite=sqlite_store,
                     settings={},
                     vector_store=None,
+                    working_memory_manager=working_memory_manager,
                 )
             )
 
@@ -253,7 +263,7 @@ class TestRunChronicleFarewellConfig:
         assert fc["thresholds"]["anger"] == 0.8
 
     def test_null_farewell_config_in_response_is_not_saved(
-        self, sqlite_store, char_id_with_ghost, ghost_preset_id
+        self, sqlite_store, char_id_with_ghost, ghost_preset_id, working_memory_manager
     ):
         """LLM が farewell_config=null を返した場合、DBは変更されないこと。"""
         # まず farewell_config を設定する
@@ -268,6 +278,7 @@ class TestRunChronicleFarewellConfig:
                     sqlite=sqlite_store,
                     settings={},
                     vector_store=None,
+                    working_memory_manager=working_memory_manager,
                 )
             )
 
@@ -277,12 +288,13 @@ class TestRunChronicleFarewellConfig:
         assert fc is not None
         assert fc["thresholds"]["anger"] == 0.5
 
-    def test_farewell_config_and_self_history_both_updated(
-        self, sqlite_store, char_id_with_ghost, farewell_config_dict, ghost_preset_id
+    def test_farewell_config_and_carve_both_applied(
+        self, sqlite_store, char_id_with_ghost, farewell_config_dict, ghost_preset_id,
+        working_memory_manager,
     ):
-        """farewell_config と self_history が同時に更新されること。"""
+        """farewell_config の更新と inner_narrative 蒸留（carve）が同時に反映されること。"""
         response = _make_chronicle_response(
-            self_history_text="新しい歴史テキスト",
+            carve_text="新しい自己像テキスト",
             farewell_config=farewell_config_dict,
         )
         with patch("backend.batch.chronicle_job.ask_character", new=AsyncMock(return_value=response)):
@@ -292,18 +304,20 @@ class TestRunChronicleFarewellConfig:
                     sqlite=sqlite_store,
                     settings={},
                     vector_store=None,
+                    working_memory_manager=working_memory_manager,
                 )
             )
 
-        assert "self_history" in result["updated_fields"]
-        assert "farewell_config" in result["updated_fields"]
+        assert result["status"] == "success"
+        assert result["counts"]["carved"] == 1
 
         char = sqlite_store.get_character(char_id_with_ghost)
-        assert char.self_history == "新しい歴史テキスト"
+        assert "新しい自己像テキスト" in char.inner_narrative
         assert char.farewell_config is not None
 
     def test_check_estrangement_called_after_update(
-        self, sqlite_store, char_id_with_ghost, farewell_config_dict, ghost_preset_id
+        self, sqlite_store, char_id_with_ghost, farewell_config_dict, ghost_preset_id,
+        working_memory_manager,
     ):
         """run_chronicle() 完了後に _check_estrangement() が呼ばれること。"""
         response = _make_chronicle_response(farewell_config=farewell_config_dict)
@@ -315,6 +329,7 @@ class TestRunChronicleFarewellConfig:
                         sqlite=sqlite_store,
                         settings={},
                         vector_store=None,
+                        working_memory_manager=working_memory_manager,
                     )
                 )
         mock_check.assert_called_once()
@@ -338,7 +353,7 @@ class TestRunChronicleFarewellConfig:
         assert result["status"] == "error"
 
     def test_prompt_contains_farewell_rubric(
-        self, sqlite_store, char_id_with_ghost, ghost_preset_id
+        self, sqlite_store, char_id_with_ghost, ghost_preset_id, working_memory_manager
     ):
         """chronicle のプロンプトに FAREWELL_EMOTION_RUBRIC が含まれること。"""
         from backend.character_actions.farewell_detector import FAREWELL_EMOTION_RUBRIC
@@ -356,6 +371,7 @@ class TestRunChronicleFarewellConfig:
                     sqlite=sqlite_store,
                     settings={},
                     vector_store=None,
+                    working_memory_manager=working_memory_manager,
                 )
             )
 
@@ -373,7 +389,7 @@ class TestRunPendingChroniclesChroma:
     """run_pending_chronicles() が vector_store を受け取って run_chronicle に渡すことを検証する。"""
 
     def test_chroma_is_passed_to_run_chronicle(
-        self, sqlite_store, char_id_with_ghost, ghost_preset_id
+        self, sqlite_store, char_id_with_ghost, ghost_preset_id, working_memory_manager
     ):
         """run_pending_chronicles() に渡した chroma が run_chronicle に伝達されること。"""
         mock_vector_store = MagicMock()
@@ -382,19 +398,29 @@ class TestRunPendingChroniclesChroma:
         with patch("backend.batch.chronicle_job.ask_character", new=AsyncMock(return_value=response)):
             with patch("backend.batch.chronicle_job._check_estrangement", new=AsyncMock()) as mock_check:
                 asyncio.run(
-                    run_pending_chronicles(sqlite=sqlite_store, vector_store=mock_vector_store)
+                    run_pending_chronicles(
+                        sqlite=sqlite_store,
+                        vector_store=mock_vector_store,
+                        working_memory_manager=working_memory_manager,
+                    )
                 )
 
         # _check_estrangement が少なくとも1回呼ばれていること
         # （chroma が run_chronicle に渡され、処理が実行されたことを確認）
         assert mock_check.called
 
-    def test_chroma_none_does_not_raise(self, sqlite_store, char_id_with_ghost, ghost_preset_id):
+    def test_chroma_none_does_not_raise(
+        self, sqlite_store, char_id_with_ghost, ghost_preset_id, working_memory_manager
+    ):
         """run_pending_chronicles() に vector_store=None を渡しても例外が発生しないこと。"""
         response = _make_chronicle_response()
         with patch("backend.batch.chronicle_job.ask_character", new=AsyncMock(return_value=response)):
             asyncio.run(
-                run_pending_chronicles(sqlite=sqlite_store, vector_store=None)
+                run_pending_chronicles(
+                    sqlite=sqlite_store,
+                    vector_store=None,
+                    working_memory_manager=working_memory_manager,
+                )
             )
 
 

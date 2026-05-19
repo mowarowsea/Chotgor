@@ -207,21 +207,6 @@ class TestAskCharacterSuccess:
         system_prompt, _ = provider.generate.call_args[0]
         assert "inner_narrativeの内容" in system_prompt
 
-    @pytest.mark.asyncio
-    async def test_system_prompt_contains_self_history(self, sqlite_store, char_id, preset_id):
-        """生成されたシステムプロンプトに self_history が含まれること。"""
-        provider = _mock_provider("")
-        with patch("backend.services.character_query.create_provider", return_value=provider):
-            await ask_character(
-                character_id=char_id,
-                preset_id=preset_id,
-                messages=[{"role": "user", "content": "テスト"}],
-                sqlite=sqlite_store,
-                settings={},
-            )
-        system_prompt, _ = provider.generate.call_args[0]
-        assert "self_historyの内容" in system_prompt
-
 
 # ─── recall_query — 記憶想起のオン・オフ ─────────────────────────────────────
 
@@ -424,8 +409,7 @@ class TestAskCharacterWithTools:
         failing_provider.SUPPORTS_TOOLS = True
         failing_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("LLM unreachable"))
         with patch("backend.services.character_query.create_provider", return_value=failing_provider), \
-             patch("backend.character_actions.executor.ToolExecutor"), \
-             patch("backend.services.memory.drift_manager.DriftManager"):
+             patch("backend.character_actions.executor.ToolExecutor"):
             result = await ask_character_with_tools(
                 character_id=char_id,
                 preset_id=preset_id,
@@ -440,8 +424,7 @@ class TestAskCharacterWithTools:
     async def test_success_returns_true(self, sqlite_store, char_id, preset_id):
         """generate_with_tools() が正常終了したとき True を返すこと。"""
         with patch("backend.services.character_query.create_provider", return_value=_mock_tools_provider()), \
-             patch("backend.character_actions.executor.ToolExecutor"), \
-             patch("backend.services.memory.drift_manager.DriftManager"):
+             patch("backend.character_actions.executor.ToolExecutor"):
             result = await ask_character_with_tools(
                 character_id=char_id,
                 preset_id=preset_id,
@@ -458,8 +441,7 @@ class TestAskCharacterWithTools:
         provider = _mock_tools_provider()
         input_messages = [{"role": "user", "content": "蒸留クエリ"}]
         with patch("backend.services.character_query.create_provider", return_value=provider), \
-             patch("backend.character_actions.executor.ToolExecutor"), \
-             patch("backend.services.memory.drift_manager.DriftManager"):
+             patch("backend.character_actions.executor.ToolExecutor"):
             await ask_character_with_tools(
                 character_id=char_id,
                 preset_id=preset_id,
@@ -487,8 +469,7 @@ class TestAskCharacterWithTools:
             side_effect=LLMApiError("[Error: anthropic_api_key が設定されていません。Settings ページで設定してください]")
         )
         with patch("backend.services.character_query.create_provider", return_value=api_error_provider), \
-             patch("backend.character_actions.executor.ToolExecutor"), \
-             patch("backend.services.memory.drift_manager.DriftManager"):
+             patch("backend.character_actions.executor.ToolExecutor"):
             result = await ask_character_with_tools(
                 character_id=char_id,
                 preset_id=preset_id,

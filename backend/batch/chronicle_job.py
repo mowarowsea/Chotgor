@@ -20,6 +20,19 @@ self_history は「Close した task/topic スレッドの蓄積」が、
 relationship_state は「relation スレッド」が自然に代替する。
 
 farewell_config の更新と estrangement 判定は従来どおり別関心事として残す。
+
+--- システムプロンプト設計（1on1 チャット基準に統一） ---
+Chronicle は通常チャットと同じ ask_character() / build_system_prompt() を使う。
+システムプロンプトは 1on1 チャット基準に統一する方針:
+
+  - working_memory_manager を ask_character() に渡し、全スレッド一覧（Block 6・
+    Open/Close 問わず）と emotion/body/relation 固定注入（Block 7）を
+    1on1 と同じ形でシステムプロンプトへ入れる。
+  - 加えて Chronicle はユーザメッセージ本文（_PROMPT_TEMPLATE）に「Open スレッド」
+    「Close スレッド」を ID 付きの棚卸し専用フォーマットで埋め込む。これは LLM が
+    棚卸し JSON でスレッドを操作するための作業データである。
+  - したがってスレッド情報はシステムプロンプト（自己認識用）とユーザメッセージ
+    （操作対象データ用）の両方に現れるが、役割が異なるため重複は許容する。
 """
 
 import json
@@ -57,6 +70,9 @@ _PROMPT_TEMPLATE = """\
 
 ## 現在 Open なスレッド
 {open_threads}
+
+## 最近 Close したスレッド（参照用。再燃していれば thread_updates で is_open を true に戻せる）
+{closed_threads}
 
 ## 今日の会話
 {conversation}
@@ -130,17 +146,24 @@ def _format_conversation(messages: list) -> str:
     return "\n".join(lines)
 
 
-def _format_open_threads(threads: list[dict]) -> str:
-    """Open なワーキングメモリスレッドを棚卸しプロンプト用テキストに整形する。
+# 棚卸しプロンプトに載せる Close 済みスレッドの最大件数（updated_at 降順で新しい順）。
+_CLOSED_THREADS_LIMIT = 30
+
+
+def _format_threads(threads: list[dict], empty_label: str = "（スレッドはありません）") -> str:
+    """ワーキングメモリスレッドのリストを棚卸しプロンプト用テキストに整形する。
+
+    Open / Close いずれのスレッドにも使う共通フォーマッタ。
 
     Args:
         threads: WorkingMemoryManager.list_threads_by_type() が返す dict のリスト。
+        empty_label: スレッドが空のときに返す文言。
 
     Returns:
-        整形テキスト。スレッドがない場合はその旨を返す。
+        整形テキスト。スレッドがない場合は empty_label を返す。
     """
     if not threads:
-        return "（Open なスレッドはありません）"
+        return empty_label
     lines = []
     for t in threads:
         head = f"[{t['id']}] ({t.get('type', '')}) {t.get('summary', '')} 重要度{float(t.get('importance', 0.0)):.2f}"
@@ -414,8 +437,14 @@ async def run_chronicle(
         messages = sqlite.get_unchronicled_messages_for_character(char.name)
 
     conversation_text = _format_conversation(messages)
+
+    # Open スレッドは棚卸しの操作対象。Close 済みは参照用（再燃時の再オープン判断・merges 判断）。
     open_threads = working_memory_manager.list_threads_by_type(character_id, is_open=True)
-    open_threads_text = _format_open_threads(open_threads)
+    open_threads_text = _format_threads(open_threads, "（Open なスレッドはありません）")
+    closed_threads = working_memory_manager.list_threads_by_type(character_id, is_open=False)
+    closed_threads_text = _format_threads(
+        closed_threads[:_CLOSED_THREADS_LIMIT], "（Close したスレッドはまだありません）"
+    )
 
     memories = (
         _format_memories(memory_manager.get_top_memorable(character_id, limit=30))
@@ -433,6 +462,7 @@ async def run_chronicle(
     prompt_text = _PROMPT_TEMPLATE.format(
         character_name=char.name,
         open_threads=open_threads_text,
+        closed_threads=closed_threads_text,
         conversation=conversation_text,
         memories=memories,
         farewell_emotion_rubric=FAREWELL_EMOTION_RUBRIC.strip(),
@@ -451,6 +481,7 @@ async def run_chronicle(
             settings=settings,
             recall_query=None,
             feature_label="chronicle",
+            working_memory_manager=working_memory_manager,
         )
     except Exception as e:
         logger.exception("エラー char=%s", char_label)

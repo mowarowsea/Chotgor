@@ -241,10 +241,11 @@ class SelfReflector:
                 memory_manager=self.memory_manager,
                 feature_label="reflection",
                 session_id=session_id,
+                working_memory_manager=self.working_memory_manager,
             )
             return
 
-        # タグ方式フォールバック: 応答テキストから [CARVE_NARRATIVE:...] / [DRIFT:...] を抽出する
+        # タグ方式フォールバック: 応答テキストから [CARVE_NARRATIVE:...] を抽出する
         user_message = _REFLECTION_USER_TEMPLATE.format(conversation=conversation_text)
         _log.debug("自己参照(タグ方式) char=%s preset=%s", character_id, preset_id)
         reflection_text = await ask_character(
@@ -255,6 +256,7 @@ class SelfReflector:
             settings=settings,
             recall_query=None,
             feature_label="reflection",
+            working_memory_manager=self.working_memory_manager,
         )
 
         if not reflection_text or not reflection_text.strip():

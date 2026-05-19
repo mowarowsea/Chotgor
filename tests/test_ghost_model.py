@@ -33,6 +33,19 @@ def memory_manager(sqlite_store):
     return MemoryManager(sqlite_store, chroma)
 
 
+@pytest.fixture
+def working_memory_manager(sqlite_store):
+    """テスト用 WorkingMemoryManager。
+
+    スレッド CRUD は実 SQLite（インメモリ一時DB）で動かし、embedding 層の
+    LanceStore のみ MagicMock に置き換える。chronicle が棚卸し結果を
+    実際にスレッドへ反映する挙動をそのまま検証できる。
+    """
+    from unittest.mock import MagicMock
+    from backend.services.memory.working_memory_manager import WorkingMemoryManager
+    return WorkingMemoryManager(sqlite_store, MagicMock())
+
+
 # ---------------------------------------------------------------------------
 # ghost_model DB 永続化テスト
 # ---------------------------------------------------------------------------
@@ -84,19 +97,19 @@ def test_ghost_model_cleared(sqlite_store):
 
 def test_parse_chronicle_response_plain_json():
     """コードブロックなしの JSON をパースできることを確認する。"""
-    raw = '{"self_history": {"update": true, "text": "hello"}, "relationship_state": {"update": false, "text": null}}'
+    raw = '{"new_threads": [{"type": "topic", "summary": "hello"}], "carve": null}'
     result = _parse_chronicle_response(raw)
-    assert result["self_history"]["update"] is True
-    assert result["self_history"]["text"] == "hello"
-    assert result["relationship_state"]["update"] is False
+    assert result["new_threads"][0]["type"] == "topic"
+    assert result["new_threads"][0]["summary"] == "hello"
+    assert result["carve"] is None
 
 
 def test_parse_chronicle_response_with_code_block():
     """```json ブロックで囲まれた JSON もパースできることを確認する。"""
-    raw = '説明文\n```json\n{"self_history": {"update": false, "text": null}, "relationship_state": {"update": true, "text": "changed"}}\n```'
+    raw = '説明文\n```json\n{"thread_updates": [], "carve": {"mode": "append", "text": "changed"}}\n```'
     result = _parse_chronicle_response(raw)
-    assert result["relationship_state"]["update"] is True
-    assert result["relationship_state"]["text"] == "changed"
+    assert result["thread_updates"] == []
+    assert result["carve"]["text"] == "changed"
 
 
 def test_parse_chronicle_response_invalid_returns_empty():
@@ -153,50 +166,57 @@ async def test_run_chronicle_error_when_character_not_found(sqlite_store):
 
 
 # ---------------------------------------------------------------------------
-# run_chronicle: LLM が更新不要と回答した場合
+# run_chronicle: LLM が棚卸し不要と回答した場合
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_chronicle_no_update_when_llm_returns_no_update(sqlite_store):
-    """LLM が両フィールドとも update: false を返した場合、updated_fields が空であることを確認する。"""
+async def test_run_chronicle_no_update_when_llm_returns_empty(sqlite_store, working_memory_manager):
+    """LLM が全配列とも空で返した場合、counts が全て 0 でスレッドも作られないことを確認する。"""
     preset_id = str(uuid.uuid4())
     char_id = str(uuid.uuid4())
     sqlite_store.create_model_preset(preset_id, "TestPreset", "google", "gemini-2.0-flash")
     sqlite_store.create_character(char_id, "TestChar", ghost_model=preset_id)
 
-    no_update_response = '{"self_history": {"update": false, "text": null}, "relationship_state": {"update": false, "text": null}}'
     mock_provider = AsyncMock()
-    mock_provider.generate = AsyncMock(return_value=no_update_response)
+    mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
         result = await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
             sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
         )
 
     assert result["status"] == "success"
-    assert result["updated_fields"] == []
+    assert all(v == 0 for v in result["counts"].values())
 
-    # DB が変わっていないことを確認する
-    char = sqlite_store.get_character(char_id)
-    assert char.self_history == ""
-    assert char.relationship_state == ""
+    # ワーキングメモリにスレッドが作られていないことを確認する
+    assert working_memory_manager.list_threads_by_type(char_id) == []
 
 
 # ---------------------------------------------------------------------------
-# run_chronicle: LLM が更新を指示した場合
+# run_chronicle: LLM が棚卸し・蒸留を指示した場合
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_chronicle_updates_fields_when_llm_requests_update(sqlite_store):
-    """LLM が self_history を更新するよう指示した場合、DB に反映されることを確認する。"""
+async def test_run_chronicle_applies_new_thread_and_carve(
+    sqlite_store, working_memory_manager
+):
+    """LLM が new_threads と carve を返した場合、スレッド作成と inner_narrative 追記が反映されることを確認する。"""
     preset_id = str(uuid.uuid4())
     char_id = str(uuid.uuid4())
     sqlite_store.create_model_preset(preset_id, "TestPreset", "google", "gemini-2.0-flash")
     sqlite_store.create_character(char_id, "TestChar", ghost_model=preset_id)
 
-    update_response = '{"self_history": {"update": true, "text": "新しい歴史"}, "relationship_state": {"update": false, "text": null}}'
+    update_response = (
+        '{"thread_updates": [], "new_threads": ['
+        '{"type": "topic", "summary": "気になっている問い", "atmosphere": "モヤモヤ",'
+        ' "importance": 0.6, "post": "今日の会話で浮かんだ", "relation_target": null}],'
+        ' "merges": [], "inscribe": [],'
+        ' "carve": {"mode": "append", "text": "問いを抱えることを恐れない"},'
+        ' "farewell_config": null}'
+    )
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=update_response)
 
@@ -205,34 +225,120 @@ async def test_run_chronicle_updates_fields_when_llm_requests_update(sqlite_stor
             character_id=char_id,
             target_date="2026-01-01",
             sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
         )
 
     assert result["status"] == "success"
-    assert "self_history" in result["updated_fields"]
-    assert "relationship_state" not in result["updated_fields"]
+    assert result["counts"]["created"] == 1
+    assert result["counts"]["carved"] == 1
 
+    # 新規スレッドが実際に作られていること
+    threads = working_memory_manager.list_threads_by_type(char_id)
+    assert len(threads) == 1
+    assert threads[0]["summary"] == "気になっている問い"
+    assert threads[0]["type"] == "topic"
+
+    # inner_narrative に追記されていること
     char = sqlite_store.get_character(char_id)
-    assert char.self_history == "新しい歴史"
-    assert char.relationship_state == ""
+    assert "問いを抱えることを恐れない" in char.inner_narrative
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_uses_ghost_model_preset(sqlite_store):
+async def test_run_chronicle_prompt_includes_closed_threads(sqlite_store, working_memory_manager):
+    """Close 済みスレッドが棚卸しプロンプト（ユーザメッセージ）に参照用として含まれることを確認する。"""
+    preset_id = str(uuid.uuid4())
+    char_id = str(uuid.uuid4())
+    sqlite_store.create_model_preset(preset_id, "TestPreset", "google", "gemini-2.0-flash")
+    sqlite_store.create_character(char_id, "TestChar", ghost_model=preset_id)
+
+    # Close 済みスレッドを1本用意する
+    thread = working_memory_manager.create_thread(
+        character_id=char_id, type="task", summary="決着済みの課題XYZ", importance=0.5,
+    )
+    working_memory_manager.set_open(thread["id"], False)
+
+    captured_prompt: list[str] = []
+
+    async def fake_generate(sys_prompt, messages):
+        captured_prompt.append(messages[0]["content"])
+        return _NO_UPDATE_RESPONSE
+
+    mock_provider = AsyncMock()
+    mock_provider.generate = fake_generate
+
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
+        await run_chronicle(
+            character_id=char_id, target_date="2026-01-01", sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
+
+    assert len(captured_prompt) == 1
+    assert "決着済みの課題XYZ" in captured_prompt[0]
+    assert "最近 Close したスレッド" in captured_prompt[0]
+
+
+@pytest.mark.asyncio
+async def test_run_chronicle_system_prompt_includes_wm_threads(
+    sqlite_store, working_memory_manager
+):
+    """chronicle のシステムプロンプトが 1on1 基準に統一されていることを確認する。
+
+    emotion 固定注入（Block 7）に加え、Close 済み task スレッドも含む全スレッド一覧
+    （Block 6）がシステムプロンプトに入る。「私は過去こういうことがあった」という
+    自己認識を 1on1 チャットと同じ形で持たせる。
+    """
+    preset_id = str(uuid.uuid4())
+    char_id = str(uuid.uuid4())
+    sqlite_store.create_model_preset(preset_id, "TestPreset", "google", "gemini-2.0-flash")
+    sqlite_store.create_character(char_id, "TestChar", ghost_model=preset_id)
+
+    working_memory_manager.create_thread(
+        character_id=char_id, type="emotion", summary="落ち着いた高揚感ABC", importance=0.5,
+    )
+    closed = working_memory_manager.create_thread(
+        character_id=char_id, type="task", summary="決着済みの課題GHI", importance=0.5,
+    )
+    working_memory_manager.set_open(closed["id"], False)
+
+    captured_system: list[str] = []
+
+    async def fake_generate(sys_prompt, messages):
+        captured_system.append(sys_prompt)
+        return _NO_UPDATE_RESPONSE
+
+    mock_provider = AsyncMock()
+    mock_provider.generate = fake_generate
+
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
+        await run_chronicle(
+            character_id=char_id, target_date="2026-01-01", sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
+
+    assert len(captured_system) == 1
+    # Block 7: emotion 固定注入
+    assert "落ち着いた高揚感ABC" in captured_system[0]
+    # Block 6: Close 済み task も含む全スレッド一覧
+    assert "決着済みの課題GHI" in captured_system[0]
+
+
+@pytest.mark.asyncio
+async def test_run_chronicle_uses_ghost_model_preset(sqlite_store, working_memory_manager):
     """run_chronicle が正しいプロバイダー・モデルで create_provider を呼ぶことを確認する。"""
     preset_id = str(uuid.uuid4())
     char_id = str(uuid.uuid4())
     sqlite_store.create_model_preset(preset_id, "TestPreset", "anthropic", "claude-3-5-haiku-latest")
     sqlite_store.create_character(char_id, "TestChar", ghost_model=preset_id)
 
-    no_update_response = '{"self_history": {"update": false, "text": null}, "relationship_state": {"update": false, "text": null}}'
     mock_provider = AsyncMock()
-    mock_provider.generate = AsyncMock(return_value=no_update_response)
+    mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider) as mock_cp:
         await run_chronicle(
             character_id=char_id,
             target_date="2026-01-01",
             sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
         )
 
     mock_cp.assert_called_once_with(
@@ -318,9 +424,10 @@ def _setup_char_with_messages(sqlite_store, char_name: str = "Alice", n_messages
     return char_id, session_id, message_ids, preset_id
 
 
+# 棚卸し・蒸留とも「変更なし」を表す chronicle 応答。
 _NO_UPDATE_RESPONSE = (
-    '{"self_history": {"update": false, "text": null},'
-    ' "relationship_state": {"update": false, "text": null}}'
+    '{"thread_updates": [], "new_threads": [], "merges": [],'
+    ' "inscribe": [], "carve": null, "farewell_config": null}'
 )
 
 
@@ -421,14 +528,17 @@ def test_mark_messages_as_chronicled_is_idempotent(sqlite_store):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_chronicle_marks_messages_on_success(sqlite_store):
+async def test_run_chronicle_marks_messages_on_success(sqlite_store, working_memory_manager):
     """chronicle 成功後、処理対象メッセージの chronicled_at が設定されることを確認する。"""
     char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
-        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+        result = await run_chronicle(
+            character_id=char_id, sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
 
     assert result["status"] == "success"
     msgs = sqlite_store.list_chat_messages(session_id)
@@ -436,14 +546,17 @@ async def test_run_chronicle_marks_messages_on_success(sqlite_store):
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_does_not_mark_messages_on_llm_error(sqlite_store):
+async def test_run_chronicle_does_not_mark_messages_on_llm_error(sqlite_store, working_memory_manager):
     """LLM 呼び出し失敗時は chronicled_at が NULL のままであることを確認する。"""
     char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(side_effect=Exception("network error"))
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
-        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+        result = await run_chronicle(
+            character_id=char_id, sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
 
     assert result["status"] == "error"
     msgs = sqlite_store.list_chat_messages(session_id)
@@ -451,14 +564,17 @@ async def test_run_chronicle_does_not_mark_messages_on_llm_error(sqlite_store):
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_does_not_mark_messages_on_json_parse_failure(sqlite_store):
+async def test_run_chronicle_does_not_mark_messages_on_json_parse_failure(sqlite_store, working_memory_manager):
     """JSON パース失敗時は chronicled_at が NULL のままであることを確認する。"""
     char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value="これはJSONではありません")
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
-        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+        result = await run_chronicle(
+            character_id=char_id, sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
 
     assert result["status"] == "error"
     msgs = sqlite_store.list_chat_messages(session_id)
@@ -466,23 +582,25 @@ async def test_run_chronicle_does_not_mark_messages_on_json_parse_failure(sqlite
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_marks_even_when_no_field_updates(sqlite_store):
-    """LLM が update: false を返した場合でも chronicled_at はセットされることを確認する。"""
+async def test_run_chronicle_marks_even_when_no_updates(sqlite_store, working_memory_manager):
+    """LLM が全配列とも空で返した場合でも chronicled_at はセットされることを確認する。"""
     char_id, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=1)
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
-        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+        result = await run_chronicle(
+            character_id=char_id, sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
 
     assert result["status"] == "success"
-    assert result["updated_fields"] == []
     msgs = sqlite_store.list_chat_messages(session_id)
     assert all(m.chronicled_at is not None for m in msgs)
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_only_processes_unchronicled_messages(sqlite_store):
+async def test_run_chronicle_only_processes_unchronicled_messages(sqlite_store, working_memory_manager):
     """既に chronicled_at が設定済みのメッセージは LLM への入力に含まれないことを確認する。"""
     char_id, _, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=3)
     # message_ids[0] を処理済みにする
@@ -498,7 +616,10 @@ async def test_run_chronicle_only_processes_unchronicled_messages(sqlite_store):
     mock_provider.generate = fake_generate
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
-        await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+        await run_chronicle(
+            character_id=char_id, sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
 
     assert len(captured_prompt) == 1
     assert "メッセージ 0" not in captured_prompt[0]
@@ -507,7 +628,7 @@ async def test_run_chronicle_only_processes_unchronicled_messages(sqlite_store):
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_all_chronicled_still_calls_llm(sqlite_store):
+async def test_run_chronicle_all_chronicled_still_calls_llm(sqlite_store, working_memory_manager):
     """未処理メッセージがなくても LLM は呼ばれ（空会話として反芻）、success を返すことを確認する。"""
     char_id, _, message_ids, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
     sqlite_store.mark_messages_as_chronicled(message_ids)
@@ -516,7 +637,10 @@ async def test_run_chronicle_all_chronicled_still_calls_llm(sqlite_store):
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
-        result = await run_chronicle(character_id=char_id, sqlite=sqlite_store)
+        result = await run_chronicle(
+            character_id=char_id, sqlite=sqlite_store,
+            working_memory_manager=working_memory_manager,
+        )
 
     assert result["status"] == "success"
     mock_provider.generate.assert_called_once()
@@ -527,14 +651,16 @@ async def test_run_chronicle_all_chronicled_still_calls_llm(sqlite_store):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_pending_chronicles_marks_unchronicled_messages(sqlite_store):
+async def test_run_pending_chronicles_marks_unchronicled_messages(sqlite_store, working_memory_manager):
     """run_pending_chronicles 実行後、全未処理メッセージの chronicled_at が設定されることを確認する。"""
     _, session_id, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=2)
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(return_value=_NO_UPDATE_RESPONSE)
 
     with patch("backend.services.character_query.create_provider", return_value=mock_provider):
-        await run_pending_chronicles(sqlite=sqlite_store)
+        await run_pending_chronicles(
+            sqlite=sqlite_store, working_memory_manager=working_memory_manager,
+        )
 
     msgs = sqlite_store.list_chat_messages(session_id)
     assert all(m.chronicled_at is not None for m in msgs)
@@ -717,7 +843,7 @@ def test_get_top_memorable_attaches_decayed_score(sqlite_store, memory_manager):
 
 @pytest.mark.asyncio
 async def test_run_chronicle_includes_memories_in_prompt_when_memory_manager_given(
-    sqlite_store, memory_manager
+    sqlite_store, memory_manager, working_memory_manager
 ):
     """memory_manager を渡した場合、記憶内容がプロンプトに含まれることを確認する。
 
@@ -746,6 +872,7 @@ async def test_run_chronicle_includes_memories_in_prompt_when_memory_manager_giv
             character_id=char_id,
             sqlite=sqlite_store,
             memory_manager=memory_manager,
+            working_memory_manager=working_memory_manager,
         )
 
     assert result["status"] == "success"
@@ -754,7 +881,7 @@ async def test_run_chronicle_includes_memories_in_prompt_when_memory_manager_giv
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_uses_placeholder_when_no_memory_manager(sqlite_store):
+async def test_run_chronicle_uses_placeholder_when_no_memory_manager(sqlite_store, working_memory_manager):
     """memory_manager=None の場合、「記憶データなし」プレースホルダーがプロンプトに入ることを確認する。"""
     char_id, _, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=1)
 
@@ -772,6 +899,7 @@ async def test_run_chronicle_uses_placeholder_when_no_memory_manager(sqlite_stor
             character_id=char_id,
             sqlite=sqlite_store,
             memory_manager=None,
+            working_memory_manager=working_memory_manager,
         )
 
     assert len(captured_prompt) == 1
@@ -795,7 +923,7 @@ async def test_run_pending_chronicles_passes_memory_manager_to_run_chronicle(
     with patch(
         "backend.batch.chronicle_job.run_chronicle", new_callable=AsyncMock
     ) as mock_rc:
-        mock_rc.return_value = {"status": "success", "updated_fields": []}
+        mock_rc.return_value = {"status": "success", "counts": {}}
         await run_pending_chronicles(sqlite=sqlite_store, memory_manager=memory_manager)
 
     assert mock_rc.called

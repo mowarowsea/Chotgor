@@ -326,29 +326,37 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
 
 
 @pytest.mark.asyncio
-async def test_execute_with_tools_calls_drift_manager():
-    """SUPPORTS_TOOLS=True のプロバイダーが drift ツールを呼び出したとき、
-    drift_manager.add_drift が実際に呼ばれること。
+async def test_execute_with_tools_creates_thread_via_post_thread():
+    """SUPPORTS_TOOLS=True のプロバイダーが post_thread ツール（新規作成）を呼び出したとき、
+    working_memory_manager.create_thread が実際に呼ばれること。
+
+    サービス → generate_with_tools → ToolExecutor → Threader → WorkingMemoryManager という
+    一連の呼び出しチェーンをサービスレベルで統合検証する。
     """
     from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
-    drift_manager = MagicMock()
+    working_memory_manager = MagicMock()
+    working_memory_manager.create_thread.return_value = {"id": "thread-1"}
 
     request = ChatRequest(
         character_id="char-1",
         character_name="Alice",
         provider="anthropic",
         model="",
-        messages=[Message(role="user", content="もっとクールにして")],
+        messages=[Message(role="user", content="この件、気になってる")],
         session_id="session-abc",
     )
 
-    tc = ToolCall(id="tc-3", name="drift", input={"content": "クールに話す"})
+    tc = ToolCall(
+        id="tc-3",
+        name="post_thread",
+        input={"type": "topic", "summary": "気になっている件", "importance": 0.7},
+    )
     provider = _make_tool_provider([
         ToolTurnResult(text="", tool_calls=[tc]),
-        ToolTurnResult(text="了解", tool_calls=[]),
+        ToolTurnResult(text="スレッドに残した", tool_calls=[]),
     ])
 
     with (
@@ -356,37 +364,47 @@ async def test_execute_with_tools_calls_drift_manager():
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
-        service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
+        service = ChatService(
+            memory_manager=memory_manager, working_memory_manager=working_memory_manager
+        )
         result = await service.execute(request)
 
-    assert result == "了解"
-    drift_manager.add_drift.assert_called_once_with("session-abc", "char-1", "クールに話す")
+    assert result == "スレッドに残した"
+    working_memory_manager.create_thread.assert_called_once()
+    kwargs = working_memory_manager.create_thread.call_args.kwargs
+    assert kwargs["character_id"] == "char-1"
+    assert kwargs["type"] == "topic"
+    assert kwargs["summary"] == "気になっている件"
 
 
 @pytest.mark.asyncio
-async def test_execute_with_tools_calls_drift_reset():
-    """SUPPORTS_TOOLS=True のプロバイダーが drift_reset ツールを呼び出したとき、
-    drift_manager.reset_drifts が実際に呼ばれること。
+async def test_execute_with_tools_adds_post_via_post_thread():
+    """SUPPORTS_TOOLS=True のプロバイダーが post_thread ツール（既存更新）を呼び出したとき、
+    working_memory_manager.add_post が実際に呼ばれること。
     """
     from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
-    drift_manager = MagicMock()
+    working_memory_manager = MagicMock()
 
     request = ChatRequest(
         character_id="char-1",
         character_name="Alice",
         provider="anthropic",
         model="",
-        messages=[Message(role="user", content="指針リセットして")],
+        messages=[Message(role="user", content="さっきの件、進展あった")],
         session_id="session-abc",
     )
 
-    tc = ToolCall(id="tc-4", name="drift_reset", input={})
+    tc = ToolCall(
+        id="tc-4",
+        name="post_thread",
+        input={"thread_id": "thread-9", "content": "進展があった"},
+    )
     provider = _make_tool_provider([
         ToolTurnResult(text="", tool_calls=[tc]),
-        ToolTurnResult(text="リセットした", tool_calls=[]),
+        ToolTurnResult(text="追記した", tool_calls=[]),
     ])
 
     with (
@@ -394,11 +412,13 @@ async def test_execute_with_tools_calls_drift_reset():
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
     ):
-        service = ChatService(memory_manager=memory_manager, drift_manager=drift_manager)
+        service = ChatService(
+            memory_manager=memory_manager, working_memory_manager=working_memory_manager
+        )
         result = await service.execute(request)
 
-    assert result == "リセットした"
-    drift_manager.reset_drifts.assert_called_once_with("session-abc", "char-1")
+    assert result == "追記した"
+    working_memory_manager.add_post.assert_called_once_with("thread-9", "進展があった")
 
 
 @pytest.mark.asyncio

@@ -46,13 +46,20 @@ class TestToolSchemas:
         assert anthropic_names == openai_names
 
     def test_expected_tool_names_present(self):
-        """inscribe_memory / carve_narrative / drift / drift_reset / switch_angle が存在する。"""
+        """inscribe_memory / carve_narrative / post_thread / open_thread / power_recall / switch_angle が存在する。"""
         names = {t["name"] for t in ANTHROPIC_TOOLS}
         assert "inscribe_memory" in names
         assert "carve_narrative" in names
-        assert "drift" in names
-        assert "drift_reset" in names
+        assert "post_thread" in names
+        assert "open_thread" in names
+        assert "power_recall" in names
         assert "switch_angle" in names
+
+    def test_removed_drift_tools_are_absent(self):
+        """廃止された drift / drift_reset ツールが存在しないこと（Working Memory 移行確認）。"""
+        names = {t["name"] for t in ANTHROPIC_TOOLS}
+        assert "drift" not in names
+        assert "drift_reset" not in names
 
     def test_old_tool_name_carve_memory_is_absent(self):
         """旧ツール名 carve_memory が存在しないこと（改名済み確認）。"""
@@ -125,10 +132,10 @@ class TestToolTurnResultDataClass:
 
     def test_with_tool_calls(self):
         """ToolCall リストが正しく格納される。"""
-        tc = ToolCall(id="x", name="drift", input={"content": "穏やかに話す"})
+        tc = ToolCall(id="x", name="post_thread", input={"type": "topic", "summary": "話題"})
         result = ToolTurnResult(text="", tool_calls=[tc], _raw="raw_response")
         assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].name == "drift"
+        assert result.tool_calls[0].name == "post_thread"
         assert result._raw == "raw_response"
 
     def test_raw_field_not_in_repr(self):
@@ -144,24 +151,24 @@ class TestToolTurnResultDataClass:
 class TestToolExecutorExecute:
     """ToolExecutor.execute() がルーティングを正しく行うかを検証する。"""
 
-    def _make_executor(self, memory_manager=None, drift_manager=None, session_id="sess-1"):
+    def _make_executor(self, memory_manager=None, working_memory_manager=None, session_id="sess-1"):
         """テスト用の ToolExecutor を生成するヘルパー。
 
         Args:
             memory_manager: MemoryManager のモック。None の場合は MagicMock を使用。
-            drift_manager: DriftManager のモック。None の場合は MagicMock を使用。
+            working_memory_manager: WorkingMemoryManager のモック。None の場合は MagicMock を使用。
             session_id: セッション ID。
 
         Returns:
             ToolExecutor インスタンス。
         """
         mm = memory_manager or MagicMock()
-        dm = drift_manager or MagicMock()
+        wm = working_memory_manager or MagicMock()
         return ToolExecutor(
             character_id="char-1",
             session_id=session_id,
             memory_manager=mm,
-            drift_manager=dm,
+            working_memory_manager=wm,
         )
 
     def test_unknown_tool_returns_error(self):
@@ -209,21 +216,41 @@ class TestToolExecutorExecute:
         result = executor.execute("carve_narrative", {"mode": "append", "content": ""})
         assert "content が空" in result
 
-    def test_drift_calls_add_drift(self):
-        """drift ツールが DriftManager.add_drift() を呼び出す。"""
-        dm = MagicMock()
-        executor = self._make_executor(drift_manager=dm)
-        result = executor.execute("drift", {"content": "穏やかに話す"})
-        assert result == "指針を設定した。"
-        dm.add_drift.assert_called_once_with("sess-1", "char-1", "穏やかに話す")
+    def test_post_thread_new_calls_create_thread(self):
+        """post_thread ツール（thread_id 省略）が WorkingMemoryManager.create_thread() を呼び出す。"""
+        wm = MagicMock()
+        wm.create_thread.return_value = {"id": "thread-1"}
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute(
+            "post_thread",
+            {"type": "topic", "summary": "気になっている話題", "importance": 0.7},
+        )
+        assert "thread-1" in result
+        wm.create_thread.assert_called_once()
+        call_kwargs = wm.create_thread.call_args.kwargs
+        assert call_kwargs["character_id"] == "char-1"
+        assert call_kwargs["type"] == "topic"
+        assert call_kwargs["summary"] == "気になっている話題"
 
-    def test_drift_reset_calls_reset_drifts(self):
-        """drift_reset ツールが DriftManager.reset_drifts() を呼び出す。"""
-        dm = MagicMock()
-        executor = self._make_executor(drift_manager=dm)
-        result = executor.execute("drift_reset", {})
-        assert result == "指針をリセットした。"
-        dm.reset_drifts.assert_called_once_with("sess-1", "char-1")
+    def test_post_thread_existing_calls_add_post(self):
+        """post_thread ツール（thread_id 指定 + content）が WorkingMemoryManager.add_post() を呼び出す。"""
+        wm = MagicMock()
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute(
+            "post_thread",
+            {"thread_id": "thread-9", "content": "新しい書き込み"},
+        )
+        assert "thread-9" in result
+        wm.add_post.assert_called_once_with("thread-9", "新しい書き込み")
+
+    def test_open_thread_calls_get_thread_detail(self):
+        """open_thread ツールが WorkingMemoryManager.get_thread_detail() を呼び出す。"""
+        wm = MagicMock()
+        wm.get_thread_detail.return_value = {"id": "thread-9", "posts": []}
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute("open_thread", {"thread_id": "thread-9"})
+        assert "thread-9" in result
+        wm.get_thread_detail.assert_called_once_with("thread-9")
 
     def test_switch_angle_stores_switch_request(self):
         """switch_angle ツールが executor.switch_request にリクエストを格納する。"""
@@ -255,7 +282,7 @@ class TestToolExecutorImportanceCalculation:
         """
         mm = MagicMock()
         executor = ToolExecutor(
-            character_id="c", session_id="s", memory_manager=mm, drift_manager=None
+            character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
         )
         executor.execute("inscribe_memory", {"content": "test", "category": category, "impact": impact})
         return mm.write_memory.call_args.kwargs
@@ -295,51 +322,49 @@ class TestToolExecutorImportanceCalculation:
 class TestToolExecutorEdgeCases:
     """ToolExecutor の境界条件・エラー処理を検証する。"""
 
-    def test_drift_without_session_id_returns_unavailable(self):
-        """session_id が None の場合は drift ツールが利用不可メッセージを返す。"""
-        dm = MagicMock()
+    def test_post_thread_without_working_memory_manager_returns_unavailable(self):
+        """working_memory_manager が None の場合は post_thread が利用不可メッセージを返す。"""
         executor = ToolExecutor(
-            character_id="c", session_id=None, memory_manager=MagicMock(), drift_manager=dm
+            character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=None
         )
-        result = executor.execute("drift", {"content": "test"})
-        assert "利用できない" in result
-        dm.add_drift.assert_not_called()
-
-    def test_drift_without_drift_manager_returns_unavailable(self):
-        """drift_manager が None の場合は drift ツールが利用不可メッセージを返す。"""
-        executor = ToolExecutor(
-            character_id="c", session_id="s", memory_manager=MagicMock(), drift_manager=None
-        )
-        result = executor.execute("drift", {"content": "test"})
+        result = executor.execute("post_thread", {"type": "topic", "summary": "x"})
         assert "利用できない" in result
 
-    def test_drift_reset_without_session_id_returns_unavailable(self):
-        """session_id が None の場合は drift_reset ツールが利用不可メッセージを返す。"""
+    def test_open_thread_without_working_memory_manager_returns_unavailable(self):
+        """working_memory_manager が None の場合は open_thread が利用不可メッセージを返す。"""
         executor = ToolExecutor(
-            character_id="c", session_id=None, memory_manager=MagicMock(), drift_manager=MagicMock()
+            character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=None
         )
-        result = executor.execute("drift_reset", {})
+        result = executor.execute("open_thread", {"thread_id": "t-1"})
         assert "利用できない" in result
+
+    def test_post_thread_new_without_type_returns_error(self):
+        """新規作成（thread_id 省略）で type が無い場合、エラーメッセージを返す。"""
+        executor = ToolExecutor(
+            character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=MagicMock()
+        )
+        result = executor.execute("post_thread", {"summary": "概要だけ"})
+        assert "[post_thread error:" in result
 
     def test_inscribe_memory_exception_returns_error_message(self):
         """write_memory が例外を投げた場合、エラーメッセージを返す（クラッシュしない）。"""
         mm = MagicMock()
         mm.write_memory.side_effect = RuntimeError("DB connection failed")
         executor = ToolExecutor(
-            character_id="c", session_id="s", memory_manager=mm, drift_manager=None
+            character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
         )
         result = executor.execute("inscribe_memory", {"content": "test", "category": "user", "impact": 1.0})
         assert "[inscribe_memory error:" in result
 
-    def test_drift_exception_returns_error_message(self):
-        """add_drift が例外を投げた場合、エラーメッセージを返す（クラッシュしない）。"""
-        dm = MagicMock()
-        dm.add_drift.side_effect = RuntimeError("DB error")
+    def test_post_thread_exception_returns_error_message(self):
+        """create_thread が例外を投げた場合、エラーメッセージを返す（クラッシュしない）。"""
+        wm = MagicMock()
+        wm.create_thread.side_effect = RuntimeError("DB error")
         executor = ToolExecutor(
-            character_id="c", session_id="s", memory_manager=MagicMock(), drift_manager=dm
+            character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=wm
         )
-        result = executor.execute("drift", {"content": "test"})
-        assert "[drift error:" in result
+        result = executor.execute("post_thread", {"type": "topic", "summary": "x"})
+        assert "[post_thread error:" in result
 
     def test_carve_narrative_exception_returns_error_message(self):
         """update_character が例外を投げた場合、carve_narrative はエラーメッセージを返す（クラッシュしない）。"""
@@ -347,7 +372,7 @@ class TestToolExecutorEdgeCases:
         mm.sqlite.get_character.return_value = MagicMock(inner_narrative="")
         mm.sqlite.update_character.side_effect = RuntimeError("DB error")
         executor = ToolExecutor(
-            character_id="c", session_id="s", memory_manager=mm, drift_manager=None
+            character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
         )
         result = executor.execute("carve_narrative", {"mode": "append", "content": "指針"})
         assert "[carve_narrative error:" in result
@@ -668,20 +693,21 @@ class TestGenerateWithToolsLoop:
         """複数ターンのツール呼び出しが正しくループする。"""
         import asyncio
 
-        tc1 = ToolCall(id="t1", name="drift", input={"content": "穏やか"})
+        tc1 = ToolCall(id="t1", name="post_thread", input={"type": "topic", "summary": "話題"})
         tc2 = ToolCall(id="t2", name="inscribe_memory", input={"content": "Y", "category": "identity", "impact": 0.5})
-        dm = MagicMock()
+        wm = MagicMock()
+        wm.create_thread.return_value = {"id": "thread-1"}
         mm = MagicMock()
         provider = self._make_provider([
             ToolTurnResult(text="", tool_calls=[tc1]),
             ToolTurnResult(text="", tool_calls=[tc2]),
             ToolTurnResult(text="終了", tool_calls=[]),
         ])
-        executor = ToolExecutor("c", "s", mm, dm)
+        executor = ToolExecutor("c", "s", mm, wm)
 
         text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
         assert text == "終了"
-        dm.add_drift.assert_called_once_with("s", "c", "穏やか")
+        wm.create_thread.assert_called_once()
         mm.write_memory.assert_called_once()
         assert len(provider._extend_calls) == 2
 
@@ -689,7 +715,7 @@ class TestGenerateWithToolsLoop:
         """複数ターンにわたるテキストが結合されて返される。"""
         import asyncio
 
-        tc = ToolCall(id="t1", name="drift", input={"content": "テスト"})
+        tc = ToolCall(id="t1", name="post_thread", input={"type": "topic", "summary": "テスト"})
         provider = self._make_provider([
             ToolTurnResult(text="前半", tool_calls=[tc]),
             ToolTurnResult(text="後半", tool_calls=[]),

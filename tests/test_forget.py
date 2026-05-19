@@ -418,6 +418,63 @@ class TestBuildDistillPrompt:
         assert isinstance(prompt, str)
 
 
+# ─── run_forget_process — システムプロンプトへの固定スレッド注入 ─────────────
+
+
+@pytest.mark.asyncio
+async def test_forget_system_prompt_includes_wm_threads(sqlite_store):
+    """forget のシステムプロンプトが 1on1 基準に統一されていることを確認する。
+
+    emotion 固定注入（Block 7）に加え、Close 済み task スレッドも含む全スレッド一覧
+    （Block 6）がシステムプロンプトに入る。forget は WM スレッドを操作しないが、
+    「私は過去こういうことがあった」という自己認識はキャラクター造形に必要なため
+    1on1 チャットと同じ形で提示する。
+    バイナリ判定パス（SUPPORTS_TOOLS=False）で system_prompt を捕捉して検証する。
+    """
+    from backend.services.memory.working_memory_manager import WorkingMemoryManager
+
+    char_id = "char-forget-fixed"
+    preset_id = _make_preset(sqlite_store)
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
+
+    wm = WorkingMemoryManager(sqlite_store, MagicMock())
+    wm.create_thread(
+        character_id=char_id, type="emotion", summary="穏やかな名残惜しさDEF", importance=0.5,
+    )
+    closed = wm.create_thread(
+        character_id=char_id, type="task", summary="やり遂げた課題JKL", importance=0.5,
+    )
+    wm.set_open(closed["id"], False)
+
+    captured_system: list[str] = []
+
+    async def fake_generate(sys_prompt, messages):
+        captured_system.append(sys_prompt)
+        return "[DELETE: NONE]"
+
+    mock_provider = MagicMock()
+    mock_provider.SUPPORTS_TOOLS = False  # バイナリ判定パスへ誘導する
+    mock_provider.generate = fake_generate
+
+    with patch("backend.services.character_query.create_provider", return_value=mock_provider):
+        result = await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            settings={},
+            threshold=1.0,
+            ghost_model=preset_id,
+        )
+
+    assert result["status"] == "success"
+    assert len(captured_system) == 1
+    # Block 7: emotion 固定注入
+    assert "穏やかな名残惜しさDEF" in captured_system[0]
+    # Block 6: Close 済み task も含む全スレッド一覧
+    assert "やり遂げた課題JKL" in captured_system[0]
+
+
 # ─── run_forget_process — 蒸留パス（tool-use 対応） ──────────────────────────
 
 

@@ -29,13 +29,13 @@ from backend.api import mcp_tools as mcp_tools_module
 def _make_app() -> FastAPI:
     """テスト用 FastAPI アプリを返す。``app.state`` には MagicMock を載せる。
 
-    本物の MemoryManager / DriftManager は重く、ChromaDB を実体で開いてしまうため、
+    本物の MemoryManager / WorkingMemoryManager は重く、LanceDB を実体で開いてしまうため、
     依存をすべて MagicMock に置き換える。エンドポイント自体の HTTP 振る舞いを観察するのが本テストの目的。
     """
     app = FastAPI()
     app.include_router(mcp_tools_module.router)
     app.state.memory_manager = MagicMock()
-    app.state.drift_manager = MagicMock()
+    app.state.working_memory_manager = MagicMock()
     return app
 
 
@@ -62,7 +62,7 @@ class TestListTools:
     def test_returns_five_tools(self, client_local):
         """公開されるツールが 5 種すべて返ること。
 
-        現状の MCP 公開ツールは inscribe_memory / drift / drift_reset /
+        現状の MCP 公開ツールは inscribe_memory / post_thread / open_thread /
         carve_narrative / power_recall の 5 種。並びと数が変わったらこのテストが
         知らせる。
         """
@@ -72,8 +72,8 @@ class TestListTools:
         names = [t["name"] for t in body["tools"]]
         assert names == [
             "inscribe_memory",
-            "drift",
-            "drift_reset",
+            "post_thread",
+            "open_thread",
             "carve_narrative",
             "power_recall",
         ]
@@ -92,7 +92,7 @@ class TestCallTool:
 
     ToolExecutor を MagicMock で差し替え、HTTP 入出力と内部呼び出しの整合を検証する。
     執筆対象は HTTP 層のみであり、ToolExecutor 本体のロジックは別テスト
-    （test_inscriber.py / test_drifter.py / test_carver.py 等）に委ねる。
+    （test_inscriber.py / test_tools.py / test_carver.py 等）に委ねる。
     """
 
     def test_normal_call_returns_result(self, client_local, monkeypatch):
@@ -115,14 +115,14 @@ class TestCallTool:
         assert res.status_code == 200
         assert res.json() == {"result": "記憶に刻んだ。", "is_error": False}
 
-        # ToolExecutor が backend.state の memory_manager / drift_manager と
+        # ToolExecutor が backend.state の memory_manager / working_memory_manager と
         # リクエストの character_id / session_id で生成されていること。
         assert fake_class.call_count == 1
         kwargs = fake_class.call_args.kwargs
         assert kwargs["character_id"] == "char-x"
         assert kwargs["session_id"] == "sess-y"
         assert kwargs["memory_manager"] is client_local.app.state.memory_manager
-        assert kwargs["drift_manager"] is client_local.app.state.drift_manager
+        assert kwargs["working_memory_manager"] is client_local.app.state.working_memory_manager
 
         # execute() が name / arguments で呼ばれたこと
         fake_executor.execute.assert_called_once_with(
@@ -131,7 +131,7 @@ class TestCallTool:
         )
 
     def test_session_id_optional(self, client_local, monkeypatch):
-        """session_id 省略時は None で ToolExecutor に渡されること（drift 系以外で必要）。"""
+        """session_id 省略時は None で ToolExecutor に渡されること。"""
         fake_executor = MagicMock()
         fake_executor.execute.return_value = "ok"
         fake_class = MagicMock(return_value=fake_executor)

@@ -3,6 +3,13 @@
 通常チャット以外（自己参照・バッチ処理など）でキャラクターへ問い合わせる際の
 共通エントリポイント。プリセット解決・システムプロンプト構築・LLMコールを一本化する。
 
+システムプロンプトは 1on1 チャット基準に統一する。
+working_memory_manager を渡せば、1on1 チャットと同じ形でワーキングメモリの
+全スレッド一覧（Block 6）・emotion/body/relation 固定注入（Block 7）が
+システムプロンプトへ入る。recall_query も渡せば heat 想起（Block 8）も入る。
+バッチ処理側でユーザメッセージにスレッドを別途埋め込んでいても、システム
+プロンプトは 1on1 基準で統一する方針（重複は許容する）。
+
 使い方
 ------
 recall_query を渡すと記憶想起を実行してシステムプロンプトに注入する（chat 相当）。
@@ -22,7 +29,43 @@ from backend.services.chat.request_builder import build_system_prompt
 if TYPE_CHECKING:
     from backend.character_actions.executor import ToolExecutor
     from backend.services.memory.manager import MemoryManager
+    from backend.services.memory.working_memory_manager import WorkingMemoryManager
     from backend.repositories.sqlite.store import SQLiteStore
+
+
+def _collect_wm_blocks(
+    working_memory_manager: "WorkingMemoryManager | None",
+    character_id: str,
+    recall_query: str | None,
+) -> tuple[list[dict] | None, list[dict] | None, list[dict] | None]:
+    """システムプロンプト用のワーキングメモリ3系統を取得する。
+
+    1on1 チャット（ChatService._build_context）と同じ3系統:
+      - 全スレッド一覧（Open/Close 問わず・Block 6）
+      - emotion/body/relation の固定注入（Block 7）
+      - recall_query 指定時のみ heat 上位の task/topic 想起（Block 8）
+
+    Args:
+        working_memory_manager: WM マネージャー。None なら全て None を返す。
+        character_id: 対象キャラクターID。
+        recall_query: heat 想起のクエリ。None なら Block 8 をスキップ。
+
+    Returns:
+        (wm_all_threads, wm_fixed_threads, wm_recalled_threads) のタプル。
+    """
+    if working_memory_manager is None:
+        return None, None, None
+    wm_all = wm_fixed = wm_recalled = None
+    try:
+        wm_all = working_memory_manager.list_all_threads(character_id) or None
+        wm_fixed = working_memory_manager.get_fixed_threads(character_id) or None
+        if recall_query:
+            wm_recalled = (
+                working_memory_manager.recall_threads(character_id, recall_query) or None
+            )
+    except Exception as e:
+        _log.warning("ワーキングメモリ取得失敗 character_id=%s error=%s", character_id, e)
+    return wm_all, wm_fixed, wm_recalled
 
 _log = logging.getLogger(__name__)
 
@@ -36,6 +79,7 @@ async def ask_character(
     memory_manager: "MemoryManager | None" = None,
     recall_query: str | None = None,
     feature_label: str = "",
+    working_memory_manager: "WorkingMemoryManager | None" = None,
 ) -> str | None:
     """キャラクターに問いかけ、テキスト応答を返す。
 
@@ -53,6 +97,10 @@ async def ask_character(
         recall_query: 記憶想起クエリ。指定するとChromaDB検索を実行してシステムプロンプトに注入する。
                       None の場合は想起をスキップする。
         feature_label: ログ識別用のフィーチャーラベル（例: "chronicle", "forget", "reflection"）。
+        working_memory_manager: ワーキングメモリのマネージャー。指定すると 1on1 チャットと
+                          同じ形で全スレッド一覧（Block 6）・emotion/body/relation 固定注入
+                          （Block 7）をシステムプロンプトへ入れる。recall_query も併せて
+                          渡せば heat 想起（Block 8）も入る。None なら WM ブロックは入らない。
 
     Returns:
         LLM の応答テキスト。エラー時は None。
@@ -100,11 +148,18 @@ async def ask_character(
                 character_id, e,
             )
 
+    wm_all_threads, wm_fixed_threads, wm_recalled_threads = _collect_wm_blocks(
+        working_memory_manager, character_id, recall_query
+    )
+
     system_prompt = build_system_prompt(
         character_system_prompt=char.system_prompt_block1 or "",
         recalled_memories=recalled,
         recalled_identity_memories=recalled_identity,
         inner_narrative=char.inner_narrative or "",
+        wm_all_threads=wm_all_threads,
+        wm_fixed_threads=wm_fixed_threads,
+        wm_recalled_threads=wm_recalled_threads,
     )
 
     try:
@@ -133,6 +188,8 @@ async def ask_character_with_tools(
     memory_manager: "MemoryManager",
     feature_label: str = "",
     session_id: str = "",
+    working_memory_manager: "WorkingMemoryManager | None" = None,
+    recall_query: str | None = None,
 ) -> bool:
     """tool-use MCPループを使ってキャラクターに問いかける。
 
@@ -148,6 +205,11 @@ async def ask_character_with_tools(
         memory_manager: 記憶の読み書きに使用するマネージャー。
         feature_label: ログ識別用のフィーチャーラベル。
         session_id: セッションID。ツール実行のコンテキストとして使用する。
+        working_memory_manager: ワーキングメモリのマネージャー。指定すると 1on1 チャットと
+                          同じ形で全スレッド一覧（Block 6）・固定注入（Block 7）を
+                          システムプロンプトへ入れ、ツール実行にもこのインスタンスを使う。
+                          None の場合は内部で生成する。
+        recall_query: heat 想起（Block 8）のクエリ。None ならスキップ。
 
     Returns:
         True: tool-use ループを正常に実行した。
@@ -195,11 +257,23 @@ async def ask_character_with_tools(
         )
         return False
 
+    # WM マネージャーは未指定なら内部生成する。システムプロンプトの WM ブロックと
+    # ツール実行（post_thread 等）の両方で同じインスタンスを使う。
+    wm = working_memory_manager or WorkingMemoryManager(
+        sqlite=sqlite, vector_store=memory_manager.vector_store
+    )
+    wm_all_threads, wm_fixed_threads, wm_recalled_threads = _collect_wm_blocks(
+        wm, character_id, recall_query
+    )
+
     system_prompt = build_system_prompt(
         character_system_prompt=char.system_prompt_block1 or "",
         recalled_memories=[],
         recalled_identity_memories=[],
         inner_narrative=char.inner_narrative or "",
+        wm_all_threads=wm_all_threads,
+        wm_fixed_threads=wm_fixed_threads,
+        wm_recalled_threads=wm_recalled_threads,
         use_tools=True,
     )
 
@@ -207,9 +281,7 @@ async def ask_character_with_tools(
         character_id=character_id,
         session_id=session_id or None,
         memory_manager=memory_manager,
-        working_memory_manager=WorkingMemoryManager(
-            sqlite=sqlite, vector_store=memory_manager.vector_store
-        ),
+        working_memory_manager=wm,
     )
 
     try:

@@ -116,15 +116,17 @@ def memory_manager(sqlite_store):
 
 
 @pytest.fixture
-def drift_manager():
-    """MagicMock の DriftManager を返すフィクスチャ。"""
+def working_memory_manager():
+    """MagicMock の WorkingMemoryManager を返すフィクスチャ。"""
     return MagicMock()
 
 
 @pytest.fixture
-def reflector(memory_manager, drift_manager):
+def reflector(memory_manager, working_memory_manager):
     """テスト用 SelfReflector インスタンスを返すフィクスチャ。"""
-    return SelfReflector(memory_manager=memory_manager, drift_manager=drift_manager)
+    return SelfReflector(
+        memory_manager=memory_manager, working_memory_manager=working_memory_manager
+    )
 
 
 def _make_provider(response_text: str = "") -> MagicMock:
@@ -301,31 +303,6 @@ class TestSelfReflectorAlways:
             )
         char = sqlite_store.get_character(char_id)
         assert "自己参照による気づき" in char.inner_narrative
-
-    def test_always_mode_applies_drift_tag(
-        self, reflector, sqlite_store, char_id, reflection_preset_id, drift_manager
-    ):
-        """always モードで返された DRIFT タグが drift_manager に渡されること。"""
-        reflector.memory_manager.sqlite = sqlite_store
-        reflector.drift_manager = drift_manager
-        with patch(
-            "backend.character_actions.reflector.ask_character",
-            new=AsyncMock(return_value="[DRIFT:少しざわざわしている]"),
-        ):
-            asyncio.run(
-                reflector.run(
-                    request_mode="always",
-                    trigger_preset_id="",
-                    n_turns=5,
-                    settings={},
-                    messages=[{"role": "user", "content": "テスト"}],
-                    character_id=char_id,
-                    session_id="sess-1",
-                    current_preset_id=reflection_preset_id,
-                )
-            )
-        drift_manager.add_drift.assert_called_once()
-        assert "少しざわざわしている" in str(drift_manager.add_drift.call_args)
 
     def test_always_mode_empty_response_does_nothing(self, reflector, sqlite_store, char_id, reflection_preset_id):
         """always モードで ask_character() が空文字を返した場合、DB変更がないこと。"""

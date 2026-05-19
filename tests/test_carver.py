@@ -227,7 +227,7 @@ class TestToolExecutorCarveNarrative:
             character_id=char_id,
             session_id="sess-1",
             memory_manager=mm,
-            drift_manager=None,
+            working_memory_manager=None,
         )
         result = executor.execute(
             "carve_narrative",
@@ -248,7 +248,7 @@ class TestToolExecutorCarveNarrative:
             character_id=char_id,
             session_id="sess-1",
             memory_manager=mm,
-            drift_manager=None,
+            working_memory_manager=None,
         )
         result = executor.execute("carve_narrative", {"mode": "append", "content": ""})
 

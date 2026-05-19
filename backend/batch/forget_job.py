@@ -1,4 +1,12 @@
-"""Routine to identify and forget memories that have time-decayed below a threshold."""
+"""Routine to identify and forget memories that have time-decayed below a threshold.
+
+forget バッチもキャラクターへの問い合わせ処理であり、Chronicle と同様に
+ask_character() / ask_character_with_tools() の共通インタフェースを使う。
+システムプロンプトは 1on1 チャット基準に統一する: working_memory_manager を
+渡すことで、全スレッド一覧（Block 6・「私は過去こういうことがあった」）と
+emotion/body/relation 固定注入（Block 7）が 1on1 と同じ形で入る。
+キャラクター造形のため、操作しないスレッドも自己認識として提示する。
+"""
 
 import logging
 import re
@@ -6,6 +14,7 @@ from typing import Optional
 
 from backend.lib.log_context import new_message_id
 from backend.services.memory.manager import MemoryManager
+from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
 from backend.services.character_query import ask_character, ask_character_with_tools
 
@@ -66,6 +75,10 @@ async def run_forget_process(
         logger.info("スキップ char=%s reason=対象記憶なし", char_label)
         return {"status": "skipped", "reason": "No forgotten candidates found"}
 
+    # WM マネージャーを1つ生成し、システムプロンプトを 1on1 チャット基準に統一する
+    # （全スレッド一覧 Block 6・固定注入 Block 7 が ask_character 系の内部で入る）。
+    wm = WorkingMemoryManager(sqlite=sqlite, vector_store=memory_manager.vector_store)
+
     # tool-use対応プロバイダーは蒸留方式（MCPループ）で処理する
     logger.debug("蒸留ループ呼び出し char=%s candidates=%d", char_label, len(candidates))
     distilled = await ask_character_with_tools(
@@ -76,6 +89,7 @@ async def run_forget_process(
         settings=settings,
         memory_manager=memory_manager,
         feature_label="forget",
+        working_memory_manager=wm,
     )
 
     if distilled:
@@ -135,6 +149,7 @@ async def run_forget_process(
         settings=settings,
         recall_query=None,
         feature_label="forget",
+        working_memory_manager=wm,
     )
     if response_text is None:
         logger.warning("エラー char=%s reason=LLM応答なし", char_label)
