@@ -176,6 +176,107 @@ def test_write_memory_falls_back_to_new_when_existing_is_soft_deleted(
     mock_vector_store.delete_memory.assert_not_called()
 
 
+def test_write_memory_force_insert_skips_similarity_and_creates_new(
+    manager, sqlite_store, mock_vector_store
+):
+    """force_insert=True を渡すと、類似既存があっても上書きせず新規 UUID を発行することを確認する。
+
+    forget 蒸留バッチでは、キャラが蒸留として登録した記憶が「削除対象として提示した候補記憶」に
+    上書きされてしまうと、続く全件削除フェーズで蒸留物まで一緒に消えてしまう。
+    このバグを回避するために write_memory には force_insert オプションがあり、
+    True を渡したときは類似検索（find_similar_in_category）すら呼ばずに必ず新規作成パスへ
+    抜けて新規 UUID で insert されることを検証する。
+
+    検証項目:
+    - find_similar_in_category が **一度も呼ばれない** こと（早期スキップ）
+    - 既存記憶（existing-mem）は完全に無関係に保たれること（content/importances が一切上書きされない）
+    - 戻り値が新規 UUID（既存 ID とは別）であること
+    - SQLite に新規記憶レコードが追加されていること
+    - vector_store.add_memory が新規 UUID で 1 回呼ばれること
+    - vector_store.delete_memory は呼ばれないこと
+    """
+    char_id = "char-001"
+
+    # 類似マッチがあっても上書きされてはならない、という挙動を担保するため、
+    # 既存記憶を SQLite に置き、ベクトル DB は「類似あり」と返すよう設定する。
+    sqlite_store.create_memory(
+        "existing-mem",
+        char_id,
+        "コーヒーが好き",
+        memory_category="user",
+        contextual_importance=0.3,
+        semantic_importance=0.3,
+        identity_importance=0.3,
+        user_importance=0.3,
+    )
+    mock_vector_store.find_similar_in_category.return_value = "existing-mem"
+
+    returned_id = manager.write_memory(
+        char_id,
+        "カフェラテが好き",
+        category="user",
+        contextual_importance=0.8,
+        semantic_importance=0.7,
+        identity_importance=0.6,
+        user_importance=0.9,
+        force_insert=True,
+    )
+
+    # 類似検索パス自体がスキップされていること（force_insert の本質）
+    mock_vector_store.find_similar_in_category.assert_not_called()
+
+    # 既存記憶は無傷で残ること（上書きされていない）
+    pre = sqlite_store.get_memory("existing-mem")
+    assert pre is not None
+    assert pre.content == "コーヒーが好き"
+    assert pre.contextual_importance == 0.3
+
+    # 戻り値は既存 ID とは別の新規 UUID であること
+    assert returned_id != "existing-mem"
+
+    # アクティブな記憶が 2 件（既存 + 新規）になり、新規側に蒸留結果が入っていること
+    active_mems = {m.id: m for m in sqlite_store.list_memories(char_id)}
+    assert "existing-mem" in active_mems
+    assert returned_id in active_mems
+    new_mem = active_mems[returned_id]
+    assert new_mem.content == "カフェラテが好き"
+    assert new_mem.contextual_importance == 0.8
+
+    # ベクトル DB 側は新規 ID で add_memory が呼ばれ、delete_memory は呼ばれないこと
+    mock_vector_store.add_memory.assert_called_once()
+    assert mock_vector_store.add_memory.call_args.kwargs["memory_id"] == returned_id
+    mock_vector_store.delete_memory.assert_not_called()
+
+
+def test_write_memory_force_insert_false_keeps_default_upsert(
+    manager, sqlite_store, mock_vector_store
+):
+    """force_insert=False（デフォルト）を明示的に渡しても、従来の類似検索＋in-place 更新が動くこと。
+
+    後方互換の最低ラインを担保するための回帰テスト。
+    既存呼び出し（chat 系・通常の inscribe_memory ツール）は force_insert を渡さない、
+    あるいは False を渡すが、いずれの場合も類似検索が呼ばれ、類似マッチ時は既存 ID が再利用される。
+    """
+    char_id = "char-001"
+    sqlite_store.create_memory(
+        "existing-mem",
+        char_id,
+        "コーヒーが好き",
+        memory_category="user",
+    )
+    mock_vector_store.find_similar_in_category.return_value = "existing-mem"
+
+    returned_id = manager.write_memory(
+        char_id,
+        "カフェラテが好き",
+        category="user",
+        force_insert=False,
+    )
+
+    mock_vector_store.find_similar_in_category.assert_called_once()
+    assert returned_id == "existing-mem"
+
+
 # ---------------------------------------------------------------------------
 # recall_memory — hybrid スコア / soft-delete 除外
 # ---------------------------------------------------------------------------

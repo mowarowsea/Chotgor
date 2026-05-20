@@ -131,6 +131,10 @@ class ToolExecutor:
         session_id: 現在のセッションID。
         memory_manager: 記憶の読み書きを担うマネージャー。
         working_memory_manager: ワーキングメモリの読み書きを担うマネージャー。
+        batch_context: バッチ処理由来のフラグ群。例 ``{"force_insert_memory": True}`` を
+            渡すと、inscribe_memory ツール実行時に類似上書きをスキップして必ず新規 ID で
+            挿入する（forget 蒸留バッチ専用）。MCP ツール API は変更せず、バッチ側のみ
+            この context で挙動を切り替えるための内部チャネル。
         _inscriber: 記憶書き込みを担う Inscriber インスタンス。
         _threader: ワーキングメモリスレッド操作を担う Threader インスタンス。
         _carver: inner_narrative の彫り込みを担う Carver インスタンス。
@@ -146,12 +150,20 @@ class ToolExecutor:
         session_id: str | None,
         memory_manager: MemoryManager,
         working_memory_manager: WorkingMemoryManager | None,
+        batch_context: dict | None = None,
     ) -> None:
-        """ToolExecutorを初期化する。"""
+        """ToolExecutorを初期化する。
+
+        Args:
+            batch_context: バッチ処理が指定するツール挙動の切り替えフラグ群。
+                通常チャットでは None（=空 dict 扱い）。forget 蒸留バッチからは
+                ``{"force_insert_memory": True}`` を渡す。
+        """
         self.character_id = character_id
         self.session_id = session_id
         self.memory_manager = memory_manager
         self.working_memory_manager = working_memory_manager
+        self.batch_context: dict = batch_context or {}
         self._inscriber = Inscriber(character_id, memory_manager)
         self._threader = Threader(character_id, working_memory_manager)
         self._carver = Carver(character_id, memory_manager.sqlite)
@@ -204,12 +216,17 @@ class ToolExecutor:
         return f"[Unknown tool: {tool_name}]"
 
     def _inscribe_memory(self, content: str, category: str, impact: float) -> str:
-        """inscribe_memory ツールの実装。Inscriber.inscribe_memory() に委譲して記憶をChromaDB + SQLiteに書き込む。"""
+        """inscribe_memory ツールの実装。Inscriber.inscribe_memory() に委譲して記憶を LanceDB + SQLite に書き込む。
+
+        batch_context に ``force_insert_memory=True`` が指定されていれば、類似既存記憶への
+        上書きをスキップして必ず新規 UUID で挿入する（forget 蒸留バッチ専用パス）。
+        """
+        force_insert = bool(self.batch_context.get("force_insert_memory", False))
         try:
-            self._inscriber.inscribe_memory(content, category, impact)
+            self._inscriber.inscribe_memory(content, category, impact, force_insert=force_insert)
             self.logger.info(
-                "完了 char=%s category=%s content=%.50s",
-                self.character_id, category, content,
+                "完了 char=%s category=%s force_insert=%s content=%.50s",
+                self.character_id, category, force_insert, content,
             )
             return "記憶に刻んだ。"
         except Exception as e:

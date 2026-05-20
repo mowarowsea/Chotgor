@@ -190,6 +190,7 @@ async def ask_character_with_tools(
     session_id: str = "",
     working_memory_manager: "WorkingMemoryManager | None" = None,
     recall_query: str | None = None,
+    batch_context: dict | None = None,
 ) -> bool:
     """tool-use MCPループを使ってキャラクターに問いかける。
 
@@ -210,6 +211,9 @@ async def ask_character_with_tools(
                           システムプロンプトへ入れ、ツール実行にもこのインスタンスを使う。
                           None の場合は内部で生成する。
         recall_query: heat 想起（Block 8）のクエリ。None ならスキップ。
+        batch_context: バッチ処理由来のツール挙動切り替えフラグ。例えば forget 蒸留バッチは
+            ``{"force_insert_memory": True}`` を渡すことで、inscribe_memory ツールが
+            類似既存記憶を上書きせず必ず新規 ID で挿入するようになる。通常チャットでは None。
 
     Returns:
         True: tool-use ループを正常に実行した。
@@ -282,6 +286,7 @@ async def ask_character_with_tools(
         session_id=session_id or None,
         memory_manager=memory_manager,
         working_memory_manager=wm,
+        batch_context=batch_context,
     )
 
     try:

@@ -192,6 +192,67 @@ class TestToolExecutorExecute:
         assert call_kwargs["content"] == "ユーザは猫が好き"
         assert call_kwargs["category"] == "user"
 
+    def test_inscribe_memory_default_passes_force_insert_false(self):
+        """batch_context 未指定（通常チャット経路）では write_memory が force_insert=False で呼ばれる。
+
+        後方互換性の回帰テスト。バッチではない通常の inscribe_memory ツール呼び出しでは、
+        類似既存記憶の上書き挙動（重複排除）を維持する必要がある。
+        """
+        mm = MagicMock()
+        executor = self._make_executor(memory_manager=mm)
+        executor.execute(
+            "inscribe_memory",
+            {"content": "ユーザは猫が好き", "category": "user", "impact": 1.0},
+        )
+        call_kwargs = mm.write_memory.call_args.kwargs
+        assert call_kwargs.get("force_insert") is False
+
+    def test_inscribe_memory_with_batch_context_passes_force_insert_true(self):
+        """batch_context={"force_insert_memory": True} で生成した ToolExecutor は force_insert=True を伝播する。
+
+        forget 蒸留バッチで使われる経路。キャラが inscribe_memory ツールを呼んだとき、
+        類似既存への上書きをスキップさせるためのフラグがバッチ → ToolExecutor → Inscriber
+        → MemoryManager.write_memory まで一気通貫で伝わることを検証する。
+
+        この経路が壊れると、蒸留結果が削除候補のIDに上書きされて、続く全件削除で消滅する
+        （結合バグの再発）。
+        """
+        mm = MagicMock()
+        executor = ToolExecutor(
+            character_id="char-1",
+            session_id="sess-1",
+            memory_manager=mm,
+            working_memory_manager=MagicMock(),
+            batch_context={"force_insert_memory": True},
+        )
+        executor.execute(
+            "inscribe_memory",
+            {"content": "ユーザはコーヒーが好き", "category": "user", "impact": 1.0},
+        )
+        call_kwargs = mm.write_memory.call_args.kwargs
+        assert call_kwargs.get("force_insert") is True
+
+    def test_inscribe_memory_batch_context_none_treated_as_empty(self):
+        """batch_context=None でも例外にならず、force_insert=False が伝播する。
+
+        ask_character_with_tools のデフォルト引数（batch_context=None）が
+        ToolExecutor 側でちゃんと空 dict 扱いされることの確認。
+        """
+        mm = MagicMock()
+        executor = ToolExecutor(
+            character_id="char-1",
+            session_id="sess-1",
+            memory_manager=mm,
+            working_memory_manager=MagicMock(),
+            batch_context=None,
+        )
+        executor.execute(
+            "inscribe_memory",
+            {"content": "x", "category": "user", "impact": 1.0},
+        )
+        call_kwargs = mm.write_memory.call_args.kwargs
+        assert call_kwargs.get("force_insert") is False
+
     def test_carve_narrative_append_calls_sqlite_update(self):
         """carve_narrative（append）ツールが sqlite_store.update_character を呼び出す。"""
         mm = MagicMock()

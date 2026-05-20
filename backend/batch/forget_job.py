@@ -79,7 +79,9 @@ async def run_forget_process(
     # （全スレッド一覧 Block 6・固定注入 Block 7 が ask_character 系の内部で入る）。
     wm = WorkingMemoryManager(sqlite=sqlite, vector_store=memory_manager.vector_store)
 
-    # tool-use対応プロバイダーは蒸留方式（MCPループ）で処理する
+    # tool-use対応プロバイダーは蒸留方式（MCPループ）で処理する。
+    # 蒸留結果は新規記憶として保存され、続く全件削除で候補と一緒に消えないよう、
+    # batch_context.force_insert_memory=True で類似既存への上書きをスキップする。
     logger.debug("蒸留ループ呼び出し char=%s candidates=%d", char_label, len(candidates))
     distilled = await ask_character_with_tools(
         character_id=character_id,
@@ -90,6 +92,7 @@ async def run_forget_process(
         memory_manager=memory_manager,
         feature_label="forget",
         working_memory_manager=wm,
+        batch_context={"force_insert_memory": True},
     )
 
     if distilled:

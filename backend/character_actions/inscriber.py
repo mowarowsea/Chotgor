@@ -179,6 +179,7 @@ class Inscriber:
         category: str,
         impact: float = 1.0,
         source_preset_id: str = "",
+        force_insert: bool = False,
     ) -> None:
         """記憶を直接書き込む（ツール呼び出し方式）。
 
@@ -187,6 +188,8 @@ class Inscriber:
             category: 記憶カテゴリ（identity / user / semantic / contextual）。
             impact: 重要度係数 0.1〜2.0。1.0が標準。
             source_preset_id: 記憶を作成したプリセットID（空文字列の場合はNULL保存）。
+            force_insert: True の場合、類似既存記憶があっても上書きせず必ず新規 UUID で挿入する。
+                forget 蒸留バッチでのみ True を渡す。
         """
         # 未知カテゴリは contextual と同じ速度で減衰するよう contextual マトリクスをデフォルトにする
         base = _BASE_IMPORTANCE.get(category, _BASE_IMPORTANCE["contextual"])
@@ -197,6 +200,10 @@ class Inscriber:
             content=content,
             category=category,
             source_preset_id=preset_id_or_none,
+            force_insert=force_insert,
             **scores,
         )
-        logger.info("記憶を刻み込み: char=%s category=%s impact=%.1f content=%.50s", self.character_id, category, impact, content)
+        logger.info(
+            "記憶を刻み込み: char=%s category=%s impact=%.1f force_insert=%s content=%.50s",
+            self.character_id, category, impact, force_insert, content,
+        )

@@ -127,6 +127,7 @@ class MemoryManager:
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
         source_preset_id: Optional[str] = None,
+        force_insert: bool = False,
     ) -> str:
         """記憶を SQLite と LanceStore に書き込む。類似記憶があれば in-place 更新、なければ新規作成。
 
@@ -143,20 +144,29 @@ class MemoryManager:
         LanceStore 側は同一 ID で ``add_memory`` を呼ぶことで内部 merge_insert により
         embedding と metadata が原子的に置き換わる（delete は不要）。
 
+        Args:
+            force_insert: True の場合、類似既存記憶があっても上書きせず必ず新規 UUID で挿入する。
+                forget 蒸留バッチ専用フラグ。蒸留結果が「削除対象として提示した候補記憶」の
+                ID に上書きされてしまうと、続く全件削除フェーズで蒸留物まで消えてしまうため。
+
         Returns:
             書き込んだ記憶の memory_id（更新の場合は既存ID、新規の場合は新規UUID）。
         """
-        # カテゴリ別の更新判定閾値
-        # identity は自己定義に関わる記憶のため、ほぼ同文（距離 < 0.05）のみ上書きする
-        similarity_threshold = 0.05 if category == "identity" else 0.15
+        if force_insert:
+            # forget 蒸留バッチ用パス: 類似検索をスキップして必ず新規 ID で挿入する。
+            existing_id = None
+        else:
+            # カテゴリ別の更新判定閾値
+            # identity は自己定義に関わる記憶のため、ほぼ同文（距離 < 0.05）のみ上書きする
+            similarity_threshold = 0.05 if category == "identity" else 0.15
 
-        # 同一カテゴリ内で類似記憶を検索する
-        existing_id = self.vector_store.find_similar_in_category(
-            content=content,
-            character_id=character_id,
-            category=category,
-            threshold=similarity_threshold,
-        )
+            # 同一カテゴリ内で類似記憶を検索する
+            existing_id = self.vector_store.find_similar_in_category(
+                content=content,
+                character_id=character_id,
+                category=category,
+                threshold=similarity_threshold,
+            )
 
         if existing_id:
             # 既存 ID を再利用して in-place 更新する。SQLite 側を先に確定させる。
