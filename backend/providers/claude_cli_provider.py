@@ -121,6 +121,44 @@ def _extract_thinking_from_stream_json(raw: str) -> str:
     return collected
 
 
+def _extract_switch_angle_from_stream_json(raw: str) -> tuple[str, str] | None:
+    """Claude CLI stream-json 出力から switch_angle ツール呼び出しを抽出する。
+
+    Claude CLI は MCP サーバー（別プロセス）経由で switch_angle を実行するため、
+    ChatService 側の tool_executor には反映されない。raw stream-json に含まれる
+    mcp__chotgor__switch_angle の tool_use ブロックを解析して、(preset_name, self_instruction)
+    として返すことで、呼び出し側が tool_executor.switch_request に反映できるようにする。
+
+    複数回呼ばれている場合は最初の1件のみ返す。
+
+    Returns:
+        (preset_name, self_instruction) のタプル。見つからなければ None。
+    """
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") != "assistant":
+            continue
+        for block in event.get("message", {}).get("content", []):
+            if block.get("type") != "tool_use":
+                continue
+            name = block.get("name", "")
+            # MCP 経由のツール名は "mcp__{server}__{tool}" 形式
+            if not name.endswith("__switch_angle"):
+                continue
+            tool_input = block.get("input", {}) or {}
+            preset_name = str(tool_input.get("preset_name", ""))
+            self_instruction = str(tool_input.get("self_instruction", ""))
+            if preset_name:
+                return preset_name, self_instruction
+    return None
+
+
 async def invoke_claude_cli(system_prompt: str, input_text: str) -> str:
     """Invoke Claude CLI with a system prompt and stdin input; return assistant text.
 
@@ -232,7 +270,10 @@ class ClaudeCliProvider(BaseLLMProvider):
     ) -> tuple[str, str]:
         """Claude CLI 内部の MCP ループに委譲する。
 
-        tool_executor（Python 側）は使用しない。ツール呼び出しは MCP サーバーが処理する。
+        tool_executor（Python 側）の execute は MCP サーバー経由で実行されるため、
+        ここでは記憶系ツール（inscribe_memory 等）の結果反映には使われない。
+        ただし switch_angle のみ例外で、ChatService が tool_executor.switch_request を
+        読んで再ディスパッチを判定するため、raw stream-json から抽出して反映させる。
 
         Returns:
             (text, thinking): thinking は思考ブロックが存在する場合その内容、なければ空文字列。
@@ -247,6 +288,16 @@ class ClaudeCliProvider(BaseLLMProvider):
             raise LLMApiError(raw)
         text = _parse_stream_json(raw)
         thinking = _extract_thinking_from_stream_json(raw)
+        # MCP 経由で実行された switch_angle を tool_executor へ転写する。
+        # ChatService._extract_switch_info が tool_executor.switch_request を見て
+        # 再ディスパッチの可否を判定するため、ここで反映しないと switch_angle が無視される。
+        switch_info = _extract_switch_angle_from_stream_json(raw)
+        if switch_info is not None and tool_executor is not None:
+            preset_name, self_instruction = switch_info
+            tool_executor.execute(
+                "switch_angle",
+                {"preset_name": preset_name, "self_instruction": self_instruction},
+            )
         return text, thinking
 
     async def _run_generate_raw(self, system_prompt: str, messages: list[dict]) -> str:

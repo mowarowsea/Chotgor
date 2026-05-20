@@ -852,6 +852,11 @@ export default function App() {
           setStreamingContent("");
           accumulatedReasoning = "";
           setStreamingReasoning(null);
+        } else if (event.type === "angle_switched") {
+          // switch_angle 完了: selectedModel を切り替え先に更新する。
+          // これを行わないと次ターン以降も元のプリセットでリクエストされ続け、
+          // 切り替えが1ターン限りで消えてしまう。
+          setSelectedModel(event.model_id);
         } else if (event.type === "reasoning") {
           accumulatedReasoning += event.content;
           setStreamingReasoning(accumulatedReasoning);

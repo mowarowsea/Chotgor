@@ -38,6 +38,10 @@ from backend.character_actions.recaller import (
     POWER_RECALL_SCHEMA,
     POWER_RECALL_TOOL_DESCRIPTION,
 )
+from backend.character_actions.switcher import (
+    SWITCH_ANGLE_SCHEMA,
+    SWITCH_ANGLE_TOOL_DESCRIPTION,
+)
 
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -123,6 +127,11 @@ def _build_tool_definitions() -> list[ToolDefinition]:
             name="power_recall",
             description=POWER_RECALL_TOOL_DESCRIPTION,
             inputSchema=POWER_RECALL_SCHEMA,
+        ),
+        ToolDefinition(
+            name="switch_angle",
+            description=SWITCH_ANGLE_TOOL_DESCRIPTION,
+            inputSchema=SWITCH_ANGLE_SCHEMA,
         ),
     ]
 

@@ -498,6 +498,11 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "angle_switched":
                     effective_model_id = content
+                    # Frontend が selectedModel を更新できるよう SSE で通知する。
+                    # 通知しないと次ターン以降も古い model_id でリクエストされ、
+                    # switch_angle の効果がそのターン限りで消えてしまう。
+                    data = json.dumps({"type": "angle_switched", "model_id": content}, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
         except Exception as e:
             err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
             yield f"data: {err_data}\n\n"

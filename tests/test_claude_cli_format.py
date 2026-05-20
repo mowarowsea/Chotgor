@@ -1,8 +1,13 @@
 """Tests for claude_cli_provider._format_conversation — Issue #10 coverage."""
 
+import json
+
 import pytest
 
-from backend.providers.claude_cli_provider import _format_conversation
+from backend.providers.claude_cli_provider import (
+    _extract_switch_angle_from_stream_json,
+    _format_conversation,
+)
 
 
 class TestFormatConversation:
@@ -86,3 +91,130 @@ class TestFormatConversation:
             "最新の質問"
         )
         assert result == expected
+
+
+class TestExtractSwitchAngleFromStreamJson:
+    """Claude CLI の stream-json 出力から switch_angle ツール呼び出しを抽出する関数のテスト。
+
+    Claude CLI は MCP サーバー（独立プロセス）経由で switch_angle を実行するため、
+    ChatService 側の tool_executor.switch_request には自動反映されない。
+    raw stream-json に含まれる mcp__chotgor__switch_angle の tool_use ブロックから
+    (preset_name, self_instruction) を抽出して、generate_with_tools が
+    tool_executor に転写できるようにする必要がある。
+
+    本クラスは抽出関数の挙動を検証する：
+    - 正常系: switch_angle 呼び出しが含まれる stream-json から正しく抽出できる
+    - 異常系: tool_use が無い／別ツールの呼び出しのみ／JSON 不正行が混じる、等の場合 None
+    - 入力欠落系: preset_name が無い場合は None、self_instruction は空文字許容
+    - 複数件: 複数呼び出しがあるときは最初の1件のみ返す（switch は1ターンに1回）
+    """
+
+    def _make_assistant_event(self, content_blocks: list[dict]) -> str:
+        """assistant ロールの stream-json イベント1行を組み立てるヘルパー。"""
+        return json.dumps({
+            "type": "assistant",
+            "message": {"content": content_blocks},
+        }, ensure_ascii=False)
+
+    def test_extract_switch_angle_basic(self):
+        """mcp__chotgor__switch_angle 呼び出しを含む stream-json から (preset_name, self_instruction) が抽出される。"""
+        raw = self._make_assistant_event([
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__switch_angle",
+                "input": {
+                    "preset_name": "Gemini3_1FlashLite",
+                    "self_instruction": "軽くさっぱりと",
+                },
+            }
+        ])
+        assert _extract_switch_angle_from_stream_json(raw) == (
+            "Gemini3_1FlashLite", "軽くさっぱりと"
+        )
+
+    def test_extract_returns_none_when_no_tool_use(self):
+        """tool_use ブロックが無い（text のみ）応答からは None が返る。"""
+        raw = self._make_assistant_event([
+            {"type": "text", "text": "ただのテキスト応答"}
+        ])
+        assert _extract_switch_angle_from_stream_json(raw) is None
+
+    def test_extract_returns_none_for_other_tools(self):
+        """switch_angle 以外のツール呼び出しのみのときは None が返る。"""
+        raw = self._make_assistant_event([
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__inscribe_memory",
+                "input": {"content": "test", "category": "user", "impact": 1.0},
+            }
+        ])
+        assert _extract_switch_angle_from_stream_json(raw) is None
+
+    def test_extract_ignores_invalid_json_lines(self):
+        """JSON として無効な行が混じっていてもパースを中断せず後続行を見つけられる。"""
+        valid = self._make_assistant_event([
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__switch_angle",
+                "input": {"preset_name": "preset-a", "self_instruction": "instr"},
+            }
+        ])
+        raw = "{壊れたJSON\n" + valid
+        assert _extract_switch_angle_from_stream_json(raw) == ("preset-a", "instr")
+
+    def test_extract_returns_none_when_preset_name_missing(self):
+        """preset_name が欠けている tool_use は None を返す（実行不能なので無視）。"""
+        raw = self._make_assistant_event([
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__switch_angle",
+                "input": {"self_instruction": "instr のみ"},
+            }
+        ])
+        assert _extract_switch_angle_from_stream_json(raw) is None
+
+    def test_extract_allows_empty_self_instruction(self):
+        """self_instruction が省略されていても preset_name さえあれば抽出される。"""
+        raw = self._make_assistant_event([
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__switch_angle",
+                "input": {"preset_name": "preset-x"},
+            }
+        ])
+        assert _extract_switch_angle_from_stream_json(raw) == ("preset-x", "")
+
+    def test_extract_returns_first_call_only(self):
+        """同一応答内に複数 switch_angle 呼び出しがあるときは最初の1件だけ返す。"""
+        first = self._make_assistant_event([
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__switch_angle",
+                "input": {"preset_name": "first", "self_instruction": "a"},
+            }
+        ])
+        second = self._make_assistant_event([
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__switch_angle",
+                "input": {"preset_name": "second", "self_instruction": "b"},
+            }
+        ])
+        raw = first + "\n" + second
+        assert _extract_switch_angle_from_stream_json(raw) == ("first", "a")
+
+    def test_extract_works_with_text_and_tool_use_mixed(self):
+        """1つの assistant メッセージ内に text と tool_use が混在しても tool_use を拾える。
+
+        実際の Claude CLI 出力（debug ログ）と同型のパターン。
+        """
+        raw = self._make_assistant_event([
+            {"type": "thinking", "thinking": "切り替えよう"},
+            {"type": "text", "text": "行ってみよ。"},
+            {
+                "type": "tool_use",
+                "name": "mcp__chotgor__switch_angle",
+                "input": {"preset_name": "fastModel", "self_instruction": "軽く"},
+            },
+        ])
+        assert _extract_switch_angle_from_stream_json(raw) == ("fastModel", "軽く")
