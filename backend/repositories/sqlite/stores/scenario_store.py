@@ -420,6 +420,12 @@ class ScenarioChatStoreMixin:
         ユーザ発話の編集・GM ターンの再生成で使う「区切り点以降を一掃する」操作。
         編集・再生成パターンは既存 chat の `delete_chat_messages_from` と同じ思想。
 
+        副作用: 削除域に `synopsis_last_turn_index` が含まれる場合、その値を
+        `pivot.turn_index - 1` までクランプする。クランプを怠ると、ロールバック後の
+        セッションで「すでに削除されたターンまで蒸留済み」という誤認識が残り、
+        以降の `maybe_update_auto_synopsis` が `new_dropped` 空判定で永久に
+        skip される（あらすじが二度と再生成されない）バグになる。
+
         Args:
             session_id: 対象セッション ID。
             turn_id: この turn と、これより後（turn_index が大きいもの）を全削除する。
@@ -428,14 +434,24 @@ class ScenarioChatStoreMixin:
             削除を実行した場合は True、turn_id が見つからなければ False。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaTurn
+            from backend.repositories.sqlite.store import ZetaSession, ZetaTurn
             pivot = session.get(ZetaTurn, turn_id)
             if pivot is None or pivot.session_id != session_id:
                 return False
+            pivot_index = int(pivot.turn_index)
             session.query(ZetaTurn).filter(
                 ZetaTurn.session_id == session_id,
-                ZetaTurn.turn_index >= pivot.turn_index,
+                ZetaTurn.turn_index >= pivot_index,
             ).delete(synchronize_session=False)
+            # synopsis_last_turn_index のクランプ（ロールバック整合性）
+            sess_obj = session.get(ZetaSession, session_id)
+            if (
+                sess_obj is not None
+                and sess_obj.synopsis_last_turn_index is not None
+                and int(sess_obj.synopsis_last_turn_index) >= pivot_index
+            ):
+                sess_obj.synopsis_last_turn_index = pivot_index - 1
+                sess_obj.updated_at = datetime.now()
             session.commit()
             return True
 

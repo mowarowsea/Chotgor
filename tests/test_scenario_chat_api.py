@@ -722,6 +722,58 @@ class TestSynopsisAPI:
         )
         assert res.status_code == 404
 
+    def test_patch_auto_empty_resets_last_turn_index(self, sqlite_store):
+        """auto を空文字列にクリアしたら `last_turn_index` が -1 へ連動リセットされること。
+
+        この連動が無いと「auto は空なのに last_turn_index は過去の値を保持」という
+        不整合状態が残り、以降の自動蒸留が `new_dropped` 空判定で永久にスキップ
+        される（旧ユーザ報告: 「あらすじ削除後も再生成されない」）。
+        手動で auto を白紙化する意図は「最初から蒸留し直したい」なので、
+        進捗ポインタも初期状態へ戻すのが正しい。
+        """
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        # 蒸留が進んだ状態を直接 DB レイヤで作る
+        sqlite_store.update_zeta_session_synopsis(
+            sess_id, auto="既存あらすじ", manual="守りたいメモ", last_turn_index=42,
+        )
+        # auto だけ空文字へクリア
+        res = client.patch(
+            f"/api/scenario_chat/sessions/{sess_id}/synopsis",
+            json={"auto": ""},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["auto"] == ""
+        assert data["last_turn_index"] == -1
+        # manual は触らない（保護対象）
+        assert data["manual"] == "守りたいメモ"
+
+    def test_patch_auto_nonempty_keeps_last_turn_index(self, sqlite_store):
+        """auto を非空テキストに編集した場合は `last_turn_index` を据え置くこと。
+
+        ユーザが捏造記述だけを部分削除・修正する用途（蒸留結果を「補正」する）
+        では、last_turn_index は蒸留済みターン境界を表すので残すのが正しい。
+        リセットは「白紙化（auto を完全に空にする）」時のみの特例。
+        """
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        sqlite_store.update_zeta_session_synopsis(
+            sess_id, auto="既存あらすじ", last_turn_index=42,
+        )
+        res = client.patch(
+            f"/api/scenario_chat/sessions/{sess_id}/synopsis",
+            json={"auto": "ユーザが修正したあらすじ"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["auto"] == "ユーザが修正したあらすじ"
+        assert data["last_turn_index"] == 42
+
     def test_regenerate_without_dropped_returns_current(self, sqlite_store):
         """履歴上限内なら regenerate は何もせず現状を返す（dropped が空のため）。"""
         _seed_preset(sqlite_store)

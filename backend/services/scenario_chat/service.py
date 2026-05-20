@@ -150,6 +150,10 @@ async def maybe_update_auto_synopsis(
         max_turns, max_chars = resolve_history_limits(scenario, settings)
         dropped = dropped_history(history, max_turns, max_chars)
         if not dropped:
+            logger.debug(
+                "auto synopsis skip session=%s 理由=dropped空 (履歴上限内 max_turns=%d max_chars=%d turns=%d force=%s)",
+                session_id, max_turns, max_chars, len(history), force,
+            )
             return None
 
         synopsis = sqlite.get_zeta_session_synopsis(session_id) or {
@@ -165,16 +169,39 @@ async def maybe_update_auto_synopsis(
             if int(getattr(t, "turn_index", -1)) > last_idx
         ]
         if not new_dropped:
+            dropped_max = max(
+                (int(getattr(t, "turn_index", -1)) for t in dropped),
+                default=-1,
+            )
+            # ロールバック前のクランプ漏れが原因のことが多い。WARN で出して気づける状態にする。
+            logger.warning(
+                "auto synopsis skip session=%s 理由=new_dropped空 "
+                "(last_turn_index=%d が dropped最大turn_index=%d 以上。"
+                "ターン削除でクランプされていない可能性) force=%s",
+                session_id, last_idx, dropped_max, force,
+            )
             return None
 
         if not force:
             total_chars = sum(len(getattr(t, "content", "") or "") for t in new_dropped)
             if total_chars < SYNOPSIS_AUTO_TRIGGER_CHARS:
+                logger.debug(
+                    "auto synopsis skip session=%s 理由=閾値未満 "
+                    "(累積%d < 閾値%d new_dropped=%d)",
+                    session_id, total_chars, SYNOPSIS_AUTO_TRIGGER_CHARS, len(new_dropped),
+                )
                 return None
 
         def loader(preset_id: str):
             return sqlite.get_model_preset(preset_id)
 
+        logger.info(
+            "auto synopsis 蒸留開始 session=%s new_dropped=%d 文字数=%d force=%s",
+            session_id,
+            len(new_dropped),
+            sum(len(getattr(t, "content", "") or "") for t in new_dropped),
+            force,
+        )
         new_auto = await update_auto_synopsis(
             scenario=scenario,
             dropped_turns=new_dropped,
@@ -183,9 +210,18 @@ async def maybe_update_auto_synopsis(
             preset_loader=loader,
         )
         if new_auto is None:
+            # update_auto_synopsis 側の WARN で詳細理由は出ているので、ここは要約のみ
+            logger.warning(
+                "auto synopsis skip session=%s 理由=update_auto_synopsis が None を返却 force=%s",
+                session_id, force,
+            )
             return None
 
         latest_idx = max(int(getattr(t, "turn_index", -1)) for t in new_dropped)
+        logger.info(
+            "auto synopsis 蒸留完了 session=%s last_turn_index=%d→%d 出力文字数=%d",
+            session_id, last_idx, latest_idx, len(new_auto),
+        )
         return sqlite.update_zeta_session_synopsis(
             session_id,
             auto=new_auto,

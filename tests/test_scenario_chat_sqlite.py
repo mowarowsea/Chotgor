@@ -579,6 +579,74 @@ class TestZetaTurnCRUD:
         assert len(sqlite_store.list_zeta_turns(sa.id)) == 1
         assert len(sqlite_store.list_zeta_turns(sb.id)) == 1
 
+    def test_delete_turns_from_clamps_synopsis_last_turn_index(self, sqlite_store):
+        """ターン削除時、`synopsis_last_turn_index` が削除域に踏み込んでいたら
+        `pivot.turn_index - 1` までクランプされること。
+
+        これは「過去のあるタイミングで synopsis が turn_index=125 まで蒸留済み
+        だったが、その後ユーザがターン編集ロールバックで turn 5 以降を削除した」
+        という具体的シナリオへの根治対応。クランプを怠ると、以降の自動蒸留が
+        `new_dropped = []` 判定で永久にスキップされ、あらすじが二度と
+        再生成されなくなる（旧ユーザ報告：「あらすじ作成が効いていない」現象）。
+        """
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        t0 = _make_turn(sqlite_store, session.id, content="0")
+        _make_turn(sqlite_store, session.id, content="1")
+        t2 = _make_turn(sqlite_store, session.id, content="2")  # pivot (turn_index=2)
+        _make_turn(sqlite_store, session.id, content="3")
+        # 過去に蒸留が進んでいた状態を模す（last_turn_index=3 まで処理済）
+        sqlite_store.update_zeta_session_synopsis(
+            session.id, auto="蒸留済みあらすじ", last_turn_index=3,
+        )
+        # turn_index=2 以降を削除
+        assert sqlite_store.delete_zeta_turns_from(session.id, t2.id) is True
+        # クランプ確認: 削除済み境界より小さい値（pivot - 1 = 1）に丸まる
+        synopsis = sqlite_store.get_zeta_session_synopsis(session.id)
+        assert synopsis["last_turn_index"] == 1
+        # auto 本文は触らない（ユーザ編集の保護とは別軸）
+        assert synopsis["auto"] == "蒸留済みあらすじ"
+
+    def test_delete_turns_from_preserves_lower_synopsis_index(self, sqlite_store):
+        """既に `synopsis_last_turn_index` が削除域より低い場合は据え置きであること。
+
+        ロールバック範囲が「まだ蒸留されていないターン群」だけのケース。
+        この場合は last_turn_index を巻き戻す必要がないし、巻き戻すと
+        蒸留済みあらすじとポインタが食い違うので触らないのが正しい。
+        """
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        _make_turn(sqlite_store, session.id, content="0")
+        _make_turn(sqlite_store, session.id, content="1")
+        _make_turn(sqlite_store, session.id, content="2")
+        t3 = _make_turn(sqlite_store, session.id, content="3")  # pivot (turn_index=3)
+        # last_turn_index=1（pivot=3 より小さい）
+        sqlite_store.update_zeta_session_synopsis(
+            session.id, auto="あらすじ", last_turn_index=1,
+        )
+        assert sqlite_store.delete_zeta_turns_from(session.id, t3.id) is True
+        # クランプは作用しない（pivot - 1 = 2 > 既存値 1 なので据え置き）
+        synopsis = sqlite_store.get_zeta_session_synopsis(session.id)
+        assert synopsis["last_turn_index"] == 1
+
+    def test_delete_turns_from_first_turn_resets_synopsis_index(self, sqlite_store):
+        """先頭ターン（turn_index=0）から削除した場合、`last_turn_index` は -1 まで戻ること。
+
+        セッションを実質的に「白紙巻き戻し」した状態。蒸留進捗ポインタも
+        新規セッション同等（-1）に戻すのが妥当。
+        """
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        t0 = _make_turn(sqlite_store, session.id, content="0")
+        _make_turn(sqlite_store, session.id, content="1")
+        sqlite_store.update_zeta_session_synopsis(
+            session.id, auto="蒸留済み", last_turn_index=1,
+        )
+        assert sqlite_store.delete_zeta_turns_from(session.id, t0.id) is True
+        synopsis = sqlite_store.get_zeta_session_synopsis(session.id)
+        # pivot.turn_index = 0 → クランプ先は -1
+        assert synopsis["last_turn_index"] == -1
+
     def test_next_turn_index_per_session(self, sqlite_store):
         """next_turn_index はセッションごとに独立してカウントされる。"""
         scenario = _make_scenario(sqlite_store)

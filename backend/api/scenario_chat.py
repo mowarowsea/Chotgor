@@ -407,6 +407,11 @@ async def patch_session_synopsis(
 
     リクエストに含めたフィールドだけを書き換える。auto も書き換え可能なので、
     ユーザは UI 上で混入した捏造記述を直接削除・修正できる。
+
+    特例: auto を明示的に空文字列にする場合、`synopsis_last_turn_index` を
+    -1 に連動リセットする。auto を「白紙」にする意図は通常「最初から蒸留し直したい」
+    なので、進捗ポインタを残したままにすると次回 `maybe_update_auto_synopsis` で
+    new_dropped が永久に空判定になり、再生成不能になる。
     """
     sqlite = request.app.state.sqlite
     if sqlite.get_zeta_session(session_id) is None:
@@ -419,6 +424,9 @@ async def patch_session_synopsis(
             "manual": "",
             "last_turn_index": -1,
         }
+    if "auto" in update_fields and (update_fields.get("auto") or "") == "":
+        # auto を空にしたら蒸留進捗もゼロに戻す（再生成可能な状態へ）
+        update_fields["last_turn_index"] = -1
     updated = sqlite.update_zeta_session_synopsis(session_id, **update_fields)
     if updated is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
