@@ -266,7 +266,11 @@ async def run_scenario_turn(
 
     npcs = sqlite.list_scenario_npcs(scenario.id)
 
-    # 1. プレイヤー発話を保存（auto_advance 時はスキップして痕跡を残さない）
+    # 1. 履歴を先に取得する（ユーザーターン保存前に取得することで、
+    #    engine に渡す history_text にユーザーメッセージが二重で含まれるのを防ぐ）
+    history = sqlite.list_scenario_turns(session_id)
+
+    # 2. プレイヤー発話を保存（auto_advance 時はスキップして痕跡を残さない）
     if not auto_advance:
         user_turn = _save_turn(
             sqlite=sqlite,
@@ -276,9 +280,6 @@ async def run_scenario_turn(
             content=user_message,
         )
         yield ("user_saved", {"turn": scenario_turn_to_dict(user_turn)})
-
-    # 2. 履歴を取得（auto_advance 時はプレイヤー発話を含まない最新ターンまで）
-    history = sqlite.list_scenario_turns(session_id)
 
     # 2.5. あらすじ自動更新（best-effort）
     #      履歴上限を超えるターン群があれば、それを LLM で要約して synopsis_auto に追記する。
