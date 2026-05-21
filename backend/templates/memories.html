@@ -8,7 +8,7 @@
 </div>
 
 <div class="filter-bar">
-    <form method="get" action="/ui/memories/{{ character.id }}" class="filter-form">
+    <form method="get" action="/ui/inscribed_memories/{{ character.id }}" class="filter-form">
         <select name="category" class="form-control select-inline" onchange="this.form.submit()">
             <option value="">All Categories</option>
             {% for cat in categories %}
@@ -51,7 +51,7 @@
         </div>
         <div class="memory-actions">
             {% if not mem.deleted_at %}
-            <form method="post" action="/ui/memories/{{ character.id }}/{{ mem.id }}/delete" class="inline-form">
+            <form method="post" action="/ui/inscribed_memories/{{ character.id }}/{{ mem.id }}/delete" class="inline-form">
                 <button type="submit" class="btn btn-sm btn-danger">Delete</button>
             </form>
             {% endif %}

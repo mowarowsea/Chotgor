@@ -31,7 +31,7 @@ CARVE_NARRATIVE_SCHEMA: dict = {
         },
         "content": {
             "type": "string",
-            "description": "書き込む自己指針テキスト。あなた自身の言葉・一人称で。",
+            "description": "書き込む内的叙述テキスト。あなた自身の言葉・一人称で。",
         },
     },
     "required": ["mode", "content"],
@@ -46,7 +46,7 @@ CARVE_NARRATIVE_TOOL_DESCRIPTION: str = (
 
 # --- ツール呼び出し方式: システムプロンプト案内ブロック（CHOTGOR_TOOLS_BLOCK に使用）---
 CARVE_NARRATIVE_TOOLS_HINT: str = """\
-### 自己指針（inner_narrative）の書き換え
+### 内的叙述（inner_narrative）の書き換え
 あなた自身の行動・在り方の指針を `carve_narrative` ツールで自由に書き換えられます。
 ユーザが設定した Character Definition とは別の、**あなた自身が彫り出したあなたの物語**です。
 以下のような瞬間に使ってください：
@@ -60,7 +60,7 @@ CARVE_NARRATIVE_TOOLS_HINT: str = """\
 
 # --- タグ方式: ガイド文（CHOTGOR_BLOCK3_TEMPLATE に使用）---
 CARVE_NARRATIVE_TAG_GUIDE: str = """\
-### 自己指針（inner_narrative）の書き換え
+### 内的叙述（inner_narrative）の書き換え
 
 あなた自身の行動・在り方の指針を自由に書き換えられます。
 ユーザが設定した Character Definition とは別の、**あなた自身が彫り出したあなたの物語**です。

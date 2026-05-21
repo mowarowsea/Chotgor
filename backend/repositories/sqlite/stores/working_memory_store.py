@@ -1,4 +1,4 @@
-"""ワーキングメモリ（スレッド・ポスト）CRUD — SQLiteStore Mixin。"""
+"""ワーキングメモリ（短期記憶スレッド・ポスト）CRUD — SQLiteStore Mixin。"""
 
 from datetime import datetime
 from typing import Optional
@@ -7,7 +7,7 @@ from typing import Optional
 class WorkingMemoryStoreMixin:
     """WorkingMemoryThread / WorkingMemoryPost の作成・取得・更新・削除を担う Mixin。
 
-    ワーキングメモリのスレッド（並行する認知ストリーム）と、その内部に時系列で連なる
+    ワーキングメモリのスレッド（並行する短期記憶ストリーム）と、その内部に時系列で連なる
     ポストの永続化を担当する。type 別の本数制約はこの層では検証せず、上位の
     WorkingMemoryManager がアプリ層のルールとして担保する。
     """
@@ -16,13 +16,13 @@ class WorkingMemoryStoreMixin:
     # スレッド
     # ------------------------------------------------------------------
 
-    def add_wm_thread(
+    def add_working_memory_thread(
         self,
         thread_id: str,
         character_id: str,
         type: str,
         summary: str = "",
-        atmosphere: str = "",
+        atmosphere_tag: str = "",
         importance: float = 0.5,
         relation_target: Optional[str] = None,
     ):
@@ -35,7 +35,7 @@ class WorkingMemoryStoreMixin:
                 character_id=character_id,
                 type=type,
                 summary=summary,
-                atmosphere=atmosphere,
+                atmosphere_tag=atmosphere_tag,
                 importance=importance,
                 is_open=1,
                 relation_target=relation_target,
@@ -46,13 +46,13 @@ class WorkingMemoryStoreMixin:
             session.refresh(thread)
             return thread
 
-    def get_wm_thread(self, thread_id: str):
-        """IDでスレッドを取得する。"""
+    def get_working_memory_thread(self, thread_id: str):
+        """ID でスレッドを取得する。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import WorkingMemoryThread
             return session.get(WorkingMemoryThread, thread_id)
 
-    def list_wm_threads(
+    def list_working_memory_threads(
         self,
         character_id: str,
         type: Optional[str] = None,
@@ -76,7 +76,7 @@ class WorkingMemoryStoreMixin:
                 q = q.filter(WorkingMemoryThread.is_open == (1 if is_open else 0))
             return q.order_by(WorkingMemoryThread.updated_at.desc()).all()
 
-    def get_wm_thread_by_relation(self, character_id: str, relation_target: str):
+    def get_working_memory_thread_by_relation(self, character_id: str, relation_target: str):
         """relation 型スレッドを相手識別子で取得する（重複作成防止用）。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import WorkingMemoryThread
@@ -90,11 +90,11 @@ class WorkingMemoryStoreMixin:
                 .first()
             )
 
-    def update_wm_thread(
+    def update_working_memory_thread(
         self,
         thread_id: str,
         summary: Optional[str] = None,
-        atmosphere: Optional[str] = None,
+        atmosphere_tag: Optional[str] = None,
         importance: Optional[float] = None,
         is_open: Optional[bool] = None,
         touch: bool = False,
@@ -103,7 +103,7 @@ class WorkingMemoryStoreMixin:
 
         Args:
             thread_id: 更新対象スレッドID。
-            summary / atmosphere / importance / is_open: 非Noneのものだけ更新する。
+            summary / atmosphere_tag / importance / is_open: 非None のものだけ更新する。
             touch: True なら last_touched_at を現在時刻に更新する（heat の decay 起点リセット）。
 
         Returns:
@@ -116,8 +116,8 @@ class WorkingMemoryStoreMixin:
                 return False
             if summary is not None:
                 thread.summary = summary
-            if atmosphere is not None:
-                thread.atmosphere = atmosphere
+            if atmosphere_tag is not None:
+                thread.atmosphere_tag = atmosphere_tag
             if importance is not None:
                 thread.importance = importance
             if is_open is not None:
@@ -127,7 +127,7 @@ class WorkingMemoryStoreMixin:
             session.commit()
             return True
 
-    def delete_wm_thread(self, thread_id: str) -> bool:
+    def delete_working_memory_thread(self, thread_id: str) -> bool:
         """スレッドと配下の全ポストを物理削除する。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import (
@@ -148,7 +148,7 @@ class WorkingMemoryStoreMixin:
     # ポスト
     # ------------------------------------------------------------------
 
-    def add_wm_post(self, post_id: str, thread_id: str, content: str):
+    def add_working_memory_post(self, post_id: str, thread_id: str, content: str):
         """スレッドにポストを追加し、親スレッドの last_touched_at を更新する。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import (
@@ -168,7 +168,7 @@ class WorkingMemoryStoreMixin:
             session.refresh(post)
             return post
 
-    def list_wm_posts(self, thread_id: str) -> list:
+    def list_working_memory_posts(self, thread_id: str) -> list:
         """スレッド内の全ポストを作成日時昇順で返す。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import WorkingMemoryPost
@@ -179,7 +179,7 @@ class WorkingMemoryStoreMixin:
                 .all()
             )
 
-    def get_latest_wm_post(self, thread_id: str):
+    def get_latest_working_memory_post(self, thread_id: str):
         """スレッド内の最新ポストを返す（なければ None）。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import WorkingMemoryPost

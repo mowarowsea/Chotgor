@@ -32,9 +32,6 @@
 {% if request.query_params.get("saved") %}
 <div class="alert alert-success">Settings saved.</div>
 {% endif %}
-{% if request.query_params.get("migration_error") %}
-<div class="alert alert-danger">Embedding の再インデックスに失敗しました。APIキーとモデルIDを確認して再保存してください。記憶は SQLite に保全されています。</div>
-{% endif %}
 {% if request.query_params.get("reindex_done") %}
 <div class="alert alert-success">記憶の再インデックスが完了しました。</div>
 {% endif %}
@@ -192,7 +189,7 @@
             <select id="embedding_provider" name="embedding_provider" class="form-control"
                     onchange="updateEmbeddingUI(this.value)">
                 <option value="default" {% if settings.get('embedding_provider', 'default') == 'default' %}selected{% endif %}>
-                    Default (ChromaDB 組み込み / all-MiniLM-L6-v2)
+                    Default (LanceDB 組み込み / all-MiniLM-L6-v2)
                 </option>
                 <option value="google"
                         {% if settings.get('embedding_provider') == 'google' %}selected{% endif %}

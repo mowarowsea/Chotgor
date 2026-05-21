@@ -33,7 +33,7 @@
             </div>
         </a>
         <div class="card-footer">
-            <a href="/ui/memories/{{ char.id }}" class="btn btn-secondary btn-sm">Memories</a>
+            <a href="/ui/inscribed_memories/{{ char.id }}" class="btn btn-secondary btn-sm">Memories</a>
             <form method="post" action="/ui/characters/{{ char.id }}/delete" class="inline-form"
                   onsubmit="return confirm('Delete {{ char.name }}?')" style="margin-left:auto">
                 <button type="submit" class="btn btn-danger btn-sm">Delete</button>

@@ -109,7 +109,7 @@ def google_trigger_preset_id(sqlite_store):
 
 @pytest.fixture
 def memory_manager(sqlite_store):
-    """MagicMock の MemoryManager（sqlite は実DBに差し替え）を返すフィクスチャ。"""
+    """MagicMock の InscribedMemoryManager（sqlite は実DBに差し替え）を返すフィクスチャ。"""
     mm = MagicMock()
     mm.sqlite = sqlite_store
     return mm

@@ -6,7 +6,7 @@ inscribe_memory / drift / drift_reset / carve_narrative / power_recall
 の 5 ツールを公開する。
 
 このプロセスは **Chotgor backend (uvicorn) の薄いプロキシ** として動作する。
-LanceStore / MemoryManager / DriftManager は backend が保持する単一インスタンスを
+LanceStore / InscribedMemoryManager / DriftManager は backend が保持する単一インスタンスを
 利用するため、本プロセスはベクトルストアを一切開かない（構造的欠陥 A 対策）。
 
 登録方法（一度だけ実行）:

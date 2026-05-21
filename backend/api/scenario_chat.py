@@ -1,4 +1,4 @@
-"""シナリオチャット（Zeta モード）API ルータ。
+"""シナリオチャット API ルータ。
 
 `/api/scenario_chat/...` 配下に、シナリオテンプレートとプレイインスタンスの
 2 層を扱う CRUD と SSE ストリームを提供する。
@@ -42,10 +42,10 @@ from backend.services.scenario_chat.service import (
     maybe_update_auto_synopsis,
     run_scenario_turn,
     seed_intro_turns,
-    zeta_npc_to_dict,
-    zeta_scenario_to_dict,
-    zeta_session_to_dict,
-    zeta_turn_to_dict,
+    scenario_npc_to_dict,
+    scenario_to_dict,
+    scenario_session_to_dict,
+    scenario_turn_to_dict,
 )
 
 router = APIRouter(prefix="/api/scenario_chat", tags=["scenario_chat"])
@@ -167,7 +167,7 @@ async def create_scenario(request: Request, body: ScenarioCreate):
             detail=f"指定された gm_preset_id が見つかりません: {body.gm_preset_id}",
         )
     sid = str(uuid.uuid4())
-    sqlite.create_zeta_scenario(
+    sqlite.create_scenario(
         scenario_id=sid,
         title=body.title,
         user_alias=body.user_alias,
@@ -177,26 +177,26 @@ async def create_scenario(request: Request, body: ScenarioCreate):
         history_max_turns=body.history_max_turns,
         history_max_chars=body.history_max_chars,
     )
-    return zeta_scenario_to_dict(sqlite.get_zeta_scenario(sid))
+    return scenario_to_dict(sqlite.get_scenario(sid))
 
 
 @router.get("/scenarios")
 async def list_scenarios(request: Request, limit: int = 100):
     """シナリオテンプレート一覧を新しい順で返す。"""
     sqlite = request.app.state.sqlite
-    return [zeta_scenario_to_dict(s) for s in sqlite.list_zeta_scenarios(limit=limit)]
+    return [scenario_to_dict(s) for s in sqlite.list_scenarios(limit=limit)]
 
 
 @router.get("/scenarios/{scenario_id}")
 async def get_scenario(request: Request, scenario_id: str):
     """シナリオテンプレート詳細（NPC を含む）を返す。"""
     sqlite = request.app.state.sqlite
-    sc = sqlite.get_zeta_scenario(scenario_id)
+    sc = sqlite.get_scenario(scenario_id)
     if sc is None:
         raise HTTPException(status_code=404, detail="シナリオが見つかりません")
-    npcs = sqlite.list_zeta_npcs(scenario_id)
-    result = zeta_scenario_to_dict(sc)
-    result["npcs"] = [zeta_npc_to_dict(n) for n in npcs]
+    npcs = sqlite.list_scenario_npcs(scenario_id)
+    result = scenario_to_dict(sc)
+    result["npcs"] = [scenario_npc_to_dict(n) for n in npcs]
     return result
 
 
@@ -204,7 +204,7 @@ async def get_scenario(request: Request, scenario_id: str):
 async def update_scenario(request: Request, scenario_id: str, body: ScenarioUpdate):
     """シナリオテンプレートを部分更新する。紐づくプレイセッションは残る。"""
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_scenario(scenario_id) is None:
+    if sqlite.get_scenario(scenario_id) is None:
         raise HTTPException(status_code=404, detail="シナリオが見つかりません")
     update_fields = body.model_dump(exclude_unset=True)
     if "gm_preset_id" in update_fields and update_fields["gm_preset_id"]:
@@ -213,15 +213,15 @@ async def update_scenario(request: Request, scenario_id: str, body: ScenarioUpda
                 status_code=400,
                 detail=f"指定された gm_preset_id が見つかりません: {update_fields['gm_preset_id']}",
             )
-    updated = sqlite.update_zeta_scenario(scenario_id, **update_fields)
-    return zeta_scenario_to_dict(updated)
+    updated = sqlite.update_scenario(scenario_id, **update_fields)
+    return scenario_to_dict(updated)
 
 
 @router.delete("/scenarios/{scenario_id}")
 async def delete_scenario(request: Request, scenario_id: str):
     """シナリオテンプレートを削除する。紐づく NPC・セッション・ターンも一括削除する。"""
     sqlite = request.app.state.sqlite
-    ok = sqlite.delete_zeta_scenario(scenario_id)
+    ok = sqlite.delete_scenario(scenario_id)
     if not ok:
         raise HTTPException(status_code=404, detail="シナリオが見つかりません")
     return {"deleted": True}
@@ -234,35 +234,35 @@ async def delete_scenario(request: Request, scenario_id: str):
 async def add_npc(request: Request, scenario_id: str, body: NpcCreate):
     """シナリオテンプレートに NPC を追加する。"""
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_scenario(scenario_id) is None:
+    if sqlite.get_scenario(scenario_id) is None:
         raise HTTPException(status_code=404, detail="シナリオが見つかりません")
-    existing = [n for n in sqlite.list_zeta_npcs(scenario_id) if n.name == body.name]
+    existing = [n for n in sqlite.list_scenario_npcs(scenario_id) if n.name == body.name]
     if existing:
         raise HTTPException(
             status_code=400, detail=f"同名 NPC が既に存在します: {body.name}"
         )
     npc_id = str(uuid.uuid4())
-    sqlite.create_zeta_npc(
+    sqlite.create_scenario_npc(
         npc_id=npc_id,
         scenario_id=scenario_id,
         name=body.name,
         description=body.description,
         image_data=body.image_data,
     )
-    return zeta_npc_to_dict(sqlite.get_zeta_npc(npc_id))
+    return scenario_npc_to_dict(sqlite.get_scenario_npc(npc_id))
 
 
 @router.patch("/scenarios/{scenario_id}/npcs/{npc_id}")
 async def edit_npc(request: Request, scenario_id: str, npc_id: str, body: NpcUpdate):
     """NPC を部分更新する。"""
     sqlite = request.app.state.sqlite
-    npc = sqlite.get_zeta_npc(npc_id)
+    npc = sqlite.get_scenario_npc(npc_id)
     if npc is None or npc.scenario_id != scenario_id:
         raise HTTPException(status_code=404, detail="NPC が見つかりません")
     update_fields = body.model_dump(exclude_unset=True)
     if "name" in update_fields and update_fields["name"] != npc.name:
         existing = [
-            n for n in sqlite.list_zeta_npcs(scenario_id)
+            n for n in sqlite.list_scenario_npcs(scenario_id)
             if n.name == update_fields["name"] and n.id != npc_id
         ]
         if existing:
@@ -270,18 +270,18 @@ async def edit_npc(request: Request, scenario_id: str, npc_id: str, body: NpcUpd
                 status_code=400,
                 detail=f"同名 NPC が既に存在します: {update_fields['name']}",
             )
-    updated = sqlite.update_zeta_npc(npc_id, **update_fields)
-    return zeta_npc_to_dict(updated)
+    updated = sqlite.update_scenario_npc(npc_id, **update_fields)
+    return scenario_npc_to_dict(updated)
 
 
 @router.delete("/scenarios/{scenario_id}/npcs/{npc_id}")
 async def remove_npc(request: Request, scenario_id: str, npc_id: str):
     """NPC を削除する。発話履歴は残る。"""
     sqlite = request.app.state.sqlite
-    npc = sqlite.get_zeta_npc(npc_id)
+    npc = sqlite.get_scenario_npc(npc_id)
     if npc is None or npc.scenario_id != scenario_id:
         raise HTTPException(status_code=404, detail="NPC が見つかりません")
-    sqlite.delete_zeta_npc(npc_id)
+    sqlite.delete_scenario_npc(npc_id)
     return {"deleted": True}
 
 
@@ -292,42 +292,42 @@ async def remove_npc(request: Request, scenario_id: str, npc_id: str):
 async def start_session(request: Request, body: SessionStart):
     """シナリオテンプレートから新しいプレイセッションを起動する。"""
     sqlite = request.app.state.sqlite
-    scenario = sqlite.get_zeta_scenario(body.scenario_id)
+    scenario = sqlite.get_scenario(body.scenario_id)
     if scenario is None:
         raise HTTPException(
             status_code=400, detail=f"シナリオが見つかりません: {body.scenario_id}"
         )
     sid = str(uuid.uuid4())
     title = body.title or scenario.title
-    sqlite.create_zeta_session(
+    sqlite.create_scenario_session(
         session_id=sid,
         scenario_id=body.scenario_id,
         title=title,
     )
     # シナリオ設定の導入部（intro）があれば固定ターンとして先頭挿入する
     seed_intro_turns(sqlite, sid, scenario)
-    return zeta_session_to_dict(sqlite.get_zeta_session(sid))
+    return scenario_session_to_dict(sqlite.get_scenario_session(sid))
 
 
 @router.get("/sessions")
 async def list_sessions(request: Request, limit: int = 100):
     """プレイセッション一覧を新しい順で返す。"""
     sqlite = request.app.state.sqlite
-    return [zeta_session_to_dict(s) for s in sqlite.list_zeta_sessions(limit=limit)]
+    return [scenario_session_to_dict(s) for s in sqlite.list_scenario_sessions(limit=limit)]
 
 
 @router.get("/sessions/{session_id}")
 async def get_session(request: Request, session_id: str):
     """プレイセッション詳細を返す。元シナリオの基本情報と NPC も含める。"""
     sqlite = request.app.state.sqlite
-    sess = sqlite.get_zeta_session(session_id)
+    sess = sqlite.get_scenario_session(session_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    scenario = sqlite.get_zeta_scenario(sess.scenario_id)
-    npcs = sqlite.list_zeta_npcs(sess.scenario_id) if scenario else []
-    result = zeta_session_to_dict(sess)
-    result["scenario"] = zeta_scenario_to_dict(scenario) if scenario else None
-    result["npcs"] = [zeta_npc_to_dict(n) for n in npcs]
+    scenario = sqlite.get_scenario(sess.scenario_id)
+    npcs = sqlite.list_scenario_npcs(sess.scenario_id) if scenario else []
+    result = scenario_session_to_dict(sess)
+    result["scenario"] = scenario_to_dict(scenario) if scenario else None
+    result["npcs"] = [scenario_npc_to_dict(n) for n in npcs]
     return result
 
 
@@ -335,18 +335,18 @@ async def get_session(request: Request, session_id: str):
 async def update_session(request: Request, session_id: str, body: SessionUpdate):
     """プレイセッションを部分更新する（タイトル変更 / status 変更）。"""
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_session(session_id) is None:
+    if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     update_fields = body.model_dump(exclude_unset=True)
-    updated = sqlite.update_zeta_session(session_id, **update_fields)
-    return zeta_session_to_dict(updated)
+    updated = sqlite.update_scenario_session(session_id, **update_fields)
+    return scenario_session_to_dict(updated)
 
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(request: Request, session_id: str):
     """プレイセッションを削除する。テンプレには影響しない。"""
     sqlite = request.app.state.sqlite
-    ok = sqlite.delete_zeta_session(session_id)
+    ok = sqlite.delete_scenario_session(session_id)
     if not ok:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     return {"deleted": True}
@@ -356,19 +356,19 @@ async def delete_session(request: Request, session_id: str):
 async def end_session(request: Request, session_id: str):
     """プレイセッションを終了状態にする。"""
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_session(session_id) is None:
+    if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    updated = sqlite.update_zeta_session(session_id, status="ended")
-    return zeta_session_to_dict(updated)
+    updated = sqlite.update_scenario_session(session_id, status="ended")
+    return scenario_session_to_dict(updated)
 
 
 @router.get("/sessions/{session_id}/turns")
 async def list_turns(request: Request, session_id: str):
     """セッションの全ターンを時系列昇順で返す。"""
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_session(session_id) is None:
+    if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    return [zeta_turn_to_dict(t) for t in sqlite.list_zeta_turns(session_id)]
+    return [scenario_turn_to_dict(t) for t in sqlite.list_scenario_turns(session_id)]
 
 
 @router.delete("/sessions/{session_id}/turns/from/{turn_id}")
@@ -378,9 +378,9 @@ async def delete_turns_from(request: Request, session_id: str, turn_id: str):
     ユーザ発話の編集・GM ターンの再生成の前処理として呼ぶ。
     """
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_session(session_id) is None:
+    if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    ok = sqlite.delete_zeta_turns_from(session_id, turn_id)
+    ok = sqlite.delete_scenario_turns_from(session_id, turn_id)
     if not ok:
         raise HTTPException(status_code=404, detail="ターンが見つかりません")
     return {"deleted": True}
@@ -390,9 +390,9 @@ async def delete_turns_from(request: Request, session_id: str, turn_id: str):
 async def get_session_synopsis(request: Request, session_id: str):
     """セッションのあらすじ（auto / manual / last_turn_index）を取得する。"""
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_session(session_id) is None:
+    if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    synopsis = sqlite.get_zeta_session_synopsis(session_id)
+    synopsis = sqlite.get_scenario_session_synopsis(session_id)
     if synopsis is None:
         # セッションが存在する以上、None は想定外（防御的に空を返す）
         return {"auto": "", "manual": "", "last_turn_index": -1}
@@ -414,12 +414,12 @@ async def patch_session_synopsis(
     new_dropped が永久に空判定になり、再生成不能になる。
     """
     sqlite = request.app.state.sqlite
-    if sqlite.get_zeta_session(session_id) is None:
+    if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     update_fields = body.model_dump(exclude_unset=True)
     if not update_fields:
         # 何も更新指示が無ければ現状を返すだけ
-        return sqlite.get_zeta_session_synopsis(session_id) or {
+        return sqlite.get_scenario_session_synopsis(session_id) or {
             "auto": "",
             "manual": "",
             "last_turn_index": -1,
@@ -427,7 +427,7 @@ async def patch_session_synopsis(
     if "auto" in update_fields and (update_fields.get("auto") or "") == "":
         # auto を空にしたら蒸留進捗もゼロに戻す（再生成可能な状態へ）
         update_fields["last_turn_index"] = -1
-    updated = sqlite.update_zeta_session_synopsis(session_id, **update_fields)
+    updated = sqlite.update_scenario_session_synopsis(session_id, **update_fields)
     if updated is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     return updated
@@ -443,14 +443,14 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
     """
     state = request.app.state
     sqlite = state.sqlite
-    sess = sqlite.get_zeta_session(session_id)
+    sess = sqlite.get_scenario_session(session_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    scenario = sqlite.get_zeta_scenario(sess.scenario_id)
+    scenario = sqlite.get_scenario(sess.scenario_id)
     if scenario is None:
         raise HTTPException(status_code=400, detail="元シナリオが見つかりません")
     settings = sqlite.get_all_settings()
-    history = sqlite.list_zeta_turns(session_id)
+    history = sqlite.list_scenario_turns(session_id)
     updated = await maybe_update_auto_synopsis(
         sqlite=sqlite,
         settings=settings,
@@ -461,7 +461,7 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
     )
     if updated is None:
         # 追記対象が無い、または LLM 呼び出し失敗（best-effort）。現状を返す。
-        return sqlite.get_zeta_session_synopsis(session_id) or {
+        return sqlite.get_scenario_session_synopsis(session_id) or {
             "auto": "",
             "manual": "",
             "last_turn_index": -1,
@@ -483,7 +483,7 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
 
     state = request.app.state
     sqlite = state.sqlite
-    sess = sqlite.get_zeta_session(session_id)
+    sess = sqlite.get_scenario_session(session_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     if sess.status != "active":

@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.adapters.openai import router as openai_router
-from backend.api import characters, memories, chat as chat_module, chat_images as chat_images_module, group_chat as group_chat_module, scenario_chat as scenario_chat_module
+from backend.api import characters, inscribed_memories, chat as chat_module, chat_images as chat_images_module, group_chat as group_chat_module, scenario_chat as scenario_chat_module
 from backend.api import ui as ui_module
 from backend.api import logs_ui as logs_ui_module
 from backend.api import translation as translation_module
@@ -24,7 +24,7 @@ from backend.lib.log_context import setup_logging
 from backend.repositories.lance.store import LanceStore
 from backend.batch.chronicle_job import run_pending_chronicles
 from backend.batch.forget_job import run_pending_forget
-from backend.services.memory.manager import MemoryManager
+from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
 
@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     )
     _log.info("ベクトルストア: LanceStore (path=%s)", LANCE_DB_PATH)
 
-    memory_manager = MemoryManager(sqlite=sqlite, vector_store=vector_store)
+    memory_manager = InscribedMemoryManager(sqlite=sqlite, vector_store=vector_store)
     working_memory_manager = WorkingMemoryManager(sqlite=sqlite, vector_store=vector_store)
 
     app.state.sqlite = sqlite
@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown — MemoryManager は LanceStore 移行後はバックグラウンドリトライスレッドを
+    # Shutdown — InscribedMemoryManager は LanceStore 移行後はバックグラウンドリトライスレッドを
     # 持たないため stop() 不要。
     _log.info("Chotgor backend 終了")
 
@@ -180,7 +180,7 @@ if os.path.exists(STATIC_DIR):
 # Include routers
 app.include_router(openai_router.router)
 app.include_router(characters.router)
-app.include_router(memories.router)
+app.include_router(inscribed_memories.router)
 app.include_router(ui_module.router)
 app.include_router(chat_module.router)
 app.include_router(chat_images_module.router)

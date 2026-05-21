@@ -10,7 +10,7 @@
     <h1>{% if character %}{{ character.name }}{% else %}New Character{% endif %}</h1>
     <div style="display:flex;gap:0.5rem">
         {% if character %}
-        <a href="/ui/memories/{{ character.id }}" class="btn btn-secondary">Memories</a>
+        <a href="/ui/inscribed_memories/{{ character.id }}" class="btn btn-secondary">Memories</a>
         <a href="/ui/working-memory/{{ character.id }}" class="btn btn-secondary">Working Memory</a>
         {% endif %}
         <a href="/ui/" class="btn btn-secondary">Back</a>
@@ -79,7 +79,7 @@
         <!-- 読み取り専用フィールド群 -->
         <div class="form-group">
             <label>Inner Narrative
-                <span class="label-hint">キャラクター自身が carve_narrative で書き込む自己指針（読み取り専用）</span>
+                <span class="label-hint">キャラクター自身が carve_narrative で書き込む内的叙述（読み取り専用）</span>
             </label>
             <textarea class="form-control textarea-medium" readonly
                 style="opacity:0.6;cursor:default"
@@ -291,7 +291,7 @@
             {% endif %}
             <a href="/ui/" class="btn btn-secondary">{% if character %}Back{% else %}Cancel{% endif %}</a>
             {% if character %}
-            <a href="/ui/memories/{{ character.id }}" class="btn btn-secondary">Memories</a>
+            <a href="/ui/inscribed_memories/{{ character.id }}" class="btn btn-secondary">Memories</a>
             {% endif %}
         </div>
     </form>

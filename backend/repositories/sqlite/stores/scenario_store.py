@@ -1,10 +1,10 @@
-"""Scenario Chat（Zeta モード）の CRUD — SQLiteStore Mixin。
+"""Scenario Chat の CRUD — SQLiteStore Mixin。
 
 `scenario_chat` 機能で使う以下 4 テーブルへの永続化を担う:
-  - zeta_scenarios : シナリオテンプレート（タイトル・GM・世界観・NPCの定義先）
-  - zeta_npcs      : テンプレートに紐づく NPC（軽量 Character）
-  - zeta_sessions  : テンプレから起動されたプレイインスタンス
-  - zeta_turns     : 発話履歴（session_id に紐づく）
+  - scenarios         : シナリオテンプレート（タイトル・GM・世界観・NPCの定義先）
+  - scenario_npcs     : テンプレートに紐づく NPC（軽量 Character）
+  - scenario_sessions : テンプレから起動されたプレイインスタンス
+  - scenario_turns    : 発話履歴（session_id に紐づく）
 
 設計方針:
   - シナリオは何度でも遊べる「テンプレート」。
@@ -25,7 +25,7 @@ class ScenarioChatStoreMixin:
     #   Scenario Templates
     # ────────────────────────────────────────────────────────────────────────
 
-    def create_zeta_scenario(
+    def create_scenario(
         self,
         scenario_id: str,
         title: str,
@@ -42,8 +42,8 @@ class ScenarioChatStoreMixin:
         intro はセッション開始時に固定ターンとして挿入される導入部（@キャラ: 記法）。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaScenario
-            obj = ZetaScenario(
+            from backend.repositories.sqlite.store import Scenario
+            obj = Scenario(
                 id=scenario_id,
                 title=title,
                 scenario=scenario,
@@ -58,32 +58,32 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def get_zeta_scenario(self, scenario_id: str):
+    def get_scenario(self, scenario_id: str):
         """ID でシナリオテンプレートを取得する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaScenario
-            return session.get(ZetaScenario, scenario_id)
+            from backend.repositories.sqlite.store import Scenario
+            return session.get(Scenario, scenario_id)
 
-    def list_zeta_scenarios(self, limit: int = 100) -> list:
+    def list_scenarios(self, limit: int = 100) -> list:
         """シナリオテンプレート一覧を更新日時の新しい順で返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaScenario
+            from backend.repositories.sqlite.store import Scenario
             return (
-                session.query(ZetaScenario)
-                .order_by(ZetaScenario.updated_at.desc())
+                session.query(Scenario)
+                .order_by(Scenario.updated_at.desc())
                 .limit(limit)
                 .all()
             )
 
-    def update_zeta_scenario(self, scenario_id: str, **kwargs):
+    def update_scenario(self, scenario_id: str, **kwargs):
         """シナリオテンプレートを部分更新する。
 
         プレイ中のセッションは影響を受けない（セッションはテンプレを実行時 lookup するため、
         次の発話から新しいテンプレ内容が反映される）。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaScenario
-            obj = session.get(ZetaScenario, scenario_id)
+            from backend.repositories.sqlite.store import Scenario
+            obj = session.get(Scenario, scenario_id)
             if not obj:
                 return None
             for k, v in kwargs.items():
@@ -94,7 +94,7 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def delete_zeta_scenario(self, scenario_id: str) -> bool:
+    def delete_scenario(self, scenario_id: str) -> bool:
         """シナリオテンプレートを削除する。紐づく NPC・セッション・ターンも全て削除する。
 
         Returns:
@@ -102,30 +102,30 @@ class ScenarioChatStoreMixin:
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import (
-                ZetaScenario,
-                ZetaNpc,
-                ZetaSession,
-                ZetaTurn,
+                Scenario,
+                ScenarioNpc,
+                ScenarioSession,
+                ScenarioTurn,
             )
             # 紐づくセッションのターンを一括削除
             session_ids = [
                 row[0]
-                for row in session.query(ZetaSession.id)
-                .filter(ZetaSession.scenario_id == scenario_id)
+                for row in session.query(ScenarioSession.id)
+                .filter(ScenarioSession.scenario_id == scenario_id)
                 .all()
             ]
             if session_ids:
-                session.query(ZetaTurn).filter(
-                    ZetaTurn.session_id.in_(session_ids)
+                session.query(ScenarioTurn).filter(
+                    ScenarioTurn.session_id.in_(session_ids)
                 ).delete(synchronize_session=False)
-                session.query(ZetaSession).filter(
-                    ZetaSession.scenario_id == scenario_id
+                session.query(ScenarioSession).filter(
+                    ScenarioSession.scenario_id == scenario_id
                 ).delete(synchronize_session=False)
             # NPC を削除
-            session.query(ZetaNpc).filter(
-                ZetaNpc.scenario_id == scenario_id
+            session.query(ScenarioNpc).filter(
+                ScenarioNpc.scenario_id == scenario_id
             ).delete(synchronize_session=False)
-            obj = session.get(ZetaScenario, scenario_id)
+            obj = session.get(Scenario, scenario_id)
             if not obj:
                 session.commit()
                 return False
@@ -137,7 +137,7 @@ class ScenarioChatStoreMixin:
     #   Scenario NPCs（テンプレートに紐づく）
     # ────────────────────────────────────────────────────────────────────────
 
-    def create_zeta_npc(
+    def create_scenario_npc(
         self,
         npc_id: str,
         scenario_id: str,
@@ -152,8 +152,8 @@ class ScenarioChatStoreMixin:
             image_data: アバター画像（base64 data URI 形式）。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaNpc
-            obj = ZetaNpc(
+            from backend.repositories.sqlite.store import ScenarioNpc
+            obj = ScenarioNpc(
                 id=npc_id,
                 scenario_id=scenario_id,
                 name=name,
@@ -165,28 +165,28 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def get_zeta_npc(self, npc_id: str):
+    def get_scenario_npc(self, npc_id: str):
         """ID で NPC を取得する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaNpc
-            return session.get(ZetaNpc, npc_id)
+            from backend.repositories.sqlite.store import ScenarioNpc
+            return session.get(ScenarioNpc, npc_id)
 
-    def list_zeta_npcs(self, scenario_id: str) -> list:
+    def list_scenario_npcs(self, scenario_id: str) -> list:
         """シナリオテンプレートに紐づく NPC を作成順で返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaNpc
+            from backend.repositories.sqlite.store import ScenarioNpc
             return (
-                session.query(ZetaNpc)
-                .filter(ZetaNpc.scenario_id == scenario_id)
-                .order_by(ZetaNpc.created_at.asc())
+                session.query(ScenarioNpc)
+                .filter(ScenarioNpc.scenario_id == scenario_id)
+                .order_by(ScenarioNpc.created_at.asc())
                 .all()
             )
 
-    def update_zeta_npc(self, npc_id: str, **kwargs):
+    def update_scenario_npc(self, npc_id: str, **kwargs):
         """NPC のフィールドを更新する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaNpc
-            obj = session.get(ZetaNpc, npc_id)
+            from backend.repositories.sqlite.store import ScenarioNpc
+            obj = session.get(ScenarioNpc, npc_id)
             if not obj:
                 return None
             for k, v in kwargs.items():
@@ -196,11 +196,11 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def delete_zeta_npc(self, npc_id: str) -> bool:
-        """NPC を削除する。過去の発話履歴（zeta_turns.speaker_id）は残るが参照不能になる。"""
+    def delete_scenario_npc(self, npc_id: str) -> bool:
+        """NPC を削除する。過去の発話履歴（scenario_turns.speaker_id）は残るが参照不能になる。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaNpc
-            obj = session.get(ZetaNpc, npc_id)
+            from backend.repositories.sqlite.store import ScenarioNpc
+            obj = session.get(ScenarioNpc, npc_id)
             if not obj:
                 return False
             session.delete(obj)
@@ -211,7 +211,7 @@ class ScenarioChatStoreMixin:
     #   Scenario Sessions（プレイインスタンス）
     # ────────────────────────────────────────────────────────────────────────
 
-    def create_zeta_session(
+    def create_scenario_session(
         self,
         session_id: str,
         scenario_id: str,
@@ -227,8 +227,8 @@ class ScenarioChatStoreMixin:
             engine_type: P1 では "ensemble" 固定。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession
-            obj = ZetaSession(
+            from backend.repositories.sqlite.store import ScenarioSession
+            obj = ScenarioSession(
                 id=session_id,
                 scenario_id=scenario_id,
                 title=title,
@@ -240,39 +240,39 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def get_zeta_session(self, session_id: str):
+    def get_scenario_session(self, session_id: str):
         """ID でプレイセッションを取得する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession
-            return session.get(ZetaSession, session_id)
+            from backend.repositories.sqlite.store import ScenarioSession
+            return session.get(ScenarioSession, session_id)
 
-    def list_zeta_sessions(self, limit: int = 100) -> list:
+    def list_scenario_sessions(self, limit: int = 100) -> list:
         """プレイセッション一覧を更新日時の新しい順で返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession
+            from backend.repositories.sqlite.store import ScenarioSession
             return (
-                session.query(ZetaSession)
-                .order_by(ZetaSession.updated_at.desc())
+                session.query(ScenarioSession)
+                .order_by(ScenarioSession.updated_at.desc())
                 .limit(limit)
                 .all()
             )
 
-    def list_zeta_sessions_by_scenario(self, scenario_id: str) -> list:
+    def list_scenario_sessions_by_scenario(self, scenario_id: str) -> list:
         """指定シナリオから起動された全プレイセッションを返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession
+            from backend.repositories.sqlite.store import ScenarioSession
             return (
-                session.query(ZetaSession)
-                .filter(ZetaSession.scenario_id == scenario_id)
-                .order_by(ZetaSession.updated_at.desc())
+                session.query(ScenarioSession)
+                .filter(ScenarioSession.scenario_id == scenario_id)
+                .order_by(ScenarioSession.updated_at.desc())
                 .all()
             )
 
-    def update_zeta_session(self, session_id: str, **kwargs):
+    def update_scenario_session(self, session_id: str, **kwargs):
         """プレイセッションのフィールド（title / status 等）を更新する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession
-            obj = session.get(ZetaSession, session_id)
+            from backend.repositories.sqlite.store import ScenarioSession
+            obj = session.get(ScenarioSession, session_id)
             if not obj:
                 return None
             for k, v in kwargs.items():
@@ -283,7 +283,7 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def get_zeta_session_synopsis(self, session_id: str) -> Optional[dict]:
+    def get_scenario_session_synopsis(self, session_id: str) -> Optional[dict]:
         """セッションのあらすじ（auto / manual / last_turn_index）を取得する。
 
         Returns:
@@ -291,8 +291,8 @@ class ScenarioChatStoreMixin:
             dict は {"auto": str, "manual": str, "last_turn_index": int} の形。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession
-            obj = session.get(ZetaSession, session_id)
+            from backend.repositories.sqlite.store import ScenarioSession
+            obj = session.get(ScenarioSession, session_id)
             if not obj:
                 return None
             return {
@@ -303,7 +303,7 @@ class ScenarioChatStoreMixin:
                 else -1,
             }
 
-    def update_zeta_session_synopsis(
+    def update_scenario_session_synopsis(
         self,
         session_id: str,
         *,
@@ -321,8 +321,8 @@ class ScenarioChatStoreMixin:
             更新後のあらすじ dict（get と同じ形）。セッション未存在は None。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession
-            obj = session.get(ZetaSession, session_id)
+            from backend.repositories.sqlite.store import ScenarioSession
+            obj = session.get(ScenarioSession, session_id)
             if not obj:
                 return None
             if auto is not None:
@@ -342,15 +342,15 @@ class ScenarioChatStoreMixin:
                 else -1,
             }
 
-    def delete_zeta_session(self, session_id: str) -> bool:
+    def delete_scenario_session(self, session_id: str) -> bool:
         """プレイセッションを削除する。ターンも一括削除する。
 
-        テンプレ（zeta_scenarios）には影響しない。
+        テンプレ（scenarios）には影響しない。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession, ZetaTurn
-            session.query(ZetaTurn).filter(ZetaTurn.session_id == session_id).delete()
-            obj = session.get(ZetaSession, session_id)
+            from backend.repositories.sqlite.store import ScenarioSession, ScenarioTurn
+            session.query(ScenarioTurn).filter(ScenarioTurn.session_id == session_id).delete()
+            obj = session.get(ScenarioSession, session_id)
             if not obj:
                 session.commit()
                 return False
@@ -362,7 +362,7 @@ class ScenarioChatStoreMixin:
     #   Scenario Turns（プレイインスタンスに紐づく発話履歴）
     # ────────────────────────────────────────────────────────────────────────
 
-    def create_zeta_turn(
+    def create_scenario_turn(
         self,
         turn_id: str,
         session_id: str,
@@ -382,13 +382,13 @@ class ScenarioChatStoreMixin:
             speaker_type: "user" | "narrator" | "npc" | "character"。
             speaker_name: 表示・履歴整形用のスナップショット名。
             content: 発話本文。
-            speaker_id: npc 種別なら zeta_npcs.id、character 種別なら characters.id。
+            speaker_id: npc 種別なら scenario_npcs.id、character 種別なら characters.id。
                         user / narrator / 未知 NPC は NULL。
             raw_response: GM の単一呼出で得たターン全体の生出力（デバッグ用）。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaTurn
-            obj = ZetaTurn(
+            from backend.repositories.sqlite.store import ScenarioTurn
+            obj = ScenarioTurn(
                 id=turn_id,
                 session_id=session_id,
                 turn_index=turn_index,
@@ -403,18 +403,18 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def list_zeta_turns(self, session_id: str) -> list:
+    def list_scenario_turns(self, session_id: str) -> list:
         """セッション内の全ターンを turn_index 昇順で返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaTurn
+            from backend.repositories.sqlite.store import ScenarioTurn
             return (
-                session.query(ZetaTurn)
-                .filter(ZetaTurn.session_id == session_id)
-                .order_by(ZetaTurn.turn_index.asc(), ZetaTurn.created_at.asc())
+                session.query(ScenarioTurn)
+                .filter(ScenarioTurn.session_id == session_id)
+                .order_by(ScenarioTurn.turn_index.asc(), ScenarioTurn.created_at.asc())
                 .all()
             )
 
-    def delete_zeta_turns_from(self, session_id: str, turn_id: str) -> bool:
+    def delete_scenario_turns_from(self, session_id: str, turn_id: str) -> bool:
         """指定 turn_id 以降（自身を含む）のターンをまとめて削除する。
 
         ユーザ発話の編集・GM ターンの再生成で使う「区切り点以降を一掃する」操作。
@@ -434,17 +434,17 @@ class ScenarioChatStoreMixin:
             削除を実行した場合は True、turn_id が見つからなければ False。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaSession, ZetaTurn
-            pivot = session.get(ZetaTurn, turn_id)
+            from backend.repositories.sqlite.store import ScenarioSession, ScenarioTurn
+            pivot = session.get(ScenarioTurn, turn_id)
             if pivot is None or pivot.session_id != session_id:
                 return False
             pivot_index = int(pivot.turn_index)
-            session.query(ZetaTurn).filter(
-                ZetaTurn.session_id == session_id,
-                ZetaTurn.turn_index >= pivot_index,
+            session.query(ScenarioTurn).filter(
+                ScenarioTurn.session_id == session_id,
+                ScenarioTurn.turn_index >= pivot_index,
             ).delete(synchronize_session=False)
             # synopsis_last_turn_index のクランプ（ロールバック整合性）
-            sess_obj = session.get(ZetaSession, session_id)
+            sess_obj = session.get(ScenarioSession, session_id)
             if (
                 sess_obj is not None
                 and sess_obj.synopsis_last_turn_index is not None
@@ -455,14 +455,14 @@ class ScenarioChatStoreMixin:
             session.commit()
             return True
 
-    def get_next_zeta_turn_index(self, session_id: str) -> int:
+    def get_next_scenario_turn_index(self, session_id: str) -> int:
         """次に使うべき turn_index を返す（既存最大値+1、なければ 0）。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ZetaTurn
+            from backend.repositories.sqlite.store import ScenarioTurn
             row = (
-                session.query(ZetaTurn.turn_index)
-                .filter(ZetaTurn.session_id == session_id)
-                .order_by(ZetaTurn.turn_index.desc())
+                session.query(ScenarioTurn.turn_index)
+                .filter(ScenarioTurn.session_id == session_id)
+                .order_by(ScenarioTurn.turn_index.desc())
                 .first()
             )
             if row is None:

@@ -1,8 +1,5 @@
 """Embedding 関数群 — ベクトルストア非依存の embedding プロバイダー実装。
 
-LanceStore（および以前の ChromaStore）の双方から利用される embedding 実装をここに集約する。
-ベクトル DB の差し替えで毎回 embedding 実装を書き換えなくて済むよう、専用モジュールに分離した。
-
 # 提供するプロバイダー
 
   * ``InfinityEmbeddingFunction`` — infinity サーバーの OpenAI 互換 ``/embeddings``
@@ -19,12 +16,6 @@ LanceStore（および以前の ChromaStore）の双方から利用される emb
 
   * ``InfinityEmbeddingFunction`` のみ追加で ``embed_query(texts: list[str]) -> list[list[float]]`` を持つ
     （ruri-v3 系はクエリ用にプレフィックスを変える必要があるため）
-
-# 旧 ChromaDB 依存の整理
-
-歴史的経緯で ``chromadb.EmbeddingFunction`` を継承していたが、現在は LanceStore 移行に伴い
-ChromaDB への依存を切った。``chromadb`` 由来の型ヒントは削除したが、シグネチャ互換性は維持して
-いるため、外部から呼ぶ側のコードは変更不要。
 """
 
 from __future__ import annotations

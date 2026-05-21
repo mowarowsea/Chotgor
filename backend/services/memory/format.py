@@ -40,7 +40,7 @@ def format_recalled_threads(threads: list) -> str:
 
     Args:
         threads: WorkingMemoryManager.recall_threads() が返すスレッド辞書のリスト。
-                 各要素は {"type", "summary", "atmosphere", "latest_post"} を想定。
+                 各要素は {"type", "summary", "atmosphere_tag", "latest_post"} を想定。
 
     Returns:
         人間が読みやすい形式の文字列。スレッドがなければ空文字列。
@@ -51,7 +51,7 @@ def format_recalled_threads(threads: list) -> str:
     for t in threads:
         type_ = t.get("type", "")
         summary = (t.get("summary", "") or "").replace("\n", " ")
-        atmo = (t.get("atmosphere", "") or "").replace("\n", " ")
+        atmo = (t.get("atmosphere_tag", "") or "").replace("\n", " ")
         latest = (t.get("latest_post") or "").replace("\n", " ")
         line = f"{_THREAD_LINE_PREFIX} [{type_}] {summary}"
         if atmo:

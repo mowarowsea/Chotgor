@@ -147,7 +147,7 @@ async def _stream_character_response(
     thinking_parts: list[str] = []
 
     async for chunk_type, content in chat_service.execute_stream(request):
-        if chunk_type == "memories":
+        if chunk_type == "inscribed_memories":
             memory_text = format_recalled_memories(content)
             if memory_text:
                 yield ("character_reasoning", {"character": char_name, "content": memory_text})
@@ -192,8 +192,7 @@ async def run_group_turn(
     各キャラクターを順番にストリーミング処理する（1on1を複数回行う形）。
 
     司会モデルはシステム設定 `group_director_preset_id`（翻訳モデルと同様の
-    ユーティリティモデル）を使用する。未設定・古いセッションの場合は
-    group_config 内の旧 `director_preset_id` をフォールバックとして使う。
+    ユーティリティモデル）を使用する。未設定の場合は ``director_error`` を返す。
 
     Yields:
         ("speaker_decided",     {"speakers": [str]})                              — 司会が発言者を一括決定
@@ -220,11 +219,7 @@ async def run_group_turn(
                         司会が引き継いで自動ターンを継続する。
     """
     participants = group_config.get("participants", [])
-    # 司会プリセットはシステム設定を優先し、古いセッションのみ group_config をフォールバックする
-    director_preset_id = (
-        settings.get("group_director_preset_id")
-        or group_config.get("director_preset_id", "")
-    )
+    director_preset_id = settings.get("group_director_preset_id") or ""
     max_auto_turns = int(group_config.get("max_auto_turns", 3))
     user_name = settings.get("user_name", "ユーザ")
     all_char_names = {p["char_name"] for p in participants}

@@ -47,7 +47,7 @@ class TurnRecord:
 class EngineResult:
     """エンジンが 1 ターンを完了したときに残す副産物。
 
-    raw_response はターン全体の生 LLM 出力で、`zeta_turns.raw_response` に
+    raw_response はターン全体の生 LLM 出力で、`scenario_turns.raw_response` に
     保存される（同一ターン内の全発話レコードに同じ値が格納される想定）。
     """
 
@@ -134,9 +134,9 @@ class EnsembleEngine:
         """1 ターンの発話列をストリーミング生成する。
 
         Args:
-            scenario: ZetaScenario ORM。user_alias / gm_preset_id を必須とする。
-            npcs: 既知 NPC のリスト（ZetaNpc ORM 風）。
-            history: ZetaTurn ORM 風オブジェクトの時系列昇順リスト（全件）。
+            scenario: Scenario ORM。user_alias / gm_preset_id を必須とする。
+            npcs: 既知 NPC のリスト（ScenarioNpc ORM 風）。
+            history: ScenarioTurn ORM 風オブジェクトの時系列昇順リスト（全件）。
             user_message: 今回のプレイヤー発話テキスト。
                           auto_advance=True の場合は空文字列を渡してよい（無視される）。
             settings: グローバル設定辞書（API キー等）。

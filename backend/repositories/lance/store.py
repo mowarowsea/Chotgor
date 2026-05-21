@@ -1,37 +1,25 @@
-"""LanceDB によるベクトル永続化層 — ChromaStore の置き換え。
+"""LanceDB によるベクトル永続化層。
 
 # 設計概要
 
-ChromaDB の HNSW バイナリは multi-writer-unsafe で、書き込み中にプロセスが落ちると
-インデックスが破損する持病があった（過去に「はる」のコレクション全消失事故あり）。
-LanceDB は以下の特性により、この種の破損を構造的に回避する。
-
-  - Lance フォーマット（列指向、追記ベース）+ アトミックなマニフェストコミット
-  - 書き込みコンフリクト時は楽観ロックで失敗→リトライ可（黙って壊れない）
-  - HNSW のような外部バイナリインデックスは持たず、ベクトルもデータファイルに同居
+Lance フォーマット（列指向、追記ベース）+ アトミックなマニフェストコミットにより、
+multi-writer 環境でも書き込みが原子的で、HNSW のような外部バイナリインデックスを
+持たない構造的に堅牢なベクトルストア。
 
 # テーブル構成（単一テーブル方式）
 
-ChromaDB がキャラクターごとにコレクションを作っていたのと違い、LanceStore は
-3用途それぞれを **単一テーブル + character_id カラムでフィルタ** する。
+用途別に **単一テーブル + character_id カラムでフィルタ** する。
 キャラクター数の増加でテーブル数が爆発せず、横断統計も1クエリで取れる。
 
-  1. ``memories``    — 記憶コレクション（旧 ``char_{character_id}``）
-  2. ``chat_turns``  — チャット履歴（旧 ``chat_{character_id}``）
-  3. ``definitions`` — キャラクター定義（旧 ``char_definitions``）
-
-# 互換性方針
-
-ChromaStore のパブリックメソッドシグネチャを 1:1 で踏襲する。
-``MemoryManager`` / ``inscriber`` / ``chat/indexer`` 等の呼び出し側に変更を強いない。
-内部メソッド ``_get_collection`` 等を直接触っていた ``migration_service`` は
-別途書き換える（呼び出し側修正は Phase 5 で実施）。
+  1. ``inscribed_memories``     — 保存記憶コレクション
+  2. ``chat_turns``             — チャット履歴
+  3. ``definitions``            — キャラクター定義
+  4. ``working_memory_threads`` — ワーキングメモリスレッドの index 用ベクトル
 
 # Embedding 戦略
 
-ChromaDB は ``EmbeddingFunction`` をコレクションに紐付けて自動 embed していたが、
-LanceStore は **アプリ側で明示的に embed して vector カラムへ詰める**。
-既存の ``InfinityEmbeddingFunction`` / ``GeminiEmbeddingFunction`` を流用する。
+アプリ側で明示的に embed して vector カラムへ詰める。
+``InfinityEmbeddingFunction`` / ``GeminiEmbeddingFunction`` のいずれかを使う。
 
 # Vector 次元の決定
 
@@ -61,25 +49,25 @@ logger = logging.getLogger(__name__)
 
 
 # テーブル名定数。単一テーブル方式のため固定。
-_TABLE_MEMORIES = "memories"
+_TABLE_INSCRIBED_MEMORIES = "inscribed_memories"
 _TABLE_CHAT_TURNS = "chat_turns"
 _TABLE_DEFINITIONS = "definitions"
-_TABLE_WM_THREADS = "wm_threads"
+_TABLE_WORKING_MEMORY_THREADS = "working_memory_threads"
 
 
 def _where_dict_to_sql(where: dict) -> str:
-    """ChromaDB 形式の where dict を LanceDB の SQL 文字列に変換する。
+    """where dict を LanceDB の SQL 文字列に変換する。
 
-    ChromaDB の where フィルタは ``{"category": "identity"}`` のような単純比較と、
+    where フィルタは ``{"category": "identity"}`` のような単純比較と、
     ``{"category": {"$ne": "identity"}}`` のような演算子付き比較をサポートする。
-    LanceStore はこれを SQL 文字列（``category = 'identity'`` / ``category != 'identity'``）に
+    SQL 文字列（``category = 'identity'`` / ``category != 'identity'``）に
     変換して ``LanceQueryBuilder.where()`` に渡す。
 
     対応演算子: ``$eq`` / ``$ne`` / ``$gt`` / ``$gte`` / ``$lt`` / ``$lte`` / ``$in`` / ``$nin``。
     複数キーは AND 結合。
 
     Args:
-        where: ChromaDB 形式の where 辞書。
+        where: where 辞書（``$eq`` 等の演算子付きを含む）。
 
     Returns:
         LanceDB の where 句に渡せる SQL 文字列。空辞書なら空文字列。
@@ -147,12 +135,11 @@ def _quote_id(value: str) -> str:
 
 
 class LanceStore:
-    """LanceDB 永続化ストア — ChromaStore のドロップイン置換。
+    """LanceDB 永続化ストア。
 
-    パブリックメソッドのシグネチャは ChromaStore と互換。内部実装のみ LanceDB で再構築している。
-    Lance フォーマットの書き込み原子性により、ChromaStore で必要だった
-    ``_safe_get_or_create_collection`` / ``rebuild_memory_collection`` 等の
-    破損対応コードは不要になる。
+    Lance フォーマットの書き込み原子性により、書き込み中にプロセスが落ちても
+    インデックスが破損しない。バックグラウンドのリトライキューや破損対応の
+    再構築機構は不要。
     """
 
     def __init__(
@@ -172,8 +159,8 @@ class LanceStore:
         Args:
             db_path: LanceDB データディレクトリのパス。
             embedding_provider: ``"infinity"`` / ``"google"``。
-                ChromaDB 組み込みの ``"default"`` は LanceStore では非サポート
-                （sentence-transformers 依存を持ち込まない方針のため）。
+                sentence-transformers 系の組み込み ``"default"`` プロバイダーは
+                依存を増やさない方針のため非サポート。
             embedding_model: embedding モデル ID。空ならプロバイダーのデフォルト。
             api_key: プロバイダーの API キー（infinity の場合は未使用）。
             base_url: infinity サーバーの BaseURL。
@@ -199,9 +186,7 @@ class LanceStore:
         # vector 次元は遅延決定する。既存テーブルがあれば open 時に schema から読む。
         self._vector_dim: Optional[int] = None
 
-        # ChromaStore と互換のロック。LanceDB は書き込み原子性を保証するため
-        # 本来は不要だが、テーブル作成時の dim 決定 race condition 回避と、
-        # migration_service が ``_write_lock`` を直接参照しているため互換維持目的で残す。
+        # テーブル作成時の dim 決定 race condition 回避用のロック。
         self._write_lock = threading.RLock()
 
     # ─── Embedding ヘルパ ─────────────────────────────────────────────
@@ -249,8 +234,8 @@ class LanceStore:
 
     # ─── スキーマ生成 ────────────────────────────────────────────────
 
-    def _schema_memories(self, dim: int) -> pa.Schema:
-        """記憶テーブルのスキーマ。"""
+    def _schema_inscribed_memories(self, dim: int) -> pa.Schema:
+        """保存記憶テーブルのスキーマ。"""
         return pa.schema([
             pa.field("id", pa.string()),
             pa.field("character_id", pa.string()),
@@ -286,7 +271,7 @@ class LanceStore:
             pa.field("status", pa.string()),
         ])
 
-    def _schema_wm_threads(self, dim: int) -> pa.Schema:
+    def _schema_working_memory_threads(self, dim: int) -> pa.Schema:
         """ワーキングメモリスレッドテーブルのスキーマ。
 
         ``content`` には embedding の素材（summary + 最新ポスト本文の結合）を格納する。
@@ -307,7 +292,7 @@ class LanceStore:
 
         既存テーブルを open した場合は、その vector 次元を _vector_dim にキャッシュする。
         embedding model が変わった等で次元ミスマッチが起きた場合は warning を出すが、
-        破壊操作は行わない（ユーザが明示的に migration を走らせるべき）。
+        破壊操作は行わない（ユーザが明示的に再インデックスを走らせるべき）。
         """
         existing = self._list_table_names()
         if name in existing:
@@ -325,42 +310,42 @@ class LanceStore:
             if name in self._list_table_names():
                 return self._db.open_table(name)
             dim = self._ensure_vector_dim()
-            if name == _TABLE_MEMORIES:
-                schema = self._schema_memories(dim)
+            if name == _TABLE_INSCRIBED_MEMORIES:
+                schema = self._schema_inscribed_memories(dim)
             elif name == _TABLE_CHAT_TURNS:
                 schema = self._schema_chat_turns(dim)
             elif name == _TABLE_DEFINITIONS:
                 schema = self._schema_definitions(dim)
-            elif name == _TABLE_WM_THREADS:
-                schema = self._schema_wm_threads(dim)
+            elif name == _TABLE_WORKING_MEMORY_THREADS:
+                schema = self._schema_working_memory_threads(dim)
             else:
                 raise ValueError(f"未知のテーブル名: {name}")
             tbl = self._db.create_table(name, schema=schema)
             logger.info("LanceStore: テーブル作成 name=%s dim=%d", name, dim)
             return tbl
 
-    # ─── 記憶コレクション ────────────────────────────────────────────
+    # ─── 保存記憶コレクション ────────────────────────────────────────────
 
-    def add_memory(
+    def add_inscribed_memory(
         self,
         memory_id: str,
         content: str,
         character_id: str,
         metadata: Optional[dict] = None,
     ) -> None:
-        """記憶を ``memories`` テーブルに upsert する（merge_insert）。
+        """保存記憶を ``inscribed_memories`` テーブルに upsert する（merge_insert）。
 
-        ChromaStore.add_memory と互換シグネチャ。同一 ID が存在すれば更新、なければ挿入。
+        同一 ID が存在すれば更新、なければ挿入。
 
         Args:
-            memory_id: 記憶の一意 ID（SQLite の Memory.id と同一）。
+            memory_id: 記憶の一意 ID（SQLite の InscribedMemory.id と同一）。
             content: embedding するテキスト本文。
             character_id: キャラクター ID。
             metadata: 追加メタデータ。``category`` / ``*_importance`` を読み取る。
         """
         meta = metadata or {}
         with self._write_lock:
-            tbl = self._ensure_table(_TABLE_MEMORIES)
+            tbl = self._ensure_table(_TABLE_INSCRIBED_MEMORIES)
             vec = self._embed_documents([content])[0]
             row = {
                 "id": memory_id,
@@ -380,17 +365,17 @@ class LanceStore:
                 .execute([row])
             )
 
-    def recall_memory(
+    def recall_inscribed_memory(
         self,
         query: str,
         character_id: str,
         top_k: int = 5,
         where: Optional[dict] = None,
     ) -> list[dict]:
-        """類似度検索で記憶を取得する。
+        """類似度検索で保存記憶を取得する。
 
-        ChromaStore.recall_memory と互換戻り値（``id`` / ``content`` / ``distance`` / ``metadata``）。
-        距離は cosine（0=同一、2=対極）で揃える（ChromaDB の hnsw:space=cosine と等価）。
+        戻り値は ``id`` / ``content`` / ``distance`` / ``metadata`` の dict リスト。
+        距離は cosine（0=同一、2=対極）。
 
         Args:
             query: 検索クエリテキスト。
@@ -402,9 +387,9 @@ class LanceStore:
             id / content / distance / metadata のリスト。
         """
         # テーブルが存在しないなら結果は空（embed すら呼ばない）
-        if _TABLE_MEMORIES not in self._list_table_names():
+        if _TABLE_INSCRIBED_MEMORIES not in self._list_table_names():
             return []
-        tbl = self._db.open_table(_TABLE_MEMORIES)
+        tbl = self._db.open_table(_TABLE_INSCRIBED_MEMORIES)
         if tbl.count_rows() == 0:
             return []
 
@@ -427,7 +412,7 @@ class LanceStore:
             )
         except Exception as e:
             logger.warning(
-                "LanceStore.recall_memory 失敗 char=%s where=%s error=%s",
+                "LanceStore.recall_inscribed_memory 失敗 char=%s where=%s error=%s",
                 character_id, where, e,
             )
             return []
@@ -458,8 +443,7 @@ class LanceStore:
     ) -> Optional[str]:
         """同一キャラクター・カテゴリ内で類似する記憶 ID を返す（重複排除用）。
 
-        find_similar 系は「文書同士の比較」なので、検索クエリも文書プレフィックスで embed する
-        （ChromaStore の as_document=True と等価な扱い）。
+        find_similar 系は「文書同士の比較」なので、検索クエリも文書プレフィックスで embed する。
 
         Args:
             content: 検索クエリとなる新しい記憶テキスト。
@@ -470,9 +454,9 @@ class LanceStore:
         Returns:
             類似記憶が見つかった場合はその memory_id、見つからなければ None。
         """
-        if _TABLE_MEMORIES not in self._list_table_names():
+        if _TABLE_INSCRIBED_MEMORIES not in self._list_table_names():
             return None
-        tbl = self._db.open_table(_TABLE_MEMORIES)
+        tbl = self._db.open_table(_TABLE_INSCRIBED_MEMORIES)
         if tbl.count_rows() == 0:
             return None
 
@@ -501,54 +485,33 @@ class LanceStore:
             return results[0]["id"]
         return None
 
-    def delete_memory(self, memory_id: str, character_id: str) -> None:
-        """指定 ID の記憶を物理削除する。
+    def delete_inscribed_memory(self, memory_id: str, character_id: str) -> None:
+        """指定 ID の保存記憶を物理削除する。
 
-        ChromaStore.delete_memory と互換。character_id は API 互換のため受け取るが、
-        単一テーブルなので id だけで一意に特定できる。
+        character_id は呼び出し側互換のため受け取るが、単一テーブルなので
+        id だけで一意に特定できる。
 
         Args:
             memory_id: 削除する記憶 ID。
             character_id: キャラクター ID（互換シグネチャ用）。
         """
-        if _TABLE_MEMORIES not in self._list_table_names():
+        if _TABLE_INSCRIBED_MEMORIES not in self._list_table_names():
             return
         with self._write_lock:
-            tbl = self._db.open_table(_TABLE_MEMORIES)
+            tbl = self._db.open_table(_TABLE_INSCRIBED_MEMORIES)
             tbl.delete(f"id = {_quote_id(memory_id)}")
 
-    def delete_all_memories(self, character_id: str) -> None:
-        """指定キャラクターの全記憶を削除する（キャラクター削除時に使用）。
+    def delete_all_inscribed_memories(self, character_id: str) -> None:
+        """指定キャラクターの全保存記憶を削除する（キャラクター削除時に使用）。
 
-        ChromaStore はコレクションごと消していたが、LanceStore は単一テーブル方式なので
-        ``character_id`` でフィルタした行を削除する。テーブル自体は維持する。
+        LanceStore は単一テーブル方式なので ``character_id`` でフィルタした行を削除する。
+        テーブル自体は維持する。
         """
-        if _TABLE_MEMORIES not in self._list_table_names():
+        if _TABLE_INSCRIBED_MEMORIES not in self._list_table_names():
             return
         with self._write_lock:
-            tbl = self._db.open_table(_TABLE_MEMORIES)
+            tbl = self._db.open_table(_TABLE_INSCRIBED_MEMORIES)
             tbl.delete(f"character_id = {_quote_id(character_id)}")
-
-    def rebuild_memory_collection(self, character_id: str) -> int:
-        """互換性のためのスタブ。LanceDB は HNSW 破損が起きないため実体不要。
-
-        ChromaStore では HNSW 破損時の緊急再構築用だったが、LanceDB の Lance フォーマットは
-        書き込みが追記＋アトミックコミットで完結するため、この種の再構築は不要。
-        呼び出されてもログだけ出して該当キャラの行数を返す。
-        """
-        if _TABLE_MEMORIES not in self._list_table_names():
-            return 0
-        tbl = self._db.open_table(_TABLE_MEMORIES)
-        try:
-            n = len(
-                tbl.search().where(
-                    f"character_id = {_quote_id(character_id)}", prefilter=True
-                ).limit(10**9).to_arrow()
-            )
-        except Exception:
-            n = 0
-        logger.info("LanceStore.rebuild_memory_collection スキップ（不要） char=%s count=%d", character_id, n)
-        return n
 
     # ─── チャット履歴コレクション ────────────────────────────────────
 
@@ -596,7 +559,7 @@ class LanceStore:
     ) -> list[dict]:
         """類似度検索でチャット履歴ターンを取得する（PowerRecall 用）。
 
-        ChromaStore.recall_chat_turns と互換戻り値。
+        戻り値は id / content / distance / metadata の dict リスト。
 
         Args:
             query: 検索クエリテキスト。
@@ -748,14 +711,14 @@ class LanceStore:
 
     # ─── ワーキングメモリスレッド ────────────────────────────────────
 
-    def upsert_wm_thread(
+    def upsert_working_memory_thread(
         self,
         thread_id: str,
         index_text: str,
         character_id: str,
         metadata: Optional[dict] = None,
     ) -> None:
-        """ワーキングメモリスレッドを ``wm_threads`` テーブルに upsert する。
+        """ワーキングメモリスレッドを ``working_memory_threads`` テーブルに upsert する。
 
         ``index_text`` は embedding の素材。スレッドの summary 単独では中身に
         強く関連するが summary に出てこない語の想起精度が落ちるため、
@@ -770,7 +733,7 @@ class LanceStore:
         """
         meta = metadata or {}
         with self._write_lock:
-            tbl = self._ensure_table(_TABLE_WM_THREADS)
+            tbl = self._ensure_table(_TABLE_WORKING_MEMORY_THREADS)
             vec = self._embed_documents([index_text])[0]
             row = {
                 "id": thread_id,
@@ -788,7 +751,7 @@ class LanceStore:
                 .execute([row])
             )
 
-    def recall_wm_threads(
+    def recall_working_memory_threads(
         self,
         query: str,
         character_id: str,
@@ -809,9 +772,9 @@ class LanceStore:
         Returns:
             id / content / distance / metadata（type / importance / is_open）のリスト。
         """
-        if _TABLE_WM_THREADS not in self._list_table_names():
+        if _TABLE_WORKING_MEMORY_THREADS not in self._list_table_names():
             return []
-        tbl = self._db.open_table(_TABLE_WM_THREADS)
+        tbl = self._db.open_table(_TABLE_WORKING_MEMORY_THREADS)
         if tbl.count_rows() == 0:
             return []
 
@@ -834,7 +797,7 @@ class LanceStore:
             )
         except Exception as e:
             logger.warning(
-                "LanceStore.recall_wm_threads 失敗 char=%s where=%s error=%s",
+                "LanceStore.recall_working_memory_threads 失敗 char=%s where=%s error=%s",
                 character_id, where, e,
             )
             return []
@@ -854,20 +817,20 @@ class LanceStore:
             })
         return threads
 
-    def delete_wm_thread(self, thread_id: str) -> None:
+    def delete_working_memory_thread(self, thread_id: str) -> None:
         """指定 ID のワーキングメモリスレッドを物理削除する（スレッド削除時に使用）。"""
-        if _TABLE_WM_THREADS not in self._list_table_names():
+        if _TABLE_WORKING_MEMORY_THREADS not in self._list_table_names():
             return
         with self._write_lock:
-            tbl = self._db.open_table(_TABLE_WM_THREADS)
+            tbl = self._db.open_table(_TABLE_WORKING_MEMORY_THREADS)
             tbl.delete(f"id = {_quote_id(thread_id)}")
 
-    def delete_all_wm_threads(self, character_id: str) -> None:
+    def delete_all_working_memory_threads(self, character_id: str) -> None:
         """指定キャラクターの全スレッドを削除する（キャラクター削除時に使用）。"""
-        if _TABLE_WM_THREADS not in self._list_table_names():
+        if _TABLE_WORKING_MEMORY_THREADS not in self._list_table_names():
             return
         with self._write_lock:
-            tbl = self._db.open_table(_TABLE_WM_THREADS)
+            tbl = self._db.open_table(_TABLE_WORKING_MEMORY_THREADS)
             tbl.delete(f"character_id = {_quote_id(character_id)}")
 
     # ─── 全件再インデックス（embedding model 変更時） ─────────────
@@ -879,27 +842,31 @@ class LanceStore:
     ) -> dict:
         """embedding model 変更時に全テーブルを drop → 新 embedding で再構築する。
 
-        旧 ChromaStore 時代の ``migrate_embeddings`` を、LanceStore の単純な構造に合わせて
-        再実装したもの。SQLite を source of truth として全データを読み直し、
+        SQLite を source of truth として全データを読み直し、
         新 embedding で再 embed して LanceStore に流し込む。
 
-        - memories       : SQLite ``Memory`` テーブルから全アクティブ記憶を取得して再 embed
-        - chat_turns     : SQLite ``chat_messages`` から全メッセージを取得して再 embed
-        - definitions    : SQLite ``characters`` から system_prompt_block1 を取得して再 embed
-        - wm_threads     : SQLite ``wm_threads`` から全スレッドを取得し summary + 最新ポストで再 embed
+        - inscribed_memories     : SQLite ``InscribedMemory`` テーブルから全アクティブ記憶を取得して再 embed
+        - chat_turns             : SQLite ``chat_messages`` から全メッセージを取得して再 embed
+        - definitions            : SQLite ``characters`` から system_prompt_block1 を取得して再 embed
+        - working_memory_threads : SQLite ``working_memory_threads`` から全スレッドを取得し summary + 最新ポストで再 embed
 
         Args:
             new_embedding_fn: 新しい embedding function（``__call__`` を持つ）。
             sqlite: SQLiteStore インスタンス。
 
         Returns:
-            ``{"memories": int, "chat_turns": int, "definitions": int, "wm_threads": int}`` の件数辞書。
+            ``{"inscribed_memories": int, "chat_turns": int, "definitions": int, "working_memory_threads": int}`` の件数辞書。
         """
         from backend.services.chat.indexer import build_chat_doc_and_metadata, get_participant_char_ids
 
         with self._write_lock:
             # 1. 既存テーブルを全 drop（vector 次元が変わる可能性があるため）
-            for name in (_TABLE_MEMORIES, _TABLE_CHAT_TURNS, _TABLE_DEFINITIONS, _TABLE_WM_THREADS):
+            for name in (
+                _TABLE_INSCRIBED_MEMORIES,
+                _TABLE_CHAT_TURNS,
+                _TABLE_DEFINITIONS,
+                _TABLE_WORKING_MEMORY_THREADS,
+            ):
                 if name in self._list_table_names():
                     self._db.drop_table(name)
                     logger.info("LanceStore.reindex_all: drop %s", name)
@@ -908,14 +875,19 @@ class LanceStore:
             self._embedding_fn = new_embedding_fn
             self._vector_dim = None  # 次元を再決定させる
 
-            counts = {"memories": 0, "chat_turns": 0, "definitions": 0, "wm_threads": 0}
+            counts = {
+                "inscribed_memories": 0,
+                "chat_turns": 0,
+                "definitions": 0,
+                "working_memory_threads": 0,
+            }
 
-            # 3. memories 再構築
+            # 3. inscribed_memories 再構築
             characters = sqlite.list_characters()
             for char in characters:
-                memories = sqlite.get_all_active_memories(char.id)
+                memories = sqlite.get_all_active_inscribed_memories(char.id)
                 for m in memories:
-                    self.add_memory(
+                    self.add_inscribed_memory(
                         memory_id=m.id,
                         content=m.content,
                         character_id=char.id,
@@ -927,9 +899,12 @@ class LanceStore:
                             "user_importance": m.user_importance,
                         },
                     )
-                    counts["memories"] += 1
+                    counts["inscribed_memories"] += 1
                 if memories:
-                    logger.info("reindex_all(memories): char=%s count=%d", char.name, len(memories))
+                    logger.info(
+                        "reindex_all(inscribed_memories): char=%s count=%d",
+                        char.name, len(memories),
+                    )
 
             # 4. chat_turns 再構築
             sessions = sqlite.list_chat_sessions(limit=1_000_000)
@@ -961,17 +936,17 @@ class LanceStore:
                 self.upsert_character_definition(char.id, text, status=status)
                 counts["definitions"] += 1
 
-            # 6. wm_threads 再構築（summary + 最新ポスト本文を embedding 素材とする）
+            # 6. working_memory_threads 再構築（summary + 最新ポスト本文を embedding 素材とする）
             for char in characters:
-                threads = sqlite.list_wm_threads(char.id)
+                threads = sqlite.list_working_memory_threads(char.id)
                 for t in threads:
-                    latest = sqlite.get_latest_wm_post(t.id)
+                    latest = sqlite.get_latest_working_memory_post(t.id)
                     index_text = (t.summary or "").strip()
                     if latest and latest.content:
                         index_text = (index_text + "\n" + latest.content).strip()
                     if not index_text:
                         continue
-                    self.upsert_wm_thread(
+                    self.upsert_working_memory_thread(
                         thread_id=t.id,
                         index_text=index_text,
                         character_id=char.id,
@@ -981,7 +956,7 @@ class LanceStore:
                             "is_open": t.is_open,
                         },
                     )
-                    counts["wm_threads"] += 1
+                    counts["working_memory_threads"] += 1
 
             logger.info("LanceStore.reindex_all 完了 counts=%s", counts)
             return counts

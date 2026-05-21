@@ -33,7 +33,7 @@ from backend.services.scenario_chat.context import (
 
 @dataclass
 class FakeSession:
-    """ZetaSession 風のダミーオブジェクト。テスト用。"""
+    """ScenarioSession 風のダミーオブジェクト。テスト用。"""
 
     history_max_turns: object = None
     history_max_chars: object = None
@@ -199,8 +199,7 @@ class TestSliceHistory:
 class TestFormatTurnForGm:
     """発話 1 件の `@話者: 本文` 整形を検証する。
 
-    GM の出力規則・ScenarioChatParser と同じ `@名前: 本文` 規約に揃えてある
-    （旧 `<話者>本文</話者>` SGML 形式から移行）。
+    GM の出力規則・ScenarioChatParser と同じ `@名前: 本文` 規約に揃えてある。
     speaker_type ごとに使う名前が変わる:
         - user      → @{user_alias}
         - narrator  → @Narrator

@@ -1,15 +1,16 @@
-"""SQLite store — 設定・キャラクターメタデータ・記憶レコードの永続化層。
+"""SQLite store — 設定・キャラクターメタデータ・保存記憶レコードの永続化層。
 
 SQLiteStore はドメイン別 Mixin を多重継承したファサードクラス。
 各ドメインの実装は backend/core/memory/stores/ 以下を参照。
 
-  SettingsStoreMixin          — グローバル設定 (key/value)
-  CharacterStoreMixin         — キャラクター管理
-  MemoryStoreMixin            — 記憶レコード
-  PresetStoreMixin            — LLMモデルプリセット
-  ChatStoreMixin              — セッション・メッセージ・画像
-  DriftStoreMixin             — SELF_DRIFT指針
-  WorkingMemoryStoreMixin     — ワーキングメモリ（スレッド・ポスト）
+  SettingsStoreMixin                — グローバル設定 (key/value)
+  CharacterStoreMixin               — キャラクター管理
+  InscribedMemoryStoreMixin         — 保存記憶レコード
+  PresetStoreMixin                  — LLMモデルプリセット
+  ChatStoreMixin                    — セッション・メッセージ・画像
+  DriftStoreMixin                   — SELF_DRIFT指針
+  WorkingMemoryStoreMixin           — ワーキングメモリ（短期記憶スレッド・ポスト）
+  ScenarioChatStoreMixin            — シナリオチャット（テンプレ・セッション・NPC・ターン）
 """
 
 import os
@@ -33,7 +34,9 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from backend.repositories.sqlite.stores.character_store import CharacterStoreMixin
 from backend.repositories.sqlite.stores.chat_store import ChatStoreMixin
 from backend.repositories.sqlite.stores.drift_store import DriftStoreMixin
-from backend.repositories.sqlite.stores.memory_store import MemoryStoreMixin
+from backend.repositories.sqlite.stores.inscribed_memory_store import (
+    InscribedMemoryStoreMixin,
+)
 from backend.repositories.sqlite.stores.preset_store import PresetStoreMixin
 from backend.repositories.sqlite.stores.scenario_store import ScenarioChatStoreMixin
 from backend.repositories.sqlite.stores.settings_store import SettingsStoreMixin
@@ -117,7 +120,7 @@ class Character(Base):
     id = Column(String, primary_key=True)  # UUID
     name = Column(String, nullable=False)
     system_prompt_block1 = Column(Text, nullable=False, default="")
-    inner_narrative = Column(Text, nullable=False, default="")
+    inner_narrative = Column(Text, nullable=False, default="")  # 内的叙述（キャラクター自身の自己物語テキスト）
     cleanup_config = Column(JSON, nullable=False, default=dict)
     enabled_providers = Column(JSON, nullable=False, default=dict)
     ghost_model = Column(String, nullable=True)  # digest/forget に使うプリセットID
@@ -135,7 +138,7 @@ class Character(Base):
     # 別れ機能フィールド
     farewell_config = Column(JSON, nullable=True)  # chronicle で更新される感情閾値・退席設定JSON
     relationship_status = Column(String, nullable=False, default="active")  # "active" | "estranged"
-    definition_embedding_id = Column(String, nullable=True)  # ChromaDB char_definitions コレクション内の doc ID
+    definition_embedding_id = Column(String, nullable=True)  # LanceDB definitions テーブル内の doc ID
     # キャラクターごとの外部ツール許可設定 (web_search/google_calendar/gmail/google_drive)
     allowed_tools = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, default=lambda: datetime.now())
@@ -146,10 +149,14 @@ class Character(Base):
     )
 
 
-class Memory(Base):
-    """記憶レコード — キャラクターの記憶をカテゴリ・重要度スコアとともに保持する。"""
+class InscribedMemory(Base):
+    """保存記憶レコード — キャラクターが `inscribe_memory` で残した記憶を、
 
-    __tablename__ = "memories"
+    カテゴリ・重要度スコアとともに保持する永続テーブル。短期記憶（ワーキングメモリ・
+    `WorkingMemoryThread`）と対になる「長期に残す記憶」を表す。
+    """
+
+    __tablename__ = "inscribed_memories"
 
     id = Column(String, primary_key=True)  # UUID
     character_id = Column(String, ForeignKey("characters.id"), nullable=False)
@@ -160,7 +167,7 @@ class Memory(Base):
     semantic_importance = Column(Float, default=0.5)
     identity_importance = Column(Float, default=0.5)
     user_importance = Column(Float, default=0.5)
-    # 記憶を作成したプリセットID（NULLは旧データまたは不明）
+    # 記憶を作成したプリセットID
     source_preset_id = Column(String, nullable=True)
     # アクセス追跡
     last_accessed_at = Column(DateTime, nullable=True)
@@ -172,24 +179,23 @@ class Memory(Base):
 
 
 class WorkingMemoryThread(Base):
-    """ワーキングメモリスレッド — キャラクターの並行する認知ストリームの1本。
+    """ワーキングメモリスレッド — キャラクターの並行する短期記憶ストリームの1本。
 
     BBS/チケット管理に似た「スレッド方式」で、task/topic/emotion/body/relation の
-    並走する認知ストリームを表現する。各スレッドは時系列に連なる WorkingMemoryPost を持つ。
-    旧来の self_history / afterglow / drift / relationship_state を統合的に置き換える層であり、
-    キャラクターの短期・中期記憶（ワーキングメモリ）を担う。
+    並走する短期記憶ストリームを表現する。各スレッドは時系列に連なる WorkingMemoryPost を持つ。
+    キャラクターの短期・中期記憶（ワーキングメモリ）を担う層。
 
     type 別の制約（emotion/body は1本のみ、relation は相手ごとに1本など）は
     DB ではなくアプリ層（WorkingMemoryManager）で担保する。
     """
 
-    __tablename__ = "wm_threads"
+    __tablename__ = "working_memory_threads"
 
     id = Column(String, primary_key=True)  # UUID
     character_id = Column(String, ForeignKey("characters.id"), nullable=False)
     type = Column(String, nullable=False)  # emotion / body / task / topic / relation
     summary = Column(Text, nullable=False, default="")      # タイトル相当。embedding index の素材
-    atmosphere = Column(Text, nullable=False, default="")   # 質感の自由テキスト（Active時:温度感／Close時:終わり方）
+    atmosphere_tag = Column(Text, nullable=False, default="")  # 質感の短いタグ（Active時:温度感／Close時:終わり方）
     importance = Column(Float, nullable=False, default=0.5)  # 0.0 - 1.0
     is_open = Column(Integer, nullable=False, default=1)     # 1=Open（運用中・一覧表示対象）, 0=Archived
     # relation 型のみ使用: 関係相手の識別子（ユーザ名・他キャラ名など）。重複作成防止のキーにもなる。
@@ -208,10 +214,10 @@ class WorkingMemoryThread(Base):
 class WorkingMemoryPost(Base):
     """ワーキングメモリポスト — スレッド内に時系列順で連なる1書き込み。"""
 
-    __tablename__ = "wm_posts"
+    __tablename__ = "working_memory_posts"
 
     id = Column(String, primary_key=True)  # UUID
-    thread_id = Column(String, ForeignKey("wm_threads.id"), nullable=False)
+    thread_id = Column(String, ForeignKey("working_memory_threads.id"), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
@@ -242,16 +248,16 @@ class LLMModelPreset(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
-class ZetaScenario(Base):
-    """シナリオテンプレート — Zeta モードで何度でも遊べるシナリオ設定本体。
+class Scenario(Base):
+    """シナリオテンプレート — シナリオチャットで何度でも遊べるシナリオ設定本体。
 
     NPC 構成・GM プリセット・世界観などをテンプレートとして登録しておき、
-    そこから ZetaSession（プレイインスタンス）を起動する。
+    そこから ScenarioSession（プレイインスタンス）を起動する。
     テンプレート編集中もプレイ中のセッションには影響しないよう、
     セッションはテンプレートの内容を「実行時に lookup する」設計。
     """
 
-    __tablename__ = "zeta_scenarios"
+    __tablename__ = "scenarios"
 
     id = Column(String, primary_key=True)                  # UUID
     title = Column(String, nullable=False)
@@ -269,7 +275,7 @@ class ZetaScenario(Base):
     )
 
 
-class ZetaNpc(Base):
+class ScenarioNpc(Base):
     """シナリオテンプレートに紐づく NPC — 軽量 Character。
 
     シナリオの編集対象。P2 で promoted_character_id を使って既存キャラへ昇格できる予約あり。
@@ -279,10 +285,10 @@ class ZetaNpc(Base):
     （以前は description / speaking_style の 2 つに分けていたが、線引きが曖昧だったため統合）
     """
 
-    __tablename__ = "zeta_npcs"
+    __tablename__ = "scenario_npcs"
 
     id = Column(String, primary_key=True)                          # UUID
-    scenario_id = Column(String, ForeignKey("zeta_scenarios.id"), nullable=False)
+    scenario_id = Column(String, ForeignKey("scenarios.id"), nullable=False)
     name = Column(String, nullable=False)                          # @タグに使う シナリオ内ユニーク名
     description = Column(Text, nullable=True)                      # 人物像・口調・話し方を自由記述
     image_data = Column(Text, nullable=True)                       # アバター画像 (base64 data URI)
@@ -291,22 +297,22 @@ class ZetaNpc(Base):
 
     # 同一シナリオ内では NPC 名（@タグ）はユニーク。@タグの曖昧性を防ぐ。
     __table_args__ = (
-        UniqueConstraint("scenario_id", "name", name="uq_zeta_npcs_scenario_name"),
+        UniqueConstraint("scenario_id", "name", name="uq_scenario_npcs_scenario_name"),
     )
 
 
-class ZetaSession(Base):
+class ScenarioSession(Base):
     """シナリオから起動されたプレイインスタンス。
 
-    テンプレ（ZetaScenario）の `scenario_id` を参照し、プレイ独自の
-    `title` / `status` / 発話履歴（zeta_turns）を持つ薄いテーブル。
+    テンプレ（Scenario）の `scenario_id` を参照し、プレイ独自の
+    `title` / `status` / 発話履歴（scenario_turns）を持つ薄いテーブル。
     user_alias や scenario・NPCs などのプレイ用設定はテンプレを lookup して取得する。
     """
 
-    __tablename__ = "zeta_sessions"
+    __tablename__ = "scenario_sessions"
 
     id = Column(String, primary_key=True)                  # UUID
-    scenario_id = Column(String, ForeignKey("zeta_scenarios.id"), nullable=False)
+    scenario_id = Column(String, ForeignKey("scenarios.id"), nullable=False)
     title = Column(String, nullable=False)                 # 起動時はテンプレ title からコピー（編集可）
     engine_type = Column(String, nullable=False, default="ensemble")  # P1 では 'ensemble' 固定
     status = Column(String, nullable=False, default="active")  # active / ended
@@ -328,16 +334,16 @@ class ZetaSession(Base):
     )
 
 
-class ZetaTurn(Base):
+class ScenarioTurn(Base):
     """シナリオセッションの発話ターン — ユーザ・Narrator・NPC・(将来)既存キャラを多態で格納する。"""
 
-    __tablename__ = "zeta_turns"
+    __tablename__ = "scenario_turns"
 
     id = Column(String, primary_key=True)                          # UUID
-    session_id = Column(String, ForeignKey("zeta_sessions.id"), nullable=False)
+    session_id = Column(String, ForeignKey("scenario_sessions.id"), nullable=False)
     turn_index = Column(Integer, nullable=False)                   # セッション内連番（0始まり）
     speaker_type = Column(String, nullable=False)                  # user / narrator / npc / character
-    speaker_id = Column(String, nullable=True)                     # npc: zeta_npcs.id / character: characters.id / 他NULL
+    speaker_id = Column(String, nullable=True)                     # npc: scenario_npcs.id / character: characters.id / 他NULL
     speaker_name = Column(String, nullable=False)                  # 表示・履歴整形用のスナップショット名（NPC 名変更後も履歴保護）
     content = Column(Text, nullable=False)
     raw_response = Column(Text, nullable=True)                     # GM の単一呼出で得たターン全体の生出力（デバッグ用）
@@ -347,7 +353,7 @@ class ZetaTurn(Base):
 class SQLiteStore(
     SettingsStoreMixin,
     CharacterStoreMixin,
-    MemoryStoreMixin,
+    InscribedMemoryStoreMixin,
     PresetStoreMixin,
     ChatStoreMixin,
     DriftStoreMixin,
@@ -360,222 +366,18 @@ class SQLiteStore(
     """
 
     def __init__(self, db_path: str):
-        """データベースを初期化し、マイグレーションを実行する。"""
+        """データベースを初期化する。
+
+        スキーマは ORM 定義（このモジュール上部の各 Base クラス）が唯一の正。
+        ``Base.metadata.create_all`` が新規 DB に全テーブルを定義通りに作成する。
+        テーブル名・カラム追加等の変更は、必要なら別途使い捨ての移行スクリプトで対応する。
+        """
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         self.SessionLocal = sessionmaker(bind=self.engine)
-        self._predrop_legacy_zeta_tables()
         Base.metadata.create_all(self.engine)
-        self._migrate()
-
-    def _predrop_legacy_zeta_tables(self) -> None:
-        """zeta_* の旧スキーマを検出して破壊的に DROP する。
-
-        スキーマ進化に合わせて、以下のいずれかが検出されたら 4 テーブルを一括作り直す:
-            - zeta_npcs.session_id 残存（最初の 1 層構造）
-            - zeta_npcs.speaking_style 残存（旧 NPC スキーマ）
-            - zeta_npcs.display_order 残存（display_order 廃止前）
-            - zeta_npcs.image_data 未追加（旧 NPC スキーマ）
-            - zeta_scenarios.location 残存（location/scene_summary 等の細分フィールド廃止前）
-
-        zeta_* は開発段階の試行データのみのため、旧スキーマ検出 = 一括 DROP で問題ない。
-        """
-        with self.engine.connect() as conn:
-            try:
-                npc_cols = {
-                    row[0]
-                    for row in conn.execute(
-                        text("SELECT name FROM pragma_table_info('zeta_npcs')")
-                    ).fetchall()
-                }
-                scen_cols = {
-                    row[0]
-                    for row in conn.execute(
-                        text("SELECT name FROM pragma_table_info('zeta_scenarios')")
-                    ).fetchall()
-                }
-                if not npc_cols and not scen_cols:
-                    return  # テーブル未作成 → create_all に任せる
-                needs_rebuild = (
-                    "session_id" in npc_cols
-                    or "speaking_style" in npc_cols
-                    or "display_order" in npc_cols
-                    or (bool(npc_cols) and "image_data" not in npc_cols)
-                    or "location" in scen_cols
-                )
-                if needs_rebuild:
-                    for tbl in (
-                        "zeta_turns",
-                        "zeta_npcs",
-                        "zeta_sessions",
-                        "zeta_scenarios",
-                    ):
-                        conn.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
-                    conn.commit()
-            except Exception:
-                # pragma 失敗等は無視（テーブル未作成時など）
-                pass
-
-    def _migrate(self):
-        """既存テーブルへの新カラム追加とテーブル新設を冪等に実行する。"""
-        with self.engine.connect() as conn:
-            for stmt in [
-                "ALTER TABLE memories ADD COLUMN updated_at TIMESTAMP",
-                "ALTER TABLE characters ADD COLUMN enabled_providers TEXT NOT NULL DEFAULT '{}'",
-                "ALTER TABLE characters ADD COLUMN image_data TEXT",
-                "ALTER TABLE characters ADD COLUMN ghost_model TEXT",
-                "ALTER TABLE llm_model_presets ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'default'",
-                "ALTER TABLE characters ADD COLUMN switch_angle_enabled INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE memories ADD COLUMN source_preset_id TEXT",
-                "ALTER TABLE characters ADD COLUMN inner_narrative TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE characters ADD COLUMN afterglow_default INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE characters ADD COLUMN self_history TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE characters ADD COLUMN relationship_state TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE characters ADD COLUMN self_reflection_mode TEXT NOT NULL DEFAULT 'disabled'",
-                "ALTER TABLE characters ADD COLUMN self_reflection_preset_id TEXT",
-                "ALTER TABLE characters ADD COLUMN self_reflection_n_turns INTEGER NOT NULL DEFAULT 5",
-                "ALTER TABLE characters ADD COLUMN farewell_config TEXT",
-                "ALTER TABLE characters ADD COLUMN relationship_status TEXT NOT NULL DEFAULT 'active'",
-                "ALTER TABLE characters ADD COLUMN definition_embedding_id TEXT",
-                "ALTER TABLE characters ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '{}'",
-                "ALTER TABLE zeta_scenarios ADD COLUMN intro TEXT",
-                # zeta_sessions のあらすじ機構（記憶捏造対策）
-                "ALTER TABLE zeta_sessions ADD COLUMN synopsis_auto TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE zeta_sessions ADD COLUMN synopsis_manual TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE zeta_sessions ADD COLUMN synopsis_last_turn_index INTEGER NOT NULL DEFAULT -1",
-            ]:
-                try:
-                    conn.execute(text(stmt))
-                    conn.commit()
-                except Exception:
-                    pass
-
-            # characters テーブルに旧カラム（meta_instructions 等）が残っている場合、
-            # テーブルを再作成して現行 ORM スキーマに揃える。
-            # meta_instructions は NOT NULL かつ DEFAULT なしのため、
-            # ORM 経由の INSERT が失敗する原因になる。
-            try:
-                result = conn.execute(
-                    text("SELECT count(*) FROM pragma_table_info('characters') WHERE name='meta_instructions'")
-                )
-                if result.fetchone()[0] > 0:
-                    # 中途失敗時の残骸テーブルを除去してからリトライ
-                    conn.execute(text("DROP TABLE IF EXISTS characters_new"))
-                    conn.execute(text("""
-                        CREATE TABLE characters_new (
-                            id VARCHAR NOT NULL PRIMARY KEY,
-                            name VARCHAR NOT NULL,
-                            system_prompt_block1 TEXT NOT NULL DEFAULT '',
-                            inner_narrative TEXT NOT NULL DEFAULT '',
-                            cleanup_config JSON NOT NULL DEFAULT '{}',
-                            enabled_providers TEXT NOT NULL DEFAULT '{}',
-                            ghost_model TEXT,
-                            image_data TEXT,
-                            switch_angle_enabled INTEGER NOT NULL DEFAULT 0,
-                            afterglow_default INTEGER NOT NULL DEFAULT 0,
-                            self_history TEXT NOT NULL DEFAULT '',
-                            relationship_state TEXT NOT NULL DEFAULT '',
-                            self_reflection_mode TEXT NOT NULL DEFAULT 'disabled',
-                            self_reflection_preset_id TEXT,
-                            self_reflection_n_turns INTEGER NOT NULL DEFAULT 5,
-                            farewell_config TEXT,
-                            relationship_status TEXT NOT NULL DEFAULT 'active',
-                            definition_embedding_id TEXT,
-                            allowed_tools TEXT NOT NULL DEFAULT '{}',
-                            created_at DATETIME,
-                            updated_at DATETIME
-                        )
-                    """))
-                    conn.execute(text("""
-                        INSERT INTO characters_new
-                            (id, name, system_prompt_block1, inner_narrative,
-                             cleanup_config, enabled_providers, ghost_model,
-                             image_data, switch_angle_enabled, afterglow_default,
-                             self_history, relationship_state,
-                             created_at, updated_at)
-                        SELECT
-                            id, name, system_prompt_block1,
-                            COALESCE(NULLIF(inner_narrative, ''), meta_instructions, ''),
-                            COALESCE(cleanup_config, '{}'),
-                            COALESCE(enabled_providers, '{}'),
-                            ghost_model, image_data,
-                            COALESCE(switch_angle_enabled, 0),
-                            COALESCE(afterglow_default, 0),
-                            '', '',
-                            created_at, updated_at
-                        FROM characters
-                    """))
-                    conn.execute(text("ALTER TABLE characters RENAME TO characters_old"))
-                    conn.execute(text("ALTER TABLE characters_new RENAME TO characters"))
-                    conn.execute(text("DROP TABLE characters_old"))
-                    conn.commit()
-            except Exception:
-                pass
-
-            for stmt in [
-                "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT",
-                "ALTER TABLE chat_messages ADD COLUMN images TEXT",
-                "ALTER TABLE chat_messages ADD COLUMN character_name TEXT",
-                "ALTER TABLE chat_messages ADD COLUMN preset_name TEXT",
-                "ALTER TABLE chat_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT '1on1'",
-                "ALTER TABLE chat_sessions ADD COLUMN group_config TEXT",
-                "ALTER TABLE chat_sessions ADD COLUMN afterglow_session_id TEXT",
-                "ALTER TABLE chat_sessions ADD COLUMN exited_chars TEXT",
-                "ALTER TABLE chat_messages ADD COLUMN is_system_message INTEGER",
-                "ALTER TABLE chat_messages ADD COLUMN log_message_id TEXT",
-            ]:
-                try:
-                    conn.execute(text(stmt))
-                    conn.commit()
-                except Exception:
-                    pass
-
-            # chronicled_at カラム追加と既存メッセージの一括マークは同一トランザクション内で実行する。
-            # ALTER TABLE が失敗（カラム既存）した場合は UPDATE も実行しないことで、
-            # 起動のたびに未処理メッセージが上書きされるバグを防ぐ。
-            try:
-                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN chronicled_at TIMESTAMP"))
-                conn.execute(text("UPDATE chat_messages SET chronicled_at = created_at WHERE chronicled_at IS NULL"))
-                conn.commit()
-            except Exception:
-                pass
-
-            for stmt in [
-                (
-                    "CREATE TABLE IF NOT EXISTS chat_sessions "
-                    "(id TEXT PRIMARY KEY, model_id TEXT NOT NULL, "
-                    "title TEXT NOT NULL DEFAULT '新しいチャット', "
-                    "created_at TIMESTAMP, updated_at TIMESTAMP)"
-                ),
-                (
-                    "CREATE TABLE IF NOT EXISTS chat_messages "
-                    "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
-                    "role TEXT NOT NULL, content TEXT NOT NULL, reasoning TEXT, images TEXT, "
-                    "created_at TIMESTAMP, "
-                    "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
-                ),
-                (
-                    "CREATE TABLE IF NOT EXISTS chat_images "
-                    "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
-                    "message_id TEXT, mime_type TEXT NOT NULL, "
-                    "created_at TIMESTAMP, "
-                    "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
-                ),
-                (
-                    "CREATE TABLE IF NOT EXISTS session_drifts "
-                    "(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
-                    "character_id TEXT NOT NULL, content TEXT NOT NULL, "
-                    "enabled INTEGER NOT NULL DEFAULT 1, "
-                    "created_at TIMESTAMP, "
-                    "FOREIGN KEY (session_id) REFERENCES chat_sessions(id))"
-                ),
-            ]:
-                try:
-                    conn.execute(text(stmt))
-                    conn.commit()
-                except Exception:
-                    pass
 
     def get_session(self) -> Session:
-        """新しいDBセッションを返す。Mixin クラスが共通して使用する。"""
+        """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""
         return self.SessionLocal()
+

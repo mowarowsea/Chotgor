@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# システム依存パッケージ（chromadb等のCコンパイルに必要）
+# システム依存パッケージ（pyarrow / lancedb 等の C ライブラリ用）
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
@@ -15,8 +15,8 @@ RUN pip install --no-cache-dir -e .
 # アプリケーションコード
 COPY backend/ ./backend/
 
-# ChromaDBデータディレクトリ
-RUN mkdir -p /app/data/chroma
+# LanceDB / SQLite データディレクトリ
+RUN mkdir -p /app/data/lancedb
 
 EXPOSE 8000
 

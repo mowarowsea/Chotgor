@@ -1,4 +1,4 @@
-"""Memory Inscriber — [INSCRIBE_MEMORY:...] タグの抽出と記憶への刻み込み。
+"""InscribedMemory Inscriber — [INSCRIBE_MEMORY:...] タグの抽出と記憶への刻み込み。
 
 Inscriber クラスと関連定数を一元管理する。
 - INSCRIBE_MEMORY_SCHEMA: ツール呼び出し方式のパラメータ JSON スキーマ
@@ -10,7 +10,7 @@ Inscriber クラスと関連定数を一元管理する。
 import logging
 
 from backend.lib.tag_parser import parse_tags
-from backend.services.memory.manager import MemoryManager
+from backend.services.memory.manager import InscribedMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class Inscriber:
         memory_manager: 記憶の読み書きを担うマネージャー。
     """
 
-    def __init__(self, character_id: str, memory_manager: MemoryManager) -> None:
+    def __init__(self, character_id: str, memory_manager: InscribedMemoryManager) -> None:
         """Inscriber を初期化する。
 
         Args:
@@ -195,7 +195,7 @@ class Inscriber:
         base = _BASE_IMPORTANCE.get(category, _BASE_IMPORTANCE["contextual"])
         scores = {f"{k}_importance": (v * impact) for k, v in base.items()}
         preset_id_or_none = source_preset_id if source_preset_id else None
-        self.memory_manager.write_memory(
+        self.memory_manager.write_inscribed_memory(
             character_id=self.character_id,
             content=content,
             category=category,

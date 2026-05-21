@@ -120,7 +120,7 @@ class TestToolExecutorSwitchAngle:
         mm = MagicMock()
         executor = _make_executor(memory_manager=mm)
         executor.execute("switch_angle", {"preset_name": "p", "self_instruction": "i"})
-        mm.write_memory.assert_not_called()
+        mm.write_inscribed_memory.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

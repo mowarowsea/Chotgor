@@ -1,11 +1,11 @@
-"""チャット履歴インデクサー — メッセージをChromaDBのchat_コレクションへupsertする。
+"""チャット履歴インデクサー — メッセージを LanceDB の ``chat_turns`` テーブルへ upsert する。
 
 asyncio.to_thread 経由で呼び出すことを想定した同期関数を提供する。
-ChromaDB書き込みはSQLiteコミット後のベストエフォート。失敗時は30秒ごとに最大5回リトライする。
+LanceDB 書き込みは SQLite コミット後のベストエフォート。失敗時は 30 秒ごとに最大 5 回リトライする。
 
 文書・メタデータの構築仕様は ``build_chat_doc_and_metadata`` に集約しており、
-embedding model 変更時の再インデックス処理（``services.memory.migration_service``）からも
-同関数を再利用する。indexer と migration の構築ロジックがズレないように同関数経由で行うこと。
+embedding model 変更時の再インデックス処理（``services.memory.reindex_service``）からも
+同関数を再利用する。indexer と reindex の構築ロジックがズレないように同関数経由で行うこと。
 """
 
 import json
@@ -25,9 +25,9 @@ def build_chat_doc_and_metadata(
     message,
     user_name: str = "ユーザ",
 ) -> Optional[tuple[str, dict]]:
-    """メッセージから ChromaDB upsert 用の (document, metadata) を構築する。
+    """メッセージから LanceDB upsert 用の (document, metadata) を構築する。
 
-    indexer（通常書き込み）と migration_service（embedding 再構築）の双方から
+    indexer（通常書き込み）と reindex_service（embedding 再構築）の双方から
     呼び出される。両者で構築ロジックが乖離しないよう、ここに一本化する。
 
     is_system_message が立っているメッセージはインデックス対象外として None を返す。

@@ -35,7 +35,7 @@ from backend.services.scenario_chat.parser import UtteranceDelta
 
 @dataclass
 class FakeScenario:
-    """ZetaScenario 風のダミー（テンプレート）。"""
+    """Scenario 風のダミー（テンプレート）。"""
 
     user_alias: str = "プレイヤー"
     gm_preset_id: str = "preset-001"
@@ -46,7 +46,7 @@ class FakeScenario:
 
 @dataclass
 class FakeNpc:
-    """ZetaNpc 風のダミー（scenario_id に紐づく）。"""
+    """ScenarioNpc 風のダミー（scenario_id に紐づく）。"""
 
     id: str
     name: str
@@ -57,7 +57,7 @@ class FakeNpc:
 
 @dataclass
 class FakeTurn:
-    """ZetaTurn 風のダミー。"""
+    """ScenarioTurn 風のダミー。"""
 
     speaker_type: str
     speaker_name: str

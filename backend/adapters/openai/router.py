@@ -202,7 +202,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         async def generate():
             """型付きチャンクを OpenAI SSE 形式に変換して送信する。"""
             async for chunk_type, content in chat_service.execute_stream(chat_request):
-                if chunk_type == "memories":
+                if chunk_type == "inscribed_memories":
                     display = _format_memories_display(content)
                     if display:
                         yield _sse_chunk_reasoning(display)

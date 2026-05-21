@@ -37,7 +37,7 @@ def build_synopsis_system_prompt(
     単純な追記ではなく、古い経緯を圧縮しつつ全体を作り直させる。
 
     Args:
-        scenario: ZetaScenario ORM 風オブジェクト（user_alias / scenario を使う）。
+        scenario: Scenario ORM 風オブジェクト（user_alias / scenario を使う）。
         existing_auto: 既存の synopsis_auto テキスト（空文字列も可）。
         narrator_name: Narrator のタグ名。
 
@@ -90,11 +90,11 @@ async def update_auto_synopsis(
     """既存 `existing_auto` と `dropped_turns` を統合し、全体を再蒸留した結果を返す。
 
     呼び出し元 (service.py) は本関数の戻り値（None でなければ）を
-    `update_zeta_session_synopsis(..., auto=戻り値, last_turn_index=...)` で
+    `update_scenario_session_synopsis(..., auto=戻り値, last_turn_index=...)` で
     SQLite に書き込む。戻り値は既存 auto への追記ではなく、全体の置き換え版。
 
     Args:
-        scenario: ZetaScenario ORM。user_alias / scenario / gm_preset_id を使う。
+        scenario: Scenario ORM。user_alias / scenario / gm_preset_id を使う。
         dropped_turns: 今回新たに送信対象外となったターン群（時系列昇順）。
         existing_auto: 既存の synopsis_auto テキスト。
         settings: グローバル設定辞書（API キー等）。

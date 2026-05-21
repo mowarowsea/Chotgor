@@ -3,7 +3,7 @@
 以下を網羅的に検証する:
   - Recaller: [POWER_RECALL:...] タグのパース（クエリ・top_k抽出、マーカー前テキスト返却）
   - StreamingTagStripper: [POWER_RECALL:] がUIに表示されないこと（除去対象であること）
-  - MemoryManager.power_recall: 記憶+チャット履歴の横断検索とコンテキスト付与
+  - InscribedMemoryManager.power_recall: 記憶+チャット履歴の横断検索とコンテキスト付与
   - tools._power_recall: tool result のフォーマット（コンテキストあり・なし）
   - system_prompt: power_recalled ブロックの生成
   - ChatService.execute_stream: PowerRecall再呼び出しとループ防止
@@ -15,7 +15,7 @@ from datetime import datetime
 
 from backend.character_actions.recaller import Recaller
 from backend.lib.tag_parser import StreamingTagStripper
-from backend.services.memory.manager import MemoryManager
+from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.chat.request_builder import build_system_prompt
 
 
@@ -107,41 +107,41 @@ class TestStreamingTagStripperPowerRecall:
         assert "続き" in full
 
 
-# ─── MemoryManager.power_recall ───────────────────────────────────────────────
+# ─── InscribedMemoryManager.power_recall ───────────────────────────────────────────────
 
 
 class TestMemoryManagerPowerRecall:
-    """MemoryManager.power_recall() のテスト。ChromaStore はモック化する。"""
+    """InscribedMemoryManager.power_recall() のテスト。LanceStore はモック化する。"""
 
     @pytest.fixture
-    def mock_chroma(self):
-        """ChromaStore のモック。"""
-        chroma = MagicMock()
-        chroma.recall_memory.return_value = [
+    def mock_vector_store(self):
+        """LanceStore のモック。"""
+        vector_store = MagicMock()
+        vector_store.recall_inscribed_memory.return_value = [
             {"id": "mem-1", "content": "コーヒーが好き", "distance": 0.1, "metadata": {"category": "user"}}
         ]
-        chroma.recall_chat_turns.return_value = []
-        chroma.find_similar_in_category.return_value = None
-        return chroma
+        vector_store.recall_chat_turns.return_value = []
+        vector_store.find_similar_in_category.return_value = None
+        return vector_store
 
     @pytest.fixture
-    def manager(self, sqlite_store, mock_chroma):
-        """MemoryManager のフィクスチャ。"""
-        return MemoryManager(sqlite=sqlite_store, vector_store=mock_chroma)
+    def manager(self, sqlite_store, mock_vector_store):
+        """InscribedMemoryManager のフィクスチャ。"""
+        return InscribedMemoryManager(sqlite=sqlite_store, vector_store=mock_vector_store)
 
-    def test_記憶とチャット履歴の両方を返す(self, manager, mock_chroma):
+    def test_記憶とチャット履歴の両方を返す(self, manager, mock_vector_store):
         """power_recall が memories と chat_turns の両キーを持つ dict を返すこと。"""
         result = manager.power_recall("char-1", "好きな飲み物")
-        assert "memories" in result
+        assert "inscribed_memories" in result
         assert "chat_turns" in result
 
-    def test_ChromaDBが両コレクションを検索する(self, manager, mock_chroma):
+    def test_LanceDBが両コレクションを検索する(self, manager, mock_vector_store):
         """recall_memory と recall_chat_turns の両方が呼ばれること。"""
         manager.power_recall("char-1", "好きな飲み物", top_k=7)
-        mock_chroma.recall_memory.assert_called_once_with("好きな飲み物", "char-1", top_k=7)
-        mock_chroma.recall_chat_turns.assert_called_once_with("好きな飲み物", "char-1", top_k=7)
+        mock_vector_store.recall_inscribed_memory.assert_called_once_with("好きな飲み物", "char-1", top_k=7)
+        mock_vector_store.recall_chat_turns.assert_called_once_with("好きな飲み物", "char-1", top_k=7)
 
-    def test_チャットヒットにcontextが付与される(self, manager, mock_chroma, sqlite_store):
+    def test_チャットヒットにcontextが付与される(self, manager, mock_vector_store, sqlite_store):
         """chat_turns の各ヒットに context キーが付与されること。"""
         import uuid
         session_id = str(uuid.uuid4())
@@ -150,7 +150,7 @@ class TestMemoryManagerPowerRecall:
         sqlite_store.create_chat_message(
             message_id=msg_id, session_id=session_id, role="user", content="ヒットメッセージ"
         )
-        mock_chroma.recall_chat_turns.return_value = [
+        mock_vector_store.recall_chat_turns.return_value = [
             {"id": msg_id, "content": "ユーザ: ヒットメッセージ", "distance": 0.2,
              "metadata": {"session_id": session_id}}
         ]
@@ -159,7 +159,7 @@ class TestMemoryManagerPowerRecall:
         assert len(result["chat_turns"]) == 1
         assert "context" in result["chat_turns"][0]
 
-    def test_同一セッションヒットはlist_chat_messagesを1回だけ呼ぶ(self, manager, mock_chroma, sqlite_store):
+    def test_同一セッションヒットはlist_chat_messagesを1回だけ呼ぶ(self, manager, mock_vector_store, sqlite_store):
         """同一セッションから複数ヒットがあっても list_chat_messages は1回だけ呼ばれること。
 
         N+1クエリを防ぐためのセッション単位キャッシュの動作確認。
@@ -173,7 +173,7 @@ class TestMemoryManagerPowerRecall:
                 role="user", content=f"msg{i}"
             )
 
-        mock_chroma.recall_chat_turns.return_value = [
+        mock_vector_store.recall_chat_turns.return_value = [
             {"id": "msg-0", "content": "c0", "distance": 0.1, "metadata": {"session_id": session_id}},
             {"id": "msg-2", "content": "c2", "distance": 0.2, "metadata": {"session_id": session_id}},
         ]
@@ -213,7 +213,7 @@ class TestFormatPowerRecallTurn:
         """memories のコンテンツが Chotgor ターンに含まれること。"""
         from backend.character_actions.recaller import format_power_recall_turn
         results = {
-            "memories": [
+            "inscribed_memories": [
                 {"content": "コーヒーが好き", "distance": 0.1, "metadata": {"category": "user"}}
             ],
             "chat_turns": [],
@@ -227,7 +227,7 @@ class TestFormatPowerRecallTurn:
         """chat_turns のコンテキストメッセージが Chotgor ターンに含まれること。"""
         from backend.character_actions.recaller import format_power_recall_turn
         results = {
-            "memories": [],
+            "inscribed_memories": [],
             "chat_turns": [
                 {
                     "content": "ユーザ: カレーが好き",
@@ -249,7 +249,7 @@ class TestFormatPowerRecallTurn:
     def test_結果なしでも正常に動作する(self):
         """memories と chat_turns が空でも例外が発生しないこと。"""
         from backend.character_actions.recaller import format_power_recall_turn
-        turn = format_power_recall_turn({"memories": [], "chat_turns": []}, "何か")
+        turn = format_power_recall_turn({"inscribed_memories": [], "chat_turns": []}, "何か")
         assert "POWER_RECALL COMPLETE" in turn
         assert "見つかりませんでした" in turn
 
@@ -296,10 +296,10 @@ class TestChatServicePowerRecallLoop:
         return provider
 
     def _make_memory_manager(self):
-        """power_recall が {"memories": [], "chat_turns": []} を返す MemoryManager モック。"""
+        """power_recall が {"inscribed_memories": [], "chat_turns": []} を返す InscribedMemoryManager モック。"""
         mm = MagicMock()
         mm.recall_with_identity.return_value = ([], [])
-        mm.power_recall.return_value = {"memories": [], "chat_turns": []}
+        mm.power_recall.return_value = {"inscribed_memories": [], "chat_turns": []}
         return mm
 
     @pytest.mark.asyncio
@@ -321,7 +321,7 @@ class TestChatServicePowerRecallLoop:
             patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
             patch("backend.services.chat.service.find_urls", return_value=[]),
             patch("backend.services.chat.service.asyncio.to_thread", new=AsyncMock(
-                return_value={"memories": [], "chat_turns": []}
+                return_value={"inscribed_memories": [], "chat_turns": []}
             )),
         ):
             service = ChatService(memory_manager=mm)
@@ -352,7 +352,7 @@ class TestChatServicePowerRecallLoop:
         mm = self._make_memory_manager()
         # power_recalled が非空 = 再呼び出し中
         request = self._make_base_request(
-            power_recalled={"memories": [{"content": "前回の検索結果"}], "chat_turns": []}
+            power_recalled={"inscribed_memories": [{"content": "前回の検索結果"}], "chat_turns": []}
         )
         provider = self._make_stream_provider("思い出してみる\n[POWER_RECALL:もっと調べる|3]")
 

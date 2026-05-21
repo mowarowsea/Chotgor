@@ -1,14 +1,8 @@
-"""Memory manager: SQLite と LanceStore を協調させて記憶の書き込み・想起・管理を行う。
-
-# 設計方針
+"""InscribedMemoryManager: SQLite と LanceStore を協調させて保存記憶の書き込み・想起・管理を行う。
 
 SQLite は記憶のメタデータ（カテゴリ・importance・タイムスタンプ等）を保持する
-source of truth、LanceStore は ベクトル + 検索インデックス。
+source of truth、LanceStore はベクトル + 検索インデックス。
 両者は同じ ``memory_id`` で紐付き、書き込みは SQLite → LanceStore の順に行う。
-
-旧 ChromaStore 時代に存在した「バックグラウンドリトライキュー」は撤去した。
-LanceStore は Lance フォーマットの追記＋アトミックコミットにより書き込みが原子的で、
-HNSW バイナリ破損のような失敗モードが構造的に発生しないため、リトライ機構自体が不要になった。
 """
 
 import logging
@@ -27,7 +21,7 @@ from backend.services.memory.decay import (
 logger = logging.getLogger(__name__)
 
 
-class MemoryManager:
+class InscribedMemoryManager:
     """SQLite と LanceStore を協調させて記憶の書き込み・想起・管理を行うクラス。
 
     Attributes:
@@ -36,7 +30,7 @@ class MemoryManager:
     """
 
     def __init__(self, sqlite: SQLiteStore, vector_store: LanceStore):
-        """MemoryManager を初期化する。
+        """InscribedMemoryManager を初期化する。
 
         Args:
             sqlite: SQLite ストア。
@@ -85,7 +79,7 @@ class MemoryManager:
         now = datetime.now()
         candidates = []
 
-        memories = self.sqlite.get_all_active_memories(character_id)
+        memories = self.sqlite.get_all_active_inscribed_memories(character_id)
 
         for m in memories:
             score = self.calculate_decayed_score(m, now)
@@ -111,13 +105,13 @@ class MemoryManager:
             _decayed_score 属性付きの記憶 ORM オブジェクトのリスト（降順）。
         """
         now = datetime.now()
-        memories = self.sqlite.get_all_active_memories(character_id)
+        memories = self.sqlite.get_all_active_inscribed_memories(character_id)
         for m in memories:
             setattr(m, '_decayed_score', self.calculate_decayed_score(m, now))
         memories.sort(key=lambda x: getattr(x, '_decayed_score', 0.0), reverse=True)
         return memories[:limit]
 
-    def write_memory(
+    def write_inscribed_memory(
         self,
         character_id: str,
         content: str,
@@ -132,16 +126,13 @@ class MemoryManager:
         """記憶を SQLite と LanceStore に書き込む。類似記憶があれば in-place 更新、なければ新規作成。
 
         SQLite を先にコミットしてから LanceStore に書き込む。LanceStore 書き込みは
-        原子的なので、過去 ChromaStore 時代に必要だったリトライキューは存在しない。
-        書き込み失敗（embedding API 落ち等）は例外として呼び出し側に伝播する。
+        原子的で、失敗（embedding API 落ち等）は例外として呼び出し側に伝播する。
 
         同一キャラクター・カテゴリ内で類似既存記憶が見つかった場合は、
         既存 memory_id を再利用して in-place 上書きする（重複排除）。
-        旧来の「soft_delete + 新規UUID」方式は、ベクトル DB 側で「旧ID delete + 新ID add」の
-        競合 2 操作になりゴーストID共存の連鎖破損を引き起こすため廃止した（欠陥 C 対策）。
         access_count / created_at / last_accessed_at は維持され、
         content / category / importances / updated_at のみ上書きされる。
-        LanceStore 側は同一 ID で ``add_memory`` を呼ぶことで内部 merge_insert により
+        LanceStore 側は同一 ID で ``add_inscribed_memory`` を呼ぶことで内部 merge_insert により
         embedding と metadata が原子的に置き換わる（delete は不要）。
 
         Args:
@@ -170,7 +161,7 @@ class MemoryManager:
 
         if existing_id:
             # 既存 ID を再利用して in-place 更新する。SQLite 側を先に確定させる。
-            updated = self.sqlite.update_memory_for_overwrite(
+            updated = self.sqlite.update_inscribed_memory_for_overwrite(
                 memory_id=existing_id,
                 content=content,
                 memory_category=category,
@@ -194,7 +185,7 @@ class MemoryManager:
         if not existing_id:
             # 新規作成: まず SQLite にコミットしてから LanceStore へ書き込む
             memory_id = str(uuid.uuid4())
-            self.sqlite.create_memory(
+            self.sqlite.create_inscribed_memory(
                 memory_id=memory_id,
                 character_id=character_id,
                 content=content,
@@ -208,7 +199,7 @@ class MemoryManager:
 
         # SQLite コミット完了後に LanceStore へ書き込む。
         # 同一 ID の場合は merge_insert により embedding と metadata が原子的に置き換わる。
-        self.vector_store.add_memory(
+        self.vector_store.add_inscribed_memory(
             memory_id=memory_id,
             content=content,
             character_id=character_id,
@@ -223,7 +214,7 @@ class MemoryManager:
 
         return memory_id
 
-    def recall_memory(
+    def recall_inscribed_memory(
         self,
         character_id: str,
         query: str,
@@ -245,7 +236,7 @@ class MemoryManager:
         """
         # Fetch more candidates for reranking
         fetch_k = top_k * 2
-        results = self.vector_store.recall_memory(query, character_id, fetch_k, where=where)
+        results = self.vector_store.recall_inscribed_memory(query, character_id, fetch_k, where=where)
 
         now = datetime.now()
 
@@ -257,7 +248,7 @@ class MemoryManager:
                 continue
 
             try:
-                m = self.sqlite.get_memory(mem_id)
+                m = self.sqlite.get_inscribed_memory(mem_id)
                 if not m:
                     logger.debug(
                         "recall_memory: ベクトルストアにあるが SQLite に存在しない記憶をスキップ id=%s char=%s",
@@ -300,7 +291,7 @@ class MemoryManager:
         for mem in final_results:
             mem_id = mem.get("id")
             if mem_id:
-                self.sqlite.remember(mem_id)
+                self.sqlite.remember_inscribed_memory(mem_id)
 
         return final_results
 
@@ -325,7 +316,7 @@ class MemoryManager:
         Returns:
             ``(identity_memories, other_memories)`` のタプル。
         """
-        identity_memories = self.recall_memory(
+        identity_memories = self.recall_inscribed_memory(
             character_id=character_id,
             query=query,
             top_k=identity_top_k,
@@ -336,7 +327,7 @@ class MemoryManager:
             len(identity_memories), character_id, query,
         )
 
-        other_memories = self.recall_memory(
+        other_memories = self.recall_inscribed_memory(
             character_id=character_id,
             query=query,
             top_k=other_top_k,
@@ -368,10 +359,10 @@ class MemoryManager:
             top_k: 各コレクションから取得する最大件数。
 
         Returns:
-            ``{"memories": [...], "chat_turns": [...]}`` の辞書。
+            ``{"inscribed_memories": [...], "chat_turns": [...]}`` の辞書。
             各リストは id / content / distance / metadata を持つ dict。
         """
-        memories = self.vector_store.recall_memory(query, character_id, top_k=top_k)
+        memories = self.vector_store.recall_inscribed_memory(query, character_id, top_k=top_k)
         chat_turns = self.vector_store.recall_chat_turns(query, character_id, top_k=top_k)
 
         # 各ヒットに前後コンテキストを付与する。
@@ -394,7 +385,7 @@ class MemoryManager:
             character_id, query, len(memories), len(chat_turns),
         )
 
-        return {"memories": memories, "chat_turns": chat_turns}
+        return {"inscribed_memories": memories, "chat_turns": chat_turns}
 
     @staticmethod
     def _build_context_window(msgs: list, message_id: str, window: int) -> list[dict]:
@@ -432,7 +423,7 @@ class MemoryManager:
             )
         return result
 
-    def delete_memory(self, memory_id: str, character_id: str) -> bool:
+    def delete_inscribed_memory(self, memory_id: str, character_id: str) -> bool:
         """SQLite ソフトデリート + LanceStore ハードデリートを行う。
 
         SQLite を先に確定させ、LanceStore 削除はその後同期実行する。
@@ -445,16 +436,16 @@ class MemoryManager:
         Returns:
             SQLite の削除成否。False の場合は記憶が存在しないか既に削除済み。
         """
-        ok = self.sqlite.soft_delete_memory(memory_id)
+        ok = self.sqlite.soft_delete_inscribed_memory(memory_id)
         if ok:
             # SQLite コミット完了後に LanceStore から削除する
-            self.vector_store.delete_memory(memory_id=memory_id, character_id=character_id)
+            self.vector_store.delete_inscribed_memory(memory_id=memory_id, character_id=character_id)
         return ok
 
     def restore_memory(self, memory_id: str) -> bool:
         """ソフトデリート済み記憶を復元する。
 
-        LanceStore は復元対象外（再インデックスは write_memory を使用）。
+        LanceStore は復元対象外（再インデックスは write_inscribed_memory を使用）。
         SQLite の deleted_at を NULL に戻すだけ。
 
         Args:
@@ -463,9 +454,9 @@ class MemoryManager:
         Returns:
             復元成否。False の場合は記憶が存在しないか削除されていない。
         """
-        return self.sqlite.restore_memory(memory_id)
+        return self.sqlite.restore_inscribed_memory(memory_id)
 
-    def delete_character_with_memories(self, character_id: str) -> bool:
+    def delete_character_with_inscribed_memories(self, character_id: str) -> bool:
         """キャラクターと全記憶を削除する。
 
         SQLite のキャラクターレコードを先に削除してから、LanceStore のレコードを削除する。
@@ -482,7 +473,7 @@ class MemoryManager:
         result = self.sqlite.delete_character(character_id)
         if result:
             # SQLite の削除が確定してから LanceStore の該当キャラ行を削除する
-            self.vector_store.delete_all_memories(character_id)
+            self.vector_store.delete_all_inscribed_memories(character_id)
         return result
 
     def list_memories(
@@ -493,7 +484,7 @@ class MemoryManager:
         sort_by: str = "created_at",
     ) -> list[dict]:
         """キャラクターの記憶一覧を dict リストで返す。"""
-        mems = self.sqlite.list_memories(character_id, category, include_deleted, sort_by)
+        mems = self.sqlite.list_inscribed_memories(character_id, category, include_deleted, sort_by)
         return [
             {
                 "id": m.id,

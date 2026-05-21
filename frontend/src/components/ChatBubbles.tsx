@@ -172,7 +172,7 @@ function isThreadLine(line: string): boolean {
 
 /**
  * 想起したワーキングメモリスレッド1行を描画する。
- * バックエンドの ``⟦thread⟧ [type] summary 〈atmosphere〉 → post`` 形式をパースする。
+ * バックエンドの ``⟦thread⟧ [type] summary 〈atmosphere_tag〉 → post`` 形式をパースする。
  */
 function ThreadLine({ line }: { line: string }) {
   const match = /^⟦thread⟧ \[([\w_]+)\] (.*)$/.exec(line);

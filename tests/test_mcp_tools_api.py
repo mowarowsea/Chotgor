@@ -1,20 +1,14 @@
 """``backend.api.mcp_tools`` の HTTP プロキシ API 統合テスト。
 
---- 背景・目的（詳細） ---
-従来 ``mcp_server.py`` は独立子プロセスとして起動し、自身で ``ChromaStore`` /
-``MemoryManager`` を生成して ``data/chroma`` を二重に開いていた。これが
-構造的欠陥 A（multi-process write による HNSW 破損）の元凶だった。
-
-修正後、``mcp_server.py`` は backend に集約された ToolExecutor を HTTP 経由で
-叩くだけのプロキシとなり、本テストは backend 側の HTTP エンドポイントの振る舞いを
-保証する：
+``mcp_server.py`` は backend に集約された ToolExecutor を HTTP 経由で叩くだけの
+プロキシであり、本テストは backend 側の HTTP エンドポイントの振る舞いを保証する：
 
   - ``GET /api/mcp/tools`` がツール定義リストを返すこと
   - ``POST /api/mcp/tools/call`` が ToolExecutor を正しく呼ぶこと（state 注入の確認）
   - ToolExecutor が例外を投げてもエンドポイントは 200 のまま is_error=True で返すこと
   - localhost 以外からのアクセスは 403 で拒絶されること（外部攻撃面の閉塞）
 
-LLM や ChromaDB への実ネットワーク呼び出しは一切行わない。
+LLM や LanceDB への実ネットワーク呼び出しは一切行わない。
 """
 
 from unittest.mock import MagicMock
@@ -29,7 +23,7 @@ from backend.api import mcp_tools as mcp_tools_module
 def _make_app() -> FastAPI:
     """テスト用 FastAPI アプリを返す。``app.state`` には MagicMock を載せる。
 
-    本物の MemoryManager / WorkingMemoryManager は重く、LanceDB を実体で開いてしまうため、
+    本物の InscribedMemoryManager / WorkingMemoryManager は重く、LanceDB を実体で開いてしまうため、
     依存をすべて MagicMock に置き換える。エンドポイント自体の HTTP 振る舞いを観察するのが本テストの目的。
     """
     app = FastAPI()
@@ -54,16 +48,16 @@ def client_local(monkeypatch):
 class TestListTools:
     """``GET /api/mcp/tools`` のテスト。
 
-    旧 ``mcp_server.py`` が ``_build_tool_list()`` でローカルに構築していたツール定義を
-    backend が返却することを保証する。MCPプロセス側はこの応答をそのまま JSON-RPC ``tools/list`` に乗せる。
-    各定義は ``name`` / ``description`` / ``inputSchema`` の 3 フィールドを持つ必要がある。
+    backend がツール定義一覧を返すことを保証する。MCPプロセス側はこの応答をそのまま JSON-RPC
+    ``tools/list`` に乗せる。各定義は ``name`` / ``description`` / ``inputSchema`` の 3 フィールドを
+    持つ必要がある。
     """
 
-    def test_returns_five_tools(self, client_local):
-        """公開されるツールが 5 種すべて返ること。
+    def test_returns_six_tools(self, client_local):
+        """公開されるツールが 6 種すべて返ること。
 
-        現状の MCP 公開ツールは inscribe_memory / post_thread / open_thread /
-        carve_narrative / power_recall の 5 種。並びと数が変わったらこのテストが
+        現状の MCP 公開ツールは inscribe_memory / post_working_memory_thread / open_working_memory_thread /
+        carve_narrative / power_recall / switch_angle の 6 種。並びと数が変わったらこのテストが
         知らせる。
         """
         res = client_local.get("/api/mcp/tools")
@@ -72,10 +66,11 @@ class TestListTools:
         names = [t["name"] for t in body["tools"]]
         assert names == [
             "inscribe_memory",
-            "post_thread",
-            "open_thread",
+            "post_working_memory_thread",
+            "open_working_memory_thread",
             "carve_narrative",
             "power_recall",
+            "switch_angle",
         ]
 
     def test_each_tool_has_required_fields(self, client_local):
@@ -152,8 +147,8 @@ class TestCallTool:
     def test_executor_exception_returns_is_error_true(self, client_local, monkeypatch):
         """ToolExecutor.execute() が例外を投げても 200 で is_error=True が返ること。
 
-        旧 mcp_server.py のエラーハンドリング挙動を踏襲する。HTTP 5xx で返してしまうと
-        MCP プロセス側で接続失敗と区別がつかなくなるため、ツール内部エラーは 200 + is_error=True に統一する。
+        HTTP 5xx で返してしまうと MCP プロセス側で接続失敗と区別がつかなくなるため、
+        ツール内部エラーは 200 + is_error=True に統一する。
         """
         fake_executor = MagicMock()
         fake_executor.execute.side_effect = RuntimeError("boom!")

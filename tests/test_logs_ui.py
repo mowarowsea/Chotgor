@@ -514,19 +514,6 @@ class TestParseEntry:
         assert "chat" in features
         assert "trigger" in features
 
-    def test_old_format_no_feature_name(self, tmp_path):
-        """旧形式（機能名なし）: "02_Request_claude_cli.log" が tool_calls に含まれること。"""
-        folder = _make_debug_dir(tmp_path, "oldformat")
-        _write_response(folder, "02_Request_claude_cli.log", "{}")
-        _write_response(folder, "03_Response_claude_cli.log", "旧形式の応答")
-
-        entry = _parse_entry("oldformat", folder, {})
-
-        assert len(entry["tool_calls"]) == 1
-        tc = entry["tool_calls"][0]
-        assert tc["feature"] == ""
-        assert tc["preset"] == "claude_cli"
-
     def test_has_error_false_on_normal_response(self, tmp_path):
         """正常なレスポンスの場合、has_error は False であること。"""
         folder = _make_debug_dir(tmp_path, "ok1")

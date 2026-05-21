@@ -1,13 +1,17 @@
-"""記憶レコード CRUD — SQLiteStore Mixin。"""
+"""保存記憶（InscribedMemory）レコード CRUD — SQLiteStore Mixin。
+
+`inscribe_memory` ツールでキャラクター本人が長期に残すと決めた記憶を扱う層。
+短期記憶（WorkingMemoryThread/Post）とは別系統で、忘却バッチ・想起検索の対象。
+"""
 
 from datetime import datetime
 from typing import Optional
 
 
-class MemoryStoreMixin:
-    """記憶レコードの作成・取得・更新・削除を担う Mixin。"""
+class InscribedMemoryStoreMixin:
+    """保存記憶レコードの作成・取得・更新・削除を担う Mixin。"""
 
-    def create_memory(
+    def create_inscribed_memory(
         self,
         memory_id: str,
         character_id: str,
@@ -19,10 +23,10 @@ class MemoryStoreMixin:
         user_importance: float = 0.5,
         source_preset_id: Optional[str] = None,
     ):
-        """記憶レコードを新規作成する。"""
+        """保存記憶レコードを新規作成する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            mem = Memory(
+            from backend.repositories.sqlite.store import InscribedMemory
+            mem = InscribedMemory(
                 id=memory_id,
                 character_id=character_id,
                 content=content,
@@ -38,64 +42,66 @@ class MemoryStoreMixin:
             session.refresh(mem)
             return mem
 
-    def get_memory(self, memory_id: str):
-        """IDで記憶レコードを取得する。"""
+    def get_inscribed_memory(self, memory_id: str):
+        """ID で保存記憶レコードを取得する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            return session.get(Memory, memory_id)
+            from backend.repositories.sqlite.store import InscribedMemory
+            return session.get(InscribedMemory, memory_id)
 
-    def list_memories(
+    def list_inscribed_memories(
         self,
         character_id: str,
         category: Optional[str] = None,
         include_deleted: bool = False,
         sort_by: str = "created_at",
     ) -> list:
-        """キャラクターの記憶一覧を指定順で返す。"""
+        """キャラクターの保存記憶一覧を指定順で返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            q = session.query(Memory).filter(Memory.character_id == character_id)
+            from backend.repositories.sqlite.store import InscribedMemory
+            q = session.query(InscribedMemory).filter(
+                InscribedMemory.character_id == character_id
+            )
             if not include_deleted:
-                q = q.filter(Memory.deleted_at.is_(None))
+                q = q.filter(InscribedMemory.deleted_at.is_(None))
             if category:
-                q = q.filter(Memory.memory_category == category)
+                q = q.filter(InscribedMemory.memory_category == category)
             if sort_by == "updated_at":
                 from sqlalchemy import func
                 q = q.order_by(
-                    func.coalesce(Memory.updated_at, Memory.created_at).desc()
+                    func.coalesce(InscribedMemory.updated_at, InscribedMemory.created_at).desc()
                 )
             else:
-                q = q.order_by(Memory.created_at.desc())
+                q = q.order_by(InscribedMemory.created_at.desc())
             return q.all()
 
 
-    def recall(self, memory_id: str) -> None:
+    def recall_inscribed_memory(self, memory_id: str) -> None:
         """last_accessed_at を更新し access_count をインクリメントする。
 
         忘却バッチで「残す」と判断した時・上書き時に使用。
         単純な想起では使わないこと（参照日付更新による decay リセット防止のため）。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            mem = session.get(Memory, memory_id)
+            from backend.repositories.sqlite.store import InscribedMemory
+            mem = session.get(InscribedMemory, memory_id)
             if mem:
                 mem.last_accessed_at = datetime.now()
                 mem.access_count = (mem.access_count or 0) + 1
                 session.commit()
 
-    def remember(self, memory_id: str) -> None:
+    def remember_inscribed_memory(self, memory_id: str) -> None:
         """access_count をインクリメントする（last_accessed_at は更新しない）。
 
         システムによる自動想起時に使用。参照日付を更新しないことで、decay タイマーを保持する。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            mem = session.get(Memory, memory_id)
+            from backend.repositories.sqlite.store import InscribedMemory
+            mem = session.get(InscribedMemory, memory_id)
             if mem:
                 mem.access_count = (mem.access_count or 0) + 1
                 session.commit()
 
-    def update_memory_for_overwrite(
+    def update_inscribed_memory_for_overwrite(
         self,
         memory_id: str,
         content: str,
@@ -105,13 +111,11 @@ class MemoryStoreMixin:
         identity_importance: float,
         user_importance: float,
     ) -> bool:
-        """既存記憶を in-place 上書き更新する（重複排除時に使用）。
+        """既存保存記憶を in-place 上書き更新する（重複排除時に使用）。
 
-        write_memory 経路で類似既存記憶が見つかった際、旧レコードを soft_delete して
-        新規 UUID で作り直すと、ChromaDB 側で「旧ID delete + 新ID add」という競合
-        2 操作になり、ゴーストID共存の連鎖破損を引き起こす（欠陥 C）。
-        本メソッドは旧IDをそのまま再利用して content / category / importances を
-        上書きすることで、ChromaDB 側も単一 upsert で完結させる。
+        write 経路で類似既存記憶が見つかった際、既存 ID をそのまま再利用して
+        content / category / importances を上書きすることで、ベクトル DB 側も
+        単一 upsert（merge_insert）で完結させる。
 
         access_count / created_at / last_accessed_at は維持し、updated_at のみ更新する。
         deleted_at が設定されている記憶は更新対象外（False を返す）。
@@ -129,8 +133,8 @@ class MemoryStoreMixin:
             更新できたら True、対象が存在しない／soft-delete 済みなら False。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            mem = session.get(Memory, memory_id)
+            from backend.repositories.sqlite.store import InscribedMemory
+            mem = session.get(InscribedMemory, memory_id)
             if not mem or mem.deleted_at is not None:
                 return False
             mem.content = content
@@ -143,37 +147,37 @@ class MemoryStoreMixin:
             session.commit()
             return True
 
-    def soft_delete_memory(self, memory_id: str) -> bool:
-        """記憶をソフト削除する（deleted_at をセット）。"""
+    def soft_delete_inscribed_memory(self, memory_id: str) -> bool:
+        """保存記憶をソフト削除する（deleted_at をセット）。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            mem = session.get(Memory, memory_id)
+            from backend.repositories.sqlite.store import InscribedMemory
+            mem = session.get(InscribedMemory, memory_id)
             if not mem:
                 return False
             mem.deleted_at = datetime.now()
             session.commit()
             return True
 
-    def restore_memory(self, memory_id: str) -> bool:
-        """ソフト削除された記憶を復元する。"""
+    def restore_inscribed_memory(self, memory_id: str) -> bool:
+        """ソフト削除された保存記憶を復元する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
-            mem = session.get(Memory, memory_id)
+            from backend.repositories.sqlite.store import InscribedMemory
+            mem = session.get(InscribedMemory, memory_id)
             if not mem:
                 return False
             mem.deleted_at = None
             session.commit()
             return True
 
-    def get_all_active_memories(self, character_id: str) -> list:
-        """キャラクターの全アクティブ記憶（削除済みを除く）を返す。"""
+    def get_all_active_inscribed_memories(self, character_id: str) -> list:
+        """キャラクターの全アクティブ保存記憶（削除済みを除く）を返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Memory
+            from backend.repositories.sqlite.store import InscribedMemory
             return (
-                session.query(Memory)
+                session.query(InscribedMemory)
                 .filter(
-                    Memory.character_id == character_id,
-                    Memory.deleted_at.is_(None),
+                    InscribedMemory.character_id == character_id,
+                    InscribedMemory.deleted_at.is_(None),
                 )
                 .all()
             )

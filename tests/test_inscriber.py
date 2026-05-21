@@ -115,7 +115,7 @@ def test_extract_skips_marker_inside_inline_code():
 
 
 class TestInscriberInscribeMemoryFromText:
-    """Inscriber.inscribe_memory_from_text() のタグ抽出・write_memory 呼び出しを検証する。"""
+    """Inscriber.inscribe_memory_from_text() のタグ抽出・write_inscribed_memory 呼び出しを検証する。"""
 
     def _make_inscriber(self, memory_manager=None):
         """テスト用の Inscriber インスタンスを生成するヘルパー。"""
@@ -133,41 +133,41 @@ class TestInscriberInscribeMemoryFromText:
         assert "また話しましょう。" in clean
 
     def test_inscribe_memory_from_text_calls_write_memory(self):
-        """マーカーが存在するとき write_memory が呼ばれること。"""
+        """マーカーが存在するとき write_inscribed_memory が呼ばれること。"""
         inscriber, mm = self._make_inscriber()
         text = "[INSCRIBE_MEMORY:user|0.8|ユーザは猫が好き]"
         inscriber.inscribe_memory_from_text(text)
 
-        mm.write_memory.assert_called_once()
-        kwargs = mm.write_memory.call_args.kwargs
+        mm.write_inscribed_memory.assert_called_once()
+        kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert kwargs["character_id"] == "char-1"
         assert kwargs["content"] == "ユーザは猫が好き"
         assert kwargs["category"] == "user"
 
     def test_inscribe_memory_from_text_no_marker_does_not_call_write_memory(self):
-        """マーカーが存在しないとき write_memory は呼ばれないこと。"""
+        """マーカーが存在しないとき write_inscribed_memory は呼ばれないこと。"""
         inscriber, mm = self._make_inscriber()
         text = "マーカーのない普通の発言です。"
         clean = inscriber.inscribe_memory_from_text(text)
 
         assert clean == text
-        mm.write_memory.assert_not_called()
+        mm.write_inscribed_memory.assert_not_called()
 
     def test_inscribe_memory_from_text_multiple_markers_calls_write_memory_multiple_times(self):
-        """複数マーカーがあるとき write_memory が複数回呼ばれること。"""
+        """複数マーカーがあるとき write_inscribed_memory が複数回呼ばれること。"""
         inscriber, mm = self._make_inscriber()
         text = "[INSCRIBE_MEMORY:user|1.0|ユーザA][INSCRIBE_MEMORY:contextual|0.5|出来事B]"
         inscriber.inscribe_memory_from_text(text)
 
-        assert mm.write_memory.call_count == 2
+        assert mm.write_inscribed_memory.call_count == 2
 
     def test_inscribe_memory_from_text_with_source_preset_id(self):
-        """source_preset_id が指定されたとき write_memory に渡されること。"""
+        """source_preset_id が指定されたとき write_inscribed_memory に渡されること。"""
         inscriber, mm = self._make_inscriber()
         text = "[INSCRIBE_MEMORY:semantic|1.0|Chotgorの設計]"
         inscriber.inscribe_memory_from_text(text, source_preset_id="preset-abc")
 
-        kwargs = mm.write_memory.call_args.kwargs
+        kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert kwargs.get("source_preset_id") == "preset-abc"
 
     def test_inscribe_memory_from_text_empty_preset_id_passes_none(self):
@@ -176,13 +176,13 @@ class TestInscriberInscribeMemoryFromText:
         text = "[INSCRIBE_MEMORY:contextual|1.0|内容]"
         inscriber.inscribe_memory_from_text(text, source_preset_id="")
 
-        kwargs = mm.write_memory.call_args.kwargs
+        kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert kwargs.get("source_preset_id") is None
 
     def test_inscribe_memory_from_text_write_memory_exception_does_not_raise(self):
-        """write_memory が例外を投げても inscribe_memory_from_text はクラッシュしないこと。"""
+        """write_inscribed_memory が例外を投げても inscribe_memory_from_text はクラッシュしないこと。"""
         mm = MagicMock()
-        mm.write_memory.side_effect = RuntimeError("DB接続失敗")
+        mm.write_inscribed_memory.side_effect = RuntimeError("DB接続失敗")
         inscriber = Inscriber(character_id="char-1", memory_manager=mm)
         text = "[INSCRIBE_MEMORY:user|1.0|内容]残りのテキスト"
         clean = inscriber.inscribe_memory_from_text(text)
@@ -198,19 +198,19 @@ class TestInscriberInscribeMemory:
     """Inscriber.inscribe_memory() の直接書き込みとインポータンス計算を検証する。"""
 
     def _run(self, category: str, impact: float) -> dict:
-        """inscribe_memory を実行して write_memory に渡された kwargs を返すヘルパー。"""
+        """inscribe_memory を実行して write_inscribed_memory に渡された kwargs を返すヘルパー。"""
         mm = MagicMock()
         inscriber = Inscriber(character_id="char-x", memory_manager=mm)
         inscriber.inscribe_memory(content="テスト内容", category=category, impact=impact)
-        return mm.write_memory.call_args.kwargs
+        return mm.write_inscribed_memory.call_args.kwargs
 
     def test_inscribe_memory_calls_write_memory_with_content(self):
-        """content が write_memory に正しく渡されること。"""
+        """content が write_inscribed_memory に正しく渡されること。"""
         mm = MagicMock()
         inscriber = Inscriber(character_id="char-1", memory_manager=mm)
         inscriber.inscribe_memory(content="ユーザは音楽が好き", category="user", impact=1.2)
 
-        kwargs = mm.write_memory.call_args.kwargs
+        kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert kwargs["character_id"] == "char-1"
         assert kwargs["content"] == "ユーザは音楽が好き"
         assert kwargs["category"] == "user"
@@ -259,7 +259,7 @@ class TestInscriberInscribeMemory:
         inscriber = Inscriber(character_id="char-1", memory_manager=mm)
         inscriber.inscribe_memory(content="内容", category="user")
 
-        kwargs = mm.write_memory.call_args.kwargs
+        kwargs = mm.write_inscribed_memory.call_args.kwargs
         # impact=1.0 と impact=1.5 で呼んだ場合で値が変わることを確認（デフォルト1.0の検証）
         assert kwargs["user_importance"] == pytest.approx(0.9)  # user カテゴリの user 基準値 0.9 × 1.0
 

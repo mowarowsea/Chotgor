@@ -1,7 +1,7 @@
 """ToolExecutor・ToolCall・ToolTurnResult・ツールスキーマのテスト。
 
 ツール呼び出しの正規化・記憶の書き込み（inscribe_memory）・inner_narrative の彫り込み（carve_narrative）・
-SELF_DRIFT 操作・switch_angle が MemoryManager / DriftManager を通じて正しく実行されるかを検証する。
+SELF_DRIFT 操作・switch_angle が InscribedMemoryManager / DriftManager を通じて正しく実行されるかを検証する。
 """
 
 import pytest
@@ -46,12 +46,12 @@ class TestToolSchemas:
         assert anthropic_names == openai_names
 
     def test_expected_tool_names_present(self):
-        """inscribe_memory / carve_narrative / post_thread / open_thread / power_recall / switch_angle が存在する。"""
+        """inscribe_memory / carve_narrative / post_working_memory_thread / open_working_memory_thread / power_recall / switch_angle が存在する。"""
         names = {t["name"] for t in ANTHROPIC_TOOLS}
         assert "inscribe_memory" in names
         assert "carve_narrative" in names
-        assert "post_thread" in names
-        assert "open_thread" in names
+        assert "post_working_memory_thread" in names
+        assert "open_working_memory_thread" in names
         assert "power_recall" in names
         assert "switch_angle" in names
 
@@ -132,10 +132,10 @@ class TestToolTurnResultDataClass:
 
     def test_with_tool_calls(self):
         """ToolCall リストが正しく格納される。"""
-        tc = ToolCall(id="x", name="post_thread", input={"type": "topic", "summary": "話題"})
+        tc = ToolCall(id="x", name="post_working_memory_thread", input={"type": "topic", "summary": "話題"})
         result = ToolTurnResult(text="", tool_calls=[tc], _raw="raw_response")
         assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].name == "post_thread"
+        assert result.tool_calls[0].name == "post_working_memory_thread"
         assert result._raw == "raw_response"
 
     def test_raw_field_not_in_repr(self):
@@ -155,7 +155,7 @@ class TestToolExecutorExecute:
         """テスト用の ToolExecutor を生成するヘルパー。
 
         Args:
-            memory_manager: MemoryManager のモック。None の場合は MagicMock を使用。
+            memory_manager: InscribedMemoryManager のモック。None の場合は MagicMock を使用。
             working_memory_manager: WorkingMemoryManager のモック。None の場合は MagicMock を使用。
             session_id: セッション ID。
 
@@ -178,7 +178,7 @@ class TestToolExecutorExecute:
         assert "[Unknown tool:" in result
 
     def test_inscribe_memory_calls_write_memory(self):
-        """inscribe_memory ツールが MemoryManager.write_memory() を呼び出す。"""
+        """inscribe_memory ツールが InscribedMemoryManager.write_inscribed_memory() を呼び出す。"""
         mm = MagicMock()
         executor = self._make_executor(memory_manager=mm)
         result = executor.execute(
@@ -186,14 +186,14 @@ class TestToolExecutorExecute:
             {"content": "ユーザは猫が好き", "category": "user", "impact": 1.2},
         )
         assert result == "記憶に刻んだ。"
-        mm.write_memory.assert_called_once()
-        call_kwargs = mm.write_memory.call_args.kwargs
+        mm.write_inscribed_memory.assert_called_once()
+        call_kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert call_kwargs["character_id"] == "char-1"
         assert call_kwargs["content"] == "ユーザは猫が好き"
         assert call_kwargs["category"] == "user"
 
     def test_inscribe_memory_default_passes_force_insert_false(self):
-        """batch_context 未指定（通常チャット経路）では write_memory が force_insert=False で呼ばれる。
+        """batch_context 未指定（通常チャット経路）では write_inscribed_memory が force_insert=False で呼ばれる。
 
         後方互換性の回帰テスト。バッチではない通常の inscribe_memory ツール呼び出しでは、
         類似既存記憶の上書き挙動（重複排除）を維持する必要がある。
@@ -204,7 +204,7 @@ class TestToolExecutorExecute:
             "inscribe_memory",
             {"content": "ユーザは猫が好き", "category": "user", "impact": 1.0},
         )
-        call_kwargs = mm.write_memory.call_args.kwargs
+        call_kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert call_kwargs.get("force_insert") is False
 
     def test_inscribe_memory_with_batch_context_passes_force_insert_true(self):
@@ -212,7 +212,7 @@ class TestToolExecutorExecute:
 
         forget 蒸留バッチで使われる経路。キャラが inscribe_memory ツールを呼んだとき、
         類似既存への上書きをスキップさせるためのフラグがバッチ → ToolExecutor → Inscriber
-        → MemoryManager.write_memory まで一気通貫で伝わることを検証する。
+        → InscribedMemoryManager.write_inscribed_memory まで一気通貫で伝わることを検証する。
 
         この経路が壊れると、蒸留結果が削除候補のIDに上書きされて、続く全件削除で消滅する
         （結合バグの再発）。
@@ -229,7 +229,7 @@ class TestToolExecutorExecute:
             "inscribe_memory",
             {"content": "ユーザはコーヒーが好き", "category": "user", "impact": 1.0},
         )
-        call_kwargs = mm.write_memory.call_args.kwargs
+        call_kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert call_kwargs.get("force_insert") is True
 
     def test_inscribe_memory_batch_context_none_treated_as_empty(self):
@@ -250,7 +250,7 @@ class TestToolExecutorExecute:
             "inscribe_memory",
             {"content": "x", "category": "user", "impact": 1.0},
         )
-        call_kwargs = mm.write_memory.call_args.kwargs
+        call_kwargs = mm.write_inscribed_memory.call_args.kwargs
         assert call_kwargs.get("force_insert") is False
 
     def test_carve_narrative_append_calls_sqlite_update(self):
@@ -277,13 +277,13 @@ class TestToolExecutorExecute:
         result = executor.execute("carve_narrative", {"mode": "append", "content": ""})
         assert "content が空" in result
 
-    def test_post_thread_new_calls_create_thread(self):
-        """post_thread ツール（thread_id 省略）が WorkingMemoryManager.create_thread() を呼び出す。"""
+    def test_post_working_memory_thread_new_calls_create_thread(self):
+        """post_working_memory_thread ツール（thread_id 省略）が WorkingMemoryManager.create_thread() を呼び出す。"""
         wm = MagicMock()
         wm.create_thread.return_value = {"id": "thread-1"}
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute(
-            "post_thread",
+            "post_working_memory_thread",
             {"type": "topic", "summary": "気になっている話題", "importance": 0.7},
         )
         assert "thread-1" in result
@@ -293,23 +293,23 @@ class TestToolExecutorExecute:
         assert call_kwargs["type"] == "topic"
         assert call_kwargs["summary"] == "気になっている話題"
 
-    def test_post_thread_existing_calls_add_post(self):
-        """post_thread ツール（thread_id 指定 + content）が WorkingMemoryManager.add_post() を呼び出す。"""
+    def test_post_working_memory_thread_existing_calls_add_post(self):
+        """post_working_memory_thread ツール（thread_id 指定 + content）が WorkingMemoryManager.add_post() を呼び出す。"""
         wm = MagicMock()
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute(
-            "post_thread",
+            "post_working_memory_thread",
             {"thread_id": "thread-9", "content": "新しい書き込み"},
         )
         assert "thread-9" in result
         wm.add_post.assert_called_once_with("thread-9", "新しい書き込み")
 
-    def test_open_thread_calls_get_thread_detail(self):
-        """open_thread ツールが WorkingMemoryManager.get_thread_detail() を呼び出す。"""
+    def test_open_working_memory_thread_calls_get_thread_detail(self):
+        """open_working_memory_thread ツールが WorkingMemoryManager.get_thread_detail() を呼び出す。"""
         wm = MagicMock()
         wm.get_thread_detail.return_value = {"id": "thread-9", "posts": []}
         executor = self._make_executor(working_memory_manager=wm)
-        result = executor.execute("open_thread", {"thread_id": "thread-9"})
+        result = executor.execute("open_working_memory_thread", {"thread_id": "thread-9"})
         assert "thread-9" in result
         wm.get_thread_detail.assert_called_once_with("thread-9")
 
@@ -332,21 +332,21 @@ class TestToolExecutorImportanceCalculation:
     """inscribe_memory のインパクト係数がインポータンス計算に正しく反映されることを検証する。"""
 
     def _run_inscribe_memory(self, category: str, impact: float) -> dict:
-        """inscribe_memory を実行して write_memory に渡された kwargs を返すヘルパー。
+        """inscribe_memory を実行して write_inscribed_memory に渡された kwargs を返すヘルパー。
 
         Args:
             category: 記憶カテゴリ。
             impact: 重要度係数。
 
         Returns:
-            write_memory に渡された kwargs dict。
+            write_inscribed_memory に渡された kwargs dict。
         """
         mm = MagicMock()
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
         )
         executor.execute("inscribe_memory", {"content": "test", "category": category, "impact": impact})
-        return mm.write_memory.call_args.kwargs
+        return mm.write_inscribed_memory.call_args.kwargs
 
     def test_identity_category_has_high_identity_importance(self):
         """identity カテゴリでは identity_importance が最大になる。"""
@@ -383,49 +383,49 @@ class TestToolExecutorImportanceCalculation:
 class TestToolExecutorEdgeCases:
     """ToolExecutor の境界条件・エラー処理を検証する。"""
 
-    def test_post_thread_without_working_memory_manager_returns_unavailable(self):
-        """working_memory_manager が None の場合は post_thread が利用不可メッセージを返す。"""
+    def test_post_working_memory_thread_without_working_memory_manager_returns_unavailable(self):
+        """working_memory_manager が None の場合は post_working_memory_thread が利用不可メッセージを返す。"""
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=None
         )
-        result = executor.execute("post_thread", {"type": "topic", "summary": "x"})
+        result = executor.execute("post_working_memory_thread", {"type": "topic", "summary": "x"})
         assert "利用できない" in result
 
-    def test_open_thread_without_working_memory_manager_returns_unavailable(self):
-        """working_memory_manager が None の場合は open_thread が利用不可メッセージを返す。"""
+    def test_open_working_memory_thread_without_working_memory_manager_returns_unavailable(self):
+        """working_memory_manager が None の場合は open_working_memory_thread が利用不可メッセージを返す。"""
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=None
         )
-        result = executor.execute("open_thread", {"thread_id": "t-1"})
+        result = executor.execute("open_working_memory_thread", {"thread_id": "t-1"})
         assert "利用できない" in result
 
-    def test_post_thread_new_without_type_returns_error(self):
+    def test_post_working_memory_thread_new_without_type_returns_error(self):
         """新規作成（thread_id 省略）で type が無い場合、エラーメッセージを返す。"""
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=MagicMock()
         )
-        result = executor.execute("post_thread", {"summary": "概要だけ"})
-        assert "[post_thread error:" in result
+        result = executor.execute("post_working_memory_thread", {"summary": "概要だけ"})
+        assert "[post_working_memory_thread error:" in result
 
     def test_inscribe_memory_exception_returns_error_message(self):
-        """write_memory が例外を投げた場合、エラーメッセージを返す（クラッシュしない）。"""
+        """write_inscribed_memory が例外を投げた場合、エラーメッセージを返す（クラッシュしない）。"""
         mm = MagicMock()
-        mm.write_memory.side_effect = RuntimeError("DB connection failed")
+        mm.write_inscribed_memory.side_effect = RuntimeError("DB connection failed")
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
         )
         result = executor.execute("inscribe_memory", {"content": "test", "category": "user", "impact": 1.0})
         assert "[inscribe_memory error:" in result
 
-    def test_post_thread_exception_returns_error_message(self):
+    def test_post_working_memory_thread_exception_returns_error_message(self):
         """create_thread が例外を投げた場合、エラーメッセージを返す（クラッシュしない）。"""
         wm = MagicMock()
         wm.create_thread.side_effect = RuntimeError("DB error")
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=wm
         )
-        result = executor.execute("post_thread", {"type": "topic", "summary": "x"})
-        assert "[post_thread error:" in result
+        result = executor.execute("post_working_memory_thread", {"type": "topic", "summary": "x"})
+        assert "[post_working_memory_thread error:" in result
 
     def test_carve_narrative_exception_returns_error_message(self):
         """update_character が例外を投げた場合、carve_narrative はエラーメッセージを返す（クラッシュしない）。"""
@@ -727,7 +727,7 @@ class TestGenerateWithToolsLoop:
 
         text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
         assert text == "完了した"
-        mm.write_memory.assert_called_once()
+        mm.write_inscribed_memory.assert_called_once()
         assert len(provider._extend_calls) == 1
 
     def test_single_carve_narrative_call_executes_and_continues(self):
@@ -754,7 +754,7 @@ class TestGenerateWithToolsLoop:
         """複数ターンのツール呼び出しが正しくループする。"""
         import asyncio
 
-        tc1 = ToolCall(id="t1", name="post_thread", input={"type": "topic", "summary": "話題"})
+        tc1 = ToolCall(id="t1", name="post_working_memory_thread", input={"type": "topic", "summary": "話題"})
         tc2 = ToolCall(id="t2", name="inscribe_memory", input={"content": "Y", "category": "identity", "impact": 0.5})
         wm = MagicMock()
         wm.create_thread.return_value = {"id": "thread-1"}
@@ -769,14 +769,14 @@ class TestGenerateWithToolsLoop:
         text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
         assert text == "終了"
         wm.create_thread.assert_called_once()
-        mm.write_memory.assert_called_once()
+        mm.write_inscribed_memory.assert_called_once()
         assert len(provider._extend_calls) == 2
 
     def test_text_accumulates_across_turns(self):
         """複数ターンにわたるテキストが結合されて返される。"""
         import asyncio
 
-        tc = ToolCall(id="t1", name="post_thread", input={"type": "topic", "summary": "テスト"})
+        tc = ToolCall(id="t1", name="post_working_memory_thread", input={"type": "topic", "summary": "テスト"})
         provider = self._make_provider([
             ToolTurnResult(text="前半", tool_calls=[tc]),
             ToolTurnResult(text="後半", tool_calls=[]),

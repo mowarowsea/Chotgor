@@ -2,12 +2,12 @@
 
 # テスト方針
 
-ChromaStore からの置き換えとして、以下を網羅的に検証する。
+LanceStore からの置き換えとして、以下を網羅的に検証する。
 
-- パブリック API の入出力互換性（ChromaStore との戻り値形状一致）
+- パブリック API の入出力互換性（LanceStore との戻り値形状一致）
 - where フィルタの $eq / $ne / $in 等の SQL 変換が正しいこと
 - merge_insert（upsert）が同一ID再投入で更新動作になること
-- 過去 ChromaStore で発生した「whereフィルタ後件数 < top_k で結果が消える」バグが
+- 過去 LanceStore で発生した「whereフィルタ後件数 < top_k で結果が消える」バグが
   LanceStore では発生しないこと（プリフィルタ + LIMIT で安全に動く）
 - delete / delete_all_memories の物理削除挙動
 - キャラクター定義（estranged 検出）の正しい動作
@@ -51,7 +51,7 @@ class FakeEmbeddingFunction:
     """
 
     def __call__(self, texts: Iterable[str]) -> list[list[float]]:
-        """ChromaDB EmbeddingFunction 互換: テキストリスト → ベクトルリスト。"""
+        """LanceDB EmbeddingFunction 互換: テキストリスト → ベクトルリスト。"""
         out: list[list[float]] = []
         for t in texts:
             h = hashlib.sha256(t.encode("utf-8")).digest()
@@ -78,7 +78,7 @@ def _add_memories(s: LanceStore, char_id: str, items: list[dict]) -> None:
         items: ``{"id", "content", "category"}`` を含む辞書リスト。
     """
     for it in items:
-        s.add_memory(
+        s.add_inscribed_memory(
             memory_id=it["id"],
             content=it["content"],
             character_id=char_id,
@@ -92,9 +92,9 @@ def _add_memories(s: LanceStore, char_id: str, items: list[dict]) -> None:
 
 
 class TestWhereDictToSql:
-    """ChromaDB 形式 where dict → LanceDB SQL 変換ロジックのテスト。
+    """LanceDB 形式 where dict → LanceDB SQL 変換ロジックのテスト。
 
-    ``MemoryManager.recall_with_identity`` が ``{"category": {"$ne": "identity"}}`` 形式を
+    ``InscribedMemoryManager.recall_with_identity`` が ``{"category": {"$ne": "identity"}}`` 形式を
     使うため、$ne の正しい変換が特に重要。
     """
 
@@ -164,45 +164,44 @@ class TestAddRecallMemory:
 
     def test_add_then_recall_returns_added_memory(self, store):
         """add_memory した記憶が recall_memory で取得できる。"""
-        store.add_memory(
+        store.add_inscribed_memory(
             memory_id="m1",
             content="コーヒーが好き",
             character_id="char_a",
             metadata={"category": "user"},
         )
-        results = store.recall_memory(query="コーヒー", character_id="char_a", top_k=5)
+        results = store.recall_inscribed_memory(query="コーヒー", character_id="char_a", top_k=5)
         assert len(results) == 1
         r = results[0]
         assert r["id"] == "m1"
         assert r["content"] == "コーヒーが好き"
-        # ChromaStore 互換の戻り値形状
+        # LanceStore 互換の戻り値形状
         assert "distance" in r
         assert r["metadata"]["category"] == "user"
         assert r["metadata"]["character_id"] == "char_a"
 
     def test_recall_filters_by_character_id(self, store):
         """recall_memory は character_id で必ずフィルタする（他キャラの記憶は混入しない）。"""
-        store.add_memory(memory_id="ma", content="char A の記憶", character_id="char_a", metadata={"category": "x"})
-        store.add_memory(memory_id="mb", content="char B の記憶", character_id="char_b", metadata={"category": "x"})
-        results = store.recall_memory(query="記憶", character_id="char_a", top_k=10)
+        store.add_inscribed_memory(memory_id="ma", content="char A の記憶", character_id="char_a", metadata={"category": "x"})
+        store.add_inscribed_memory(memory_id="mb", content="char B の記憶", character_id="char_b", metadata={"category": "x"})
+        results = store.recall_inscribed_memory(query="記憶", character_id="char_a", top_k=10)
         ids = [r["id"] for r in results]
         assert "ma" in ids
         assert "mb" not in ids
 
     def test_recall_on_empty_store_returns_empty(self, store):
         """テーブル未作成の状態で recall を呼んでも例外を出さず空リストを返す。"""
-        assert store.recall_memory(query="anything", character_id="char_x", top_k=5) == []
+        assert store.recall_inscribed_memory(query="anything", character_id="char_x", top_k=5) == []
 
     def test_add_same_id_updates_inplace(self, store):
         """同一 ID で add_memory を再呼び出しすると既存レコードが in-place 更新される。
 
-        旧 ChromaStore の欠陥 C（旧ID delete + 新ID add で HNSW ゴーストID共存）を
-        構造的に避けるため、merge_insert による upsert になっていることを保証する。
+        merge_insert による upsert になっていることを保証する。
         """
-        store.add_memory(memory_id="m1", content="初期内容", character_id="c", metadata={"category": "user"})
-        store.add_memory(memory_id="m1", content="更新内容", character_id="c", metadata={"category": "identity"})
+        store.add_inscribed_memory(memory_id="m1", content="初期内容", character_id="c", metadata={"category": "user"})
+        store.add_inscribed_memory(memory_id="m1", content="更新内容", character_id="c", metadata={"category": "identity"})
 
-        results = store.recall_memory(query="内容", character_id="c", top_k=5)
+        results = store.recall_inscribed_memory(query="内容", character_id="c", top_k=5)
         # ID 重複ではなく1件にマージされていること
         assert len([r for r in results if r["id"] == "m1"]) == 1
         target = next(r for r in results if r["id"] == "m1")
@@ -218,8 +217,7 @@ class TestAddRecallMemory:
 class TestRecallMemoryWithWhereFilter:
     """recall_memory の where 引数が正しく動くことを検証する。
 
-    特に旧 ChromaStore で発生していた「フィルタ後件数 < top_k で結果が消える」バグが
-    LanceStore では発生しないことを保証する（LanceDB の prefilter + LIMIT で安全）。
+    LanceDB の prefilter + LIMIT で「フィルタ後件数 < top_k でも結果が消えない」ことを保証する。
     """
 
     def test_identity_only_filter(self, store):
@@ -232,7 +230,7 @@ class TestRecallMemoryWithWhereFilter:
         ]
         _add_memories(store, char_id, items)
 
-        results = store.recall_memory(query="名前", character_id=char_id, top_k=5, where={"category": "identity"})
+        results = store.recall_inscribed_memory(query="名前", character_id=char_id, top_k=5, where={"category": "identity"})
         assert len(results) == 2
         for r in results:
             assert r["metadata"]["category"] == "identity"
@@ -240,7 +238,7 @@ class TestRecallMemoryWithWhereFilter:
     def test_filtered_count_less_than_top_k_returns_filtered_count(self, store):
         """旧バグ再現: フィルタ後件数 (2) < top_k (5) でも結果が消えないことを保証する。
 
-        ChromaStore では `Number of requested results > number of elements based on filters`
+        LanceStore では `Number of requested results > number of elements based on filters`
         例外が発生し、空リストが返る不具合があった。LanceDB は LIMIT で勝手に絞るため
         この問題は構造的に発生しない。
         """
@@ -252,7 +250,7 @@ class TestRecallMemoryWithWhereFilter:
         ]
         _add_memories(store, char_id, items)
 
-        results = store.recall_memory(
+        results = store.recall_inscribed_memory(
             query="記憶",
             character_id=char_id,
             top_k=5,
@@ -274,7 +272,7 @@ class TestRecallMemoryWithWhereFilter:
         ]
         _add_memories(store, char_id, items)
 
-        results = store.recall_memory(
+        results = store.recall_inscribed_memory(
             query="記憶",
             character_id=char_id,
             top_k=10,
@@ -301,7 +299,7 @@ class TestFindSimilarInCategory:
 
     def test_returns_existing_id_for_identical_content(self, store):
         """同一テキストを与えると既存 ID を返す（距離 0 < threshold）。"""
-        store.add_memory(memory_id="m1", content="identical", character_id="c", metadata={"category": "user"})
+        store.add_inscribed_memory(memory_id="m1", content="identical", character_id="c", metadata={"category": "user"})
         result = store.find_similar_in_category(
             content="identical", character_id="c", category="user", threshold=0.15
         )
@@ -309,7 +307,7 @@ class TestFindSimilarInCategory:
 
     def test_skips_other_category(self, store):
         """指定カテゴリ以外は検索対象外（identity を探しているのに user は対象外）。"""
-        store.add_memory(memory_id="m1", content="x", character_id="c", metadata={"category": "user"})
+        store.add_inscribed_memory(memory_id="m1", content="x", character_id="c", metadata={"category": "user"})
         result = store.find_similar_in_category(
             content="x", character_id="c", category="identity", threshold=0.15
         )
@@ -324,31 +322,31 @@ class TestFindSimilarInCategory:
 class TestDelete:
     """物理削除が正しく動くことを検証する。"""
 
-    def test_delete_memory_removes_record(self, store):
+    def test_delete_inscribed_memory_removes_record(self, store):
         """delete_memory で指定 ID が消える（recall に出てこない）。"""
-        store.add_memory(memory_id="m1", content="残る記憶", character_id="c", metadata={"category": "x"})
-        store.add_memory(memory_id="m2", content="消す記憶", character_id="c", metadata={"category": "x"})
-        store.delete_memory(memory_id="m2", character_id="c")
-        results = store.recall_memory(query="記憶", character_id="c", top_k=5)
+        store.add_inscribed_memory(memory_id="m1", content="残る記憶", character_id="c", metadata={"category": "x"})
+        store.add_inscribed_memory(memory_id="m2", content="消す記憶", character_id="c", metadata={"category": "x"})
+        store.delete_inscribed_memory(memory_id="m2", character_id="c")
+        results = store.recall_inscribed_memory(query="記憶", character_id="c", top_k=5)
         ids = [r["id"] for r in results]
         assert "m1" in ids
         assert "m2" not in ids
 
     def test_delete_all_memories_removes_only_target_character(self, store):
         """delete_all_memories は指定キャラのみ削除し、他キャラは残す（単一テーブル方式の検証）。"""
-        store.add_memory(memory_id="ma", content="A", character_id="char_a", metadata={"category": "x"})
-        store.add_memory(memory_id="mb", content="B", character_id="char_b", metadata={"category": "x"})
-        store.delete_all_memories("char_a")
+        store.add_inscribed_memory(memory_id="ma", content="A", character_id="char_a", metadata={"category": "x"})
+        store.add_inscribed_memory(memory_id="mb", content="B", character_id="char_b", metadata={"category": "x"})
+        store.delete_all_inscribed_memories("char_a")
 
-        a_results = store.recall_memory(query="A", character_id="char_a", top_k=5)
-        b_results = store.recall_memory(query="B", character_id="char_b", top_k=5)
+        a_results = store.recall_inscribed_memory(query="A", character_id="char_a", top_k=5)
+        b_results = store.recall_inscribed_memory(query="B", character_id="char_b", top_k=5)
         assert a_results == []
         assert len(b_results) == 1 and b_results[0]["id"] == "mb"
 
     def test_delete_on_missing_table_is_noop(self, store):
         """テーブル未作成での delete 呼び出しは例外を出さず黙って戻る。"""
-        store.delete_memory(memory_id="x", character_id="c")
-        store.delete_all_memories("c")
+        store.delete_inscribed_memory(memory_id="x", character_id="c")
+        store.delete_all_inscribed_memories("c")
 
 
 # ---------------------------------------------------------------------------
@@ -454,11 +452,11 @@ def test_persistence_across_reopen(tmp_path):
     backend 再起動後も記憶が消えないことの最低限の保証。
     """
     s1 = LanceStore(db_path=str(tmp_path), embedding_fn=FakeEmbeddingFunction())
-    s1.add_memory(memory_id="m1", content="残るべき記憶", character_id="c", metadata={"category": "user"})
+    s1.add_inscribed_memory(memory_id="m1", content="残るべき記憶", character_id="c", metadata={"category": "user"})
     del s1
 
     s2 = LanceStore(db_path=str(tmp_path), embedding_fn=FakeEmbeddingFunction())
-    results = s2.recall_memory(query="記憶", character_id="c", top_k=5)
+    results = s2.recall_inscribed_memory(query="記憶", character_id="c", top_k=5)
     assert len(results) == 1
     assert results[0]["id"] == "m1"
     assert results[0]["content"] == "残るべき記憶"

@@ -474,13 +474,13 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         accumulated_reasoning = ""
         try:
             async for chunk_type, content in state.chat_service.execute_stream(chat_request):
-                if chunk_type == "memories":
+                if chunk_type == "inscribed_memories":
                     display = format_memories_for_sse(content)
                     if display:
                         accumulated_reasoning += display
                         data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
-                elif chunk_type == "wm_threads":
+                elif chunk_type == "working_memory_threads":
                     display = format_recalled_threads(content)
                     if display:
                         accumulated_reasoning += display

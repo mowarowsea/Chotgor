@@ -42,8 +42,8 @@ import type {
   ScenarioSynopsis,
   ScenarioTemplate,
   ScenarioPreset,
-  ZetaNpc,
-  ZetaTurn,
+  ScenarioNpc,
+  ScenarioTurn,
 } from "./api";
 import { charNameOf } from "./api";
 
@@ -58,7 +58,7 @@ import { charNameOf } from "./api";
  * 上記の単純なマッピングで出力される。
  */
 function scenarioTurnsToExportMessages(
-  turns: ZetaTurn[],
+  turns: ScenarioTurn[],
   sessionId: string,
 ): ChatMessage[] {
   return turns.map<ChatMessage>((t) => {
@@ -229,8 +229,8 @@ export default function App() {
     if (!id) return null;
     return scenarioPresets.find((p) => p.id === id)?.name ?? null;
   }, [activeScenarioTemplate, scenarioPresets]);
-  const [scenarioNpcs, setScenarioNpcs] = useState<ZetaNpc[]>([]);
-  const [scenarioTurns, setScenarioTurns] = useState<ZetaTurn[]>([]);
+  const [scenarioNpcs, setScenarioNpcs] = useState<ScenarioNpc[]>([]);
+  const [scenarioTurns, setScenarioTurns] = useState<ScenarioTurn[]>([]);
   /** ストリーミング中の未確定吹き出し列。 */
   const [scenarioPending, setScenarioPending] = useState<PendingBubble[]>([]);
   /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
@@ -615,7 +615,7 @@ export default function App() {
 
     // 直前に user 発話があるかを見て、通常 / auto_advance を判別。
     const prev = lastTurnStart > 0 ? scenarioTurns[lastTurnStart - 1] : null;
-    let pivot: ZetaTurn;
+    let pivot: ScenarioTurn;
     let resend: () => Promise<void>;
     if (prev && prev.speaker_type === "user") {
       // 通常ターン: user を含めて削除し、同じ発話で再ストリーム

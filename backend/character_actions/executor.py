@@ -1,18 +1,13 @@
 """Chotgor MCPツール定義 — 記憶・ワーキングメモリ・アングル切り替えのツールスキーマとexecutor。
 
-タグ方式（[INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] マーカー）に代わり、LLMのtool-use（function calling）で
-記憶・ワーキングメモリ・switch_angle を操作するための定義を提供する。
-
-対応プロバイダー: Anthropic API、OpenAI API（xAI含む）
-非対応プロバイダー（Claude CLI、Ollama）は従来のマーカー方式にフォールバックする。
+LLM の tool-use（function calling）で保存記憶・ワーキングメモリ・switch_angle 等を
+操作するための定義を提供する。tool-use 非対応プロバイダー（Claude CLI、Ollama）は
+タグ方式（[INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] マーカー）にフォールバックする。
 
 各ツールのスキーマ・説明文は対応モジュールに定義する:
 - inscribe_memory: inscriber.py
 - carve_narrative: carver.py
-- post_thread / open_thread: threader.py
-
-退席機能（end_session）は廃止。FarewellDetector によるシステム側判定に置き換えた。
-旧 SELF_DRIFT（drift / drift_reset）はワーキングメモリへ統合され廃止された。
+- post_working_memory_thread / open_working_memory_thread: threader.py
 """
 
 from __future__ import annotations
@@ -22,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from backend.services.memory.manager import MemoryManager
+    from backend.services.memory.manager import InscribedMemoryManager
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
 from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
@@ -31,10 +26,10 @@ from backend.character_actions.carver import Carver, CARVE_NARRATIVE_SCHEMA, CAR
 from backend.character_actions.inscriber import Inscriber, INSCRIBE_MEMORY_SCHEMA, INSCRIBE_MEMORY_TOOL_DESCRIPTION
 from backend.character_actions.threader import (
     Threader,
-    POST_THREAD_SCHEMA,
-    POST_THREAD_TOOL_DESCRIPTION,
-    OPEN_THREAD_SCHEMA,
-    OPEN_THREAD_TOOL_DESCRIPTION,
+    POST_WORKING_MEMORY_THREAD_SCHEMA,
+    POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    OPEN_WORKING_MEMORY_THREAD_SCHEMA,
+    OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
 )
 
 # Anthropic形式のツール定義リスト
@@ -45,14 +40,14 @@ ANTHROPIC_TOOLS: list[dict] = [
         "input_schema": INSCRIBE_MEMORY_SCHEMA,
     },
     {
-        "name": "post_thread",
-        "description": POST_THREAD_TOOL_DESCRIPTION,
-        "input_schema": POST_THREAD_SCHEMA,
+        "name": "post_working_memory_thread",
+        "description": POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+        "input_schema": POST_WORKING_MEMORY_THREAD_SCHEMA,
     },
     {
-        "name": "open_thread",
-        "description": OPEN_THREAD_TOOL_DESCRIPTION,
-        "input_schema": OPEN_THREAD_SCHEMA,
+        "name": "open_working_memory_thread",
+        "description": OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+        "input_schema": OPEN_WORKING_MEMORY_THREAD_SCHEMA,
     },
     {
         "name": "carve_narrative",
@@ -91,7 +86,7 @@ class ToolCall:
 
     Attributes:
         id: プロバイダーが発行するツール呼び出しID。
-        name: ツール名（inscribe_memory / post_thread / open_thread / carve_narrative / switch_angle / power_recall）。
+        name: ツール名（inscribe_memory / post_working_memory_thread / open_working_memory_thread / carve_narrative / switch_angle / power_recall）。
         input: ツールに渡す引数 dict。
     """
 
@@ -123,7 +118,7 @@ class ToolTurnResult:
 class ToolExecutor:
     """LLMからのツール呼び出しを実際に実行するクラス。
 
-    inscribe_memory / post_thread / open_thread / carve_narrative / switch_angle / power_recall の
+    inscribe_memory / post_working_memory_thread / open_working_memory_thread / carve_narrative / switch_angle / power_recall の
     各ツールを受け取り、Inscriber / Threader / Carver / Switcher を通じてDBへ反映する。
 
     Attributes:
@@ -148,7 +143,7 @@ class ToolExecutor:
         self,
         character_id: str,
         session_id: str | None,
-        memory_manager: MemoryManager,
+        memory_manager: InscribedMemoryManager,
         working_memory_manager: WorkingMemoryManager | None,
         batch_context: dict | None = None,
     ) -> None:
@@ -178,7 +173,7 @@ class ToolExecutor:
         """ツール名と入力を受け取り実行して結果テキストを返す。
 
         Args:
-            tool_name: ツール名（"inscribe_memory" / "post_thread" / "open_thread" / "carve_narrative" / "switch_angle" / "power_recall"）。
+            tool_name: ツール名（"inscribe_memory" / "post_working_memory_thread" / "open_working_memory_thread" / "carve_narrative" / "switch_angle" / "power_recall"）。
             tool_input: ツールの入力パラメータ dict。
 
         Returns:
@@ -191,10 +186,10 @@ class ToolExecutor:
                 category=str(tool_input.get("category", "contextual")),
                 impact=float(tool_input.get("impact", 1.0)),
             )
-        if tool_name == "post_thread":
-            return self._post_thread(tool_input)
-        if tool_name == "open_thread":
-            return self._threader.open_thread(
+        if tool_name == "post_working_memory_thread":
+            return self._post_working_memory_thread(tool_input)
+        if tool_name == "open_working_memory_thread":
+            return self._threader.open_working_memory_thread(
                 thread_id=str(tool_input.get("thread_id", "")),
             )
         if tool_name == "carve_narrative":
@@ -233,8 +228,8 @@ class ToolExecutor:
             self.logger.exception("エラー char=%s", self.character_id)
             return f"[inscribe_memory error: {e}]"
 
-    def _post_thread(self, tool_input: dict) -> str:
-        """post_thread ツールの実装。Threader.post_thread() に委譲する。
+    def _post_working_memory_thread(self, tool_input: dict) -> str:
+        """post_working_memory_thread ツールの実装。Threader.post_working_memory_thread() に委譲する。
 
         importance は省略可能なため、キー不在時は None を渡して
         WorkingMemoryManager 側のデフォルト（新規=0.5／更新=変更なし）に委ねる。
@@ -245,11 +240,11 @@ class ToolExecutor:
                 importance = float(importance)
             except (TypeError, ValueError):
                 importance = None
-        return self._threader.post_thread(
+        return self._threader.post_working_memory_thread(
             thread_id=str(tool_input.get("thread_id", "")),
             type=str(tool_input.get("type", "")),
             summary=str(tool_input.get("summary", "")),
-            atmosphere=str(tool_input.get("atmosphere", "")),
+            atmosphere_tag=str(tool_input.get("atmosphere_tag", "")),
             importance=importance,
             content=str(tool_input.get("content", "")),
             relation_target=str(tool_input.get("relation_target", "")),
@@ -271,9 +266,7 @@ class ToolExecutor:
             return f"[carve_narrative error: {e}]"
 
     def _power_recall(self, query: str, top_k: int) -> str:
-        """power_recall ツールの実装。記憶コレクションとチャット履歴コレクションを横断検索して結果をテキストで返す。
-
-        ChromaDB同期失敗中の場合、結果の先頭に再インデックスを促す警告を表示する。
+        """power_recall ツールの実装。保存記憶コレクションとチャット履歴コレクションを横断検索して結果をテキストで返す。
 
         Args:
             query: 検索クエリテキスト。
@@ -290,10 +283,7 @@ class ToolExecutor:
             self.logger.exception("エラー char=%s query=%.50s", self.character_id, query)
             return f"[power_recall error: {e}]"
 
-        # ChromaDB同期失敗中の警告を取り出す（存在しない場合はNone）
-        warning = results.pop("_warning", None)
-
-        memories = results.get("memories", [])
+        memories = results.get("inscribed_memories", [])
         chat_turns = results.get("chat_turns", [])
 
         self.logger.info(
@@ -302,10 +292,6 @@ class ToolExecutor:
         )
 
         lines: list[str] = []
-
-        # ChromaDB同期失敗中は先頭に警告を表示する
-        if warning:
-            lines.append(f"【⚠️ システム警告】{warning}\n")
 
         if not memories and not chat_turns:
             lines.append(f"「{query}」に関する記憶・会話は見つからなかった。")

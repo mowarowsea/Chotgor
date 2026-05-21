@@ -243,7 +243,7 @@ def _make_tool_provider(turn_results: list):
 @pytest.mark.asyncio
 async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
     """SUPPORTS_TOOLS=True のプロバイダーが inscribe_memory ツールを呼び出したとき、
-    memory_manager.write_memory が実際に呼ばれること。
+    memory_manager.write_inscribed_memory が実際に呼ばれること。
 
     サービス → generate_with_tools → ToolExecutor → inscribe_memory → memory_manager という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
@@ -277,8 +277,8 @@ async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
         result = await service.execute(request)
 
     assert result == "覚えたよ"
-    memory_manager.write_memory.assert_called_once()
-    call_kwargs = memory_manager.write_memory.call_args
+    memory_manager.write_inscribed_memory.assert_called_once()
+    call_kwargs = memory_manager.write_inscribed_memory.call_args
     assert call_kwargs.kwargs.get("content") == "ユーザは猫が好き"
 
 
@@ -326,8 +326,8 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
 
 
 @pytest.mark.asyncio
-async def test_execute_with_tools_creates_thread_via_post_thread():
-    """SUPPORTS_TOOLS=True のプロバイダーが post_thread ツール（新規作成）を呼び出したとき、
+async def test_execute_with_tools_creates_thread_via_post_working_memory_thread():
+    """SUPPORTS_TOOLS=True のプロバイダーが post_working_memory_thread ツール（新規作成）を呼び出したとき、
     working_memory_manager.create_thread が実際に呼ばれること。
 
     サービス → generate_with_tools → ToolExecutor → Threader → WorkingMemoryManager という
@@ -351,7 +351,7 @@ async def test_execute_with_tools_creates_thread_via_post_thread():
 
     tc = ToolCall(
         id="tc-3",
-        name="post_thread",
+        name="post_working_memory_thread",
         input={"type": "topic", "summary": "気になっている件", "importance": 0.7},
     )
     provider = _make_tool_provider([
@@ -378,8 +378,8 @@ async def test_execute_with_tools_creates_thread_via_post_thread():
 
 
 @pytest.mark.asyncio
-async def test_execute_with_tools_adds_post_via_post_thread():
-    """SUPPORTS_TOOLS=True のプロバイダーが post_thread ツール（既存更新）を呼び出したとき、
+async def test_execute_with_tools_adds_post_via_post_working_memory_thread():
+    """SUPPORTS_TOOLS=True のプロバイダーが post_working_memory_thread ツール（既存更新）を呼び出したとき、
     working_memory_manager.add_post が実際に呼ばれること。
     """
     from backend.character_actions.executor import ToolCall, ToolTurnResult
@@ -399,7 +399,7 @@ async def test_execute_with_tools_adds_post_via_post_thread():
 
     tc = ToolCall(
         id="tc-4",
-        name="post_thread",
+        name="post_working_memory_thread",
         input={"thread_id": "thread-9", "content": "進展があった"},
     )
     provider = _make_tool_provider([

@@ -59,8 +59,8 @@
         <div class="memory-card {% if not t.is_open %}memory-deleted{% endif %}">
             <div class="memory-header">
                 <span class="badge badge-{{ t.type }}">{{ t.type }}</span>
-                {% if t.atmosphere %}
-                <span class="badge badge-atmosphere">{{ t.atmosphere }}</span>
+                {% if t.atmosphere_tag %}
+                <span class="badge badge-atmosphere">{{ t.atmosphere_tag }}</span>
                 {% endif %}
                 {% if not t.is_open %}
                 <span class="badge badge-deleted">Archived</span>

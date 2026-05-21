@@ -4,9 +4,9 @@
 API のレスポンス整形に使う dict 変換ヘルパを提供する。
 
 責務:
-    - プレイヤー発話を zeta_turns に保存
+    - プレイヤー発話を scenario_turns に保存
     - EnsembleEngine を駆動して話者単位の SSE イベントを生成
-    - 各発話を zeta_turns に保存
+    - 各発話を scenario_turns に保存
     - raw_response はそのターン内の発話レコードに共通で紐付ける
 
 group_chat.run_group_turn と同じ思想（非同期ジェネレータで SSE 用イベントを yield）
@@ -44,8 +44,8 @@ SYNOPSIS_AUTO_TRIGGER_CHARS = 1500
 # ─── dict 変換 ───────────────────────────────────────────────────────────────
 
 
-def zeta_scenario_to_dict(scenario: Any) -> dict:
-    """ZetaScenario ORM を JSON 化可能な dict に変換する。"""
+def scenario_to_dict(scenario: Any) -> dict:
+    """Scenario ORM を JSON 化可能な dict に変換する。"""
     if scenario is None:
         return {}
     return {
@@ -62,8 +62,8 @@ def zeta_scenario_to_dict(scenario: Any) -> dict:
     }
 
 
-def zeta_session_to_dict(session: Any) -> dict:
-    """ZetaSession ORM（プレイインスタンス）を JSON 化可能な dict に変換する。"""
+def scenario_session_to_dict(session: Any) -> dict:
+    """ScenarioSession ORM（プレイインスタンス）を JSON 化可能な dict に変換する。"""
     if session is None:
         return {}
     return {
@@ -80,8 +80,8 @@ def zeta_session_to_dict(session: Any) -> dict:
     }
 
 
-def zeta_npc_to_dict(npc: Any) -> dict:
-    """ZetaNpc ORM を JSON 化可能な dict に変換する。"""
+def scenario_npc_to_dict(npc: Any) -> dict:
+    """ScenarioNpc ORM を JSON 化可能な dict に変換する。"""
     if npc is None:
         return {}
     return {
@@ -95,8 +95,8 @@ def zeta_npc_to_dict(npc: Any) -> dict:
     }
 
 
-def zeta_turn_to_dict(turn: Any) -> dict:
-    """ZetaTurn ORM を JSON 化可能な dict に変換する。"""
+def scenario_turn_to_dict(turn: Any) -> dict:
+    """ScenarioTurn ORM を JSON 化可能な dict に変換する。"""
     if turn is None:
         return {}
     return {
@@ -156,7 +156,7 @@ async def maybe_update_auto_synopsis(
             )
             return None
 
-        synopsis = sqlite.get_zeta_session_synopsis(session_id) or {
+        synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
             "auto": "",
             "manual": "",
             "last_turn_index": -1,
@@ -222,7 +222,7 @@ async def maybe_update_auto_synopsis(
             "auto synopsis 蒸留完了 session=%s last_turn_index=%d→%d 出力文字数=%d",
             session_id, last_idx, latest_idx, len(new_auto),
         )
-        return sqlite.update_zeta_session_synopsis(
+        return sqlite.update_scenario_session_synopsis(
             session_id,
             auto=new_auto,
             last_turn_index=latest_idx,
@@ -242,7 +242,7 @@ async def run_scenario_turn(
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザ発話を受け取り、シナリオ 1 ターン分の SSE イベントを順次 yield する。
 
-    プレイセッション（zeta_sessions）から元シナリオ（zeta_scenarios）を lookup し、
+    プレイセッション（scenario_sessions）から元シナリオ（scenarios）を lookup し、
     そのシナリオの NPC・user_alias・GM プリセット等で 1 ターンを進行させる。
 
     auto_advance=True の場合:
@@ -252,19 +252,19 @@ async def run_scenario_turn(
         - GM プロンプト末尾に「プレイヤーは無言、場面を進めて」という OOC 指示が入る
     """
     current_log_feature.set("scenario_chat")
-    session = sqlite.get_zeta_session(session_id)
+    session = sqlite.get_scenario_session(session_id)
     if not session:
         yield ("error", {"message": f"セッション '{session_id}' が見つかりません"})
         return
     if session.status != "active":
         yield ("error", {"message": "セッションは終了しています"})
         return
-    scenario = sqlite.get_zeta_scenario(session.scenario_id)
+    scenario = sqlite.get_scenario(session.scenario_id)
     if not scenario:
         yield ("error", {"message": "元シナリオが見つかりません（孤児セッション）"})
         return
 
-    npcs = sqlite.list_zeta_npcs(scenario.id)
+    npcs = sqlite.list_scenario_npcs(scenario.id)
 
     # 1. プレイヤー発話を保存（auto_advance 時はスキップして痕跡を残さない）
     if not auto_advance:
@@ -275,10 +275,10 @@ async def run_scenario_turn(
             speaker_name=scenario.user_alias,
             content=user_message,
         )
-        yield ("user_saved", {"turn": zeta_turn_to_dict(user_turn)})
+        yield ("user_saved", {"turn": scenario_turn_to_dict(user_turn)})
 
     # 2. 履歴を取得（auto_advance 時はプレイヤー発話を含まない最新ターンまで）
-    history = sqlite.list_zeta_turns(session_id)
+    history = sqlite.list_scenario_turns(session_id)
 
     # 2.5. あらすじ自動更新（best-effort）
     #      履歴上限を超えるターン群があれば、それを LLM で要約して synopsis_auto に追記する。
@@ -296,7 +296,7 @@ async def run_scenario_turn(
         yield ("synopsis_updated", {"synopsis": updated_synopsis})
         current_synopsis = updated_synopsis
     else:
-        current_synopsis = sqlite.get_zeta_session_synopsis(session_id) or {
+        current_synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
             "auto": "",
             "manual": "",
             "last_turn_index": -1,
@@ -355,10 +355,10 @@ async def run_scenario_turn(
             raw_response=raw_response,
         )
         saved_turn_ids.append(saved.id)
-        yield ("speaker_end", {"turn": zeta_turn_to_dict(saved)})
+        yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
 
     # セッションの updated_at を最新化（タイトルは触らない）
-    sqlite.update_zeta_session(session_id, status=session.status)
+    sqlite.update_scenario_session(session_id, status=session.status)
 
     yield ("turn_complete", {"turn_ids": saved_turn_ids})
 
@@ -453,7 +453,7 @@ def seed_intro_turns(sqlite, session_id: str, scenario) -> int:
     Args:
         sqlite: SQLiteStore インスタンス。
         session_id: 対象セッション ID。
-        scenario: ZetaScenario ORM。intro を持つ。
+        scenario: Scenario ORM。intro を持つ。
 
     Returns:
         実際に保存したターン数。
@@ -461,7 +461,7 @@ def seed_intro_turns(sqlite, session_id: str, scenario) -> int:
     intro_text = getattr(scenario, "intro", None)
     if not intro_text or not intro_text.strip():
         return 0
-    npcs = sqlite.list_zeta_npcs(scenario.id)
+    npcs = sqlite.list_scenario_npcs(scenario.id)
     known = {n.name: n.id for n in npcs if getattr(n, "name", None)}
     blocks = parse_intro_to_turns(
         intro_text=intro_text,
@@ -493,8 +493,8 @@ def _save_turn(
 ):
     """ターンを次の turn_index で保存して返す共通ヘルパ。"""
     turn_id = str(uuid.uuid4())
-    next_index = sqlite.get_next_zeta_turn_index(session_id)
-    return sqlite.create_zeta_turn(
+    next_index = sqlite.get_next_scenario_turn_index(session_id)
+    return sqlite.create_scenario_turn(
         turn_id=turn_id,
         session_id=session_id,
         turn_index=next_index,

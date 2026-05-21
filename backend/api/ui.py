@@ -8,7 +8,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from backend.services.memory.migration_service import migrate_embeddings
+from backend.services.memory.reindex_service import reindex_with_new_embeddings
 from backend.providers.registry import (
     PROVIDER_LABELS,
     PROVIDER_ORDER,
@@ -259,8 +259,8 @@ async def update_character(request: Request, character_id: str):
 
 @router.post("/characters/{character_id}/delete")
 async def delete_character(request: Request, character_id: str):
-    """キャラクターと全記憶を削除する。ChromaDB・SQLite の順に削除する。"""
-    request.app.state.memory_manager.delete_character_with_memories(character_id)
+    """キャラクターと全保存記憶を削除する。LanceDB・SQLite の順に削除する。"""
+    request.app.state.memory_manager.delete_character_with_inscribed_memories(character_id)
     return RedirectResponse(url="/ui/", status_code=303)
 
 
@@ -278,7 +278,7 @@ async def memories_view(
     if not char:
         return RedirectResponse(url="/ui/", status_code=303)
 
-    memories = request.app.state.memory_manager.list_memories(
+    memories = request.app.state.memory_manager.list_inscribed_memories(
         character_id=character_id,
         category=category,
         include_deleted=deleted_only,
@@ -297,7 +297,7 @@ async def memories_view(
         {
             "request": request,
             "character": char,
-            "memories": memories,
+            "inscribed_memories": memories,
             "categories": categories,
             "selected_category": category,
             "deleted_only": deleted_only,
@@ -308,8 +308,8 @@ async def memories_view(
 
 @router.post("/memories/{character_id}/{memory_id}/delete")
 async def delete_memory(request: Request, character_id: str, memory_id: str):
-    request.app.state.memory_manager.delete_memory(memory_id, character_id)
-    return RedirectResponse(url=f"/ui/memories/{character_id}", status_code=303)
+    request.app.state.memory_manager.delete_inscribed_memory(memory_id, character_id)
+    return RedirectResponse(url=f"/ui/inscribed_memories/{character_id}", status_code=303)
 
 
 @router.get("/working-memory/{character_id}", response_class=HTMLResponse)
@@ -430,7 +430,7 @@ async def delete_model_preset(request: Request, preset_id: str):
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 
 
-# --- Scenarios (Zeta Mode テンプレート管理) ---
+# --- Scenarios (シナリオテンプレート管理) ---
 
 
 def _coalesce_optional_int(form, key: str):
@@ -447,7 +447,7 @@ def _coalesce_optional_int(form, key: str):
 @router.get("/scenarios", response_class=HTMLResponse)
 async def scenarios_list(request: Request):
     """シナリオテンプレート一覧ページ。"""
-    scenarios = request.app.state.sqlite.list_zeta_scenarios()
+    scenarios = request.app.state.sqlite.list_scenarios()
     return get_templates().TemplateResponse(
         "scenarios.html",
         {"request": request, "scenarios": scenarios},
@@ -481,7 +481,7 @@ async def create_scenario(request: Request):
         return RedirectResponse(url="/ui/scenarios/new", status_code=303)
 
     sid = str(uuid.uuid4())
-    request.app.state.sqlite.create_zeta_scenario(
+    request.app.state.sqlite.create_scenario(
         scenario_id=sid,
         title=title,
         user_alias=user_alias,
@@ -498,10 +498,10 @@ async def create_scenario(request: Request):
 async def edit_scenario_form(request: Request, scenario_id: str):
     """シナリオテンプレート編集ページ（NPC 編集を含む）。"""
     sqlite = request.app.state.sqlite
-    scenario = sqlite.get_zeta_scenario(scenario_id)
+    scenario = sqlite.get_scenario(scenario_id)
     if not scenario:
         return RedirectResponse(url="/ui/scenarios", status_code=303)
-    npcs = sqlite.list_zeta_npcs(scenario_id)
+    npcs = sqlite.list_scenario_npcs(scenario_id)
     model_presets = sqlite.list_model_presets()
     return get_templates().TemplateResponse(
         "scenario_edit.html",
@@ -533,14 +533,14 @@ async def update_scenario(request: Request, scenario_id: str):
     gm_preset_id = (form.get("gm_preset_id") or "").strip()
     if gm_preset_id:
         update_kwargs["gm_preset_id"] = gm_preset_id
-    request.app.state.sqlite.update_zeta_scenario(scenario_id, **update_kwargs)
+    request.app.state.sqlite.update_scenario(scenario_id, **update_kwargs)
     return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
 
 
 @router.post("/scenarios/{scenario_id}/delete")
 async def delete_scenario(request: Request, scenario_id: str):
     """シナリオテンプレートを削除する（紐づくセッション・ターンも一括削除）。"""
-    request.app.state.sqlite.delete_zeta_scenario(scenario_id)
+    request.app.state.sqlite.delete_scenario(scenario_id)
     return RedirectResponse(url="/ui/scenarios", status_code=303)
 
 
@@ -552,11 +552,11 @@ async def add_npc_form(request: Request, scenario_id: str):
     if not name:
         return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
     sqlite = request.app.state.sqlite
-    existing = [n for n in sqlite.list_zeta_npcs(scenario_id) if n.name == name]
+    existing = [n for n in sqlite.list_scenario_npcs(scenario_id) if n.name == name]
     if existing:
         return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
     image_data = await _read_image_data(form)
-    sqlite.create_zeta_npc(
+    sqlite.create_scenario_npc(
         npc_id=str(uuid.uuid4()),
         scenario_id=scenario_id,
         name=name,
@@ -584,14 +584,14 @@ async def edit_npc_form(request: Request, scenario_id: str, npc_id: str):
     elif form.get("remove_image"):
         update_kwargs["image_data"] = None
 
-    request.app.state.sqlite.update_zeta_npc(npc_id, **update_kwargs)
+    request.app.state.sqlite.update_scenario_npc(npc_id, **update_kwargs)
     return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
 
 
 @router.post("/scenarios/{scenario_id}/npcs/{npc_id}/delete")
 async def delete_npc_form(request: Request, scenario_id: str, npc_id: str):
     """NPC を削除する（過去の発話履歴は残る）。"""
-    request.app.state.sqlite.delete_zeta_npc(npc_id)
+    request.app.state.sqlite.delete_scenario_npc(npc_id)
     return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
 
 
@@ -697,21 +697,21 @@ async def save_embedding_settings(
         current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
         try:
             state = request.app.state
-            new_vector_store, new_memory_manager, new_chat_service = await migrate_embeddings(
+            new_vector_store, new_memory_manager, new_chat_service = await reindex_with_new_embeddings(
                 sqlite=state.sqlite,
-                old_vector_store=state.vector_store,
+                vector_store=state.vector_store,
                 working_memory_manager=state.working_memory_manager,
                 new_provider=embedding_provider,
                 new_model=embedding_model,
                 new_api_key=current_google_key,
                 new_base_url=current_infinity_url,
             )
-            # マイグレーション後に app.state を新しいインスタンスで更新する
+            # 再インデックス後に app.state を新しいインスタンスで更新する
             state.vector_store = new_vector_store
             state.memory_manager = new_memory_manager
             state.chat_service = new_chat_service
         except Exception:
-            return RedirectResponse(url="/ui/settings?saved=1&migration_error=1", status_code=303)
+            return RedirectResponse(url="/ui/settings?saved=1&reindex_error=1", status_code=303)
 
     return RedirectResponse(url="/ui/settings?saved=1", status_code=303)
 
@@ -731,9 +731,9 @@ async def reindex_memories(request: Request):
     current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
     try:
         state = request.app.state
-        new_vector_store, new_memory_manager, new_chat_service = await migrate_embeddings(
+        new_vector_store, new_memory_manager, new_chat_service = await reindex_with_new_embeddings(
             sqlite=state.sqlite,
-            old_vector_store=state.vector_store,
+            vector_store=state.vector_store,
             working_memory_manager=state.working_memory_manager,
             new_provider=current_provider,
             new_model=current_model,

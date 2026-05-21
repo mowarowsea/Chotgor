@@ -20,7 +20,7 @@ from backend.lib.character_context import build_character_context
 from backend.services.character_query import ask_character, ask_character_with_tools
 
 if TYPE_CHECKING:
-    from backend.services.memory.manager import MemoryManager
+    from backend.services.memory.manager import InscribedMemoryManager
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
 _log = logging.getLogger(__name__)
@@ -67,13 +67,13 @@ _REFLECTION_USER_TEMPLATE = """\
 
 # 自己参照のユーザーメッセージ（MCPツール方式：tool-use対応プロバイダー向け）。
 # ask_character_with_tools() 経由で呼ぶため、システムプロンプト（use_tools=True）が
-# carve_narrative / post_thread ツールの説明を担う。タグの記述は不要。
+# carve_narrative / post_working_memory_thread ツールの説明を担う。タグの記述は不要。
 _REFLECTION_USER_TEMPLATE_TOOLS = """\
 これはユーザからのメッセージではなく、Chotgorシステムからのメッセージです。
 
 以下の会話を読み、あなたの反応がSystemInstructionを逸脱していないか確認してください。
 大幅に逸脱している場合は carve_narrative ツールを呼び出し、アイデンティティの再解釈・恒久的な価値観の変容・成長をあなたの言葉で記載してください。
-引っかかっている問いや、続いている感情・状態があれば post_thread ツールでワーキングメモリに記録してもかまいません。
+引っかかっている問いや、続いている感情・状態があれば post_working_memory_thread ツールでワーキングメモリに記録してもかまいません。
 特に何もなければツールを使わず「逸脱していない」「No」などと返答してください。
 
 [会話]
@@ -115,7 +115,7 @@ class SelfReflector:
 
     def __init__(
         self,
-        memory_manager: "MemoryManager",
+        memory_manager: "InscribedMemoryManager",
         working_memory_manager: "WorkingMemoryManager | None",
     ) -> None:
         """SelfReflector を初期化する。"""
@@ -209,7 +209,7 @@ class SelfReflector:
         """自己参照コールを実行し、内省結果をDBに反映する。
 
         プロバイダーが tool-use に対応している場合は ask_character_with_tools() 経由で
-        carve_narrative / post_thread ツールを直接呼び出す（MCPツール方式）。
+        carve_narrative / post_working_memory_thread ツールを直接呼び出す（MCPツール方式）。
         非対応の場合は ask_character() + テキストパース（タグ方式）にフォールバックする。
 
         Args:
@@ -229,7 +229,7 @@ class SelfReflector:
         supports_tools = bool(provider_cls and provider_cls.SUPPORTS_TOOLS)
 
         if supports_tools:
-            # MCPツール方式: carve_narrative / post_thread ツールをキャラクター自身が呼び出す
+            # MCPツール方式: carve_narrative / post_working_memory_thread ツールをキャラクター自身が呼び出す
             user_message = _REFLECTION_USER_TEMPLATE_TOOLS.format(conversation=conversation_text)
             _log.debug("自己参照(ツール方式) char=%s preset=%s", character_id, preset_id)
             await ask_character_with_tools(

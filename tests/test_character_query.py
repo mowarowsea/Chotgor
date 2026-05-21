@@ -9,7 +9,7 @@ ask_character() の動作を検証する。
 テスト方針:
     - SQLite は conftest.py の sqlite_store フィクスチャで実際の一時DBを使用する
     - LLMプロバイダーは AsyncMock で差し替える
-    - 記憶想起は MemoryManager.recall_with_identity() を MagicMock で差し替える
+    - 記憶想起は InscribedMemoryManager.recall_with_identity() を MagicMock で差し替える
     - キャラクター未発見・プリセット未発見・プロバイダー生成失敗・LLMコール失敗の
       いずれも例外を送出せず None を返すことを確認する
     - recall_query の有無で記憶想起の実行・スキップが切り替わることを確認する
@@ -277,7 +277,7 @@ class TestAskCharacterRecall:
     async def test_recall_failure_does_not_abort(self, sqlite_store, char_id, preset_id):
         """recall_with_identity() が例外を送出しても、記憶なしで続行してLLM応答を返すこと。"""
         memory_manager = MagicMock()
-        memory_manager.recall_with_identity = MagicMock(side_effect=RuntimeError("chroma down"))
+        memory_manager.recall_with_identity = MagicMock(side_effect=RuntimeError("vector store down"))
         provider = _mock_provider("記憶なしで応答")
         with patch("backend.services.character_query.create_provider", return_value=provider):
             result = await ask_character(

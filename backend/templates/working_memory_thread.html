@@ -21,8 +21,8 @@
 <div class="memory-card">
     <div class="memory-header">
         <span class="badge badge-{{ thread.type }}">{{ thread.type }}</span>
-        {% if thread.atmosphere %}
-        <span class="badge badge-atmosphere">{{ thread.atmosphere }}</span>
+        {% if thread.atmosphere_tag %}
+        <span class="badge badge-atmosphere">{{ thread.atmosphere_tag }}</span>
         {% endif %}
         {% if not thread.is_open %}
         <span class="badge badge-deleted">Archived</span>

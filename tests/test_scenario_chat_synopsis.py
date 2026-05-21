@@ -33,7 +33,7 @@ from backend.services.scenario_chat.synopsis import (
 
 @dataclass
 class FakeScenario:
-    """ZetaScenario 風のダミーオブジェクト。"""
+    """Scenario 風のダミーオブジェクト。"""
 
     user_alias: str = "プレイヤー"
     gm_preset_id: str = "preset-001"
@@ -42,7 +42,7 @@ class FakeScenario:
 
 @dataclass
 class FakeTurn:
-    """ZetaTurn 風のダミーオブジェクト。"""
+    """ScenarioTurn 風のダミーオブジェクト。"""
 
     speaker_type: str
     speaker_name: str

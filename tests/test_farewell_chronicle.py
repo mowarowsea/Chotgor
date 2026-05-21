@@ -190,10 +190,10 @@ class TestCheckEstrangement:
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "estranged"
 
-    def test_chroma_mark_called_when_estranged(self, sqlite_store, farewell_config_dict):
-        """疎遠化確定時に chroma.mark_definition_estranged() が呼ばれること。"""
+    def test_vector_store_mark_called_when_estranged(self, sqlite_store, farewell_config_dict):
+        """疎遠化確定時に vector_store.mark_definition_estranged() が呼ばれること。"""
         cid = str(uuid.uuid4())
-        sqlite_store.create_character(character_id=cid, name="EstrangedChroma")
+        sqlite_store.create_character(character_id=cid, name="EstrangedVector")
         sqlite_store.update_character(cid, farewell_config=farewell_config_dict)
         char = sqlite_store.get_character(cid)
 
@@ -203,10 +203,10 @@ class TestCheckEstrangement:
 
         mock_vector_store.mark_definition_estranged.assert_called_once_with(cid)
 
-    def test_chroma_none_does_not_raise(self, sqlite_store, farewell_config_dict):
-        """chroma が None でも例外が発生しないこと。"""
+    def test_vector_store_none_does_not_raise(self, sqlite_store, farewell_config_dict):
+        """vector_store が None でも例外が発生しないこと。"""
         cid = str(uuid.uuid4())
-        sqlite_store.create_character(character_id=cid, name="NullChroma")
+        sqlite_store.create_character(character_id=cid, name="NullVector")
         sqlite_store.update_character(cid, farewell_config=farewell_config_dict)
         char = sqlite_store.get_character(cid)
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=5):
@@ -215,19 +215,19 @@ class TestCheckEstrangement:
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "estranged"
 
-    def test_chroma_error_does_not_propagate(self, sqlite_store, farewell_config_dict):
-        """chroma.mark_definition_estranged() が例外を投げても run_chronicle が落ちないこと。"""
+    def test_vector_store_error_does_not_propagate(self, sqlite_store, farewell_config_dict):
+        """vector_store.mark_definition_estranged() が例外を投げても run_chronicle が落ちないこと。"""
         cid = str(uuid.uuid4())
-        sqlite_store.create_character(character_id=cid, name="ChromaError")
+        sqlite_store.create_character(character_id=cid, name="VectorStoreError")
         sqlite_store.update_character(cid, farewell_config=farewell_config_dict)
         char = sqlite_store.get_character(cid)
 
         mock_vector_store = MagicMock()
-        mock_vector_store.mark_definition_estranged.side_effect = RuntimeError("ChromaDB接続失敗")
+        mock_vector_store.mark_definition_estranged.side_effect = RuntimeError("LanceDB接続失敗")
         with patch.object(sqlite_store, "get_negative_exit_count", return_value=5):
             asyncio.run(_check_estrangement(char, sqlite_store, vector_store=mock_vector_store))
 
-        # chroma エラーがあっても relationship_status は更新されていること
+        # ベクトルストアエラーがあっても relationship_status は更新されていること
         char = sqlite_store.get_character(cid)
         assert getattr(char, "relationship_status", "active") == "estranged"
 
@@ -382,16 +382,16 @@ class TestRunChronicleFarewellConfig:
         assert "0.0" in prompt_content
 
 
-# ─── run_pending_chronicles() — chroma 引数 ──────────────────────────────────
+# ─── run_pending_chronicles() — vector_store 引数 ──────────────────────────────────
 
 
-class TestRunPendingChroniclesChroma:
+class TestRunPendingChroniclesVectorStore:
     """run_pending_chronicles() が vector_store を受け取って run_chronicle に渡すことを検証する。"""
 
-    def test_chroma_is_passed_to_run_chronicle(
+    def test_vector_store_is_passed_to_run_chronicle(
         self, sqlite_store, char_id_with_ghost, ghost_preset_id, working_memory_manager
     ):
-        """run_pending_chronicles() に渡した chroma が run_chronicle に伝達されること。"""
+        """run_pending_chronicles() に渡した vector_store が run_chronicle に伝達されること。"""
         mock_vector_store = MagicMock()
         response = _make_chronicle_response()
 
@@ -406,10 +406,10 @@ class TestRunPendingChroniclesChroma:
                 )
 
         # _check_estrangement が少なくとも1回呼ばれていること
-        # （chroma が run_chronicle に渡され、処理が実行されたことを確認）
+        # （vector_store が run_chronicle に渡され、処理が実行されたことを確認）
         assert mock_check.called
 
-    def test_chroma_none_does_not_raise(
+    def test_vector_store_none_does_not_raise(
         self, sqlite_store, char_id_with_ghost, ghost_preset_id, working_memory_manager
     ):
         """run_pending_chronicles() に vector_store=None を渡しても例外が発生しないこと。"""

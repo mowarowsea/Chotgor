@@ -25,7 +25,7 @@ from backend.services.scenario_chat.prompt_builder import build_gm_system_prompt
 
 @dataclass
 class FakeSession:
-    """ZetaSession 風のダミーオブジェクト。"""
+    """ScenarioSession 風のダミーオブジェクト。"""
 
     user_alias: str = "プレイヤー"
     scenario: Optional[str] = None
@@ -33,7 +33,7 @@ class FakeSession:
 
 @dataclass
 class FakeNpc:
-    """ZetaNpc 風のダミーオブジェクト。"""
+    """ScenarioNpc 風のダミーオブジェクト。"""
 
     name: str
     description: Optional[str] = None
@@ -122,7 +122,7 @@ class TestBasicStructure:
     def test_user_message_block(self):
         """user_message を渡したらプレイヤー発話ブロックが出ること。
 
-        履歴と同じ `@名前: 本文` 規約で出力される（旧 SGML 形式から移行）。
+        履歴と同じ `@名前: 本文` 規約で出力される。
         """
         session = FakeSession(user_alias="勇者")
         out = build_gm_system_prompt(
@@ -250,7 +250,7 @@ class TestSynopsisBlocks:
         - synopsis_manual が空でないとき「プレイヤーからの補足メモ」ブロックが含まれる
         - 両方とも空のときはどちらのブロックも出力されない（=既存挙動の互換）
         - manual が「auto と矛盾する場合はこちらを正とする」旨の文言と共に出る
-        - 既知の話者ブロック（旧 Block 3）より前に挿入されること
+        - 既知の話者ブロックより前に挿入されること
     """
 
     def test_no_block_when_both_empty(self):

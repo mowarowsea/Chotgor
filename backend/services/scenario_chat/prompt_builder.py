@@ -75,10 +75,10 @@ def build_gm_system_prompt(
     """GM 用の system prompt を組み立てる。
 
     Args:
-        scenario: ZetaScenario ORM 風オブジェクト。
+        scenario: Scenario ORM 風オブジェクト。
                   必須属性: user_alias。
                   任意属性: scenario, location, scene_summary, narrator_style, pacing。
-        npcs: ZetaNpc ORM 風オブジェクトのイテラブル。順序は表示順。
+        npcs: ScenarioNpc ORM 風オブジェクトのイテラブル。順序は表示順。
         history_text: format_history_for_gm() で整形済みの履歴テキスト。
                       `<話者>本文</話者>` の連結。
         user_message: 今回のプレイヤー発話（system prompt の末尾に注釈として含める）。

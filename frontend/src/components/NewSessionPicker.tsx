@@ -1,8 +1,7 @@
 /**
  * 新規セッション作成モーダル。
  *
- * セッション種別（1on1 / グループ / シナリオ）をタブで選び、種別ごとの設定を
- * 入力して作成する。旧来のサイドバー内アコーディオン方式を置き換える。
+ * セッション種別（1on1 / グループ / シナリオ）をタブで選び、種別ごとの設定を入力して作成する。
  */
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";

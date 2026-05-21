@@ -28,7 +28,7 @@ from backend.services.chat.request_builder import build_system_prompt
 
 if TYPE_CHECKING:
     from backend.character_actions.executor import ToolExecutor
-    from backend.services.memory.manager import MemoryManager
+    from backend.services.memory.manager import InscribedMemoryManager
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
     from backend.repositories.sqlite.store import SQLiteStore
 
@@ -76,7 +76,7 @@ async def ask_character(
     messages: list[dict],
     sqlite: "SQLiteStore",
     settings: dict,
-    memory_manager: "MemoryManager | None" = None,
+    memory_manager: "InscribedMemoryManager | None" = None,
     recall_query: str | None = None,
     feature_label: str = "",
     working_memory_manager: "WorkingMemoryManager | None" = None,
@@ -94,7 +94,7 @@ async def ask_character(
         sqlite: SQLiteStore インスタンス。
         settings: グローバル設定 dict（get_all_settings() の結果）。
         memory_manager: 記憶想起に使用するマネージャー。recall_query が None の場合は不要。
-        recall_query: 記憶想起クエリ。指定するとChromaDB検索を実行してシステムプロンプトに注入する。
+        recall_query: 記憶想起クエリ。指定するとLanceDB検索を実行してシステムプロンプトに注入する。
                       None の場合は想起をスキップする。
         feature_label: ログ識別用のフィーチャーラベル（例: "chronicle", "forget", "reflection"）。
         working_memory_manager: ワーキングメモリのマネージャー。指定すると 1on1 チャットと
@@ -185,7 +185,7 @@ async def ask_character_with_tools(
     messages: list[dict],
     sqlite: "SQLiteStore",
     settings: dict,
-    memory_manager: "MemoryManager",
+    memory_manager: "InscribedMemoryManager",
     feature_label: str = "",
     session_id: str = "",
     working_memory_manager: "WorkingMemoryManager | None" = None,
@@ -262,7 +262,7 @@ async def ask_character_with_tools(
         return False
 
     # WM マネージャーは未指定なら内部生成する。システムプロンプトの WM ブロックと
-    # ツール実行（post_thread 等）の両方で同じインスタンスを使う。
+    # ツール実行（post_working_memory_thread 等）の両方で同じインスタンスを使う。
     wm = working_memory_manager or WorkingMemoryManager(
         sqlite=sqlite, vector_store=memory_manager.vector_store
     )

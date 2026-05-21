@@ -116,7 +116,7 @@ async def get_character_image(request: Request, character_id: str):
 
 @router.delete("/{character_id}", status_code=204)
 async def delete_character(request: Request, character_id: str):
-    """キャラクターと全記憶を削除する。ChromaDB・SQLite の順に削除する。"""
-    ok = request.app.state.memory_manager.delete_character_with_memories(character_id)
+    """キャラクターと全保存記憶を削除する。LanceDB・SQLite の順に削除する。"""
+    ok = request.app.state.memory_manager.delete_character_with_inscribed_memories(character_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Character not found")

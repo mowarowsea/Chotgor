@@ -90,14 +90,14 @@ def format_power_recall_turn(results: dict, query: str) -> str:
     キャラクターターン終了 → Chotgor からの新しいターン、という会話構造を作る。
 
     Args:
-        results: MemoryManager.power_recall() の戻り値
-                 {"memories": [...], "chat_turns": [...]}。
+        results: InscribedMemoryManager.power_recall() の戻り値
+                 {"inscribed_memories": [...], "chat_turns": [...]}。
         query: キャラクターが指定した検索クエリ。
 
     Returns:
         Chotgor ユーザーターンとして注入するテキスト。
     """
-    memories = results.get("memories", [])
+    memories = results.get("inscribed_memories", [])
     chat_turns = results.get("chat_turns", [])
 
     lines = [

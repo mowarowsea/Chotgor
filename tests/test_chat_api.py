@@ -309,7 +309,7 @@ class TestStreamMessage:
         chat_service.execute_stream = fake_stream
 
         memory_manager = MagicMock()
-        memory_manager.recall_memory.return_value = []
+        memory_manager.recall_inscribed_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("backend.lib.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
@@ -346,7 +346,7 @@ class TestStreamMessage:
         chat_service.execute_stream = fake_stream
 
         memory_manager = MagicMock()
-        memory_manager.recall_memory.return_value = []
+        memory_manager.recall_inscribed_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("backend.lib.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
@@ -432,7 +432,7 @@ class TestStreamMessage:
         chat_service = MagicMock()
         chat_service.execute_stream = fake_stream
         memory_manager = MagicMock()
-        memory_manager.recall_memory.return_value = []
+        memory_manager.recall_inscribed_memory.return_value = []
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("backend.lib.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)

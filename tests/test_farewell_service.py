@@ -509,13 +509,13 @@ class TestFarewellDetectionEstrangement:
         char = sqlite_store.get_character(char_id)
         assert getattr(char, "relationship_status", "active") == "estranged"
 
-    def test_chroma_mark_definition_estranged_called_on_estrangement(
+    def test_vector_store_mark_definition_estranged_called_on_estrangement(
         self, sqlite_store, char_id, session_id
     ):
-        """疎遠化確定時に chroma.mark_definition_estranged() が呼ばれること。
+        """疎遠化確定時に vector_store.mark_definition_estranged() が呼ばれること。
 
-        SQLite の更新だけでは ChromaDB の status が "active" のままとなり、
-        類似キャラクター登録ブロックが機能しない。ChromaDB の更新も必須。
+        SQLite の更新だけでは LanceDB の status が "active" のままとなり、
+        類似キャラクター登録ブロックが機能しない。LanceDB の更新も必須。
         """
         config = _make_farewell_config(threshold=3)
         _create_negative_exit_sessions(sqlite_store, "別れサービステストキャラ", 2)
@@ -538,7 +538,7 @@ class TestFarewellDetectionEstrangement:
 
         mock_vector_store.mark_definition_estranged.assert_called_once_with(char_id)
 
-    def test_chroma_none_does_not_raise_on_estrangement(self, sqlite_store, char_id, session_id):
+    def test_vector_store_none_does_not_raise_on_estrangement(self, sqlite_store, char_id, session_id):
         """vector_store=None でも疎遠化確定時に例外が発生しないこと。"""
         config = _make_farewell_config(threshold=1)
 
@@ -560,14 +560,14 @@ class TestFarewellDetectionEstrangement:
         char = sqlite_store.get_character(char_id)
         assert getattr(char, "relationship_status", "active") == "estranged"
 
-    def test_chroma_error_does_not_prevent_sqlite_update(self, sqlite_store, char_id, session_id):
-        """chroma.mark_definition_estranged() が例外を投げても SQLite の更新は完了すること。"""
+    def test_vector_store_error_does_not_prevent_sqlite_update(self, sqlite_store, char_id, session_id):
+        """vector_store.mark_definition_estranged() が例外を投げても SQLite の更新は完了すること。"""
         config = _make_farewell_config(threshold=1)
 
         result = _make_farewell_result(should_exit=True, farewell_type="negative")
         detector = _make_detector(sqlite_store, result)
         mock_vector_store = MagicMock()
-        mock_vector_store.mark_definition_estranged.side_effect = RuntimeError("ChromaDB接続失敗")
+        mock_vector_store.mark_definition_estranged.side_effect = RuntimeError("LanceDB接続失敗")
 
         _run(_run_farewell_detection(
             detector=detector,
@@ -584,8 +584,8 @@ class TestFarewellDetectionEstrangement:
         char = sqlite_store.get_character(char_id)
         assert getattr(char, "relationship_status", "active") == "estranged"
 
-    def test_chroma_not_called_below_threshold(self, sqlite_store, char_id, session_id):
-        """閾値未満の場合、chroma.mark_definition_estranged() が呼ばれないこと。"""
+    def test_vector_store_not_called_below_threshold(self, sqlite_store, char_id, session_id):
+        """閾値未満の場合、vector_store.mark_definition_estranged() が呼ばれないこと。"""
         config = _make_farewell_config(threshold=5)
         # prev=0 → total=1 < threshold=5
 

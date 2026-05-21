@@ -62,7 +62,7 @@ export interface ChatMessage {
 /** グループチャット設定オブジェクト（group_config のデシリアライズ後）。
  *
  * 司会モデルはセッション単位ではなくシステム設定で一括管理するため
- * group_config には含まれない（古いセッションには director_preset_id が残るが未使用）。
+ * group_config には含まれない（システム設定 ``group_director_preset_id`` で一元管理）。
  */
 export interface GroupConfig {
   participants: Array<{ char_name: string; preset_name: string }>;
@@ -358,7 +358,7 @@ export async function* streamGroupMessage(
 }
 
 // ---------------------------------------------------------------------------
-// シナリオチャット（Zeta モード）
+// シナリオチャット
 // ---------------------------------------------------------------------------
 
 /** シナリオテンプレート — 何度でも遊べる設定の塊。backend UI で登録・編集する。
@@ -384,7 +384,7 @@ export interface ScenarioTemplate {
  * description には人物像・口調・話し方を自由テキストで全部詰め込む。
  * image_data はアバター画像の base64 data URI（オプション）。
  */
-export interface ZetaNpc {
+export interface ScenarioNpc {
   id: string;
   scenario_id: string;
   name: string;
@@ -411,7 +411,7 @@ export interface ScenarioSession {
 }
 
 /** シナリオセッションの発話ターン。 */
-export interface ZetaTurn {
+export interface ScenarioTurn {
   id: string;
   session_id: string;
   turn_index: number;
@@ -429,7 +429,7 @@ export interface ZetaTurn {
 /** プレイセッション詳細（元シナリオ + NPC を含む）。 */
 export interface ScenarioSessionDetail extends ScenarioSession {
   scenario: ScenarioTemplate | null;
-  npcs: ZetaNpc[];
+  npcs: ScenarioNpc[];
 }
 
 /** セッション単位のあらすじ（記憶捏造対策）。
@@ -446,7 +446,7 @@ export interface ScenarioSynopsis {
 
 /** シナリオストリーミング SSE イベントの型定義。 */
 export type ScenarioStreamEvent =
-  | { type: "user_saved"; turn: ZetaTurn }
+  | { type: "user_saved"; turn: ScenarioTurn }
   | {
       type: "speaker_start";
       speaker_type: string;
@@ -455,7 +455,7 @@ export type ScenarioStreamEvent =
       is_known: boolean;
     }
   | { type: "content_delta"; text: string }
-  | { type: "speaker_end"; turn: ZetaTurn }
+  | { type: "speaker_end"; turn: ScenarioTurn }
   | { type: "turn_complete"; turn_ids: string[] }
   | { type: "synopsis_updated"; synopsis: ScenarioSynopsis }
   | { type: "error"; message: string }
@@ -511,7 +511,7 @@ export async function fetchScenarioSession(
   if (!res.ok) throw new Error("シナリオセッションの取得に失敗しました");
   const data = (await res.json()) as Omit<ScenarioSession, "session_type"> & {
     scenario: ScenarioTemplate | null;
-    npcs: ZetaNpc[];
+    npcs: ScenarioNpc[];
   };
   return {
     ...tagScenarioSession(data),
@@ -521,7 +521,7 @@ export async function fetchScenarioSession(
 }
 
 /** プレイセッションのターン一覧を取得する。 */
-export async function fetchScenarioTurns(sessionId: string): Promise<ZetaTurn[]> {
+export async function fetchScenarioTurns(sessionId: string): Promise<ScenarioTurn[]> {
   const res = await fetch(`/api/scenario_chat/sessions/${sessionId}/turns`);
   if (!res.ok) throw new Error("シナリオターンの取得に失敗しました");
   return res.json();

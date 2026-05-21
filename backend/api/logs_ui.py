@@ -32,10 +32,8 @@ CHOTGOR_LOG = Path("logs/chotgor.log")
 # 例: "... [a25e00da] ... char=はる@ClaudeCode ..."
 _LOG_CHAR_RE = re.compile(r"\[([0-9a-f]{8})\].*?\bchar=(\S+)")
 
-# ファイル名パターン（機能名あり）: "02_chat_Request_ClaudeCode.log"
+# ファイル名パターン: "02_chat_Request_ClaudeCode.log"
 _FILE_PATTERN = re.compile(r"^\d+_(.+?)_(Request|Response)_(.+)\.log$")
-# ファイル名パターン（機能名なし）: "02_Request_claude_cli.log"（旧形式）
-_FILE_PATTERN_NOFEATURE = re.compile(r"^\d+_(Request|Response)_(.+)\.log$")
 # 警告ファイルパターン: "03_Warning_context_window.log"
 _FILE_PATTERN_WARNING = re.compile(r"^\d+_Warning_(.+)\.log$")
 
@@ -450,17 +448,10 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
     pending: dict[tuple[str, str], deque[dict]] = {}
 
     for f in files:
-        # 機能名あり: "02_chat_Request_ClaudeCode.log"
         m = _FILE_PATTERN.match(f.name)
-        if m:
-            feature, kind, preset_name = m.group(1), m.group(2), m.group(3)
-        else:
-            # 機能名なし（旧形式）: "02_Request_claude_cli.log"
-            m2 = _FILE_PATTERN_NOFEATURE.match(f.name)
-            if not m2:
-                continue
-            kind, preset_name = m2.group(1), m2.group(2)
-            feature = ""
+        if not m:
+            continue
+        feature, kind, preset_name = m.group(1), m.group(2), m.group(3)
 
         pair_key = (feature, preset_name)
         if kind == "Request":

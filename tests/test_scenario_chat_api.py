@@ -445,7 +445,7 @@ class TestListTurns:
         client = TestClient(_build_app(sqlite_store))
         sid = _create_scenario(client)["id"]
         sess_id = _start_session(client, sid)["id"]
-        sqlite_store.create_zeta_turn(
+        sqlite_store.create_scenario_turn(
             turn_id=str(_uuid.uuid4()),
             session_id=sess_id,
             turn_index=0,
@@ -453,7 +453,7 @@ class TestListTurns:
             speaker_name="プレイヤー",
             content="導入",
         )
-        sqlite_store.create_zeta_turn(
+        sqlite_store.create_scenario_turn(
             turn_id=str(_uuid.uuid4()),
             session_id=sess_id,
             turn_index=1,
@@ -490,7 +490,7 @@ class TestDeleteTurnsFrom:
         ids = []
         for i in range(4):
             tid = str(_uuid.uuid4())
-            sqlite_store.create_zeta_turn(
+            sqlite_store.create_scenario_turn(
                 turn_id=tid,
                 session_id=sess_id,
                 turn_index=i,
@@ -736,7 +736,7 @@ class TestSynopsisAPI:
         sid = _create_scenario(client)["id"]
         sess_id = _start_session(client, sid)["id"]
         # 蒸留が進んだ状態を直接 DB レイヤで作る
-        sqlite_store.update_zeta_session_synopsis(
+        sqlite_store.update_scenario_session_synopsis(
             sess_id, auto="既存あらすじ", manual="守りたいメモ", last_turn_index=42,
         )
         # auto だけ空文字へクリア
@@ -762,7 +762,7 @@ class TestSynopsisAPI:
         client = TestClient(_build_app(sqlite_store))
         sid = _create_scenario(client)["id"]
         sess_id = _start_session(client, sid)["id"]
-        sqlite_store.update_zeta_session_synopsis(
+        sqlite_store.update_scenario_session_synopsis(
             sess_id, auto="既存あらすじ", last_turn_index=42,
         )
         res = client.patch(

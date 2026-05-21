@@ -13,7 +13,7 @@ import re
 from typing import Optional
 
 from backend.lib.log_context import new_message_id
-from backend.services.memory.manager import MemoryManager
+from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
 from backend.services.character_query import ask_character, ask_character_with_tools
@@ -42,7 +42,7 @@ def build_distill_prompt(candidates: list) -> str:
 async def run_forget_process(
     character_id: str,
     character_name: str,
-    memory_manager: MemoryManager,
+    memory_manager: InscribedMemoryManager,
     sqlite: SQLiteStore,
     settings: dict,
     threshold: float = 0.2,
@@ -57,7 +57,7 @@ async def run_forget_process(
     Args:
         character_id: 処理対象キャラクターID。
         character_name: キャラクター名（ログ用）。
-        memory_manager: MemoryManager インスタンス。
+        memory_manager: InscribedMemoryManager インスタンス。
         sqlite: SQLiteStore インスタンス。
         settings: get_all_settings() の結果。run_pending_forget で1回だけ取得して渡す。
         threshold: 忘却判定の閾値（decayed_score がこれ未満の記憶が対象）。
@@ -99,7 +99,7 @@ async def run_forget_process(
         # 蒸留完了 → 候補記憶を全件削除
         deleted_count = 0
         for m in candidates:
-            memory_manager.delete_memory(m.id, character_id)
+            memory_manager.delete_inscribed_memory(m.id, character_id)
             deleted_count += 1
         logger.info(
             "forget(蒸留) 完了 char=%s candidates=%d deleted=%d",
@@ -173,11 +173,11 @@ async def run_forget_process(
     for m in candidates:
         if m.id in deleted_ids:
             deleted_count += 1
-            memory_manager.delete_memory(m.id, character_id)
+            memory_manager.delete_inscribed_memory(m.id, character_id)
         else:
             kept_count += 1
             # Touching it gives it a boost and prevents it from being forgotten soon.
-            sqlite.recall(m.id)
+            sqlite.recall_inscribed_memory(m.id)
 
     logger.info(
         "forget(バイナリ) 完了 char=%s candidates=%d deleted=%d kept=%d",
@@ -192,7 +192,7 @@ async def run_forget_process(
     }
 
 
-async def run_pending_forget(sqlite: SQLiteStore, memory_manager: MemoryManager) -> None:
+async def run_pending_forget(sqlite: SQLiteStore, memory_manager: InscribedMemoryManager) -> None:
     """全キャラクターに対して forget プロセスを実行する。
 
     _forget_scheduler から呼び出される。

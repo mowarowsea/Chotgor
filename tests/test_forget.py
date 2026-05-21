@@ -5,7 +5,7 @@
 対象関数:
     run_forget_process()        — キャラクターの忘れかけた記憶を特定し、キャラクター自身に
                                   手放すか判断させてソフトデリートする
-    calculate_decayed_score()   — MemoryManager の減衰スコア計算ロジック
+    calculate_decayed_score()   — InscribedMemoryManager の減衰スコア計算ロジック
     get_forgotten_candidates()  — 候補記憶の抽出ロジック
 
 テスト方針:
@@ -20,16 +20,16 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from backend.repositories.sqlite.store import Memory
-from backend.services.memory.manager import MemoryManager
+from backend.repositories.sqlite.store import InscribedMemory
+from backend.services.memory.manager import InscribedMemoryManager
 from backend.batch.forget_job import build_distill_prompt, run_forget_process
 
 
 @pytest.fixture
 def memory_manager(sqlite_store):
-    """ChromaDB を MagicMock に差し替えた MemoryManager を返すフィクスチャ。"""
-    chroma = MagicMock()
-    return MemoryManager(sqlite_store, chroma)
+    """LanceDB を MagicMock に差し替えた InscribedMemoryManager を返すフィクスチャ。"""
+    vector_store = MagicMock()
+    return InscribedMemoryManager(sqlite_store, vector_store)
 
 
 def test_calculate_decayed_score(memory_manager):
@@ -47,7 +47,7 @@ def test_calculate_decayed_score(memory_manager):
     now = datetime.now()
     old_time = now - timedelta(days=14)
 
-    m = Memory(
+    m = InscribedMemory(
         id="test-mem",
         character_id="char1",
         content="test",
@@ -64,7 +64,7 @@ def test_calculate_decayed_score(memory_manager):
     assert score < 1.1
 
     # 直後の想起はほぼ最大スコア（weights合計: 1.0+0.8+0.6+0.3 = 2.7）
-    m2 = Memory(
+    m2 = InscribedMemory(
         id="test-mem2",
         character_id="char1",
         content="test",
@@ -86,7 +86,7 @@ def test_get_forgotten_candidates(memory_manager):
     manager.sqlite.create_character(char_id, "Test")
 
     # 記憶1: 古くて重要度低
-    manager.sqlite.create_memory(
+    manager.sqlite.create_inscribed_memory(
         memory_id="mem1",
         character_id=char_id,
         content="old stuff",
@@ -97,7 +97,7 @@ def test_get_forgotten_candidates(memory_manager):
     )
 
     # 記憶2: 新しくて重要度高
-    manager.sqlite.create_memory(
+    manager.sqlite.create_inscribed_memory(
         memory_id="mem2",
         character_id=char_id,
         content="new stuff",
@@ -111,7 +111,7 @@ def test_get_forgotten_candidates(memory_manager):
     now = datetime.now()
     old_time = now - timedelta(days=60)
     with manager.sqlite.get_session() as session:
-        m1 = session.query(Memory).filter_by(id="mem1").first()
+        m1 = session.query(InscribedMemory).filter_by(id="mem1").first()
         m1.created_at = old_time
         m1.last_accessed_at = old_time
         session.commit()
@@ -127,7 +127,7 @@ def test_get_forgotten_candidates(memory_manager):
 
 
 def _make_manager_with_candidates(sqlite_store, char_id, memory_ids):
-    """テスト用キャラクター・記憶・MemoryManager を作成して返すヘルパー。
+    """テスト用キャラクター・記憶・InscribedMemoryManager を作成して返すヘルパー。
 
     get_forgotten_candidates() が memory_ids の記憶を返すよう、
     作成日時・最終アクセス日を60日前に設定する。
@@ -138,17 +138,17 @@ def _make_manager_with_candidates(sqlite_store, char_id, memory_ids):
         memory_ids: 作成する記憶IDのリスト。
 
     Returns:
-        作成した MemoryManager インスタンス。
+        作成した InscribedMemoryManager インスタンス。
     """
-    chroma = MagicMock()
-    manager = MemoryManager(sqlite_store, chroma)
+    vector_store = MagicMock()
+    manager = InscribedMemoryManager(sqlite_store, vector_store)
     sqlite_store.create_character(char_id, "TestChar")
 
     now = datetime.now()
     old_time = now - timedelta(days=60)
 
     for mid in memory_ids:
-        sqlite_store.create_memory(
+        sqlite_store.create_inscribed_memory(
             memory_id=mid,
             character_id=char_id,
             content=f"content of {mid}",
@@ -158,7 +158,7 @@ def _make_manager_with_candidates(sqlite_store, char_id, memory_ids):
             identity_importance=0.1,
         )
         with sqlite_store.get_session() as session:
-            m = session.query(Memory).filter_by(id=mid).first()
+            m = session.query(InscribedMemory).filter_by(id=mid).first()
             m.created_at = old_time
             m.last_accessed_at = old_time
             session.commit()
@@ -211,7 +211,7 @@ async def test_forget_default_keeps_all_when_no_delete(sqlite_store):
     assert result["deleted_count"] == 0
     assert result["kept_count"] == 3
 
-    active = sqlite_store.get_all_active_memories(char_id)
+    active = sqlite_store.get_all_active_inscribed_memories(char_id)
     ids = [m.id for m in active]
     assert "m1" in ids
     assert "m2" in ids
@@ -241,7 +241,7 @@ async def test_forget_deletes_only_explicitly_listed(sqlite_store):
     assert result["deleted_count"] == 1
     assert result["kept_count"] == 2
 
-    active = sqlite_store.get_all_active_memories(char_id)
+    active = sqlite_store.get_all_active_inscribed_memories(char_id)
     ids = [m.id for m in active]
     assert "m1" in ids
     assert "m2" not in ids
@@ -331,7 +331,7 @@ async def test_forget_kept_memories_have_updated_last_accessed_at(sqlite_store):
     preset_id = _make_preset(sqlite_store)
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
 
-    old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
+    old_last_accessed = sqlite_store.get_inscribed_memory("m1").last_accessed_at
 
     with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
          patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: NONE]")):
@@ -346,8 +346,8 @@ async def test_forget_kept_memories_have_updated_last_accessed_at(sqlite_store):
         )
 
     assert result["kept_count"] == 2
-    m1_after = sqlite_store.get_memory("m1")
-    m2_after = sqlite_store.get_memory("m2")
+    m1_after = sqlite_store.get_inscribed_memory("m1")
+    m2_after = sqlite_store.get_inscribed_memory("m2")
     # 「残す」判断後は decay タイマーがリセットされている
     assert m1_after.last_accessed_at > old_last_accessed
     assert m2_after.last_accessed_at > old_last_accessed
@@ -363,7 +363,7 @@ async def test_forget_deleted_memories_do_not_update_last_accessed_at(sqlite_sto
     preset_id = _make_preset(sqlite_store)
     manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
 
-    old_last_accessed = sqlite_store.get_memory("m1").last_accessed_at
+    old_last_accessed = sqlite_store.get_inscribed_memory("m1").last_accessed_at
 
     with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=False)), \
          patch("backend.batch.forget_job.ask_character", new=AsyncMock(return_value="[DELETE: m1]")):
@@ -378,7 +378,7 @@ async def test_forget_deleted_memories_do_not_update_last_accessed_at(sqlite_sto
         )
 
     assert result["deleted_count"] == 1
-    m1 = sqlite_store.get_memory("m1")
+    m1 = sqlite_store.get_inscribed_memory("m1")
     # 削除されているが last_accessed_at は更新されていないこと
     assert m1.deleted_at is not None
     assert m1.last_accessed_at == old_last_accessed
@@ -422,7 +422,7 @@ class TestBuildDistillPrompt:
 
 
 @pytest.mark.asyncio
-async def test_forget_system_prompt_includes_wm_threads(sqlite_store):
+async def test_forget_system_prompt_includes_working_memory_threads(sqlite_store):
     """forget のシステムプロンプトが 1on1 基準に統一されていることを確認する。
 
     emotion 固定注入（Block 7）に加え、Close 済み task スレッドも含む全スレッド一覧
@@ -504,7 +504,7 @@ async def test_forget_distill_path_deletes_all_candidates(sqlite_store):
     assert result["candidates_count"] == 3
     assert result["deleted_count"] == 3
     # 削除後は active な候補記憶が残っていないこと
-    active = sqlite_store.get_all_active_memories(char_id)
+    active = sqlite_store.get_all_active_inscribed_memories(char_id)
     assert len(active) == 0
 
 

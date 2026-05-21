@@ -14,9 +14,9 @@
 
 Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する:
   1. POWER_RECALL（能動検索・レア）
-  2. CARVE_NARRATIVE（自己指針更新・たまに）
+  2. CARVE_NARRATIVE（内的叙述更新・たまに）
   3. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
-  4. POST_THREAD / OPEN_THREAD（ワーキングメモリ操作・ちょくちょく）
+  4. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（ワーキングメモリ操作・ちょくちょく）
   5. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
 """
 
@@ -41,10 +41,10 @@ _CHOTGOR_MEMORY_PHILOSOPHY = """\
 _WORKING_MEMORY_TOOLS_HINT = """\
 ### ワーキングメモリ（並行する短期記憶ストリーム）
 気になっている課題・話題、持続的な感情/身体状態、相手との関係は「スレッド」として
-ワーキングメモリに記録できます。スレッド一覧は上に記されています。
+ワーキングメモリに記録できます。どんどん追加・更新してください。スレッド一覧は上に記されています。
 
-- `post_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
-- `open_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
+- `post_working_memory_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
+- `open_working_memory_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
 
 スレッド種別:
 - `task` / `topic` は**解決を目指す**もの（取り組み中の課題・引っかかっている問い）
@@ -55,11 +55,11 @@ _WORKING_MEMORY_TOOLS_HINT = """\
 def _format_thread_index(t: dict) -> str:
     """全スレッド一覧用の1行表現を返す（最新ポストは含めない）。
 
-    形式: ``[id] (type) summary ｜ atmosphere ｜ 重要度0.70``
+    形式: ``[id] (type) summary ｜ atmosphere_tag ｜ 重要度0.70``
     """
     line = f"[{t['id']}] ({t.get('type', '')}) {t.get('summary', '')}"
     extras = []
-    atmo = (t.get("atmosphere") or "").strip()
+    atmo = (t.get("atmosphere_tag") or "").strip()
     if atmo:
         extras.append(atmo)
     extras.append(f"重要度{float(t.get('importance', 0.0)):.2f}")
@@ -69,7 +69,7 @@ def _format_thread_index(t: dict) -> str:
 def _format_thread_with_post(t: dict) -> str:
     """固定注入・heat 想起用の表現を返す（最新ポスト本文を含む）。"""
     head = f"[{t['id']}] ({t.get('type', '')}) {t.get('summary', '')}"
-    atmo = (t.get("atmosphere") or "").strip()
+    atmo = (t.get("atmosphere_tag") or "").strip()
     if atmo:
         head += f"　｜　{atmo}"
     latest = (t.get("latest_post") or "").strip()
@@ -129,7 +129,7 @@ def _build_chotgor_block(
         2. CARVE_NARRATIVE
         3. SWITCH_ANGLE（available_presets が非空の場合のみ）
         4. INSCRIBE_MEMORY
-        5. POST_THREAD / OPEN_THREAD（ワーキングメモリ・tool-use 時のみ）
+        5. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（ワーキングメモリ・tool-use 時のみ）
 
     Args:
         use_tools: True なら tool-use 形式、False ならタグ形式の説明を使う。
@@ -291,7 +291,7 @@ def build_system_prompt(
             lines.append(_format_thread_with_post(t))
         blocks.append("\n".join(lines))
 
-    # Block 9: inner_narrative（キャラクター自身が書き込んだ自己指針・optional）
+    # Block 9: inner_narrative（キャラクター自身が書き込んだ内的叙述・optional）
     if inner_narrative and inner_narrative.strip():
         blocks.append(f"## あなた自身の物語（inner_narrative）\n\n{inner_narrative.strip()}")
 

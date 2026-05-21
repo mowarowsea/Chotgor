@@ -1,7 +1,7 @@
 /**
- * シナリオチャット（Zeta モード）ビュー。
+ * シナリオチャットビュー。
  *
- * Ensemble エンジンが GM として全話者を演じるため、メッセージは ZetaTurn として
+ * Ensemble エンジンが GM として全話者を演じるため、メッセージは ScenarioTurn として
  * `user | narrator | npc | character` の 4 種類の speaker_type を持つ。
  * 既存の ChatMessage / GroupChatView とは異なる表示が必要なため、自前の
  * バブルリストと入力欄を提供する。
@@ -11,7 +11,7 @@
  *   - Narrator は左寄せ・アバターなし・少し控えめなスタイル
  *   - User バブルクリックで編集 → 保存で「そのターン以降を削除＋再ストリーム」
  *   - 最終ユーザターンに「再生成」ボタン → 以降削除＋同内容で再ストリーム
- *   - ヘッダに Export ボタン（既存 ExportDialog を ZetaTurn 用 adapter で流用）
+ *   - ヘッダに Export ボタン（既存 ExportDialog を ScenarioTurn 用 adapter で流用）
  *
  * NPC の追加・編集はバックエンドの Scenarios UI で行う。
  */
@@ -19,8 +19,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ScenarioSession,
   ScenarioTemplate,
-  ZetaNpc,
-  ZetaTurn,
+  ScenarioNpc,
+  ScenarioTurn,
 } from "../api";
 import {
   MarkdownContent,
@@ -55,9 +55,9 @@ interface Props {
   /** 元のシナリオテンプレ（タイトル・場所などの表示に使う）。 */
   scenario: ScenarioTemplate | null;
   /** シナリオの NPC リスト（既知判定・アバター表示に使う）。 */
-  npcs: ZetaNpc[];
+  npcs: ScenarioNpc[];
   /** これまでの確定ターン。 */
-  turns: ZetaTurn[];
+  turns: ScenarioTurn[];
   /** 送信中フラグ（true の間は入力欄無効化）。 */
   sending: boolean;
   /** ストリーミング中の未確定吹き出し列。 */
@@ -156,7 +156,7 @@ function NpcDetailDialog({
   npc,
   onClose,
 }: {
-  npc: ZetaNpc | null;
+  npc: ScenarioNpc | null;
   onClose: () => void;
 }) {
   // Esc で閉じる挙動。1on1 等の他のダイアログと操作感を合わせる。
@@ -500,7 +500,7 @@ export default function ScenarioChatView({
   onHeaderVisibilityChange,
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
-  const [npcDialogTarget, setNpcDialogTarget] = useState<ZetaNpc | null>(null);
+  const [npcDialogTarget, setNpcDialogTarget] = useState<ScenarioNpc | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
   const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
@@ -623,7 +623,7 @@ export default function ScenarioChatView({
             );
           }
           // 既知 NPC のときだけアバタークリックを有効化（詳細ダイアログを開く）。
-          // narrator や未知 NPC は対応する ZetaNpc レコードが無いのでクリック無効。
+          // narrator や未知 NPC は対応する ScenarioNpc レコードが無いのでクリック無効。
           const npcForAvatar =
             t.speaker_type === "npc" || t.speaker_type === "character"
               ? npcByName[t.speaker_name] ?? null

@@ -31,7 +31,7 @@ from backend.lib.debug_logger import logger
 from backend.lib.log_context import current_log_feature
 from backend.character_actions.carver import Carver
 from backend.character_actions.inscriber import Inscriber
-from backend.services.memory.manager import MemoryManager
+from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.providers.base import LLMApiError
 from backend.providers.registry import create_provider
@@ -187,7 +187,7 @@ class _Context:
 class ChatService:
     def __init__(
         self,
-        memory_manager: MemoryManager,
+        memory_manager: InscribedMemoryManager,
         working_memory_manager: WorkingMemoryManager | None = None,
     ) -> None:
         """ChatService を初期化する。
@@ -243,7 +243,6 @@ class ChatService:
             return None
 
         # 切り替え後モデルへの自己指針は、プロバイダー固有追記の末尾に畳み込む。
-        # （旧来は SELF_DRIFT として保存・注入していたが、ワーキングメモリ移行に伴い廃止）
         extra_instructions = preset.get("additional_instructions", "") or ""
         if self_instruction:
             extra_instructions = (
@@ -445,7 +444,7 @@ class ChatService:
 
         Yields:
             tuple[str, Any]:
-                ("memories",      list[dict])          : 想起した記憶リスト（最初に1回だけyield）
+                ("inscribed_memories",      list[dict])          : 想起した記憶リスト（最初に1回だけyield）
                 ("thinking",      str)                  : 思考ブロック（リアルタイム）
                 ("text",          str)                  : クリーンな応答テキスト（最後に1回）
         """
@@ -454,20 +453,20 @@ class ChatService:
         # 想起した記憶を最初にyield
         all_recalled = ctx.recalled_identity + ctx.recalled
         if all_recalled:
-            yield ("memories", all_recalled)
+            yield ("inscribed_memories", all_recalled)
         # ワーキングメモリスレッドをyield。
         # 固定注入（emotion/body/relation）と heat 想起（task/topic）の両方を
         # まとめて送り、フロントの想起セクションに全スレッドを表示させる。id で重複排除する。
-        wm_threads_payload: list[dict] = []
+        working_memory_threads_payload: list[dict] = []
         _seen_thread_ids: set = set()
         for t in [*ctx.wm_fixed, *ctx.wm_recalled]:
             tid = t.get("id")
             if tid in _seen_thread_ids:
                 continue
             _seen_thread_ids.add(tid)
-            wm_threads_payload.append(t)
-        if wm_threads_payload:
-            yield ("wm_threads", wm_threads_payload)
+            working_memory_threads_payload.append(t)
+        if working_memory_threads_payload:
+            yield ("working_memory_threads", working_memory_threads_payload)
 
         # タグ方式でリアルタイムストリーミングした場合 True。
         # True の場合、最終 yield ("text", clean_text) をスキップする。

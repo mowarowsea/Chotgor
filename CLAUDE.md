@@ -65,21 +65,19 @@ Chotgorの思想的に、キャラクターの記憶の取捨選択・編集は*
 ## LanceDB 運用ルール
 
 ベクトルストアは LanceDB（`data/lancedb`）に統一されている。
-旧 ChromaDB の HNSW バイナリ破損問題（過去に「はる」のコレクション全消失事案あり）への
-根治対応として、Lance フォーマット（追記＋アトミックコミット）に置き換えた。
-旧 ChromaDB データの最終バックアップは `data/chroma.bak.YYYYMMDD/` に保管されている。
+Lance フォーマット（追記＋アトミックコミット）により、書き込み中のプロセス停止でも
+インデックスが破損しない構造的堅牢性が特徴。
 
 ### 設計概要
 
 - **テーブル構成（単一テーブル方式）**:
-  - `memories`    — 記憶（旧 `char_{character_id}` 群を統合）
-  - `chat_turns`  — チャット履歴（旧 `chat_{character_id}` 群を統合）
-  - `definitions` — キャラクター定義（旧 `char_definitions` 相当）
+  - `inscribed_memories`     — 保存記憶
+  - `chat_turns`             — チャット履歴
+  - `definitions`            — キャラクター定義
+  - `working_memory_threads` — ワーキングメモリスレッドの index 用ベクトル
 - 単一テーブル + `character_id` カラムでフィルタする方式。
   キャラクター数の増加でテーブル数が爆発しない。
 - 書き込みは `merge_insert` で原子的に upsert される。
-  旧 ChromaStore で必要だった `_safe_get_or_create_collection` / `rebuild_memory_collection`
-  / リトライキュー機構などはすべて撤廃済み。
 
 ### 運用ルール
 
@@ -88,8 +86,8 @@ Chotgorの思想的に、キャラクターの記憶の取捨選択・編集は*
    - 一括登録・バックフィル・整合性チェック等は
      backend に HTTP API（`/api/mcp/tools/call` のような内部API）を追加して
      そちらを叩くのが望ましい（MCP プロキシと同じ思想）。
-   - LanceDB は ChromaDB と違って multi-process write でも破損しないが、
-     アプリ全体の単一インスタンス集約という設計利点は維持する。
+   - LanceDB は multi-process write でも破損しないが、アプリ全体の単一
+     インスタンス集約という設計利点は維持する。
 2. **`MCPサーバ (mcp_server.py)` は backend のプロキシであり、独立して
    `LanceStore` を生成しない。** Claude CLI が再起動した際に古い実装が
    残らないよう、変更時は CLI 再起動も併せて確認すること。
@@ -101,5 +99,4 @@ Chotgorの思想的に、キャラクターの記憶の取捨選択・編集は*
 
 - `infinity` プロバイダー（`http://localhost:7997`、ruri-v3-310m など）を推奨。
 - `google` プロバイダー（Gemini Embedding）も対応。
-- ChromaDB 組み込みの `default` プロバイダーは LanceStore で非サポート
-  （sentence-transformers 依存を持ち込まない方針）。
+- sentence-transformers 系の `default` プロバイダーは依存を増やさない方針のため非サポート。

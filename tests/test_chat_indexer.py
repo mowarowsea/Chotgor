@@ -1,12 +1,12 @@
 """chat/indexer.py のユニットテスト。
 
 get_participant_char_ids と index_message_sync の動作を検証する。
-SQLiteStore は実インメモリDB、ChromaStore はモックを使用する。
+SQLiteStore は実インメモリDB、LanceStore はモックを使用する。
 
 テスト対象:
   - get_participant_char_ids: 1on1 / グループ / 存在しないキャラの各ケース
   - index_message_sync: ユーザ発言・キャラ発言・システムメッセージ・ファンアウトの各ケース
-  - リトライ機構: ChromaDB失敗時のリトライ動作とエラーログ記録
+  - リトライ機構: LanceDB失敗時のリトライ動作とエラーログ記録
 """
 
 import json
@@ -195,16 +195,16 @@ class TestIndexMessageSync:
         """ユーザ発言が "{user_name}: {content}" 形式でインデックス登録されることを確認する。
 
         role="user" のとき speaker_name として user_name 引数が使われ、
-        chroma.add_chat_turn が正しいドキュメントで呼ばれることを検証する。
+        vector_store.add_chat_turn が正しいドキュメントで呼ばれることを検証する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         char_id = "char-001"
         msg = _make_message(role="user", content="こんにちは", session_id="s-1")
 
-        index_message_sync(msg, [char_id], chroma, user_name="テストユーザ")
+        index_message_sync(msg, [char_id], vector_store, user_name="テストユーザ")
 
-        chroma.add_chat_turn.assert_called_once()
-        kwargs = chroma.add_chat_turn.call_args.kwargs
+        vector_store.add_chat_turn.assert_called_once()
+        kwargs = vector_store.add_chat_turn.call_args.kwargs
         assert kwargs["message_id"] == msg.id
         assert kwargs["content"] == "テストユーザ: こんにちは"
         assert kwargs["character_id"] == char_id
@@ -216,15 +216,15 @@ class TestIndexMessageSync:
         """キャラ発言が "{character_name}: {content}" 形式でインデックス登録されることを確認する。
 
         role="character" のとき character_name 属性が speaker_name として使われ、
-        chroma.add_chat_turn が正しいドキュメントで呼ばれることを検証する。
+        vector_store.add_chat_turn が正しいドキュメントで呼ばれることを検証する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         char_id = "char-001"
         msg = _make_message(role="character", content="はい！", character_name="Alice")
 
-        index_message_sync(msg, [char_id], chroma)
+        index_message_sync(msg, [char_id], vector_store)
 
-        kwargs = chroma.add_chat_turn.call_args.kwargs
+        kwargs = vector_store.add_chat_turn.call_args.kwargs
         assert kwargs["content"] == "Alice: はい！"
         assert kwargs["metadata"]["speaker_name"] == "Alice"
         assert kwargs["metadata"]["role"] == "character"
@@ -232,88 +232,87 @@ class TestIndexMessageSync:
     def test_character_message_fallback_speaker_name(self):
         """character_name が None の場合、"キャラクター" がフォールバック使用されることを確認する。
 
-        character_name 未設定時（旧データ等）でも "キャラクター" として
-        インデックス登録が行われることを検証する。
+        character_name が None でも "キャラクター" としてインデックス登録が行われることを検証する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         msg = _make_message(role="character", content="ふむ", character_name=None)
 
-        index_message_sync(msg, ["char-001"], chroma)
+        index_message_sync(msg, ["char-001"], vector_store)
 
-        kwargs = chroma.add_chat_turn.call_args.kwargs
+        kwargs = vector_store.add_chat_turn.call_args.kwargs
         assert kwargs["content"] == "キャラクター: ふむ"
 
     def test_system_message_is_skipped(self):
         """is_system_message=1 のメッセージはインデックス登録されないことを確認する。
 
         退席通知などのシステムメッセージは検索対象外とするため、
-        chroma.add_chat_turn が一切呼ばれないことを検証する。
+        vector_store.add_chat_turn が一切呼ばれないことを検証する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         msg = _make_message(role="character", content="Aliceは退席しました。", is_system_message=1)
 
-        index_message_sync(msg, ["char-001"], chroma)
+        index_message_sync(msg, ["char-001"], vector_store)
 
-        chroma.add_chat_turn.assert_not_called()
+        vector_store.add_chat_turn.assert_not_called()
 
     def test_fanout_writes_to_all_character_collections(self):
         """複数キャラが参加するセッションで全員のコレクションに書き込まれることを確認する。
 
-        character_ids に3件渡したとき、chroma.add_chat_turn が3回呼ばれ、
+        character_ids に3件渡したとき、vector_store.add_chat_turn が3回呼ばれ、
         それぞれ異なる character_id で呼ばれることを検証する（ファンアウト）。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         char_ids = ["char-A", "char-B", "char-C"]
         msg = _make_message(role="user", content="みんなこんにちは")
 
-        index_message_sync(msg, char_ids, chroma, user_name="ユーザ")
+        index_message_sync(msg, char_ids, vector_store, user_name="ユーザ")
 
-        assert chroma.add_chat_turn.call_count == 3
+        assert vector_store.add_chat_turn.call_count == 3
         called_char_ids = [
-            c.kwargs["character_id"] for c in chroma.add_chat_turn.call_args_list
+            c.kwargs["character_id"] for c in vector_store.add_chat_turn.call_args_list
         ]
         assert sorted(called_char_ids) == sorted(char_ids)
 
-    def test_chroma_error_does_not_propagate(self):
-        """chroma.add_chat_turn が例外を投げてもエラーが伝播しないことを確認する。
+    def test_vector_store_error_does_not_propagate(self):
+        """vector_store.add_chat_turn が例外を投げてもエラーが伝播しないことを確認する。
 
-        ChromaDB の障害がチャット本体に影響しないよう、
+        LanceDB の障害がチャット本体に影響しないよう、
         リトライを経た後も例外を外部に漏らさず正常終了することを検証する。
         time.sleep をパッチしてリトライ待機時間をスキップする。
         """
-        chroma = MagicMock()
-        chroma.add_chat_turn.side_effect = Exception("ChromaDB接続エラー")
+        vector_store = MagicMock()
+        vector_store.add_chat_turn.side_effect = Exception("LanceDB接続エラー")
         msg = _make_message(role="user", content="テスト")
 
         # リトライのsleepをパッチしてテストを高速化する
         with patch("backend.services.chat.indexer.time.sleep"):
             # 例外が発生しないこと
-            index_message_sync(msg, ["char-001"], chroma)
+            index_message_sync(msg, ["char-001"], vector_store)
 
     def test_empty_character_ids_does_nothing(self):
-        """character_ids が空のとき、chroma.add_chat_turn が呼ばれないことを確認する。
+        """character_ids が空のとき、vector_store.add_chat_turn が呼ばれないことを確認する。
 
         参加キャラが解決できなかったセッションでも安全に処理を終了することを検証する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         msg = _make_message(role="user", content="テスト")
 
-        index_message_sync(msg, [], chroma)
+        index_message_sync(msg, [], vector_store)
 
-        chroma.add_chat_turn.assert_not_called()
+        vector_store.add_chat_turn.assert_not_called()
 
     def test_metadata_contains_created_at(self):
         """メタデータに created_at が ISO文字列として含まれることを確認する。
 
-        ChromaDB のメタデータに保存される created_at が
+        LanceDB のメタデータに保存される created_at が
         "YYYY-MM-DDTHH:MM:SS" 形式の文字列であることを検証する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         msg = _make_message(role="user", content="テスト")
 
-        index_message_sync(msg, ["char-001"], chroma)
+        index_message_sync(msg, ["char-001"], vector_store)
 
-        metadata = chroma.add_chat_turn.call_args.kwargs["metadata"]
+        metadata = vector_store.add_chat_turn.call_args.kwargs["metadata"]
         assert "created_at" in metadata
         # ISO形式の文字列であること
         datetime.fromisoformat(metadata["created_at"])
@@ -326,45 +325,45 @@ class TestIndexMessageSync:
 class TestIndexMessageSyncRetry:
     """index_message_sync のリトライ機構ユニットテスト。
 
-    ChromaDB書き込み失敗時に30秒ごとに最大5回リトライし、
+    LanceDB書き込み失敗時に30秒ごとに最大5回リトライし、
     最終失敗時にエラーログを記録することを検証する。
     time.sleep はパッチして実テスト時間を短縮する。
     """
 
     def test_retries_on_failure_then_succeeds(self):
-        """ChromaDB失敗後にリトライして最終的に成功するケースを確認する。
+        """LanceDB失敗後にリトライして最終的に成功するケースを確認する。
 
         2回目の試行で成功した場合、add_chat_turn が計2回呼ばれ
         例外が外部に漏れないことを検証する。
         """
-        chroma = MagicMock()
-        chroma.add_chat_turn.side_effect = [Exception("初回失敗"), None]
+        vector_store = MagicMock()
+        vector_store.add_chat_turn.side_effect = [Exception("初回失敗"), None]
         msg = _make_message(role="user", content="テスト")
 
         with patch("backend.services.chat.indexer.time.sleep") as mock_sleep:
-            index_message_sync(msg, ["char-001"], chroma)
+            index_message_sync(msg, ["char-001"], vector_store)
 
-        assert chroma.add_chat_turn.call_count == 2
+        assert vector_store.add_chat_turn.call_count == 2
         mock_sleep.assert_called_once()
 
     def test_logs_error_on_final_failure(self):
-        """ChromaDB書き込みが最大リトライ回数すべて失敗した場合にエラーログが記録されることを確認する。
+        """LanceDB書き込みが最大リトライ回数すべて失敗した場合にエラーログが記録されることを確認する。
 
         _CHAT_INDEX_MAX_RETRIES 回すべて失敗したとき logger.error が呼ばれ、
         例外は外部に漏れず、チャット本体（SQLite）への影響がないことを検証する。
         """
-        chroma = MagicMock()
-        chroma.add_chat_turn.side_effect = Exception("永続的なChromaDB障害")
+        vector_store = MagicMock()
+        vector_store.add_chat_turn.side_effect = Exception("永続的なLanceDB障害")
         msg = _make_message(role="user", content="テスト")
 
         with patch("backend.services.chat.indexer.time.sleep"):
             with patch("backend.services.chat.indexer.logger") as mock_logger:
-                index_message_sync(msg, ["char-001"], chroma)
+                index_message_sync(msg, ["char-001"], vector_store)
 
         assert mock_logger.error.called
         error_args = mock_logger.error.call_args[0]
         assert "最終失敗" in error_args[0]
-        assert chroma.add_chat_turn.call_count == _CHAT_INDEX_MAX_RETRIES
+        assert vector_store.add_chat_turn.call_count == _CHAT_INDEX_MAX_RETRIES
 
     def test_no_retry_on_success(self):
         """初回成功時にリトライが行われないことを確認する。
@@ -372,14 +371,14 @@ class TestIndexMessageSyncRetry:
         add_chat_turn が1回で成功した場合、time.sleep が呼ばれず
         呼び出し回数も1回であることを検証する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         msg = _make_message(role="user", content="テスト")
 
         with patch("backend.services.chat.indexer.time.sleep") as mock_sleep:
-            index_message_sync(msg, ["char-001"], chroma)
+            index_message_sync(msg, ["char-001"], vector_store)
 
         mock_sleep.assert_not_called()
-        assert chroma.add_chat_turn.call_count == 1
+        assert vector_store.add_chat_turn.call_count == 1
 
     def test_each_char_id_retried_independently(self):
         """複数キャラが存在する場合、各キャラIDに対して独立してリトライが行われることを確認する。
@@ -387,20 +386,20 @@ class TestIndexMessageSyncRetry:
         char-001 が失敗し続けても char-002 のインデックスが影響を受けないことを検証する。
         char-001 は最大試行後にエラーログ、char-002 は1回で成功することを確認する。
         """
-        chroma = MagicMock()
+        vector_store = MagicMock()
         # char-001 は常に失敗、char-002 は成功
         def side_effect(**kwargs):
             if kwargs.get("character_id") == "char-001":
-                raise Exception("char-001のChromaDB障害")
-        chroma.add_chat_turn.side_effect = side_effect
+                raise Exception("char-001のLanceDB障害")
+        vector_store.add_chat_turn.side_effect = side_effect
         msg = _make_message(role="user", content="テスト")
 
         with patch("backend.services.chat.indexer.time.sleep"):
             with patch("backend.services.chat.indexer.logger") as mock_logger:
-                index_message_sync(msg, ["char-001", "char-002"], chroma)
+                index_message_sync(msg, ["char-001", "char-002"], vector_store)
 
         # char-001 は最大試行 → エラーログ
         assert mock_logger.error.called
         # char-002 は成功（合計呼び出し回数 = char-001分 + char-002の1回）
         expected_calls = _CHAT_INDEX_MAX_RETRIES + 1
-        assert chroma.add_chat_turn.call_count == expected_calls
+        assert vector_store.add_chat_turn.call_count == expected_calls

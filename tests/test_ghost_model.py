@@ -23,14 +23,14 @@ from backend.batch.forget_job import run_forget_process
 
 @pytest.fixture
 def memory_manager(sqlite_store):
-    """テスト用 MemoryManager（ChromaDB はモック）。"""
+    """テスト用 InscribedMemoryManager（LanceDB はモック）。"""
     from unittest.mock import MagicMock
-    from backend.services.memory.manager import MemoryManager
-    chroma = MagicMock()
-    chroma.add_memory = MagicMock()
-    chroma.delete_memory = MagicMock()
-    chroma.search = MagicMock(return_value=[])
-    return MemoryManager(sqlite_store, chroma)
+    from backend.services.memory.manager import InscribedMemoryManager
+    vector_store = MagicMock()
+    vector_store.add_inscribed_memory = MagicMock()
+    vector_store.delete_inscribed_memory = MagicMock()
+    vector_store.search = MagicMock(return_value=[])
+    return InscribedMemoryManager(sqlite_store, vector_store)
 
 
 @pytest.fixture
@@ -278,7 +278,7 @@ async def test_run_chronicle_prompt_includes_closed_threads(sqlite_store, workin
 
 
 @pytest.mark.asyncio
-async def test_run_chronicle_system_prompt_includes_wm_threads(
+async def test_run_chronicle_system_prompt_includes_working_memory_threads(
     sqlite_store, working_memory_manager
 ):
     """chronicle のシステムプロンプトが 1on1 基準に統一されていることを確認する。
@@ -360,7 +360,7 @@ async def test_run_forget_process_error_when_no_ghost_model(sqlite_store, memory
     sqlite_store.create_character(char_id, "TestChar")
 
     from datetime import datetime, timedelta
-    sqlite_store.create_memory(
+    sqlite_store.create_inscribed_memory(
         memory_id=str(uuid.uuid4()),
         character_id=char_id,
         content="faint memory",
@@ -370,8 +370,8 @@ async def test_run_forget_process_error_when_no_ghost_model(sqlite_store, memory
         identity_importance=0.01,
     )
     with sqlite_store.get_session() as session:
-        from backend.repositories.sqlite.store import Memory
-        m = session.query(Memory).filter_by(character_id=char_id).first()
+        from backend.repositories.sqlite.store import InscribedMemory
+        m = session.query(InscribedMemory).filter_by(character_id=char_id).first()
         m.created_at = datetime.now() - timedelta(days=180)
         m.last_accessed_at = datetime.now() - timedelta(days=180)
         session.commit()
@@ -728,7 +728,7 @@ def test_format_memories_multiple_entries_one_per_line():
 
 
 # ---------------------------------------------------------------------------
-# MemoryManager.get_top_memorable テスト
+# InscribedMemoryManager.get_top_memorable テスト
 # ---------------------------------------------------------------------------
 
 def test_get_top_memorable_empty_returns_empty_list(sqlite_store, memory_manager):
@@ -749,13 +749,13 @@ def test_get_top_memorable_returns_descending_order(sqlite_store, memory_manager
     sqlite_store.create_character(char_id, "MemChar")
 
     low_id = str(uuid.uuid4())
-    sqlite_store.create_memory(
+    sqlite_store.create_inscribed_memory(
         memory_id=low_id, character_id=char_id, content="低スコア記憶",
         contextual_importance=0.0, semantic_importance=0.0,
         identity_importance=0.0, user_importance=0.0,
     )
     high_id = str(uuid.uuid4())
-    sqlite_store.create_memory(
+    sqlite_store.create_inscribed_memory(
         memory_id=high_id, character_id=char_id, content="高スコア記憶",
         contextual_importance=1.0, semantic_importance=1.0,
         identity_importance=1.0, user_importance=1.0,
@@ -774,7 +774,7 @@ def test_get_top_memorable_respects_limit(sqlite_store, memory_manager):
     sqlite_store.create_character(char_id, "MemChar")
 
     for i in range(5):
-        sqlite_store.create_memory(
+        sqlite_store.create_inscribed_memory(
             memory_id=str(uuid.uuid4()), character_id=char_id,
             content=f"記憶 {i}",
             contextual_importance=0.5, semantic_importance=0.5,
@@ -796,18 +796,18 @@ def test_get_top_memorable_excludes_deleted(sqlite_store, memory_manager):
     sqlite_store.create_character(char_id, "MemChar")
 
     live_id = str(uuid.uuid4())
-    sqlite_store.create_memory(
+    sqlite_store.create_inscribed_memory(
         memory_id=live_id, character_id=char_id, content="生きている記憶",
         contextual_importance=0.5, semantic_importance=0.5,
         identity_importance=0.5, user_importance=0.5,
     )
     deleted_id = str(uuid.uuid4())
-    sqlite_store.create_memory(
+    sqlite_store.create_inscribed_memory(
         memory_id=deleted_id, character_id=char_id, content="削除済み記憶",
         contextual_importance=1.0, semantic_importance=1.0,
         identity_importance=1.0, user_importance=1.0,
     )
-    sqlite_store.soft_delete_memory(deleted_id)
+    sqlite_store.soft_delete_inscribed_memory(deleted_id)
 
     results = memory_manager.get_top_memorable(char_id, limit=10)
 
@@ -823,7 +823,7 @@ def test_get_top_memorable_attaches_decayed_score(sqlite_store, memory_manager):
     """
     char_id = str(uuid.uuid4())
     sqlite_store.create_character(char_id, "MemChar")
-    sqlite_store.create_memory(
+    sqlite_store.create_inscribed_memory(
         memory_id=str(uuid.uuid4()), character_id=char_id, content="スコア付き記憶",
         contextual_importance=0.8, semantic_importance=0.5,
         identity_importance=0.3, user_importance=0.4,
@@ -851,7 +851,7 @@ async def test_run_chronicle_includes_memories_in_prompt_when_memory_manager_giv
     その記憶コンテンツが含まれていることを検証する。
     """
     char_id, _, _, _ = _setup_char_with_messages(sqlite_store, "Alice", n_messages=1)
-    sqlite_store.create_memory(
+    sqlite_store.create_inscribed_memory(
         memory_id=str(uuid.uuid4()), character_id=char_id,
         content="印象的な記憶コンテンツXYZ",
         contextual_importance=0.9, semantic_importance=0.5,

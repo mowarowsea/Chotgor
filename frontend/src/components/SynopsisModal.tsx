@@ -5,8 +5,6 @@
  *   - synopsis_auto: LLM が古い経緯を自動で要約・追記したもの。GM プロンプトのメイン。
  *     ユーザは自由編集できる（捏造記述を発見したら削除・修正できる）。
  *   - synopsis_manual: プレイヤーが手で書き留めた補足メモ。自動更新で破壊されない。
- *
- * 旧 SynopsisPanel（折りたたみパネル）をモーダル化したもの。
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";

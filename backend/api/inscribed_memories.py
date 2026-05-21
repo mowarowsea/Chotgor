@@ -1,4 +1,4 @@
-"""Memory management REST API."""
+"""InscribedMemory management REST API."""
 
 from typing import Optional
 
@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from backend.batch.chronicle_job import run_chronicle
 from backend.lib.log_context import new_message_id
 
-router = APIRouter(prefix="/api/memories", tags=["memories"])
+router = APIRouter(prefix="/api/inscribed_memories", tags=["inscribed_memories"])
 
 
 @router.get("/{character_id}")
@@ -24,7 +24,7 @@ async def list_memories(
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    memories = request.app.state.memory_manager.list_memories(
+    memories = request.app.state.memory_manager.list_inscribed_memories(
         character_id=character_id,
         category=category,
         include_deleted=include_deleted,
@@ -36,17 +36,17 @@ async def list_memories(
 @router.delete("/{character_id}/{memory_id}", status_code=204)
 async def delete_memory(request: Request, character_id: str, memory_id: str):
     """Soft-delete a memory."""
-    ok = request.app.state.memory_manager.delete_memory(memory_id, character_id)
+    ok = request.app.state.memory_manager.delete_inscribed_memory(memory_id, character_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Memory not found")
+        raise HTTPException(status_code=404, detail="InscribedMemory not found")
 
 
 @router.post("/{character_id}/{memory_id}/restore", status_code=200)
 async def restore_memory(request: Request, character_id: str, memory_id: str):
     """Restore a soft-deleted memory."""
-    ok = request.app.state.memory_manager.restore_memory(memory_id)
+    ok = request.app.state.memory_manager.restore_inscribed_memory(memory_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Memory not found")
+        raise HTTPException(status_code=404, detail="InscribedMemory not found")
     return {"status": "restored"}
 
 

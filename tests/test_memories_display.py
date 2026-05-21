@@ -1,6 +1,6 @@
 """Issue #26 — 想起した記憶のフロント表示対応のテスト。
 
-ChatService.execute_stream() が記憶を先頭で ("memories", list) としてyieldすること、
+ChatService.execute_stream() が記憶を先頭で ("inscribed_memories", list) としてyieldすること、
 および router ヘルパー関数の動作を検証する。
 """
 
@@ -175,7 +175,7 @@ def _mock_carver_passthrough():
 
 @pytest.mark.asyncio
 async def test_execute_stream_yields_memories_first():
-    """記憶がある場合、最初のチャンクが ("memories", list) であること。
+    """記憶がある場合、最初のチャンクが ("inscribed_memories", list) であること。
     recall_with_identity が (identity_list, other_list) を返し、
     identity + others を結合したリストが先頭チャンクとしてyieldされることを確認する。
     """
@@ -196,14 +196,14 @@ async def test_execute_stream_yields_memories_first():
         chunks = await _collect_stream(service, request)
 
     first_type, first_content = chunks[0]
-    assert first_type == "memories"
+    assert first_type == "inscribed_memories"
     assert isinstance(first_content, list)
     assert first_content == recalled
 
 
 @pytest.mark.asyncio
 async def test_execute_stream_no_memories_chunk_when_empty():
-    """記憶が0件の場合、("memories", ...) チャンクはyieldされないこと。
+    """記憶が0件の場合、("inscribed_memories", ...) チャンクはyieldされないこと。
     identity・others の両方が空リストのとき memories チャンクが発生しないことを確認する。
     """
     memory_manager = MagicMock()
@@ -222,7 +222,7 @@ async def test_execute_stream_no_memories_chunk_when_empty():
         chunks = await _collect_stream(service, request)
 
     types = [t for t, _ in chunks]
-    assert "memories" not in types
+    assert "inscribed_memories" not in types
 
 
 @pytest.mark.asyncio
@@ -256,7 +256,7 @@ async def test_execute_stream_yields_text_last():
 
     types = [t for t, _ in chunks]
     # 順序: memories → thinking → text
-    assert types.index("memories") < types.index("thinking")
+    assert types.index("inscribed_memories") < types.index("thinking")
     assert types.index("thinking") < types.index("text")
 
 
