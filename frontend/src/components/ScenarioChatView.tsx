@@ -73,6 +73,13 @@ interface Props {
   onEditUserTurn: (turnId: string, newContent: string) => void;
   /** 最後のユーザターン以降を削除して同内容で再ストリーム。 */
   onRegenerate: () => void;
+  /**
+   * 末尾 GM ターン（同一 raw_response のバブル列）を削除する。
+   * 再ストリームは行わず、ユーザリクエスト待ち状態へ戻す。
+   * 主な用途: auto_advance で GM が応答した後、ユーザがその応答を捨てて
+   * 自分の発話を入力したくなった場合。
+   */
+  onDiscard: () => void;
   /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
 }
@@ -362,6 +369,8 @@ interface GMBubbleRowProps {
   copyText?: string;
   /** 1ターンまるごと再生成（最終 user 以降を全削除して再ストリーム）。 */
   onRegenerate?: () => void;
+  /** 末尾 GM ターンを破棄してユーザ入力待ちに戻す（再ストリームしない）。 */
+  onDiscard?: () => void;
   /** アバタークリック時のコールバック。既知 NPC のみ渡される（押下可能になる）。 */
   onAvatarClick?: () => void;
 }
@@ -386,16 +395,19 @@ function GMBubbleRowImpl({
   isLastGM,
   copyText,
   onRegenerate,
+  onDiscard,
   onAvatarClick,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
-  // 操作バー（コピー / 再生成）。ターン末尾の GM バブルにのみ表示する。
+  // 操作バー（コピー / 破棄 / 再生成）。ターン末尾の GM バブルにのみ表示する。
   // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
   const actions = isLastGM ? (
     <MessageActionBar
       copyText={copyText ?? content}
       onRegenerate={onRegenerate}
       regenerateTitle="このターンを再生成"
+      onDiscard={onDiscard}
+      discardTitle="この応答を破棄してユーザ入力に戻す"
     />
   ) : null;
 
@@ -497,6 +509,7 @@ export default function ScenarioChatView({
   onSend,
   onEditUserTurn,
   onRegenerate,
+  onDiscard,
   onHeaderVisibilityChange,
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
@@ -643,6 +656,7 @@ export default function ScenarioChatView({
               }
               copyText={lastGMTurnCopyText}
               onRegenerate={onRegenerate}
+              onDiscard={onDiscard}
               onAvatarClick={
                 npcForAvatar ? () => setNpcDialogTarget(npcForAvatar) : undefined
               }

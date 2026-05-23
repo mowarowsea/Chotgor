@@ -395,6 +395,55 @@ export function RegenerateButton({
 }
 
 // ---------------------------------------------------------------------------
+// DiscardButton
+// ---------------------------------------------------------------------------
+
+/**
+ * バブル下部の応答破棄（🗑）ボタン。
+ *
+ * シナリオモードで「直前の GM 応答を捨てて、ユーザリクエスト待ち状態へ戻したい」
+ * 用途で使う。`RegenerateButton` と異なり、削除後に再ストリームは行わない。
+ * 誤クリック防止のため、呼び出し側で `ml-auto` 等によりバブル右端へ寄せて使う。
+ */
+export function DiscardButton({
+  onClick,
+  title = "この応答を破棄",
+  className = "",
+}: {
+  /** クリック時のコールバック。 */
+  onClick: () => void;
+  /** ホバー時のツールチップ。 */
+  title?: string;
+  /** 追加クラス（右端寄せの `ml-auto` 等）。 */
+  className?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-red-500 transition-all p-1 rounded ${className}`}
+      aria-label="この応答を破棄"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        strokeWidth={1.5}
+        stroke="currentColor"
+        width={13}
+        height={13}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+        />
+      </svg>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // UserMessageActions
 // ---------------------------------------------------------------------------
 
@@ -772,6 +821,8 @@ export function MessageActionBar({
   copyText,
   onRegenerate,
   regenerateTitle = "再生成",
+  onDiscard,
+  discardTitle = "この応答を破棄",
   logMessageId,
 }: {
   /** コピーボタンがコピーするテキスト。 */
@@ -780,6 +831,10 @@ export function MessageActionBar({
   onRegenerate?: () => void;
   /** 再生成ボタンのツールチップ。 */
   regenerateTitle?: string;
+  /** 応答破棄コールバック（無指定で破棄ボタン非表示）。再ストリームは行わない。 */
+  onDiscard?: () => void;
+  /** 破棄ボタンのツールチップ。 */
+  discardTitle?: string;
   /** デバッグログフォルダ名（8桁hex）。指定時のみログ折りたたみを表示する。 */
   logMessageId?: string;
 }) {
@@ -832,8 +887,15 @@ export function MessageActionBar({
             ))}
           </button>
         )}
+        {onDiscard && (
+          <DiscardButton onClick={onDiscard} title={discardTitle} className="ml-auto" />
+        )}
         {onRegenerate && (
-          <RegenerateButton onClick={onRegenerate} title={regenerateTitle} className="ml-auto" />
+          <RegenerateButton
+            onClick={onRegenerate}
+            title={regenerateTitle}
+            className={onDiscard ? "" : "ml-auto"}
+          />
         )}
       </div>
 

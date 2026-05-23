@@ -103,6 +103,31 @@
 
         <hr>
 
+        <!-- Ollama 設定 -->
+        <div class="form-group">
+            <label for="ollama_base_url">Ollama Base URL
+                <span class="label-hint">Ollamaサーバーのベースアドレス</span>
+            </label>
+            <input type="text" id="ollama_base_url" name="ollama_base_url"
+                   value="{{ settings.get('ollama_base_url', 'http://localhost:11434') }}"
+                   class="form-control" style="max-width:360px"
+                   placeholder="http://localhost:11434">
+        </div>
+
+        <div class="form-group">
+            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+                <input type="checkbox" id="ollama_no_think" name="ollama_no_think" value="true"
+                       {% if settings.get('ollama_no_think') in ('true', '1', 'yes', True) %}checked{% endif %}>
+                Qwen3 thinking モードを無効化（/no_think）
+            </label>
+            <p class="form-hint" style="margin-top:4px">
+                qwen3 系モデルで文字化けが起きる場合に有効にする。<br>
+                <code>think: false</code> APIフラグが効かないモデルに対して、/no_think コントロールトークンを最後のuserメッセージ先頭に追加します。
+            </p>
+        </div>
+
+        <hr>
+
         <!-- コンテキストウィンドウ圧縮 -->
         <div class="form-group">
             <label for="context_window_max_chronicled">コンテキストウィンドウ（chronicle済みメッセージ上限）

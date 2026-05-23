@@ -646,6 +646,46 @@ export default function App() {
   }, [activeScenarioSession, scenarioTurns, handleScenarioSend]);
 
   /**
+   * シナリオの GM 応答を 1 ターン分破棄してユーザ入力待ちに戻す。
+   *
+   * `handleScenarioRegenerate` と異なり、削除後に再ストリームしない。
+   * 主な用途: ユーザが auto_advance（無入力 Enter）で GM 続きを促した結果を
+   * 気に入らず、その GM 応答を捨てて自分で発話を入力したい場合。
+   *
+   * 削除対象は末尾 GM 列のみ（同一 raw_response のバブル列）。
+   * 直前のユーザ発話があれば残す（そこから次の発話を入力できる）。
+   * 末尾が user の状態（GM 未応答）では何もしない。
+   */
+  const handleScenarioDiscard = useCallback(async () => {
+    if (!activeScenarioSession) return;
+    if (scenarioTurns.length === 0) return;
+
+    const lastIndex = scenarioTurns.length - 1;
+    if (scenarioTurns[lastIndex].speaker_type === "user") return;
+
+    // 末尾 GM 列の先頭を raw_response の連続性で探す
+    let groupStart = lastIndex;
+    const tailRaw = scenarioTurns[lastIndex].raw_response;
+    while (groupStart > 0) {
+      const prev = scenarioTurns[groupStart - 1];
+      if (prev.speaker_type === "user") break;
+      if (prev.raw_response !== tailRaw) break;
+      groupStart--;
+    }
+
+    const pivot = scenarioTurns[groupStart];
+    const pivotIndex = pivot.turn_index;
+    try {
+      await deleteScenarioTurnsFrom(activeScenarioSession.id, pivot.id);
+      setScenarioTurns((prevTurns) =>
+        prevTurns.filter((t) => t.turn_index < pivotIndex),
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [activeScenarioSession, scenarioTurns]);
+
+  /**
    * ユーザバブルの編集確定処理。
    *
    * 編集対象 user turn 以降を全削除し、新しい内容で再ストリームする。
@@ -1190,6 +1230,7 @@ export default function App() {
             onSend={handleScenarioSend}
             onEditUserTurn={handleScenarioEditUserTurn}
             onRegenerate={handleScenarioRegenerate}
+            onDiscard={handleScenarioDiscard}
             onHeaderVisibilityChange={setHeaderVisible}
           />
         ) : activeSessionId && isGroupSession ? (

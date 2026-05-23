@@ -21,7 +21,8 @@ from typing import Any, AsyncGenerator, Optional
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.chat.models import ChatRequest, Message
 from backend.services.chat.service import ChatService
-from backend.services.memory.format import format_recalled_memories
+from backend.services.memory.format import format_recalled_memories, format_recalled_threads
+from backend.lib.log_context import current_log_feature, new_message_id
 from backend.lib.time_awareness import compute_time_awareness
 from backend.services.group_chat import context as ctx
 from backend.services.group_chat.director import decide_next_speakers
@@ -83,6 +84,11 @@ async def _stream_character_response(
         chat_service: コアLLMロジックを委譲するChatServiceインスタンス。
         uploads_dir: 画像ファイルの保存ディレクトリパス（画像付きメッセージのエンコードに使用）。
     """
+    # キャラクターごとに独立したログ追跡IDを振る（1キャラ応答 = 1LLM呼び出し = 1ログID）。
+    # また機能名を group_chat にセットして、デバッグログのファイル名から識別できるようにする。
+    new_message_id()
+    current_log_feature.set("group_chat")
+
     # キャラクター情報を取得する
     char = sqlite.get_character_by_name(char_name) or sqlite.get_character(char_name)
     if not char:
@@ -144,6 +150,7 @@ async def _stream_character_response(
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする
     full_text = ""
     memory_text = ""
+    wm_text = ""
     thinking_parts: list[str] = []
 
     async for chunk_type, content in chat_service.execute_stream(request):
@@ -151,6 +158,10 @@ async def _stream_character_response(
             memory_text = format_recalled_memories(content)
             if memory_text:
                 yield ("character_reasoning", {"character": char_name, "content": memory_text})
+        elif chunk_type == "working_memory_threads":
+            wm_text = format_recalled_threads(content)
+            if wm_text:
+                yield ("character_reasoning", {"character": char_name, "content": wm_text})
         elif chunk_type == "thinking":
             thinking_parts.append(content)
             yield ("character_reasoning", {"character": char_name, "content": content})
@@ -159,8 +170,8 @@ async def _stream_character_response(
             if content:
                 yield ("character_chunk", {"character": char_name, "content": content})
 
-    # 1on1チャットと同様に想起記憶と思考ブロックをreasoningにまとめてDBに保存する
-    combined = (memory_text + "".join(thinking_parts)).strip()
+    # 1on1チャットと同様に想起記憶・ワーキングメモリ・思考ブロックをreasoningにまとめてDBに保存する
+    combined = (memory_text + wm_text + "".join(thinking_parts)).strip()
     reasoning_text = combined if combined else None
 
     msg_id = str(uuid.uuid4())
