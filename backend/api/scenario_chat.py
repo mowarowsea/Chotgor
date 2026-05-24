@@ -37,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.lib.debug_logger import logger as debug_logger
-from backend.lib.log_context import new_message_id
+from backend.lib.log_context import current_log_feature, new_message_id
 from backend.services.scenario_chat.service import (
     maybe_update_auto_synopsis,
     run_scenario_turn,
@@ -452,6 +452,12 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
     抑制しているため、ユーザが任意のタイミングで追記更新を強制したいときに使う。
     既存 auto は**書き換えず**、新規分のみが末尾に追記される。
     """
+    # 通常の stream エンドポイントと同じく、リクエスト ID と feature タグを設定する。
+    # こうしないと synopsis 蒸留の debug ログが 1on1 の "chat" 扱いで出力され、
+    # 「どのモデルで蒸留されたか」を debug フォルダ名から追えなくなる。
+    new_message_id()
+    current_log_feature.set("scenario_chat")
+
     state = request.app.state
     sqlite = state.sqlite
     sess = sqlite.get_scenario_session(session_id)
