@@ -6,12 +6,39 @@
 
 import asyncio
 import json
+import re
 import urllib.error
 import urllib.request
 
 from backend.providers.base import BaseLLMProvider
 
 DEFAULT_MODEL = "qwen2.5:latest"
+
+# Qwen3系の思考ブロック <think>...</think> をマッチする正規表現。
+# DOTALLで改行を含むテキストにマッチさせ、複数ブロックにも対応する。
+_THINK_RE = re.compile(r"<think>(.*?)</think>\s*", re.DOTALL)
+
+
+def _split_think(text: str) -> tuple[str, str]:
+    """Qwen3系の <think>...</think> ブロックを分離する。
+
+    複数の思考ブロックが含まれる場合はすべて結合して thinking 側に寄せる。
+    閉じタグのない未完了 <think> は本文側にそのまま残す（安全側に倒す）。
+
+    Args:
+        text: モデル出力テキスト。
+
+    Returns:
+        (thinking, clean_text) のタプル。両方とも前後空白除去済み。
+    """
+    thinking_parts: list[str] = []
+
+    def _collect(m: re.Match) -> str:
+        thinking_parts.append(m.group(1))
+        return ""
+
+    clean = _THINK_RE.sub(_collect, text)
+    return "\n".join(p.strip() for p in thinking_parts).strip(), clean.strip()
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -140,6 +167,9 @@ class OllamaProvider(BaseLLMProvider):
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """Ollamaから応答テキストを非同期で生成する。
 
+        Qwen3系の <think>...</think> ブロックは本文から除去して返す。
+        司会AIや非ストリームパスでは思考は使わないため破棄でよい。
+
         _log_request / _log_response は asyncioコンテキスト（スレッド外）で呼び出す。
         GoogleProviderと同様の責務分離パターンに合わせている。
         """
@@ -151,7 +181,9 @@ class OllamaProvider(BaseLLMProvider):
             # 生のレスポンスdictをそのまま記録して文字化けなどの原因調査を可能にする
             self._log_response(result)
             # /api/generate は "response" フィールド（/api/chat の "message.content" とは異なる）
-            return result.get("response", "")
+            raw = result.get("response", "")
+            _, clean = _split_think(raw)
+            return clean
         except urllib.error.URLError as e:
             err = f"[Ollama接続エラー: {e.reason}. Ollamaが起動しているか確認してください]"
             self._log_error(err)
@@ -167,6 +199,36 @@ class OllamaProvider(BaseLLMProvider):
         yield text
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
-        """generate() の結果を ("text", ...) タプルとしてyieldするstream_typed互換メソッド。"""
-        text = await self.generate(system_prompt, messages)
-        yield ("text", text)
+        """非ストリームで取得した結果を ("thinking", ...) と ("text", ...) に分けてyieldする。
+
+        Ollama本体は stream: false で一括取得するため、Claudeのような逐次表示にはならない。
+        ただし思考ブロックと本文を別チャンクとして流すことで、UI側はClaudeと同じ
+        ThinkingBlock扱いで描画できる（chat service の typed-stream 契約に準拠）。
+
+        Qwen3系の <think>...</think> がない通常モデル（qwen2.5など）では
+        thinking 側が空文字となり、("text", ...) のみが流れる。
+        """
+        # generate() は本文しか返さないため、ここでは生レスポンスから直接分離する。
+        clean_messages = self._build_messages(messages)
+        self._log_request({"model": self.model, "system_prompt": system_prompt, "messages": clean_messages})
+
+        try:
+            result = await asyncio.to_thread(self._call_api, system_prompt, clean_messages)
+            self._log_response(result)
+            raw = result.get("response", "")
+        except urllib.error.URLError as e:
+            err = f"[Ollama接続エラー: {e.reason}. Ollamaが起動しているか確認してください]"
+            self._log_error(err)
+            yield ("text", err)
+            return
+        except Exception as e:
+            err = f"[Ollama エラー: {e}]"
+            self._log_error(err)
+            yield ("text", err)
+            return
+
+        thinking, clean = _split_think(raw)
+        if thinking:
+            yield ("thinking", thinking)
+        if clean:
+            yield ("text", clean)
