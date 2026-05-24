@@ -84,6 +84,7 @@ async def update_auto_synopsis(
     existing_auto: str,
     settings: dict,
     preset_loader: Callable[[str], Any],
+    gm_preset_id: str,
     provider_factory: Callable[..., Any] = create_provider,
     narrator_name: str = "Narrator",
 ) -> Optional[str]:
@@ -94,11 +95,14 @@ async def update_auto_synopsis(
     SQLite に書き込む。戻り値は既存 auto への追記ではなく、全体の置き換え版。
 
     Args:
-        scenario: Scenario ORM。user_alias / scenario / gm_preset_id を使う。
+        scenario: Scenario ORM。user_alias / scenario を使う。
         dropped_turns: 今回新たに送信対象外となったターン群（時系列昇順）。
         existing_auto: 既存の synopsis_auto テキスト。
         settings: グローバル設定辞書（API キー等）。
         preset_loader: preset_id を受け取り preset ORM 風オブジェクトを返す関数。
+        gm_preset_id: 蒸留に使う LLM プリセット ID。
+                      セッションの GM プリセット（ScenarioSession.gm_preset_id）と同じ
+                      モデルで蒸留する想定。
         provider_factory: プロバイダ生成関数（デフォルト registry.create_provider）。
         narrator_name: Narrator のタグ名。
 
@@ -110,11 +114,11 @@ async def update_auto_synopsis(
         logger.debug("synopsis 蒸留 skip 理由=dropped_turns空")
         return None
 
-    preset = preset_loader(scenario.gm_preset_id)
+    preset = preset_loader(gm_preset_id)
     if preset is None:
         logger.warning(
             "synopsis 蒸留 skip 理由=preset_loader が None を返却 gm_preset_id=%s",
-            getattr(scenario, "gm_preset_id", None),
+            gm_preset_id,
         )
         return None
 

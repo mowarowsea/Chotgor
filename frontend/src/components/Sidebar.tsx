@@ -35,8 +35,12 @@ interface Props {
   onNewChat: (modelId: string, afterglow: boolean) => void;
   /** 新規グループチャット作成時のコールバック（司会モデルはシステム設定で管理） */
   onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
-  /** シナリオテンプレートからプレイセッションを起動するコールバック */
-  onStartScenario: (scenarioId: string, title?: string) => void;
+  /** シナリオテンプレートからプレイセッションを起動するコールバック。
+   *
+   * `gmPresetId` はセッション単位の GM プリセット（必須）。NewSessionPicker の
+   * Scenario タブで選んだ値が渡る。
+   */
+  onStartScenario: (scenarioId: string, gmPresetId: string, title?: string) => void;
   /** セッション削除時のコールバック（session_type に応じて呼び出し側が分岐） */
   onDeleteSession: (sessionId: string) => void;
   /** セッションタイトル変更時のコールバック */

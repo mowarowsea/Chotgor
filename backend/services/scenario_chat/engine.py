@@ -69,11 +69,14 @@ class SceneEngine(Protocol):
         history: list[Any],
         user_message: str,
         settings: dict,
+        gm_preset_id: str,
         auto_advance: bool = False,
     ) -> AsyncIterator[Any]:
         """1 ターンの発話列をストリーミング生成する。
 
         Args:
+            gm_preset_id: このターンで GM が使う LLM プリセット ID
+                          （セッションが保持する値を呼び出し元が渡す）。
             auto_advance: True なら「ユーザは無言で続きを促す」モード。
                           user_message は使わず、GM が地の文と NPC だけで進める。
 
@@ -127,6 +130,7 @@ class EnsembleEngine:
         history: list[Any],
         user_message: str,
         settings: dict,
+        gm_preset_id: str,
         auto_advance: bool = False,
         synopsis_auto: str = "",
         synopsis_manual: str = "",
@@ -134,12 +138,13 @@ class EnsembleEngine:
         """1 ターンの発話列をストリーミング生成する。
 
         Args:
-            scenario: Scenario ORM。user_alias / gm_preset_id を必須とする。
+            scenario: Scenario ORM。user_alias を必須とする。
             npcs: 既知 NPC のリスト（ScenarioNpc ORM 風）。
             history: ScenarioTurn ORM 風オブジェクトの時系列昇順リスト（全件）。
             user_message: 今回のプレイヤー発話テキスト。
                           auto_advance=True の場合は空文字列を渡してよい（無視される）。
             settings: グローバル設定辞書（API キー等）。
+            gm_preset_id: GM が使う LLM プリセット ID（ScenarioSession.gm_preset_id）。
             auto_advance: True なら「ユーザは無言で続きを促す」モード。
                           user_message は GM プロンプトに含まれず、代わりに
                           OOC 指示が末尾に注入される。
@@ -171,10 +176,10 @@ class EnsembleEngine:
         )
 
         # 3. プロバイダ生成
-        preset = self._preset_loader(scenario.gm_preset_id)
+        preset = self._preset_loader(gm_preset_id)
         if preset is None:
             raise ValueError(
-                f"GM プリセットが見つかりません: gm_preset_id={scenario.gm_preset_id}"
+                f"GM プリセットが見つかりません: gm_preset_id={gm_preset_id}"
             )
         provider = self._provider_factory(
             preset.provider,

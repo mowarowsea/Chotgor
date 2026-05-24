@@ -30,7 +30,6 @@ class ScenarioChatStoreMixin:
         scenario_id: str,
         title: str,
         user_alias: str,
-        gm_preset_id: str,
         scenario: Optional[str] = None,
         intro: Optional[str] = None,
         history_max_turns: Optional[int] = None,
@@ -40,6 +39,8 @@ class ScenarioChatStoreMixin:
 
         場所・空気・語り口・テンポなどはすべて `scenario` テキストにまとめて記述する。
         intro はセッション開始時に固定ターンとして挿入される導入部（@キャラ: 記法）。
+
+        GM の LLM プリセットはテンプレートには持たない（セッション単位で選択する）。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Scenario
@@ -49,7 +50,6 @@ class ScenarioChatStoreMixin:
                 scenario=scenario,
                 intro=intro,
                 user_alias=user_alias,
-                gm_preset_id=gm_preset_id,
                 history_max_turns=history_max_turns,
                 history_max_chars=history_max_chars,
             )
@@ -216,6 +216,7 @@ class ScenarioChatStoreMixin:
         session_id: str,
         scenario_id: str,
         title: str,
+        gm_preset_id: str,
         engine_type: str = "ensemble",
     ):
         """シナリオから新しいプレイセッションを起動する。
@@ -224,6 +225,8 @@ class ScenarioChatStoreMixin:
             session_id: セッション UUID。
             scenario_id: 紐づくシナリオテンプレート ID。
             title: 起動時のセッションタイトル（通常はテンプレ title をコピー）。
+            gm_preset_id: このセッションで使う GM の LLM プリセット ID。
+                          後から `update_scenario_session(gm_preset_id=...)` で変更可。
             engine_type: P1 では "ensemble" 固定。
         """
         with self.get_session() as session:
@@ -232,6 +235,7 @@ class ScenarioChatStoreMixin:
                 id=session_id,
                 scenario_id=scenario_id,
                 title=title,
+                gm_preset_id=gm_preset_id,
                 engine_type=engine_type,
                 status="active",
             )

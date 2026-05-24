@@ -30,16 +30,18 @@ def _make_scenario(
     store,
     title: str = "テストシナリオ",
     user_alias: str = "プレイヤー",
-    gm_preset_id: str = "preset-test",
     **kwargs,
 ):
-    """シナリオテンプレートを 1 件作成して返すユーティリティ。"""
+    """シナリオテンプレートを 1 件作成して返すユーティリティ。
+
+    GM プリセットはセッション単位（ScenarioSession.gm_preset_id）の設定になったため、
+    テンプレ作成では受け付けない。
+    """
     scenario_id = str(uuid.uuid4())
     return store.create_scenario(
         scenario_id=scenario_id,
         title=title,
         user_alias=user_alias,
-        gm_preset_id=gm_preset_id,
         **kwargs,
     )
 
@@ -60,13 +62,18 @@ def _make_session(
     scenario_id: str,
     title: str = "プレイ #1",
     engine_type: str = "ensemble",
+    gm_preset_id: str = "preset-test",
 ):
-    """プレイセッションを 1 件作成して返すユーティリティ。"""
+    """プレイセッションを 1 件作成して返すユーティリティ。
+
+    gm_preset_id はセッション必須項目（同一シナリオから別 GM でも遊べる設計）。
+    """
     session_id = str(uuid.uuid4())
     return store.create_scenario_session(
         session_id=session_id,
         scenario_id=scenario_id,
         title=title,
+        gm_preset_id=gm_preset_id,
         engine_type=engine_type,
     )
 
@@ -113,10 +120,11 @@ class TestScenarioCRUD:
         assert scenario.id
         assert scenario.title == "テストシナリオ"
         assert scenario.user_alias == "プレイヤー"
-        assert scenario.gm_preset_id == "preset-test"
         # 省略フィールドは None
         assert scenario.scenario is None
         assert scenario.history_max_turns is None
+        # GM プリセットはテンプレート側には保持されない（セッション単位の設定に移行）。
+        assert not hasattr(scenario, "gm_preset_id")
 
     def test_create_full_fields(self, sqlite_store):
         """全フィールド指定で作成し、すべて永続化されること。"""
@@ -124,7 +132,6 @@ class TestScenarioCRUD:
             sqlite_store,
             title="廃墟探索",
             user_alias="ヴァン",
-            gm_preset_id="preset-X",
             scenario="魔導書を探す。古城。詩的に語る。slow テンポ。",
             history_max_turns=50,
             history_max_chars=40000,
@@ -367,14 +374,40 @@ class TestScenarioSessionCRUD:
     """プレイインスタンス CRUD を検証する。"""
 
     def test_create(self, sqlite_store):
-        """シナリオからセッションを起動できること。"""
+        """シナリオからセッションを起動できること。gm_preset_id がセッションに紐づくこと。"""
         scenario = _make_scenario(sqlite_store)
-        session = _make_session(sqlite_store, scenario.id, title="プレイ #1")
+        session = _make_session(
+            sqlite_store,
+            scenario.id,
+            title="プレイ #1",
+            gm_preset_id="preset-session-A",
+        )
         assert session.id
         assert session.scenario_id == scenario.id
         assert session.title == "プレイ #1"
         assert session.status == "active"
         assert session.engine_type == "ensemble"
+        assert session.gm_preset_id == "preset-session-A"
+
+    def test_create_two_sessions_can_have_different_presets(self, sqlite_store):
+        """同一シナリオから別の GM プリセットでセッションを起動できること。
+
+        Scenario からセッション単位へ gm_preset_id を移した目的のコア要件。
+        """
+        scenario = _make_scenario(sqlite_store)
+        s_a = _make_session(sqlite_store, scenario.id, gm_preset_id="preset-A")
+        s_b = _make_session(sqlite_store, scenario.id, gm_preset_id="preset-B")
+        assert s_a.gm_preset_id == "preset-A"
+        assert s_b.gm_preset_id == "preset-B"
+
+    def test_update_session_gm_preset(self, sqlite_store):
+        """セッションの gm_preset_id を後から変更できること（ヘッダーUI のモデル切替に対応）。"""
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id, gm_preset_id="preset-X")
+        updated = sqlite_store.update_scenario_session(
+            session.id, gm_preset_id="preset-Y"
+        )
+        assert updated.gm_preset_id == "preset-Y"
 
     def test_get_nonexistent_returns_none(self, sqlite_store):
         assert sqlite_store.get_scenario_session("does-not-exist") is None

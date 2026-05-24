@@ -35,10 +35,13 @@ from backend.services.scenario_chat.parser import UtteranceDelta
 
 @dataclass
 class FakeScenario:
-    """Scenario 風のダミー（テンプレート）。"""
+    """Scenario 風のダミー（テンプレート）。
+
+    gm_preset_id はセッション単位の設定（ScenarioSession.gm_preset_id）に移したため、
+    テンプレ風ダミーには含めない。テストでは generate_stream の引数で指定する。
+    """
 
     user_alias: str = "プレイヤー"
-    gm_preset_id: str = "preset-001"
     scenario: Optional[str] = None
     history_max_turns: Optional[int] = None
     history_max_chars: Optional[int] = None
@@ -148,6 +151,7 @@ class TestBasicTurnGeneration:
                 history=[],
                 user_message="やぁ",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
 
@@ -185,6 +189,7 @@ class TestBasicTurnGeneration:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         records = [i for i in items if isinstance(i, TurnRecord)]
@@ -209,6 +214,7 @@ class TestBasicTurnGeneration:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         records = [i for i in items if isinstance(i, TurnRecord)]
@@ -236,6 +242,7 @@ class TestBasicTurnGeneration:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         records = [i for i in items if isinstance(i, TurnRecord)]
@@ -265,6 +272,7 @@ class TestUserAliasSuppression:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         records = [i for i in items if isinstance(i, TurnRecord)]
@@ -298,6 +306,7 @@ class TestNonTextChunks:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         deltas = [i for i in items if isinstance(i, UtteranceDelta)]
@@ -330,6 +339,7 @@ class TestEngineResult:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         results = [i for i in items if isinstance(i, EngineResult)]
@@ -353,6 +363,7 @@ class TestEngineResult:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         # 最後の要素が EngineResult
@@ -377,11 +388,12 @@ class TestPresetMissing:
         with pytest.raises(ValueError, match="プリセット"):
             await _collect(
                 engine.generate_stream(
-                    scenario=FakeScenario(gm_preset_id="missing"),
+                    scenario=FakeScenario(),
                     npcs=[],
                     history=[],
                     user_message="hi",
                     settings={},
+                    gm_preset_id="missing",
                 )
             )
 
@@ -413,6 +425,7 @@ class TestHistoryInPrompt:
                 history=history,
                 user_message="続き",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         sp = provider.received_system_prompt
@@ -439,6 +452,7 @@ class TestHistoryInPrompt:
                 history=history,
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         sp = provider.received_system_prompt or ""
@@ -472,6 +486,7 @@ class TestSynopsisIntoSystemPrompt:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
                 synopsis_auto="勇者は森でレイカと出会った。",
             )
         )
@@ -491,6 +506,7 @@ class TestSynopsisIntoSystemPrompt:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
                 synopsis_manual="プレイヤーは「絶対に裏切らない」と約束した。",
             )
         )
@@ -510,6 +526,7 @@ class TestSynopsisIntoSystemPrompt:
                 history=[],
                 user_message="",
                 settings={},
+                gm_preset_id="preset-001",
             )
         )
         sp = provider.received_system_prompt or ""

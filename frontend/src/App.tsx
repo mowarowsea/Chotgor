@@ -22,6 +22,7 @@ import {
   fetchScenarioSession,
   fetchScenarioTurns,
   startScenarioSession,
+  updateScenarioSession,
   deleteScenarioSession,
   deleteScenarioTurnsFrom,
   streamScenarioMessage,
@@ -92,6 +93,7 @@ import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
 import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
 import CharPresetMenu from "./components/CharPresetMenu";
+import ScenarioPresetMenu from "./components/ScenarioPresetMenu";
 import SynopsisModal from "./components/SynopsisModal";
 import { useTheme } from "./hooks/useTheme";
 
@@ -219,16 +221,22 @@ export default function App() {
   scenarioSessionsRef.current = scenarioSessions;
   /** 現在選択中のシナリオプレイセッション。 */
   const [activeScenarioSession, setActiveScenarioSession] = useState<ScenarioSession | null>(null);
-  /** 元シナリオテンプレ（GM 設定や場所表示に使う）。 */
+  /** 元シナリオテンプレ（場所表示・user_alias 表示に使う）。 */
   const [activeScenarioTemplate, setActiveScenarioTemplate] = useState<ScenarioTemplate | null>(null);
   /** GM プリセット一覧（シナリオヘッダーの gm_preset_id → 表示名解決に使う）。 */
   const [scenarioPresets, setScenarioPresets] = useState<ScenarioPreset[]>([]);
-  /** アクティブなシナリオの gm_preset_id を表示用プリセット名に解決する。 */
+  /** GM プリセット切替メニューの開閉状態（左上ヘッダーチップの 1on1 用と独立）。 */
+  const [scenarioPresetMenuOpen, setScenarioPresetMenuOpen] = useState(false);
+  /** アクティブセッションの gm_preset_id を表示用プリセット名に解決する。
+   *
+   * GM モデルはセッション単位の設定なので、テンプレートではなく ScenarioSession から引く。
+   * 同一シナリオから複数セッションを起動した際にそれぞれ別の GM モデルで遊べる。
+   */
   const scenarioPresetName = useMemo(() => {
-    const id = activeScenarioTemplate?.gm_preset_id;
+    const id = activeScenarioSession?.gm_preset_id;
     if (!id) return null;
     return scenarioPresets.find((p) => p.id === id)?.name ?? null;
-  }, [activeScenarioTemplate, scenarioPresets]);
+  }, [activeScenarioSession, scenarioPresets]);
   const [scenarioNpcs, setScenarioNpcs] = useState<ScenarioNpc[]>([]);
   const [scenarioTurns, setScenarioTurns] = useState<ScenarioTurn[]>([]);
   /** ストリーミング中の未確定吹き出し列。 */
@@ -314,6 +322,7 @@ export default function App() {
     setScenarioTurns([]);
     setScenarioPending([]);
     setScenarioSynopsis(null);
+    setScenarioPresetMenuOpen(false);
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
     window.location.hash = sessionId;
 
@@ -447,12 +456,16 @@ export default function App() {
     }
   }, [activeSessionId, scenarioSessions]);
 
-  /** シナリオテンプレートからプレイセッションを起動する。 */
+  /** シナリオテンプレートからプレイセッションを起動する。
+   *
+   * `gmPresetId` は新セッションで GM を演じる LLM プリセット（必須）。NewSessionPicker
+   * の Scenario タブでユーザに選ばせる。
+   */
   const handleStartScenario = useCallback(
-    async (scenarioId: string, title?: string) => {
+    async (scenarioId: string, gmPresetId: string, title?: string) => {
       setError(null);
       try {
-        const created = await startScenarioSession(scenarioId, title);
+        const created = await startScenarioSession(scenarioId, gmPresetId, title);
         setScenarioSessions((prev) => [created, ...prev]);
         // ref も即座に更新する。直後の handleSelectSession 等が ref を読むケースに備える。
         scenarioSessionsRef.current = [created, ...scenarioSessionsRef.current];
@@ -494,6 +507,36 @@ export default function App() {
       setError(String(e));
     }
   }, [activeScenarioSession]);
+
+  /** シナリオセッションの GM プリセットを変更する。
+   *
+   * 左上ヘッダーのプリセットメニュー「適用」から呼ばれる。次ターン以降の GM 応答
+   * （および以後のあらすじ蒸留）に新プリセットが反映される。
+   */
+  const handleScenarioPresetChange = useCallback(
+    async (presetId: string) => {
+      if (!activeScenarioSession) return;
+      if (presetId === activeScenarioSession.gm_preset_id) return;
+      setError(null);
+      try {
+        const updated = await updateScenarioSession(activeScenarioSession.id, {
+          gm_preset_id: presetId,
+        });
+        // セッション一覧側にも反映する（ヘッダー用 state は session + 一覧の両方を更新）。
+        setActiveScenarioSession((prev) =>
+          prev ? { ...prev, gm_preset_id: updated.gm_preset_id } : prev,
+        );
+        setScenarioSessions((prev) =>
+          prev.map((s) =>
+            s.id === updated.id ? { ...s, gm_preset_id: updated.gm_preset_id } : s,
+          ),
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession],
+  );
 
   /**
    * シナリオ発話送信。SSE ストリームを消費しながら吹き出しを更新する。
@@ -564,10 +607,13 @@ export default function App() {
           } catch {
             // 取得失敗は無視
           }
-          // GM プリセット等の設定変更をヘッダーに反映するためテンプレを取り直す。
+          // テンプレートとセッション本体を取り直す（updated_at や設定変更を反映）。
+          // GM プリセット変更はセッション側の更新で即時反映されるが、
+          // テンプレ側を別タブで編集した場合に追従するためここでも取り直す。
           fetchScenarioSession(sessionId)
             .then((d) => {
               if (sessionId === activeSessionIdRef.current) {
+                setActiveScenarioSession(d);
                 setActiveScenarioTemplate(d.scenario);
               }
             })
@@ -1074,17 +1120,34 @@ export default function App() {
             {/* タイトルチップ（角丸ピル）。セッション種別に応じて内容を切り替える。 */}
             {activeSessionId && isScenarioSession && activeScenarioSession ? (
               <div
-                className="pointer-events-auto flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
+                className="pointer-events-auto relative flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
                 style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
               >
-                <span className="shrink-0 w-6 h-6 rounded-full bg-ch-s1 flex items-center justify-center text-ch-t2 text-xs">✦</span>
-                <div className="min-w-0">
-                  <div className="text-ch-t1 text-[13px] font-semibold truncate leading-tight">{activeScenarioSession.title}</div>
-                  {/* GM プリセット名（チャット中の変更に追従するためレスポンス毎に再取得）。 */}
-                  <div className="text-ch-t3 text-[10px] font-mono leading-tight truncate">
-                    {scenarioPresetName ? `@${scenarioPresetName}` : "scenario"}
+                {/* シナリオタイトル + GM プリセット名のチップ。クリックで GM 切替メニューを開く
+                    （1on1 のモデル切替と同じ操作感）。 */}
+                <button
+                  onClick={() => setScenarioPresetMenuOpen((o) => !o)}
+                  className="flex items-center gap-2 min-w-0"
+                  title="GM モデルを切り替え"
+                >
+                  <span className="shrink-0 w-6 h-6 rounded-full bg-ch-s1 flex items-center justify-center text-ch-t2 text-xs">✦</span>
+                  <div className="min-w-0 text-left">
+                    <div className="text-ch-t1 text-[13px] font-semibold truncate leading-tight">{activeScenarioSession.title}</div>
+                    <div className="text-ch-t3 text-[10px] font-mono leading-tight truncate">
+                      {scenarioPresetName ? `@${scenarioPresetName}` : "scenario"}
+                      <span className="text-ch-t4 ml-1">▾</span>
+                    </div>
                   </div>
-                </div>
+                </button>
+                {/* GM プリセット切替メニュー */}
+                {scenarioPresetMenuOpen && (
+                  <ScenarioPresetMenu
+                    presets={scenarioPresets}
+                    currentPresetId={activeScenarioSession.gm_preset_id}
+                    onApply={handleScenarioPresetChange}
+                    onClose={() => setScenarioPresetMenuOpen(false)}
+                  />
+                )}
               </div>
             ) : activeSessionId && isGroupSession ? (
               <div

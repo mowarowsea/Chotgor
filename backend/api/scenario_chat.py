@@ -55,11 +55,14 @@ router = APIRouter(prefix="/api/scenario_chat", tags=["scenario_chat"])
 
 
 class ScenarioCreate(BaseModel):
-    """シナリオテンプレート作成リクエスト。"""
+    """シナリオテンプレート作成リクエスト。
+
+    GM プリセットはテンプレートではなくセッション単位（SessionStart.gm_preset_id）で
+    指定するため、本リクエストには含めない。
+    """
 
     title: str = Field(min_length=1)
     user_alias: str = Field(min_length=1)
-    gm_preset_id: str = Field(min_length=1)
     scenario: Optional[str] = None
     intro: Optional[str] = None
     history_max_turns: Optional[int] = None
@@ -71,7 +74,6 @@ class ScenarioUpdate(BaseModel):
 
     title: Optional[str] = None
     user_alias: Optional[str] = None
-    gm_preset_id: Optional[str] = None
     scenario: Optional[str] = None
     intro: Optional[str] = None
     history_max_turns: Optional[int] = None
@@ -99,17 +101,23 @@ class NpcUpdate(BaseModel):
 
 
 class SessionStart(BaseModel):
-    """プレイセッション起動リクエスト。"""
+    """プレイセッション起動リクエスト。
+
+    gm_preset_id はセッション単位で必須。同一シナリオから複数セッションを起動した際に
+    それぞれ別の GM モデルを選べる設計。
+    """
 
     scenario_id: str = Field(min_length=1)
+    gm_preset_id: str = Field(min_length=1)
     title: Optional[str] = None  # 省略時はシナリオ title を使う
 
 
 class SessionUpdate(BaseModel):
-    """プレイセッション更新リクエスト（タイトル変更 / status 変更）。"""
+    """プレイセッション更新リクエスト（タイトル変更 / status 変更 / GM モデル変更）。"""
 
     title: Optional[str] = None
     status: Optional[str] = None
+    gm_preset_id: Optional[str] = None
 
 
 class SynopsisUpdate(BaseModel):
@@ -161,17 +169,11 @@ async def list_presets(request: Request):
 async def create_scenario(request: Request, body: ScenarioCreate):
     """シナリオテンプレートを新規作成する。"""
     sqlite = request.app.state.sqlite
-    if sqlite.get_model_preset(body.gm_preset_id) is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"指定された gm_preset_id が見つかりません: {body.gm_preset_id}",
-        )
     sid = str(uuid.uuid4())
     sqlite.create_scenario(
         scenario_id=sid,
         title=body.title,
         user_alias=body.user_alias,
-        gm_preset_id=body.gm_preset_id,
         scenario=body.scenario,
         intro=body.intro,
         history_max_turns=body.history_max_turns,
@@ -207,12 +209,6 @@ async def update_scenario(request: Request, scenario_id: str, body: ScenarioUpda
     if sqlite.get_scenario(scenario_id) is None:
         raise HTTPException(status_code=404, detail="シナリオが見つかりません")
     update_fields = body.model_dump(exclude_unset=True)
-    if "gm_preset_id" in update_fields and update_fields["gm_preset_id"]:
-        if sqlite.get_model_preset(update_fields["gm_preset_id"]) is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"指定された gm_preset_id が見つかりません: {update_fields['gm_preset_id']}",
-            )
     updated = sqlite.update_scenario(scenario_id, **update_fields)
     return scenario_to_dict(updated)
 
@@ -290,12 +286,20 @@ async def remove_npc(request: Request, scenario_id: str, npc_id: str):
 
 @router.post("/sessions", status_code=201)
 async def start_session(request: Request, body: SessionStart):
-    """シナリオテンプレートから新しいプレイセッションを起動する。"""
+    """シナリオテンプレートから新しいプレイセッションを起動する。
+
+    起動時に GM プリセットを必須で受け取り、セッションへ紐付ける（チャット中も変更可）。
+    """
     sqlite = request.app.state.sqlite
     scenario = sqlite.get_scenario(body.scenario_id)
     if scenario is None:
         raise HTTPException(
             status_code=400, detail=f"シナリオが見つかりません: {body.scenario_id}"
+        )
+    if sqlite.get_model_preset(body.gm_preset_id) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"指定された gm_preset_id が見つかりません: {body.gm_preset_id}",
         )
     sid = str(uuid.uuid4())
     title = body.title or scenario.title
@@ -303,6 +307,7 @@ async def start_session(request: Request, body: SessionStart):
         session_id=sid,
         scenario_id=body.scenario_id,
         title=title,
+        gm_preset_id=body.gm_preset_id,
     )
     # シナリオ設定の導入部（intro）があれば固定ターンとして先頭挿入する
     seed_intro_turns(sqlite, sid, scenario)
@@ -333,11 +338,17 @@ async def get_session(request: Request, session_id: str):
 
 @router.patch("/sessions/{session_id}")
 async def update_session(request: Request, session_id: str, body: SessionUpdate):
-    """プレイセッションを部分更新する（タイトル変更 / status 変更）。"""
+    """プレイセッションを部分更新する（タイトル変更 / status 変更 / GM モデル変更）。"""
     sqlite = request.app.state.sqlite
     if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     update_fields = body.model_dump(exclude_unset=True)
+    if "gm_preset_id" in update_fields and update_fields["gm_preset_id"]:
+        if sqlite.get_model_preset(update_fields["gm_preset_id"]) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"指定された gm_preset_id が見つかりません: {update_fields['gm_preset_id']}",
+            )
     updated = sqlite.update_scenario_session(session_id, **update_fields)
     return scenario_session_to_dict(updated)
 
@@ -457,6 +468,7 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
         scenario=scenario,
         history=history,
         session_id=session_id,
+        gm_preset_id=getattr(sess, "gm_preset_id", "") or "",
         force=True,
     )
     if updated is None:

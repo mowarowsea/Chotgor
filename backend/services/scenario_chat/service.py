@@ -54,7 +54,6 @@ def scenario_to_dict(scenario: Any) -> dict:
         "scenario": scenario.scenario,
         "intro": scenario.intro,
         "user_alias": scenario.user_alias,
-        "gm_preset_id": scenario.gm_preset_id,
         "history_max_turns": scenario.history_max_turns,
         "history_max_chars": scenario.history_max_chars,
         "created_at": scenario.created_at.isoformat() if scenario.created_at else None,
@@ -63,7 +62,11 @@ def scenario_to_dict(scenario: Any) -> dict:
 
 
 def scenario_session_to_dict(session: Any) -> dict:
-    """ScenarioSession ORM（プレイインスタンス）を JSON 化可能な dict に変換する。"""
+    """ScenarioSession ORM（プレイインスタンス）を JSON 化可能な dict に変換する。
+
+    `gm_preset_id` は同一シナリオから複数セッションを起動した際にそれぞれ別の
+    GM モデルで遊ぶための、セッション固有の LLM プリセット ID。
+    """
     if session is None:
         return {}
     return {
@@ -72,6 +75,7 @@ def scenario_session_to_dict(session: Any) -> dict:
         "title": session.title,
         "engine_type": session.engine_type,
         "status": session.status,
+        "gm_preset_id": getattr(session, "gm_preset_id", "") or "",
         "synopsis_auto": getattr(session, "synopsis_auto", "") or "",
         "synopsis_manual": getattr(session, "synopsis_manual", "") or "",
         "synopsis_last_turn_index": int(getattr(session, "synopsis_last_turn_index", -1) or -1),
@@ -128,6 +132,7 @@ async def maybe_update_auto_synopsis(
     scenario,
     history: list,
     session_id: str,
+    gm_preset_id: str,
     *,
     force: bool = False,
 ) -> Optional[dict]:
@@ -208,6 +213,7 @@ async def maybe_update_auto_synopsis(
             existing_auto=synopsis.get("auto", ""),
             settings=settings,
             preset_loader=loader,
+            gm_preset_id=gm_preset_id,
         )
         if new_auto is None:
             # update_auto_synopsis 側の WARN で詳細理由は出ているので、ここは要約のみ
@@ -285,12 +291,15 @@ async def run_scenario_turn(
     #      履歴上限を超えるターン群があれば、それを LLM で要約して synopsis_auto に追記する。
     #      閾値未満の場合・失敗時は何もしない（チャット本体は継続）。
     #      ここで取得した synopsis を engine に渡し、GM プロンプトに含める。
+    #      蒸留もセッションの GM プリセットで実施する（モデルを揃える）。
+    gm_preset_id = getattr(session, "gm_preset_id", "") or ""
     updated_synopsis = await maybe_update_auto_synopsis(
         sqlite=sqlite,
         settings=settings,
         scenario=scenario,
         history=history,
         session_id=session_id,
+        gm_preset_id=gm_preset_id,
     )
     if updated_synopsis is not None:
         # クライアントへ更新を通知（UI 側のあらすじパネルを最新化させるため）。
@@ -317,6 +326,7 @@ async def run_scenario_turn(
             history=history,
             user_message=user_message,
             settings=settings,
+            gm_preset_id=gm_preset_id,
             auto_advance=auto_advance,
             synopsis_auto=current_synopsis.get("auto", ""),
             synopsis_manual=current_synopsis.get("manual", ""),

@@ -33,10 +33,13 @@ from backend.services.scenario_chat.synopsis import (
 
 @dataclass
 class FakeScenario:
-    """Scenario 風のダミーオブジェクト。"""
+    """Scenario 風のダミーオブジェクト。
+
+    gm_preset_id はテンプレートではなくセッション単位の設定（ScenarioSession.gm_preset_id）
+    に移したため、ダミーには含めない。テストでは update_auto_synopsis の引数で指定する。
+    """
 
     user_alias: str = "プレイヤー"
-    gm_preset_id: str = "preset-001"
     scenario: Optional[str] = None
 
 
@@ -172,6 +175,7 @@ class TestUpdateAutoSynopsis:
             existing_auto="既存",
             settings={},
             preset_loader=_loader_for(FakePreset()),
+            gm_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None
@@ -190,6 +194,7 @@ class TestUpdateAutoSynopsis:
             existing_auto="",
             settings={},
             preset_loader=_loader_for(None),
+            gm_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None
@@ -206,6 +211,7 @@ class TestUpdateAutoSynopsis:
             existing_auto="既存テキスト",
             settings={},
             preset_loader=_loader_for(FakePreset()),
+            gm_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None
@@ -223,6 +229,7 @@ class TestUpdateAutoSynopsis:
             existing_auto="昔の出来事。",
             settings={},
             preset_loader=_loader_for(FakePreset()),
+            gm_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         # 既存 auto を末尾連結せず、LLM 出力そのものを全体置き換えで返す
@@ -241,6 +248,7 @@ class TestUpdateAutoSynopsis:
             existing_auto="統合対象の既存記述",
             settings={},
             preset_loader=_loader_for(FakePreset()),
+            gm_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert provider.received_system_prompt is not None
@@ -258,6 +266,7 @@ class TestUpdateAutoSynopsis:
             existing_auto="守りたい既存",
             settings={},
             preset_loader=_loader_for(FakePreset()),
+            gm_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None

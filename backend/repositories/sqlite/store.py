@@ -251,10 +251,14 @@ class LLMModelPreset(Base):
 class Scenario(Base):
     """シナリオテンプレート — シナリオチャットで何度でも遊べるシナリオ設定本体。
 
-    NPC 構成・GM プリセット・世界観などをテンプレートとして登録しておき、
+    NPC 構成・世界観などをテンプレートとして登録しておき、
     そこから ScenarioSession（プレイインスタンス）を起動する。
     テンプレート編集中もプレイ中のセッションには影響しないよう、
     セッションはテンプレートの内容を「実行時に lookup する」設計。
+
+    GM プリセット（LLM 設定）はテンプレート単位ではなくセッション単位
+    （ScenarioSession.gm_preset_id）で保持する。同一シナリオから複数
+    セッションを起動した際、それぞれ異なる GM モデルで遊べるようにするため。
     """
 
     __tablename__ = "scenarios"
@@ -264,7 +268,6 @@ class Scenario(Base):
     scenario = Column(Text, nullable=True)                 # シナリオ概要・世界観テキスト（自由記述：場所・空気感・語り口など全部ここに詰める）
     intro = Column(Text, nullable=True)                    # 導入部（@キャラ:記法）。セッション開始時に固定ターンとして挿入
     user_alias = Column(String, nullable=False)            # ユーザの @タグ用エイリアス
-    gm_preset_id = Column(String, nullable=False)          # LLMModelPreset.id（FK 制約は付けない: preset 削除時もテンプレは残す）
     history_max_turns = Column(Integer, nullable=True)     # 送信履歴の最大ターン数。NULL=settings 既定
     history_max_chars = Column(Integer, nullable=True)     # 送信履歴の最大文字数。NULL=settings 既定
     created_at = Column(DateTime, default=lambda: datetime.now())
@@ -316,6 +319,11 @@ class ScenarioSession(Base):
     title = Column(String, nullable=False)                 # 起動時はテンプレ title からコピー（編集可）
     engine_type = Column(String, nullable=False, default="ensemble")  # P1 では 'ensemble' 固定
     status = Column(String, nullable=False, default="active")  # active / ended
+    # GM が使う LLM プリセット ID（LLMModelPreset.id）。
+    # FK 制約は付けない: preset 削除時もセッション履歴は残したいため。
+    # セッション開始時に必ず指定する（フロントの「新しい会話」モーダルでユーザが選ぶ）。
+    # チャット中も左上ヘッダーから変更可能（1on1 のモデル切替と同様）。
+    gm_preset_id = Column(String, nullable=False, default="")
     # あらすじ機構（記憶捏造対策）
     #   synopsis_auto: LLM が古いターン群を要約して「追記」していく主あらすじ。
     #                  ユーザも UI から自由編集可能（捏造の混入を発見した際に削除・修正できる）。
@@ -376,6 +384,60 @@ class SQLiteStore(
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         self.SessionLocal = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
+        self._migrate_gm_preset_id_to_session()
+
+    def _migrate_gm_preset_id_to_session(self) -> None:
+        """`gm_preset_id` を scenarios → scenario_sessions に移行する。
+
+        旧スキーマ: scenarios.gm_preset_id（NOT NULL）にシナリオ単位で保持
+        新スキーマ: scenario_sessions.gm_preset_id（NOT NULL）にセッション単位で保持
+
+        移行手順:
+            1. scenario_sessions に gm_preset_id 列が無ければ ADD COLUMN
+            2. scenarios.gm_preset_id を JOIN で各セッションへバックフィル
+            3. scenarios.gm_preset_id を DROP COLUMN（SQLite 3.35+ が必要）
+
+        新規 DB（既に新スキーマ）では何もしない。冪等。
+        """
+        def _columns_of(conn, table: str) -> set[str]:
+            rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            return {r[1] for r in rows}
+
+        with self.engine.begin() as conn:
+            # 両テーブルが存在するか（最初の起動時は scenarios すら無いこともある）
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "scenarios" not in tables or "scenario_sessions" not in tables:
+                return
+
+            session_cols = _columns_of(conn, "scenario_sessions")
+            scenario_cols = _columns_of(conn, "scenarios")
+
+            # 1. scenario_sessions に列を追加（既に新スキーマなら skip）
+            if "gm_preset_id" not in session_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_sessions "
+                    "ADD COLUMN gm_preset_id TEXT NOT NULL DEFAULT ''"
+                )
+
+            # 2. 旧 scenarios.gm_preset_id が残っていればバックフィル
+            if "gm_preset_id" in scenario_cols:
+                conn.exec_driver_sql(
+                    "UPDATE scenario_sessions "
+                    "SET gm_preset_id = COALESCE(("
+                    "  SELECT s.gm_preset_id FROM scenarios s "
+                    "  WHERE s.id = scenario_sessions.scenario_id"
+                    "), gm_preset_id) "
+                    "WHERE (gm_preset_id IS NULL OR gm_preset_id = '')"
+                )
+                # 3. 旧列を削除（SQLite 3.35+）
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenarios DROP COLUMN gm_preset_id"
+                )
 
     def get_session(self) -> Session:
         """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""

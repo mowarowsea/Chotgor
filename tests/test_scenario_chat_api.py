@@ -57,11 +57,10 @@ def _seed_preset(sqlite_store, preset_id="preset-test", name="Test", provider="f
 
 
 def _create_scenario(client, **overrides) -> dict:
-    """POST /scenarios のラッパ。"""
+    """POST /scenarios のラッパ。GM プリセットはセッション側で指定するので含まない。"""
     payload = {
         "title": "テストシナリオ",
         "user_alias": "プレイヤー",
-        "gm_preset_id": "preset-test",
     }
     payload.update(overrides)
     res = client.post("/api/scenario_chat/scenarios", json=payload)
@@ -69,9 +68,11 @@ def _create_scenario(client, **overrides) -> dict:
     return res.json()
 
 
-def _start_session(client, scenario_id: str, title=None) -> dict:
-    """POST /sessions のラッパ。"""
-    payload = {"scenario_id": scenario_id}
+def _start_session(
+    client, scenario_id: str, title=None, gm_preset_id: str = "preset-test"
+) -> dict:
+    """POST /sessions のラッパ。gm_preset_id はセッション必須。"""
+    payload = {"scenario_id": scenario_id, "gm_preset_id": gm_preset_id}
     if title:
         payload["title"] = title
     res = client.post("/api/scenario_chat/sessions", json=payload)
@@ -89,18 +90,19 @@ class TestScenarioCRUD:
     """
 
     def test_create_minimum(self, sqlite_store):
-        """必須項目だけで作成し、レスポンスにフィールドが含まれること。"""
-        _seed_preset(sqlite_store)
+        """必須項目だけで作成し、レスポンスにフィールドが含まれること。
+
+        gm_preset_id はテンプレートには含まれない（セッション単位の設定に移行）。
+        """
         client = TestClient(_build_app(sqlite_store))
         body = _create_scenario(client)
         assert body["id"]
         assert body["title"] == "テストシナリオ"
         assert body["user_alias"] == "プレイヤー"
-        assert body["gm_preset_id"] == "preset-test"
+        assert "gm_preset_id" not in body
 
     def test_create_full(self, sqlite_store):
         """全フィールド指定で作成できること。"""
-        _seed_preset(sqlite_store)
         client = TestClient(_build_app(sqlite_store))
         body = _create_scenario(
             client,
@@ -110,21 +112,13 @@ class TestScenarioCRUD:
         assert body["scenario"] == "魔導書探求。古城。詩的に語る。"
         assert body["history_max_turns"] == 50
 
-    def test_create_invalid_preset(self, sqlite_store):
-        """gm_preset_id が存在しない場合 400。"""
-        client = TestClient(_build_app(sqlite_store))
-        res = client.post(
-            "/api/scenario_chat/scenarios",
-            json={"title": "x", "user_alias": "p", "gm_preset_id": "missing"},
-        )
-        assert res.status_code == 400
-
     def test_create_missing_required(self, sqlite_store):
         """必須フィールド未指定で 422。"""
         client = TestClient(_build_app(sqlite_store))
+        # title 抜けで 422
         res = client.post(
             "/api/scenario_chat/scenarios",
-            json={"user_alias": "p", "gm_preset_id": "preset-test"},
+            json={"user_alias": "p"},
         )
         assert res.status_code == 422
 
@@ -163,7 +157,6 @@ class TestScenarioCRUD:
 
     def test_update(self, sqlite_store):
         """PATCH で複数フィールドを部分更新できる。"""
-        _seed_preset(sqlite_store)
         client = TestClient(_build_app(sqlite_store))
         sid = _create_scenario(client)["id"]
         res = client.patch(
@@ -174,17 +167,6 @@ class TestScenarioCRUD:
         body = res.json()
         assert body["title"] == "更新後"
         assert body["scenario"] == "新あらすじ"
-
-    def test_update_invalid_preset(self, sqlite_store):
-        """更新時の gm_preset_id 検証。"""
-        _seed_preset(sqlite_store)
-        client = TestClient(_build_app(sqlite_store))
-        sid = _create_scenario(client)["id"]
-        res = client.patch(
-            f"/api/scenario_chat/scenarios/{sid}",
-            json={"gm_preset_id": "missing"},
-        )
-        assert res.status_code == 400
 
     def test_update_not_found(self, sqlite_store):
         client = TestClient(_build_app(sqlite_store))
@@ -332,7 +314,7 @@ class TestSessionCRUD:
     """シナリオから起動するプレイセッションのライフサイクルを検証する。"""
 
     def test_start_session(self, sqlite_store):
-        """シナリオ ID を指定してセッションを起動できる。"""
+        """シナリオ ID + gm_preset_id を指定してセッションを起動できる。"""
         _seed_preset(sqlite_store)
         client = TestClient(_build_app(sqlite_store))
         scenario = _create_scenario(client, title="テンプレA")
@@ -342,6 +324,8 @@ class TestSessionCRUD:
         # title 省略時はテンプレ title をコピー
         assert sess["title"] == "テンプレA"
         assert sess["status"] == "active"
+        # gm_preset_id がセッションに紐づく
+        assert sess["gm_preset_id"] == "preset-test"
 
     def test_start_session_with_title(self, sqlite_store):
         """title 指定でセッション名をカスタムできる。"""
@@ -353,11 +337,33 @@ class TestSessionCRUD:
 
     def test_start_session_missing_scenario(self, sqlite_store):
         """存在しないシナリオで起動は 400。"""
+        _seed_preset(sqlite_store)
         client = TestClient(_build_app(sqlite_store))
         res = client.post(
-            "/api/scenario_chat/sessions", json={"scenario_id": "missing"}
+            "/api/scenario_chat/sessions",
+            json={"scenario_id": "missing", "gm_preset_id": "preset-test"},
         )
         assert res.status_code == 400
+
+    def test_start_session_invalid_preset(self, sqlite_store):
+        """未登録の gm_preset_id でセッション起動は 400。"""
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        res = client.post(
+            "/api/scenario_chat/sessions",
+            json={"scenario_id": sid, "gm_preset_id": "missing"},
+        )
+        assert res.status_code == 400
+
+    def test_start_session_missing_preset_field(self, sqlite_store):
+        """gm_preset_id 自体を渡さないと 422（必須項目）。"""
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        res = client.post(
+            "/api/scenario_chat/sessions",
+            json={"scenario_id": sid},
+        )
+        assert res.status_code == 422
 
     def test_list_sessions(self, sqlite_store):
         """セッション一覧。"""
@@ -402,6 +408,32 @@ class TestSessionCRUD:
         )
         assert res.status_code == 200
         assert res.json()["title"] == "リネーム"
+
+    def test_update_session_gm_preset(self, sqlite_store):
+        """PATCH /sessions/{id} で GM プリセットを差し替えできること（チャット中のモデル切替）。"""
+        _seed_preset(sqlite_store, preset_id="preset-test")
+        _seed_preset(sqlite_store, preset_id="preset-other", name="Other")
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid, gm_preset_id="preset-test")["id"]
+        res = client.patch(
+            f"/api/scenario_chat/sessions/{sess_id}",
+            json={"gm_preset_id": "preset-other"},
+        )
+        assert res.status_code == 200
+        assert res.json()["gm_preset_id"] == "preset-other"
+
+    def test_update_session_invalid_preset(self, sqlite_store):
+        """存在しないプリセットへ切替は 400。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        res = client.patch(
+            f"/api/scenario_chat/sessions/{sess_id}",
+            json={"gm_preset_id": "missing"},
+        )
+        assert res.status_code == 400
 
     def test_delete_session(self, sqlite_store):
         _seed_preset(sqlite_store)

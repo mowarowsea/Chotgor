@@ -5,8 +5,13 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Character, Model, ScenarioTemplate } from "../api";
-import { charNameOf, presetNameOf, fetchScenarioTemplates } from "../api";
+import type { Character, Model, ScenarioPreset, ScenarioTemplate } from "../api";
+import {
+  charNameOf,
+  presetNameOf,
+  fetchScenarioPresets,
+  fetchScenarioTemplates,
+} from "../api";
 import { CharacterAvatar } from "./ChatBubbles";
 
 /** セッション種別。 */
@@ -23,8 +28,12 @@ interface Props {
   onNewChat: (modelId: string, afterglow: boolean) => void;
   /** グループチャット作成コールバック（司会モデルはシステム設定で管理するため引数に含まない）。 */
   onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
-  /** シナリオ起動コールバック。 */
-  onStartScenario: (scenarioId: string, title?: string) => void;
+  /** シナリオ起動コールバック。
+   *
+   * `gmPresetId` はセッション単位の GM プリセット（必須）。シナリオは何度でも遊べる
+   * テンプレートなので、ここでセッション毎に好きな GM モデルを選ぶ。
+   */
+  onStartScenario: (scenarioId: string, gmPresetId: string, title?: string) => void;
 }
 
 /** 種別タブの定義。 */
@@ -83,6 +92,9 @@ export default function NewSessionPicker({
   const [templates, setTemplates] = useState<ScenarioTemplate[]>([]);
   const [scId, setScId] = useState("");
   const [scTitle, setScTitle] = useState("");
+  /** GM プリセット選択肢（セッション開始時に必須）。 */
+  const [scPresets, setScPresets] = useState<ScenarioPreset[]>([]);
+  const [scPresetId, setScPresetId] = useState("");
 
   // 初期選択キャラクターを設定する。
   useEffect(() => {
@@ -103,10 +115,17 @@ export default function NewSessionPicker({
     setAfterglow(char?.afterglow_default ?? false);
   }, [selChar, characters]);
 
-  // シナリオタブを開いたらテンプレート一覧を取得する。
+  // シナリオタブを開いたらテンプレートと GM プリセットの一覧を取得する。
   useEffect(() => {
     if (type === "scenario") {
       fetchScenarioTemplates().then(setTemplates).catch(() => setTemplates([]));
+      fetchScenarioPresets()
+        .then((ps) => {
+          setScPresets(ps);
+          // 初期選択: 先頭プリセットを既定値にする（ユーザは選び直せる）。
+          setScPresetId((prev) => (prev || ps[0]?.id) ?? "");
+        })
+        .catch(() => setScPresets([]));
     }
   }, [type]);
 
@@ -135,7 +154,7 @@ export default function NewSessionPicker({
       ? !!selChar && !!selPreset
       : type === "group"
         ? groupSelected.size >= 2
-        : !!scId;
+        : !!scId && !!scPresetId;
 
   /** 作成を確定する。 */
   const handleCreate = () => {
@@ -145,7 +164,7 @@ export default function NewSessionPicker({
     } else if (type === "group") {
       onNewGroupChat([...groupSelected], maxAutoTurns);
     } else {
-      onStartScenario(scId, scTitle.trim() || undefined);
+      onStartScenario(scId, scPresetId, scTitle.trim() || undefined);
     }
     onClose();
   };
@@ -361,6 +380,45 @@ export default function NewSessionPicker({
                           >
                             {t.title}
                           </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* GM Model（セッション単位の必須項目）。
+                  Scenario ではキャラ概念が無いので、プリセットのみのフラット選択。 */}
+              <div>
+                <SectionLabel>GM MODEL</SectionLabel>
+                {scPresets.length === 0 ? (
+                  <p className="text-ch-t3 text-xs">
+                    LLM プリセットがありません。
+                    <a
+                      href="/ui/presets"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline ml-1 hover:text-ch-t2"
+                    >
+                      backend で登録
+                    </a>
+                  </p>
+                ) : (
+                  <div className="flex gap-1.5 flex-wrap">
+                    {scPresets.map((p) => {
+                      const active = scPresetId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => setScPresetId(p.id)}
+                          className="rounded-md px-2.5 py-1 text-xs transition-colors"
+                          style={{
+                            border: `1px solid ${active ? "var(--ch-accent)" : "var(--ch-sep2)"}`,
+                            background: active ? "oklch(50% 0.13 226 / 0.10)" : "transparent",
+                            color: active ? "var(--ch-accent)" : "rgb(var(--ch-t2))",
+                          }}
+                          title={`${p.provider} / ${p.model_id || "default"}`}
+                        >
+                          {p.name}
                         </button>
                       );
                     })}

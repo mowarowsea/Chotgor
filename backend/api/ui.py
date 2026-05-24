@@ -457,7 +457,6 @@ async def scenarios_list(request: Request):
 @router.get("/scenarios/new", response_class=HTMLResponse)
 async def new_scenario_form(request: Request):
     """シナリオテンプレート新規作成フォーム。"""
-    model_presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
         "scenario_edit.html",
         {
@@ -465,19 +464,21 @@ async def new_scenario_form(request: Request):
             "scenario": None,
             "npcs": [],
             "action": "/ui/scenarios/new",
-            "model_presets": model_presets,
         },
     )
 
 
 @router.post("/scenarios/new")
 async def create_scenario(request: Request):
-    """シナリオテンプレートを作成する。"""
+    """シナリオテンプレートを作成する。
+
+    GM の LLM プリセットはテンプレートではなくセッション単位で持つため、
+    本フォームでは扱わない（フロントの「新しい会話」モーダルで選ばせる）。
+    """
     form = await request.form()
     title = (form.get("title") or "").strip()
     user_alias = (form.get("user_alias") or "").strip() or "プレイヤー"
-    gm_preset_id = (form.get("gm_preset_id") or "").strip()
-    if not title or not gm_preset_id:
+    if not title:
         return RedirectResponse(url="/ui/scenarios/new", status_code=303)
 
     sid = str(uuid.uuid4())
@@ -485,7 +486,6 @@ async def create_scenario(request: Request):
         scenario_id=sid,
         title=title,
         user_alias=user_alias,
-        gm_preset_id=gm_preset_id,
         scenario=(form.get("scenario") or "") or None,
         intro=(form.get("intro") or "") or None,
         history_max_turns=_coalesce_optional_int(form, "history_max_turns"),
@@ -502,7 +502,6 @@ async def edit_scenario_form(request: Request, scenario_id: str):
     if not scenario:
         return RedirectResponse(url="/ui/scenarios", status_code=303)
     npcs = sqlite.list_scenario_npcs(scenario_id)
-    model_presets = sqlite.list_model_presets()
     return get_templates().TemplateResponse(
         "scenario_edit.html",
         {
@@ -510,7 +509,6 @@ async def edit_scenario_form(request: Request, scenario_id: str):
             "scenario": scenario,
             "npcs": npcs,
             "action": f"/ui/scenarios/{scenario_id}/edit",
-            "model_presets": model_presets,
         },
     )
 
@@ -526,13 +524,10 @@ async def update_scenario(request: Request, scenario_id: str):
         "history_max_turns": _coalesce_optional_int(form, "history_max_turns"),
         "history_max_chars": _coalesce_optional_int(form, "history_max_chars"),
     }
-    # タイトル・GMプリセットは必須項目。空欄なら更新しない（自動保存の空入力対策）。
+    # タイトルは必須項目。空欄なら更新しない（自動保存の空入力対策）。
     title = (form.get("title") or "").strip()
     if title:
         update_kwargs["title"] = title
-    gm_preset_id = (form.get("gm_preset_id") or "").strip()
-    if gm_preset_id:
-        update_kwargs["gm_preset_id"] = gm_preset_id
     request.app.state.sqlite.update_scenario(scenario_id, **update_kwargs)
     return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
 

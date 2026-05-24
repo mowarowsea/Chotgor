@@ -32,22 +32,6 @@
                 placeholder="e.g. ヴァン, 旅人, プレイヤー" required>
         </div>
 
-        <!-- GM プリセット -->
-        <div class="form-group">
-            <label for="gm_preset_id">GM Model
-                <span class="label-hint">GM が使う LLM プリセット</span>
-            </label>
-            <select id="gm_preset_id" name="gm_preset_id" class="form-control" required>
-                <option value="">— select a preset —</option>
-                {% for p in model_presets %}
-                <option value="{{ p.id }}"
-                    {% if scenario and scenario.gm_preset_id == p.id %}selected{% endif %}>
-                    {{ p.name }} ({{ p.provider }} / {{ p.model_id or 'default' }})
-                </option>
-                {% endfor %}
-            </select>
-        </div>
-
         <!-- シナリオ概要 -->
         <div class="form-group">
             <label for="scenario">Scenario / World

@@ -365,6 +365,10 @@ export async function* streamGroupMessage(
  *
  * 場所・空気感・語り口・テンポなどの細分情報はすべて `scenario` テキストにまとめる
  * （以前は別フィールドだったが、線引きが曖昧だったので統合）。
+ *
+ * GM の LLM プリセットはテンプレートではなくセッション単位（`ScenarioSession.gm_preset_id`）
+ * で保持する。同一シナリオから複数セッションを起動した際にそれぞれ別の GM モデルで
+ * 遊べるようにするため。
  */
 export interface ScenarioTemplate {
   id: string;
@@ -372,7 +376,6 @@ export interface ScenarioTemplate {
   scenario: string | null;
   intro: string | null;
   user_alias: string;
-  gm_preset_id: string;
   history_max_turns: number | null;
   history_max_chars: number | null;
   created_at: string;
@@ -404,6 +407,8 @@ export interface ScenarioSession {
   title: string;
   engine_type: string;
   status: string;
+  /** GM が使う LLM プリセット ID。セッション開始時に必須・チャット中も変更可。 */
+  gm_preset_id: string;
   created_at: string;
   updated_at: string;
   /** フロント側で判別用に追加（バックエンドからは返らない）。 */
@@ -527,15 +532,24 @@ export async function fetchScenarioTurns(sessionId: string): Promise<ScenarioTur
   return res.json();
 }
 
-/** シナリオから新しいプレイセッションを起動する。 */
+/** シナリオから新しいプレイセッションを起動する。
+ *
+ * `gmPresetId` はこのセッションで GM を演じる LLM プリセット ID。
+ * セッション開始後も左上ヘッダーのプリセットメニューから変更可能。
+ */
 export async function startScenarioSession(
   scenarioId: string,
+  gmPresetId: string,
   title?: string,
 ): Promise<ScenarioSession> {
   const res = await fetch("/api/scenario_chat/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scenario_id: scenarioId, ...(title ? { title } : {}) }),
+    body: JSON.stringify({
+      scenario_id: scenarioId,
+      gm_preset_id: gmPresetId,
+      ...(title ? { title } : {}),
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -545,10 +559,10 @@ export async function startScenarioSession(
   return tagScenarioSession(data);
 }
 
-/** プレイセッションを部分更新する（タイトル変更 / status 変更）。 */
+/** プレイセッションを部分更新する（タイトル変更 / status 変更 / GM モデル変更）。 */
 export async function updateScenarioSession(
   sessionId: string,
-  patch: { title?: string; status?: string },
+  patch: { title?: string; status?: string; gm_preset_id?: string },
 ): Promise<ScenarioSession> {
   const res = await fetch(`/api/scenario_chat/sessions/${sessionId}`, {
     method: "PATCH",
