@@ -409,6 +409,10 @@ export interface ScenarioSession {
   status: string;
   /** GM が使う LLM プリセット ID。セッション開始時に必須・チャット中も変更可。 */
   gm_preset_id: string;
+  /** あらすじ蒸留専用の LLM プリセット ID。GM とは別モデルを指定可能（レートリミット節約）。
+   *  セッション開始時に必須・チャット中も同モーダルから変更可。
+   */
+  synopsis_preset_id: string;
   created_at: string;
   updated_at: string;
   /** フロント側で判別用に追加（バックエンドからは返らない）。 */
@@ -535,11 +539,13 @@ export async function fetchScenarioTurns(sessionId: string): Promise<ScenarioTur
 /** シナリオから新しいプレイセッションを起動する。
  *
  * `gmPresetId` はこのセッションで GM を演じる LLM プリセット ID。
- * セッション開始後も左上ヘッダーのプリセットメニューから変更可能。
+ * `synopsisPresetId` はあらすじ蒸留専用の LLM プリセット ID（同じプリセットでもよい）。
+ * セッション開始後も左上ヘッダーのモーダルから両方変更可能。
  */
 export async function startScenarioSession(
   scenarioId: string,
   gmPresetId: string,
+  synopsisPresetId: string,
   title?: string,
 ): Promise<ScenarioSession> {
   const res = await fetch("/api/scenario_chat/sessions", {
@@ -548,6 +554,7 @@ export async function startScenarioSession(
     body: JSON.stringify({
       scenario_id: scenarioId,
       gm_preset_id: gmPresetId,
+      synopsis_preset_id: synopsisPresetId,
       ...(title ? { title } : {}),
     }),
   });
@@ -559,10 +566,15 @@ export async function startScenarioSession(
   return tagScenarioSession(data);
 }
 
-/** プレイセッションを部分更新する（タイトル変更 / status 変更 / GM モデル変更）。 */
+/** プレイセッションを部分更新する（タイトル / status / GM モデル / あらすじモデル）。 */
 export async function updateScenarioSession(
   sessionId: string,
-  patch: { title?: string; status?: string; gm_preset_id?: string },
+  patch: {
+    title?: string;
+    status?: string;
+    gm_preset_id?: string;
+    synopsis_preset_id?: string;
+  },
 ): Promise<ScenarioSession> {
   const res = await fetch(`/api/scenario_chat/sessions/${sessionId}`, {
     method: "PATCH",

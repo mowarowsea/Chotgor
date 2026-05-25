@@ -69,10 +69,23 @@ def _create_scenario(client, **overrides) -> dict:
 
 
 def _start_session(
-    client, scenario_id: str, title=None, gm_preset_id: str = "preset-test"
+    client,
+    scenario_id: str,
+    title=None,
+    gm_preset_id: str = "preset-test",
+    synopsis_preset_id: str = None,
 ) -> dict:
-    """POST /sessions のラッパ。gm_preset_id はセッション必須。"""
-    payload = {"scenario_id": scenario_id, "gm_preset_id": gm_preset_id}
+    """POST /sessions のラッパ。gm_preset_id / synopsis_preset_id はセッション必須。
+
+    synopsis_preset_id 省略時は gm_preset_id と同値を渡す（従来挙動と等価）。
+    """
+    if synopsis_preset_id is None:
+        synopsis_preset_id = gm_preset_id
+    payload = {
+        "scenario_id": scenario_id,
+        "gm_preset_id": gm_preset_id,
+        "synopsis_preset_id": synopsis_preset_id,
+    }
     if title:
         payload["title"] = title
     res = client.post("/api/scenario_chat/sessions", json=payload)
@@ -341,7 +354,11 @@ class TestSessionCRUD:
         client = TestClient(_build_app(sqlite_store))
         res = client.post(
             "/api/scenario_chat/sessions",
-            json={"scenario_id": "missing", "gm_preset_id": "preset-test"},
+            json={
+                "scenario_id": "missing",
+                "gm_preset_id": "preset-test",
+                "synopsis_preset_id": "preset-test",
+            },
         )
         assert res.status_code == 400
 
@@ -351,7 +368,11 @@ class TestSessionCRUD:
         sid = _create_scenario(client)["id"]
         res = client.post(
             "/api/scenario_chat/sessions",
-            json={"scenario_id": sid, "gm_preset_id": "missing"},
+            json={
+                "scenario_id": sid,
+                "gm_preset_id": "missing",
+                "synopsis_preset_id": "missing",
+            },
         )
         assert res.status_code == 400
 

@@ -217,6 +217,7 @@ class ScenarioChatStoreMixin:
         scenario_id: str,
         title: str,
         gm_preset_id: str,
+        synopsis_preset_id: str,
         engine_type: str = "ensemble",
     ):
         """シナリオから新しいプレイセッションを起動する。
@@ -227,6 +228,9 @@ class ScenarioChatStoreMixin:
             title: 起動時のセッションタイトル（通常はテンプレ title をコピー）。
             gm_preset_id: このセッションで使う GM の LLM プリセット ID。
                           後から `update_scenario_session(gm_preset_id=...)` で変更可。
+            synopsis_preset_id: あらすじ蒸留専用の LLM プリセット ID。
+                                レートリミット節約用に GM とは別モデルを選べる。
+                                通常 GM と同じプリセットを指定すれば従来挙動と同じ。
             engine_type: P1 では "ensemble" 固定。
         """
         with self.get_session() as session:
@@ -236,6 +240,7 @@ class ScenarioChatStoreMixin:
                 scenario_id=scenario_id,
                 title=title,
                 gm_preset_id=gm_preset_id,
+                synopsis_preset_id=synopsis_preset_id,
                 engine_type=engine_type,
                 status="active",
             )

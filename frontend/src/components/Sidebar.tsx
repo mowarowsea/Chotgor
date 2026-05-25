@@ -37,10 +37,15 @@ interface Props {
   onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオテンプレートからプレイセッションを起動するコールバック。
    *
-   * `gmPresetId` はセッション単位の GM プリセット（必須）。NewSessionPicker の
-   * Scenario タブで選んだ値が渡る。
+   * `gmPresetId` は GM プリセット（必須）、`synopsisPresetId` はあらすじ蒸留専用プリセット
+   * （必須）。NewSessionPicker の Scenario タブで選んだ値が渡る。
    */
-  onStartScenario: (scenarioId: string, gmPresetId: string, title?: string) => void;
+  onStartScenario: (
+    scenarioId: string,
+    gmPresetId: string,
+    synopsisPresetId: string,
+    title?: string,
+  ) => void;
   /** セッション削除時のコールバック（session_type に応じて呼び出し側が分岐） */
   onDeleteSession: (sessionId: string) => void;
   /** セッションタイトル変更時のコールバック */

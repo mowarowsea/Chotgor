@@ -30,10 +30,16 @@ interface Props {
   onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオ起動コールバック。
    *
-   * `gmPresetId` はセッション単位の GM プリセット（必須）。シナリオは何度でも遊べる
-   * テンプレートなので、ここでセッション毎に好きな GM モデルを選ぶ。
+   * `gmPresetId` は GM プリセット（必須）、`synopsisPresetId` はあらすじ蒸留専用プリセット
+   * （必須・同じプリセットでもよい）。シナリオは何度でも遊べるテンプレートなので、
+   * ここでセッション毎に好きなモデルを選ぶ。あらすじ用を軽量モデルにすればレートリミット節約になる。
    */
-  onStartScenario: (scenarioId: string, gmPresetId: string, title?: string) => void;
+  onStartScenario: (
+    scenarioId: string,
+    gmPresetId: string,
+    synopsisPresetId: string,
+    title?: string,
+  ) => void;
 }
 
 /** 種別タブの定義。 */
@@ -95,6 +101,8 @@ export default function NewSessionPicker({
   /** GM プリセット選択肢（セッション開始時に必須）。 */
   const [scPresets, setScPresets] = useState<ScenarioPreset[]>([]);
   const [scPresetId, setScPresetId] = useState("");
+  /** あらすじ蒸留用プリセット（セッション開始時に必須・GM とは独立に選べる）。 */
+  const [scSynopsisPresetId, setScSynopsisPresetId] = useState("");
 
   // 初期選択キャラクターを設定する。
   useEffect(() => {
@@ -122,8 +130,9 @@ export default function NewSessionPicker({
       fetchScenarioPresets()
         .then((ps) => {
           setScPresets(ps);
-          // 初期選択: 先頭プリセットを既定値にする（ユーザは選び直せる）。
+          // 初期選択: 先頭プリセットを GM・あらすじ両方の既定値にする（同じプリセットでも問題ない）。
           setScPresetId((prev) => (prev || ps[0]?.id) ?? "");
+          setScSynopsisPresetId((prev) => (prev || ps[0]?.id) ?? "");
         })
         .catch(() => setScPresets([]));
     }
@@ -154,7 +163,7 @@ export default function NewSessionPicker({
       ? !!selChar && !!selPreset
       : type === "group"
         ? groupSelected.size >= 2
-        : !!scId && !!scPresetId;
+        : !!scId && !!scPresetId && !!scSynopsisPresetId;
 
   /** 作成を確定する。 */
   const handleCreate = () => {
@@ -164,7 +173,12 @@ export default function NewSessionPicker({
     } else if (type === "group") {
       onNewGroupChat([...groupSelected], maxAutoTurns);
     } else {
-      onStartScenario(scId, scPresetId, scTitle.trim() || undefined);
+      onStartScenario(
+        scId,
+        scPresetId,
+        scSynopsisPresetId,
+        scTitle.trim() || undefined,
+      );
     }
     onClose();
   };
@@ -389,7 +403,7 @@ export default function NewSessionPicker({
               {/* GM Model（セッション単位の必須項目）。
                   Scenario ではキャラ概念が無いので、プリセットのみのフラット選択。 */}
               <div>
-                <SectionLabel>GM MODEL</SectionLabel>
+                <SectionLabel>GM MODEL（シナリオ本編用）</SectionLabel>
                 {scPresets.length === 0 ? (
                   <p className="text-ch-t3 text-xs">
                     LLM プリセットがありません。
@@ -410,6 +424,33 @@ export default function NewSessionPicker({
                         <button
                           key={p.id}
                           onClick={() => setScPresetId(p.id)}
+                          className="rounded-md px-2.5 py-1 text-xs transition-colors"
+                          style={{
+                            border: `1px solid ${active ? "var(--ch-accent)" : "var(--ch-sep2)"}`,
+                            background: active ? "oklch(50% 0.13 226 / 0.10)" : "transparent",
+                            color: active ? "var(--ch-accent)" : "rgb(var(--ch-t2))",
+                          }}
+                          title={`${p.provider} / ${p.model_id || "default"}`}
+                        >
+                          {p.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* あらすじ蒸留用モデル。GM とは独立に選択可能（節約用に軽量モデルを選べる）。
+                  同じプリセットを選べば従来挙動と等価。 */}
+              <div>
+                <SectionLabel>SYNOPSIS MODEL（あらすじ蒸留用）</SectionLabel>
+                {scPresets.length > 0 && (
+                  <div className="flex gap-1.5 flex-wrap">
+                    {scPresets.map((p) => {
+                      const active = scSynopsisPresetId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => setScSynopsisPresetId(p.id)}
                           className="rounded-md px-2.5 py-1 text-xs transition-colors"
                           style={{
                             border: `1px solid ${active ? "var(--ch-accent)" : "var(--ch-sep2)"}`,

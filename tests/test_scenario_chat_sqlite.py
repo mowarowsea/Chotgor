@@ -63,17 +63,22 @@ def _make_session(
     title: str = "プレイ #1",
     engine_type: str = "ensemble",
     gm_preset_id: str = "preset-test",
+    synopsis_preset_id: str = None,
 ):
     """プレイセッションを 1 件作成して返すユーティリティ。
 
-    gm_preset_id はセッション必須項目（同一シナリオから別 GM でも遊べる設計）。
+    gm_preset_id / synopsis_preset_id はセッション必須項目。
+    synopsis_preset_id 省略時は gm_preset_id と同値で作成する（従来挙動相当）。
     """
     session_id = str(uuid.uuid4())
+    if synopsis_preset_id is None:
+        synopsis_preset_id = gm_preset_id
     return store.create_scenario_session(
         session_id=session_id,
         scenario_id=scenario_id,
         title=title,
         gm_preset_id=gm_preset_id,
+        synopsis_preset_id=synopsis_preset_id,
         engine_type=engine_type,
     )
 

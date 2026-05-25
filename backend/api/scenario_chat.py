@@ -103,21 +103,25 @@ class NpcUpdate(BaseModel):
 class SessionStart(BaseModel):
     """プレイセッション起動リクエスト。
 
-    gm_preset_id はセッション単位で必須。同一シナリオから複数セッションを起動した際に
-    それぞれ別の GM モデルを選べる設計。
+    gm_preset_id / synopsis_preset_id はそれぞれセッション単位で必須。
+    同一シナリオから複数セッションを起動した際にそれぞれ別モデルを選べる設計で、
+    `synopsis_preset_id` はあらすじ蒸留専用（レートリミット節約のため別モデル指定可能）。
+    UI 上は両方明示指定させる（同じプリセットでもよい）。
     """
 
     scenario_id: str = Field(min_length=1)
     gm_preset_id: str = Field(min_length=1)
+    synopsis_preset_id: str = Field(min_length=1)
     title: Optional[str] = None  # 省略時はシナリオ title を使う
 
 
 class SessionUpdate(BaseModel):
-    """プレイセッション更新リクエスト（タイトル変更 / status 変更 / GM モデル変更）。"""
+    """プレイセッション更新リクエスト（タイトル / status / GM モデル / あらすじモデル）。"""
 
     title: Optional[str] = None
     status: Optional[str] = None
     gm_preset_id: Optional[str] = None
+    synopsis_preset_id: Optional[str] = None
 
 
 class SynopsisUpdate(BaseModel):
@@ -301,6 +305,11 @@ async def start_session(request: Request, body: SessionStart):
             status_code=400,
             detail=f"指定された gm_preset_id が見つかりません: {body.gm_preset_id}",
         )
+    if sqlite.get_model_preset(body.synopsis_preset_id) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"指定された synopsis_preset_id が見つかりません: {body.synopsis_preset_id}",
+        )
     sid = str(uuid.uuid4())
     title = body.title or scenario.title
     sqlite.create_scenario_session(
@@ -308,6 +317,7 @@ async def start_session(request: Request, body: SessionStart):
         scenario_id=body.scenario_id,
         title=title,
         gm_preset_id=body.gm_preset_id,
+        synopsis_preset_id=body.synopsis_preset_id,
     )
     # シナリオ設定の導入部（intro）があれば固定ターンとして先頭挿入する
     seed_intro_turns(sqlite, sid, scenario)
@@ -348,6 +358,12 @@ async def update_session(request: Request, session_id: str, body: SessionUpdate)
             raise HTTPException(
                 status_code=400,
                 detail=f"指定された gm_preset_id が見つかりません: {update_fields['gm_preset_id']}",
+            )
+    if "synopsis_preset_id" in update_fields and update_fields["synopsis_preset_id"]:
+        if sqlite.get_model_preset(update_fields["synopsis_preset_id"]) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"指定された synopsis_preset_id が見つかりません: {update_fields['synopsis_preset_id']}",
             )
     updated = sqlite.update_scenario_session(session_id, **update_fields)
     return scenario_session_to_dict(updated)
@@ -448,8 +464,8 @@ async def patch_session_synopsis(
 async def regenerate_session_synopsis(request: Request, session_id: str):
     """`synopsis_auto` への自動追記フローを手動起動する。
 
-    通常チャットでは閾値（SYNOPSIS_AUTO_TRIGGER_CHARS）未満では自動更新を
-    抑制しているため、ユーザが任意のタイミングで追記更新を強制したいときに使う。
+    通常チャットでは閾値（SYNOPSIS_AUTO_TRIGGER_RATIO × history 上限）未満では
+    自動更新を抑制しているため、ユーザが任意のタイミングで追記更新を強制したいときに使う。
     既存 auto は**書き換えず**、新規分のみが末尾に追記される。
     """
     # 通常の stream エンドポイントと同じく、リクエスト ID と feature タグを設定する。
@@ -474,7 +490,11 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
         scenario=scenario,
         history=history,
         session_id=session_id,
-        gm_preset_id=getattr(sess, "gm_preset_id", "") or "",
+        synopsis_preset_id=(
+            getattr(sess, "synopsis_preset_id", "")
+            or getattr(sess, "gm_preset_id", "")
+            or ""
+        ),
         force=True,
     )
     if updated is None:

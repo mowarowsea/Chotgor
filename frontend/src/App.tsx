@@ -93,8 +93,7 @@ import DriftBadge from "./components/DriftBadge";
 import ExportDialog from "./components/ExportDialog";
 import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
 import CharPresetMenu from "./components/CharPresetMenu";
-import ScenarioPresetMenu from "./components/ScenarioPresetMenu";
-import SynopsisModal from "./components/SynopsisModal";
+import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
 import { useTheme } from "./hooks/useTheme";
 
 /** アプリ全体のルートコンポーネント。 */
@@ -123,8 +122,20 @@ export default function App() {
   const { dark, toggle: toggleTheme } = useTheme();
   /** ヘッダーのモデル切り替えメニューの開閉状態。 */
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  /** あらすじモーダルの開閉状態（シナリオセッション用）。 */
-  const [synopsisModalOpen, setSynopsisModalOpen] = useState(false);
+  /**
+   * シナリオセッション設定モーダル（モデル切替 + あらすじ閲覧/編集を統合）の開閉状態。
+   * null で閉、"model" | "synopsis" でそのタブを初期表示して開く。
+   */
+  const [scenarioSettingsTab, setScenarioSettingsTab] = useState<
+    "model" | "synopsis" | null
+  >(null);
+  /**
+   * あらすじが更新されたがユーザがまだ確認していないことを示すフラグ。
+   * バックエンドの synopsis_updated イベント受信時に true、
+   * あらすじタブを開いた時 or セッション切替時に false。
+   * バッジは左上モデルチップに重ねて表示する。
+   */
+  const [synopsisHasUpdate, setSynopsisHasUpdate] = useState(false);
   /**
    * 浮遊ヘッダーの表示状態。
    * 上スクロール（過去ログ閲覧）で隠れ、下スクロール・最下部・1画面に収まる場合は表示する。
@@ -209,6 +220,12 @@ export default function App() {
   const [groupDirectorErrored, setGroupDirectorErrored] = useState(false);
   /** char_msg_id → log_message_id（8桁hex）のマッピング。バブルのログ折りたたみに使用する。 */
   const [msgLogIds, setMsgLogIds] = useState<Record<string, string>>({});
+  /**
+   * メッセージID（1on1/グループの char_msg_id、シナリオの turn_id）
+   * → モデルへリクエストしてから応答完了までの経過時間（ミリ秒）のマッピング。
+   * 現セッションのストリーミング分のみ保持し、ページリロードで消える。
+   */
+  const [elapsedMap, setElapsedMap] = useState<Record<string, number>>({});
 
   /** シナリオプレイセッション一覧（サイドバーで session に混ぜる）。 */
   const [scenarioSessions, setScenarioSessions] = useState<ScenarioSession[]>([]);
@@ -225,8 +242,6 @@ export default function App() {
   const [activeScenarioTemplate, setActiveScenarioTemplate] = useState<ScenarioTemplate | null>(null);
   /** GM プリセット一覧（シナリオヘッダーの gm_preset_id → 表示名解決に使う）。 */
   const [scenarioPresets, setScenarioPresets] = useState<ScenarioPreset[]>([]);
-  /** GM プリセット切替メニューの開閉状態（左上ヘッダーチップの 1on1 用と独立）。 */
-  const [scenarioPresetMenuOpen, setScenarioPresetMenuOpen] = useState(false);
   /** アクティブセッションの gm_preset_id を表示用プリセット名に解決する。
    *
    * GM モデルはセッション単位の設定なので、テンプレートではなく ScenarioSession から引く。
@@ -322,7 +337,8 @@ export default function App() {
     setScenarioTurns([]);
     setScenarioPending([]);
     setScenarioSynopsis(null);
-    setScenarioPresetMenuOpen(false);
+    setSynopsisHasUpdate(false);
+    setScenarioSettingsTab(null);
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
     window.location.hash = sessionId;
 
@@ -458,14 +474,25 @@ export default function App() {
 
   /** シナリオテンプレートからプレイセッションを起動する。
    *
-   * `gmPresetId` は新セッションで GM を演じる LLM プリセット（必須）。NewSessionPicker
-   * の Scenario タブでユーザに選ばせる。
+   * `gmPresetId` は GM を演じる LLM プリセット（必須）、`synopsisPresetId` は
+   * あらすじ蒸留専用の LLM プリセット（必須・同じプリセットでもよい）。
+   * NewSessionPicker の Scenario タブでユーザに両方選ばせる。
    */
   const handleStartScenario = useCallback(
-    async (scenarioId: string, gmPresetId: string, title?: string) => {
+    async (
+      scenarioId: string,
+      gmPresetId: string,
+      synopsisPresetId: string,
+      title?: string,
+    ) => {
       setError(null);
       try {
-        const created = await startScenarioSession(scenarioId, gmPresetId, title);
+        const created = await startScenarioSession(
+          scenarioId,
+          gmPresetId,
+          synopsisPresetId,
+          title,
+        );
         setScenarioSessions((prev) => [created, ...prev]);
         // ref も即座に更新する。直後の handleSelectSession 等が ref を読むケースに備える。
         scenarioSessionsRef.current = [created, ...scenarioSessionsRef.current];
@@ -510,8 +537,8 @@ export default function App() {
 
   /** シナリオセッションの GM プリセットを変更する。
    *
-   * 左上ヘッダーのプリセットメニュー「適用」から呼ばれる。次ターン以降の GM 応答
-   * （および以後のあらすじ蒸留）に新プリセットが反映される。
+   * 左上ヘッダーのモーダル「シナリオ用モデル」タブから呼ばれる。次ターン以降の GM 応答に
+   * 新プリセットが反映される。あらすじ蒸留モデルとは独立。
    */
   const handleScenarioPresetChange = useCallback(
     async (presetId: string) => {
@@ -538,6 +565,39 @@ export default function App() {
     [activeScenarioSession],
   );
 
+  /** シナリオセッションのあらすじ蒸留プリセットを変更する。
+   *
+   * 左上ヘッダーのモーダル「あらすじ作成用モデル」タブから呼ばれる。
+   * GM プリセットとは独立で、レートリミット節約用に軽量モデルを割り当てる用途。
+   */
+  const handleScenarioSynopsisPresetChange = useCallback(
+    async (presetId: string) => {
+      if (!activeScenarioSession) return;
+      if (presetId === activeScenarioSession.synopsis_preset_id) return;
+      setError(null);
+      try {
+        const updated = await updateScenarioSession(activeScenarioSession.id, {
+          synopsis_preset_id: presetId,
+        });
+        setActiveScenarioSession((prev) =>
+          prev
+            ? { ...prev, synopsis_preset_id: updated.synopsis_preset_id }
+            : prev,
+        );
+        setScenarioSessions((prev) =>
+          prev.map((s) =>
+            s.id === updated.id
+              ? { ...s, synopsis_preset_id: updated.synopsis_preset_id }
+              : s,
+          ),
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession],
+  );
+
   /**
    * シナリオ発話送信。SSE ストリームを消費しながら吹き出しを更新する。
    *
@@ -550,6 +610,8 @@ export default function App() {
       setError(null);
       setSending(true);
       setScenarioPending([]);
+      // モデルへリクエスト〜turn 完了までの経過時間を計測する開始時刻。
+      const turnStartedAt = performance.now();
       try {
         const sessionId = activeScenarioSession.id;
         const newPending: PendingBubble[] = [];
@@ -588,10 +650,21 @@ export default function App() {
             // ターン完了。残った未確定吹き出しは捨てる（speaker_end でほぼ消えるはず）。
             newPending.length = 0;
             setScenarioPending([]);
+            // 経過時間を記録する。同一ターン内の全GMバブル（複数発話者）に同じ値を共有する。
+            const elapsed = performance.now() - turnStartedAt;
+            if (ev.turn_ids.length > 0) {
+              setElapsedMap((prev) => {
+                const next = { ...prev };
+                for (const tid of ev.turn_ids) next[tid] = elapsed;
+                return next;
+              });
+            }
           } else if (ev.type === "synopsis_updated") {
             // バックエンドが履歴上限を超えた古いターンを synopsis_auto に追記した。
             // UI のあらすじパネルへ反映する。
             setScenarioSynopsis(ev.synopsis);
+            // 未確認の更新が発生したことをあらすじボタンのインジケータで知らせる。
+            setSynopsisHasUpdate(true);
           } else if (ev.type === "error") {
             setError(ev.message);
             break;
@@ -776,6 +849,10 @@ export default function App() {
     setGroupDirectorErrored(false);
     setGroupWaitingCharacter(null);
 
+    // キャラクターごとのリクエスト〜応答完了の経過時間を計測する開始時刻。
+    // character_start で更新し character_done で差分を取る（1ターン中に複数キャラが続けて発話するケースに対応）。
+    let charStartedAt: number | null = null;
+
     const optimisticId = `optimistic-${Date.now()}`;
     // スキップ時・手動指名時はユーザメッセージを保存しないため楽観的表示も行わない
     if (!skip && !targetCharacter) {
@@ -801,6 +878,8 @@ export default function App() {
           setGroupWaitingCharacter(ev.character);
           setGroupStreamingContent(null);
           setGroupStreamingReasoning(null);
+          // 経過時間計測の開始時刻を更新する
+          charStartedAt = performance.now();
         } else if (ev.type === "character_reasoning") {
           // 思考ブロック・想起記憶をリアルタイム表示する
           setGroupStreamingReasoning((prev) => (prev ?? "") + ev.content);
@@ -811,6 +890,12 @@ export default function App() {
           // キャラクター応答確定：メッセージリストに追加してストリーミング状態をクリアする
           if (ev.message.reasoning) {
             setGroupReasoningMap((prev) => ({ ...prev, [ev.message.id]: ev.message.reasoning! }));
+          }
+          // 経過時間を記録する（character_start からの差分）
+          if (charStartedAt !== null) {
+            const elapsed = performance.now() - charStartedAt;
+            setElapsedMap((prev) => ({ ...prev, [ev.message.id]: elapsed }));
+            charStartedAt = null;
           }
           setMessages((prev) => [...prev, ev.message]);
           setGroupStreamingContent(null);
@@ -917,6 +1002,8 @@ export default function App() {
     setError(null);
     setStreamingContent("");
     setStreamingReasoning(null);
+    // モデルリクエスト〜応答完了までの経過時間を計測する開始時刻。
+    const streamStartedAt = performance.now();
 
     const optimisticUserMsg: ChatMessage = {
       id: `optimistic-${Date.now()}`,
@@ -962,6 +1049,11 @@ export default function App() {
               [event.character_message.id]: event.log_message_id!,
             }));
           }
+          // 経過時間を記録する（ストリーム送信〜done受信）
+          setElapsedMap((prev) => ({
+            ...prev,
+            [event.character_message.id]: performance.now() - streamStartedAt,
+          }));
           setStreamingContent(null);
           setStreamingReasoning(null);
           setMessages((prev) => [
@@ -1043,7 +1135,7 @@ export default function App() {
     }
   }, [activeSessionId, sending, selectedModel, _doStream]);
 
-  /** あらすじの部分更新（auto/manual）。SynopsisModal から呼ばれる。 */
+  /** あらすじの部分更新（auto/manual）。ScenarioSettingsModal から呼ばれる。 */
   const handleSynopsisChange = useCallback(
     async (patch: { auto?: string; manual?: string }) => {
       if (!activeScenarioSession) return;
@@ -1057,7 +1149,7 @@ export default function App() {
     [activeScenarioSession],
   );
 
-  /** あらすじの自動追記フローを手動起動する。SynopsisModal から呼ばれる。 */
+  /** あらすじの自動追記フローを手動起動する。ScenarioSettingsModal から呼ばれる。 */
   const handleSynopsisRegenerate = useCallback(async () => {
     if (!activeScenarioSession) return;
     try {
@@ -1123,12 +1215,17 @@ export default function App() {
                 className="pointer-events-auto relative flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
                 style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
               >
-                {/* シナリオタイトル + GM プリセット名のチップ。クリックで GM 切替メニューを開く
-                    （1on1 のモデル切替と同じ操作感）。 */}
+                {/* シナリオタイトル + GM プリセット名のチップ。クリックでシナリオ設定モーダルを開く。
+                    モーダル内でシナリオ用モデル・あらすじ用モデル・あらすじ閲覧/編集を切替可能。
+                    未確認のあらすじ更新があれば右上にバッジを表示する。 */}
                 <button
-                  onClick={() => setScenarioPresetMenuOpen((o) => !o)}
-                  className="flex items-center gap-2 min-w-0"
-                  title="GM モデルを切り替え"
+                  onClick={() => setScenarioSettingsTab("model")}
+                  className="relative flex items-center gap-2 min-w-0"
+                  title={
+                    synopsisHasUpdate
+                      ? "あらすじが更新されました（クリックで設定モーダルを開く）"
+                      : "シナリオ設定（モデル / あらすじ）"
+                  }
                 >
                   <span className="shrink-0 w-6 h-6 rounded-full bg-ch-s1 flex items-center justify-center text-ch-t2 text-xs">✦</span>
                   <div className="min-w-0 text-left">
@@ -1138,16 +1235,14 @@ export default function App() {
                       <span className="text-ch-t4 ml-1">▾</span>
                     </div>
                   </div>
+                  {synopsisHasUpdate && (
+                    <span
+                      aria-label="未確認のあらすじ更新あり"
+                      className="absolute -top-1 -right-1 inline-block rounded-full bg-red-500"
+                      style={{ width: 8, height: 8, boxShadow: "0 0 0 1.5px var(--ch-bg)" }}
+                    />
+                  )}
                 </button>
-                {/* GM プリセット切替メニュー */}
-                {scenarioPresetMenuOpen && (
-                  <ScenarioPresetMenu
-                    presets={scenarioPresets}
-                    currentPresetId={activeScenarioSession.gm_preset_id}
-                    onApply={handleScenarioPresetChange}
-                    onClose={() => setScenarioPresetMenuOpen(false)}
-                  />
-                )}
               </div>
             ) : activeSessionId && isGroupSession ? (
               <div
@@ -1221,21 +1316,9 @@ export default function App() {
               <span className="pointer-events-auto text-ch-t1 font-bold text-[15px]" style={{ letterSpacing: "-0.02em" }}>Chotgor</span>
             ) : null}
 
-            {/* 右側ボタン群: あらすじ（シナリオ時）+ テーマ切り替え + エクスポート（ピルボタン） */}
+            {/* 右側ボタン群: テーマ切り替え + エクスポート（ピルボタン）。
+                シナリオの「あらすじ」ボタンはモデルチップ側のモーダルに統合済み。 */}
             <div className="pointer-events-auto ml-auto flex items-center gap-1.5">
-              {activeSessionId && isScenarioSession && activeScenarioSession && (
-                <button
-                  onClick={() => setSynopsisModalOpen(true)}
-                  title="これまでのあらすじ"
-                  className="flex items-center gap-1 rounded-lg bg-ch-bg text-ch-t2 hover:text-ch-t1 transition-colors text-xs"
-                  style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 10px" }}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={14} height={14}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
-                  </svg>
-                  あらすじ
-                </button>
-              )}
               <button
                 onClick={toggleTheme}
                 title={dark ? "ライトテーマに切り替え" : "ダークテーマに切り替え"}
@@ -1295,6 +1378,7 @@ export default function App() {
             onRegenerate={handleScenarioRegenerate}
             onDiscard={handleScenarioDiscard}
             onHeaderVisibilityChange={setHeaderVisible}
+            elapsedMap={elapsedMap}
           />
         ) : activeSessionId && isGroupSession ? (
           <GroupChatView
@@ -1315,6 +1399,7 @@ export default function App() {
             directorErrored={groupDirectorErrored}
             onRetryDirector={handleGroupRetryDirector}
             onRequestCharacter={handleGroupRequestCharacter}
+            elapsedMap={elapsedMap}
           />
         ) : activeSessionId ? (
           <ChatView
@@ -1330,6 +1415,7 @@ export default function App() {
             onRetry={handleRetry}
             onHeaderVisibilityChange={setHeaderVisible}
             msgLogIds={msgLogIds}
+            elapsedMap={elapsedMap}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-ch-t3 text-sm px-4 text-center">
@@ -1361,16 +1447,31 @@ export default function App() {
         />
       )}
 
-      {/* あらすじモーダル（シナリオセッション用） */}
-      {synopsisModalOpen && isScenarioSession && activeScenarioSession && (
-        <SynopsisModal
-          synopsis={scenarioSynopsis}
-          onChange={handleSynopsisChange}
-          onRegenerate={handleSynopsisRegenerate}
-          disabled={sending}
-          onClose={() => setSynopsisModalOpen(false)}
-        />
-      )}
+      {/* シナリオセッション設定モーダル（モデル切替 + あらすじ閲覧/編集）。
+          左上モデルチップから開く。タブで「モデル」「あらすじ」を切り替える。
+          synopsis タブを開いた直後にバッジを下げる（既読扱い）。 */}
+      {scenarioSettingsTab !== null &&
+        isScenarioSession &&
+        activeScenarioSession && (
+          <ScenarioSettingsModal
+            presets={scenarioPresets}
+            currentGmPresetId={activeScenarioSession.gm_preset_id}
+            currentSynopsisPresetId={activeScenarioSession.synopsis_preset_id}
+            onApplyGmPreset={handleScenarioPresetChange}
+            onApplySynopsisPreset={handleScenarioSynopsisPresetChange}
+            synopsis={scenarioSynopsis}
+            onSynopsisChange={handleSynopsisChange}
+            onSynopsisRegenerate={handleSynopsisRegenerate}
+            disabled={sending}
+            initialTab={scenarioSettingsTab}
+            onClose={() => {
+              // モーダルを閉じる際、あらすじ更新の未読バッジを下げる
+              // （ユーザがモーダルを開いた = 更新を意識した、という扱い）
+              setSynopsisHasUpdate(false);
+              setScenarioSettingsTab(null);
+            }}
+          />
+        )}
     </div>
     </CharacterImageProvider>
   );

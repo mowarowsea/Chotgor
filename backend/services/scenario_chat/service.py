@@ -19,10 +19,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
 
 from backend.lib.log_context import current_log_feature
-from backend.services.scenario_chat.context import (
-    dropped_history,
-    resolve_history_limits,
-)
+from backend.services.scenario_chat.context import resolve_history_limits
 from backend.services.scenario_chat.engine import (
     EngineResult,
     EnsembleEngine,
@@ -35,10 +32,12 @@ from backend.services.scenario_chat.synopsis import update_auto_synopsis
 logger = logging.getLogger(__name__)
 
 # あらすじ自動更新のトリガー閾値。
-# dropped ターン群の累積文字数がこれを超えたら synopsis_auto への追記を試みる。
-# 上限到達直後に毎ターン LLM 呼出が走るのを避けるための閾値。
+# 「未蒸留 dropped 群」のターン数または累積文字数が history 上限の半分に達したら
+# synopsis_auto を再蒸留する（OR 判定）。
+# 上限到達直後に毎ターン LLM 呼出が走るのを避けるための間引き閾値で、
+# シナリオごとの history_max_turns / history_max_chars に追従させる。
 # 手動 regenerate API では無視する（force=True で呼ぶ）。
-SYNOPSIS_AUTO_TRIGGER_CHARS = 1500
+SYNOPSIS_AUTO_TRIGGER_RATIO = 0.5
 
 
 # ─── dict 変換 ───────────────────────────────────────────────────────────────
@@ -76,6 +75,11 @@ def scenario_session_to_dict(session: Any) -> dict:
         "engine_type": session.engine_type,
         "status": session.status,
         "gm_preset_id": getattr(session, "gm_preset_id", "") or "",
+        "synopsis_preset_id": (
+            getattr(session, "synopsis_preset_id", "")
+            or getattr(session, "gm_preset_id", "")
+            or ""
+        ),
         "synopsis_auto": getattr(session, "synopsis_auto", "") or "",
         "synopsis_manual": getattr(session, "synopsis_manual", "") or "",
         "synopsis_last_turn_index": int(getattr(session, "synopsis_last_turn_index", -1) or -1),
@@ -132,16 +136,23 @@ async def maybe_update_auto_synopsis(
     scenario,
     history: list,
     session_id: str,
-    gm_preset_id: str,
+    synopsis_preset_id: str,
     *,
     force: bool = False,
 ) -> Optional[dict]:
-    """履歴のうち今回 LLM に渡らない古いターン群を `synopsis_auto` へ蒸留統合する。
+    """前回蒸留以降の新規ターン群を `synopsis_auto` へ統合し全体を再蒸留する。
 
     呼び出しタイミング:
         - 通常チャットフロー: 各ターン直前に best-effort で呼ぶ（force=False）。
-          dropped ターンの累積文字数が SYNOPSIS_AUTO_TRIGGER_CHARS 未満なら何もしない。
+          前回蒸留からの新規ターンが history 上限の SYNOPSIS_AUTO_TRIGGER_RATIO に
+          ターン数・文字数のどちらも届いていなければ何もしない。
         - 手動 regenerate API: force=True で呼ぶ。閾値判定をスキップする。
+
+    あらすじは生ログから押し出されたタイミングではなく **last_turn_index 以降の新規ターン**
+    全体を対象に発火する。これにより、あらすじは常に生ログより先まで（または同等まで）
+    カバーされ、ターンが生ログから押し出された瞬間に未蒸留状態となる「ギャップ」が
+    発生しなくなる。生ログとあらすじには直近側にオーバーラップが生じるが、
+    UX としては「最近のことを忘却した GM」より「直近を二重で持つ GM」の方が自然。
 
     既存の synopsis_auto は単純追記せず、新ターンと統合して**全体を再蒸留**する
     （肥大化を防ぐ）。`synopsis_last_turn_index` によって、すでに蒸留へ
@@ -153,11 +164,10 @@ async def maybe_update_auto_synopsis(
     """
     try:
         max_turns, max_chars = resolve_history_limits(scenario, settings)
-        dropped = dropped_history(history, max_turns, max_chars)
-        if not dropped:
+        if not history:
             logger.debug(
-                "auto synopsis skip session=%s 理由=dropped空 (履歴上限内 max_turns=%d max_chars=%d turns=%d force=%s)",
-                session_id, max_turns, max_chars, len(history), force,
+                "auto synopsis skip session=%s 理由=履歴空 force=%s",
+                session_id, force,
             )
             return None
 
@@ -168,32 +178,40 @@ async def maybe_update_auto_synopsis(
         }
         last_idx = int(synopsis.get("last_turn_index", -1))
 
-        # turn_index ベースで「まだ要約していない dropped ターン」を抽出
-        new_dropped = [
-            t for t in dropped
+        # turn_index ベースで「前回蒸留以降の新規ターン」を抽出
+        # 旧設計と違い、生ログから押し出された (dropped) ターンに限定しない。
+        # これによりあらすじが常に生ログ右端まで（または超えて）カバーされる。
+        new_turns = [
+            t for t in history
             if int(getattr(t, "turn_index", -1)) > last_idx
         ]
-        if not new_dropped:
-            dropped_max = max(
-                (int(getattr(t, "turn_index", -1)) for t in dropped),
+        if not new_turns:
+            history_max = max(
+                (int(getattr(t, "turn_index", -1)) for t in history),
                 default=-1,
             )
             # ロールバック前のクランプ漏れが原因のことが多い。WARN で出して気づける状態にする。
             logger.warning(
-                "auto synopsis skip session=%s 理由=new_dropped空 "
-                "(last_turn_index=%d が dropped最大turn_index=%d 以上。"
+                "auto synopsis skip session=%s 理由=new_turns空 "
+                "(last_turn_index=%d が history最大turn_index=%d 以上。"
                 "ターン削除でクランプされていない可能性) force=%s",
-                session_id, last_idx, dropped_max, force,
+                session_id, last_idx, history_max, force,
             )
             return None
 
         if not force:
-            total_chars = sum(len(getattr(t, "content", "") or "") for t in new_dropped)
-            if total_chars < SYNOPSIS_AUTO_TRIGGER_CHARS:
+            total_chars = sum(len(getattr(t, "content", "") or "") for t in new_turns)
+            total_turns = len(new_turns)
+            trigger_turns = max(1, int(max_turns * SYNOPSIS_AUTO_TRIGGER_RATIO))
+            trigger_chars = max(1, int(max_chars * SYNOPSIS_AUTO_TRIGGER_RATIO))
+            if total_turns < trigger_turns and total_chars < trigger_chars:
                 logger.debug(
                     "auto synopsis skip session=%s 理由=閾値未満 "
-                    "(累積%d < 閾値%d new_dropped=%d)",
-                    session_id, total_chars, SYNOPSIS_AUTO_TRIGGER_CHARS, len(new_dropped),
+                    "(turns %d<%d かつ chars %d<%d / max_turns=%d max_chars=%d ratio=%.2f)",
+                    session_id,
+                    total_turns, trigger_turns,
+                    total_chars, trigger_chars,
+                    max_turns, max_chars, SYNOPSIS_AUTO_TRIGGER_RATIO,
                 )
                 return None
 
@@ -201,19 +219,19 @@ async def maybe_update_auto_synopsis(
             return sqlite.get_model_preset(preset_id)
 
         logger.info(
-            "auto synopsis 蒸留開始 session=%s new_dropped=%d 文字数=%d force=%s",
+            "auto synopsis 蒸留開始 session=%s new_turns=%d 文字数=%d force=%s",
             session_id,
-            len(new_dropped),
-            sum(len(getattr(t, "content", "") or "") for t in new_dropped),
+            len(new_turns),
+            sum(len(getattr(t, "content", "") or "") for t in new_turns),
             force,
         )
         new_auto = await update_auto_synopsis(
             scenario=scenario,
-            dropped_turns=new_dropped,
+            new_turns=new_turns,
             existing_auto=synopsis.get("auto", ""),
             settings=settings,
             preset_loader=loader,
-            gm_preset_id=gm_preset_id,
+            synopsis_preset_id=synopsis_preset_id,
         )
         if new_auto is None:
             # update_auto_synopsis 側の WARN で詳細理由は出ているので、ここは要約のみ
@@ -223,7 +241,7 @@ async def maybe_update_auto_synopsis(
             )
             return None
 
-        latest_idx = max(int(getattr(t, "turn_index", -1)) for t in new_dropped)
+        latest_idx = max(int(getattr(t, "turn_index", -1)) for t in new_turns)
         logger.info(
             "auto synopsis 蒸留完了 session=%s last_turn_index=%d→%d 出力文字数=%d",
             session_id, last_idx, latest_idx, len(new_auto),
@@ -291,15 +309,19 @@ async def run_scenario_turn(
     #      履歴上限を超えるターン群があれば、それを LLM で要約して synopsis_auto に追記する。
     #      閾値未満の場合・失敗時は何もしない（チャット本体は継続）。
     #      ここで取得した synopsis を engine に渡し、GM プロンプトに含める。
-    #      蒸留もセッションの GM プリセットで実施する（モデルを揃える）。
+    #      蒸留は専用の synopsis_preset_id（未設定なら gm_preset_id にフォールバック）で行う。
+    #      GM 用とは別プリセットを指定できる設計でレートリミット節約を狙う。
     gm_preset_id = getattr(session, "gm_preset_id", "") or ""
+    synopsis_preset_id = (
+        getattr(session, "synopsis_preset_id", "") or gm_preset_id
+    )
     updated_synopsis = await maybe_update_auto_synopsis(
         sqlite=sqlite,
         settings=settings,
         scenario=scenario,
         history=history,
         session_id=session_id,
-        gm_preset_id=gm_preset_id,
+        synopsis_preset_id=synopsis_preset_id,
     )
     if updated_synopsis is not None:
         # クライアントへ更新を通知（UI 側のあらすじパネルを最新化させるため）。

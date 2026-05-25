@@ -7,7 +7,7 @@ update_auto_synopsis 自体は LLM プロバイダー呼出を含むため、本
 検証する観点:
     - `build_synopsis_system_prompt` の主要要素
       （主役の埋め込み・既存 auto の埋め込み・空のときセクション省略・蒸留方針の明示）
-    - `update_auto_synopsis` が dropped 空・preset 不在・LLM 出力空 などのエッジで
+    - `update_auto_synopsis` が new_turns 空・preset 不在・LLM 出力空 などのエッジで
       None を返すこと
     - `update_auto_synopsis` が成功時、既存 auto への単純追記ではなく
       LLM が再蒸留した「全体置き換え版」を返すこと
@@ -157,7 +157,7 @@ class TestUpdateAutoSynopsis:
     """`update_auto_synopsis` の振る舞いを mock プロバイダで検証する。
 
     主観点:
-        - dropped_turns 空 → None
+        - new_turns 空 → None
         - preset_loader が None → None
         - LLM 出力が空 → None
         - LLM 呼出例外 → None（既存を破壊しない）
@@ -166,16 +166,16 @@ class TestUpdateAutoSynopsis:
     """
 
     @pytest.mark.asyncio
-    async def test_empty_dropped_returns_none(self):
-        """dropped_turns が空なら何もせず None を返すこと。"""
+    async def test_empty_new_turns_returns_none(self):
+        """new_turns が空なら何もせず None を返すこと。"""
         provider = FakeProvider(chunks=[("text", "蒸留結果")])
         result = await update_auto_synopsis(
             scenario=FakeScenario(),
-            dropped_turns=[],
+            new_turns=[],
             existing_auto="既存",
             settings={},
             preset_loader=_loader_for(FakePreset()),
-            gm_preset_id="preset-001",
+            synopsis_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None
@@ -188,13 +188,13 @@ class TestUpdateAutoSynopsis:
         provider = FakeProvider(chunks=[("text", "蒸留結果")])
         result = await update_auto_synopsis(
             scenario=FakeScenario(),
-            dropped_turns=[
+            new_turns=[
                 FakeTurn(speaker_type="user", speaker_name="P", content="やぁ")
             ],
             existing_auto="",
             settings={},
             preset_loader=_loader_for(None),
-            gm_preset_id="preset-001",
+            synopsis_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None
@@ -205,13 +205,13 @@ class TestUpdateAutoSynopsis:
         provider = FakeProvider(chunks=[("text", "   "), ("text", "")])
         result = await update_auto_synopsis(
             scenario=FakeScenario(),
-            dropped_turns=[
+            new_turns=[
                 FakeTurn(speaker_type="user", speaker_name="P", content="やぁ")
             ],
             existing_auto="既存テキスト",
             settings={},
             preset_loader=_loader_for(FakePreset()),
-            gm_preset_id="preset-001",
+            synopsis_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None
@@ -222,14 +222,14 @@ class TestUpdateAutoSynopsis:
         provider = FakeProvider(chunks=[("text", "蒸留し直した物語全体のあらすじ。")])
         result = await update_auto_synopsis(
             scenario=FakeScenario(),
-            dropped_turns=[
+            new_turns=[
                 FakeTurn(speaker_type="user", speaker_name="P", content="A"),
                 FakeTurn(speaker_type="narrator", speaker_name="N", content="B"),
             ],
             existing_auto="昔の出来事。",
             settings={},
             preset_loader=_loader_for(FakePreset()),
-            gm_preset_id="preset-001",
+            synopsis_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         # 既存 auto を末尾連結せず、LLM 出力そのものを全体置き換えで返す
@@ -242,13 +242,13 @@ class TestUpdateAutoSynopsis:
         provider = FakeProvider(chunks=[("text", "x")])
         await update_auto_synopsis(
             scenario=FakeScenario(),
-            dropped_turns=[
+            new_turns=[
                 FakeTurn(speaker_type="user", speaker_name="P", content="A")
             ],
             existing_auto="統合対象の既存記述",
             settings={},
             preset_loader=_loader_for(FakePreset()),
-            gm_preset_id="preset-001",
+            synopsis_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert provider.received_system_prompt is not None
@@ -260,13 +260,13 @@ class TestUpdateAutoSynopsis:
         provider = FakeProvider(chunks=[], raises=RuntimeError("LLM 故障"))
         result = await update_auto_synopsis(
             scenario=FakeScenario(),
-            dropped_turns=[
+            new_turns=[
                 FakeTurn(speaker_type="user", speaker_name="P", content="A")
             ],
             existing_auto="守りたい既存",
             settings={},
             preset_loader=_loader_for(FakePreset()),
-            gm_preset_id="preset-001",
+            synopsis_preset_id="preset-001",
             provider_factory=_factory_for(provider),
         )
         assert result is None

@@ -245,6 +245,9 @@ class LLMModelPreset(Base):
     provider = Column(String, nullable=False)       # "google"
     model_id = Column(String, nullable=False, default="")  # "gemini-2.0-flash"
     thinking_level = Column(String, nullable=False, default="default")  # default/low/medium/high
+    # プロバイダーAPIリクエストのタイムアウト秒数。デフォルトは5分（=300秒）。
+    # 現状はOllamaのみ参照する（ローカルモデルは応答が遅いケースが多いため）。
+    timeout_seconds = Column(Integer, nullable=False, default=300)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -324,6 +327,11 @@ class ScenarioSession(Base):
     # セッション開始時に必ず指定する（フロントの「新しい会話」モーダルでユーザが選ぶ）。
     # チャット中も左上ヘッダーから変更可能（1on1 のモデル切替と同様）。
     gm_preset_id = Column(String, nullable=False, default="")
+    # あらすじ蒸留専用の LLM プリセット ID（LLMModelPreset.id）。
+    # シナリオ本編のレートリミット節約を目的に、GM とは別のモデルを指定できる。
+    # 起動時は必ず指定する（未指定なら gm_preset_id と同じ値を入れること）。
+    # チャット中も同モーダルから変更可能。
+    synopsis_preset_id = Column(String, nullable=False, default="")
     # あらすじ機構（記憶捏造対策）
     #   synopsis_auto: LLM が古いターン群を要約して「追記」していく主あらすじ。
     #                  ユーザも UI から自由編集可能（捏造の混入を発見した際に削除・修正できる）。
@@ -385,6 +393,8 @@ class SQLiteStore(
         self.SessionLocal = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
         self._migrate_gm_preset_id_to_session()
+        self._migrate_add_preset_timeout_seconds()
+        self._migrate_add_synopsis_preset_id()
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。
@@ -438,6 +448,73 @@ class SQLiteStore(
                 conn.exec_driver_sql(
                     "ALTER TABLE scenarios DROP COLUMN gm_preset_id"
                 )
+
+    def _migrate_add_synopsis_preset_id(self) -> None:
+        """`scenario_sessions` に `synopsis_preset_id` 列を追加する。
+
+        旧スキーマ: あらすじ蒸留はセッションの `gm_preset_id` を使い回す
+        新スキーマ: あらすじ蒸留専用の `synopsis_preset_id` を持つ
+
+        移行手順:
+            1. scenario_sessions に列が無ければ ADD COLUMN
+            2. 既存行は `gm_preset_id` を初期値として埋める（従来挙動を維持）
+
+        新規 DB（既に新スキーマ）では何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "scenario_sessions" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenario_sessions)"
+                ).fetchall()
+            }
+            if "synopsis_preset_id" in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE scenario_sessions "
+                "ADD COLUMN synopsis_preset_id TEXT NOT NULL DEFAULT ''"
+            )
+            # 既存行は gm_preset_id をそのままコピー（従来挙動を維持）
+            conn.exec_driver_sql(
+                "UPDATE scenario_sessions "
+                "SET synopsis_preset_id = gm_preset_id "
+                "WHERE (synopsis_preset_id IS NULL OR synopsis_preset_id = '')"
+            )
+
+    def _migrate_add_preset_timeout_seconds(self) -> None:
+        """`llm_model_presets` テーブルに `timeout_seconds` 列を追加する。
+
+        プロバイダーAPIリクエストのタイムアウトをプリセット単位で指定するための列。
+        既存DBでは列が存在しないため ALTER TABLE で追加し、デフォルト300秒（5分）を入れる。
+        新規DB（既に新スキーマ）では何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "llm_model_presets" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql("PRAGMA table_info(llm_model_presets)").fetchall()
+            }
+            if "timeout_seconds" in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE llm_model_presets "
+                "ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300"
+            )
 
     def get_session(self) -> Session:
         """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""

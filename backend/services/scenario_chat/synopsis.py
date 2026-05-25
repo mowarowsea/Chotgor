@@ -80,15 +80,15 @@ def build_synopsis_system_prompt(
 async def update_auto_synopsis(
     *,
     scenario: Any,
-    dropped_turns: list[Any],
+    new_turns: list[Any],
     existing_auto: str,
     settings: dict,
     preset_loader: Callable[[str], Any],
-    gm_preset_id: str,
+    synopsis_preset_id: str,
     provider_factory: Callable[..., Any] = create_provider,
     narrator_name: str = "Narrator",
 ) -> Optional[str]:
-    """既存 `existing_auto` と `dropped_turns` を統合し、全体を再蒸留した結果を返す。
+    """既存 `existing_auto` と `new_turns` を統合し、全体を再蒸留した結果を返す。
 
     呼び出し元 (service.py) は本関数の戻り値（None でなければ）を
     `update_scenario_session_synopsis(..., auto=戻り値, last_turn_index=...)` で
@@ -96,29 +96,33 @@ async def update_auto_synopsis(
 
     Args:
         scenario: Scenario ORM。user_alias / scenario を使う。
-        dropped_turns: 今回新たに送信対象外となったターン群（時系列昇順）。
+        new_turns: 前回蒸留以降の新規ターン群（時系列昇順）。生ログから押し出された
+                   ものに限らず、まだ生ログに残っているターンも含めて渡してよい。
+                   これによりあらすじは常に生ログ右端まで（または超えて）カバーされ、
+                   「最近のことを GM が忘却している」というギャップが発生しない。
         existing_auto: 既存の synopsis_auto テキスト。
         settings: グローバル設定辞書（API キー等）。
         preset_loader: preset_id を受け取り preset ORM 風オブジェクトを返す関数。
-        gm_preset_id: 蒸留に使う LLM プリセット ID。
-                      セッションの GM プリセット（ScenarioSession.gm_preset_id）と同じ
-                      モデルで蒸留する想定。
+        synopsis_preset_id: あらすじ蒸留に使う LLM プリセット ID
+                            （ScenarioSession.synopsis_preset_id）。
+                            GM 用とは独立に指定でき、レートリミット節約用に
+                            軽量モデルを割り当てられる。
         provider_factory: プロバイダ生成関数（デフォルト registry.create_provider）。
         narrator_name: Narrator のタグ名。
 
     Returns:
-        再蒸留後の synopsis_auto 文字列（全体置き換え版）。dropped_turns が空、
+        再蒸留後の synopsis_auto 文字列（全体置き換え版）。new_turns が空、
         または蒸留生成に失敗した場合は None を返す（その場合は SQLite を更新しない）。
     """
-    if not dropped_turns:
-        logger.debug("synopsis 蒸留 skip 理由=dropped_turns空")
+    if not new_turns:
+        logger.debug("synopsis 蒸留 skip 理由=new_turns空")
         return None
 
-    preset = preset_loader(gm_preset_id)
+    preset = preset_loader(synopsis_preset_id)
     if preset is None:
         logger.warning(
-            "synopsis 蒸留 skip 理由=preset_loader が None を返却 gm_preset_id=%s",
-            gm_preset_id,
+            "synopsis 蒸留 skip 理由=preset_loader が None を返却 synopsis_preset_id=%s",
+            synopsis_preset_id,
         )
         return None
 
@@ -128,6 +132,7 @@ async def update_auto_synopsis(
             model=preset.model_id,
             settings=settings,
             preset_name=preset.name,
+            timeout_seconds=getattr(preset, "timeout_seconds", 300),
         )
     except Exception:
         logger.exception(
@@ -144,7 +149,7 @@ async def update_auto_synopsis(
     )
 
     history_text = format_history_for_gm(
-        dropped_turns,
+        new_turns,
         user_alias=getattr(scenario, "user_alias", "ユーザ"),
         narrator_name=narrator_name,
     )
