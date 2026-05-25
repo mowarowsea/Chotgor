@@ -27,6 +27,16 @@ from backend.character_actions.carver import CARVE_NARRATIVE_TAG_GUIDE, CARVE_NA
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 
 
+# タグ方式プロバイダー（Ollama/OpenRouter等）共通の禁止条項。
+# 個別タグの説明より先に置くことで、小型モデルが「タグだけで応答完結」してしまう事故を防ぐ。
+# 背景: Ollama+Shisa(8B) などで本文ゼロ＋INSCRIBE_MEMORYタグ単独応答が観測された。
+_TAG_MODE_GLOBAL_RULES = """\
+### ⚠️ タグ操作の共通ルール（必読）
+- **タグだけで応答を終わらせないこと。** 必ずユーザに向けた返答テキストを先に書き、必要なタグはその後ろに添えてください。タグ単独の応答は「無応答」と同じ扱いになります。
+- 該当する記録事項がなければタグは書かなくて構いません。ただしユーザへの返答テキストは必ず1行以上書いてください。
+- 以下のタグの行はすべてユーザには見えません: `[POWER_RECALL:...]` / `[CARVE_NARRATIVE:...]` / `[INSCRIBE_MEMORY:...]` / `[SWITCH_ANGLE:...]`\
+"""
+
 # Chotgor ガイドの末尾に付く「覚えるかどうかはあなたが決める」共通ブロック
 _CHOTGOR_MEMORY_PHILOSOPHY = """\
 ### 覚えるかどうかはあなた（キャラクター）が決める
@@ -152,6 +162,8 @@ def _build_chotgor_block(
         )
         parts.append(_WORKING_MEMORY_TOOLS_HINT)
     else:
+        # タグ方式は小型モデルでの命令追従が弱いため、共通禁止条項を最初に置く
+        parts.append(_TAG_MODE_GLOBAL_RULES)
         parts.append(POWER_RECALL_TAG_GUIDE)
         parts.append(CARVE_NARRATIVE_TAG_GUIDE)
         if available_presets:
