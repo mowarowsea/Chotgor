@@ -143,7 +143,7 @@ export default function ScenarioSettingsModal({
     return () => document.removeEventListener("keydown", fn);
   }, [onClose]);
 
-  /** 「適用」ボタン: 変更されたプリセットだけ親に通知する。 */
+  /** 「適用」ボタン: 変更されたプリセットだけ親に通知して、モーダルを閉じる。 */
   const applyPresets = () => {
     if (selGmId && selGmId !== currentGmPresetId) {
       onApplyGmPreset(selGmId);
@@ -151,6 +151,7 @@ export default function ScenarioSettingsModal({
     if (selSynopsisId && selSynopsisId !== currentSynopsisPresetId) {
       onApplySynopsisPreset(selSynopsisId);
     }
+    onClose();
   };
 
   const presetsDirty =
