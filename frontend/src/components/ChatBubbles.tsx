@@ -807,6 +807,20 @@ function RawLogModal({ messageId, filename, onClose }: { messageId: string; file
 }
 
 /**
+ * 経過時間（ミリ秒）を人間向けの短い文字列にフォーマットする。
+ *
+ * - 60秒未満: `12.3s` 形式（小数1桁）
+ * - 60秒以上: `1m05s` 形式（分・秒、秒は2桁ゼロ詰め）
+ */
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.floor((ms % 60_000) / 1000);
+  return `${m}m${String(s).padStart(2, "0")}s`;
+}
+
+/**
  * バブル下部の操作バー。
  *
  * コピー / ログ折りたたみ（1on1 のみ）/ 再生成 を 1 行に並べる共通部品。
@@ -824,6 +838,7 @@ export function MessageActionBar({
   onDiscard,
   discardTitle = "この応答を破棄",
   logMessageId,
+  elapsedMs,
 }: {
   /** コピーボタンがコピーするテキスト。 */
   copyText: string;
@@ -837,6 +852,8 @@ export function MessageActionBar({
   discardTitle?: string;
   /** デバッグログフォルダ名（8桁hex）。指定時のみログ折りたたみを表示する。 */
   logMessageId?: string;
+  /** モデルリクエスト〜応答完了までの経過時間（ミリ秒）。指定時のみ表示する。 */
+  elapsedMs?: number;
 }) {
   const [logExpanded, setLogExpanded] = useState(false);
   const [entry, setEntry] = useState<LogEntry | null>(null);
@@ -866,9 +883,17 @@ export function MessageActionBar({
 
   return (
     <>
-      {/* 操作行: コピー / ログ / 再生成（再生成のみ右端へ） */}
+      {/* 操作行: コピー / 経過時間 / ログ / 再生成（再生成のみ右端へ） */}
       <div className="flex items-center gap-0.5 -ml-1 mt-0.5 w-full">
         <CopyButton text={copyText} />
+        {elapsedMs !== undefined && (
+          <span
+            className="text-[10px] text-ch-t4 font-mono px-1 select-none"
+            title="モデルへリクエストしてから応答完了までの時間"
+          >
+            {formatElapsed(elapsedMs)}
+          </span>
+        )}
         {logMessageId && (
           <button
             onClick={handleLogToggle}
@@ -1047,6 +1072,7 @@ export function CharacterBubble({
   sending = false,
   onRegenerate,
   logMessageId,
+  elapsedMs,
 }: {
   characterName: string;
   /** プリセット名。指定時は名前行に @プリセット を表示する。 */
@@ -1061,6 +1087,8 @@ export function CharacterBubble({
   onRegenerate?: () => void;
   /** デバッグログフォルダ名（8桁hex）。存在する場合はログ折りたたみを表示する。 */
   logMessageId?: string;
+  /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。 */
+  elapsedMs?: number;
 }) {
   return (
     <CharacterMessageRow
@@ -1081,12 +1109,13 @@ export function CharacterBubble({
         <MarkdownContent content={content} />
       </Bubble>
 
-      {/* 操作バー（コピー / ログ折りたたみ / 再生成）。logMessageId は CHOTGOR_DEBUG=1 時のみ。 */}
+      {/* 操作バー（コピー / 経過時間 / ログ折りたたみ / 再生成）。logMessageId は CHOTGOR_DEBUG=1 時のみ。 */}
       {!sending && (
         <MessageActionBar
           copyText={content}
           onRegenerate={onRegenerate}
           logMessageId={logMessageId}
+          elapsedMs={elapsedMs}
         />
       )}
     </CharacterMessageRow>

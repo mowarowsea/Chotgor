@@ -168,7 +168,11 @@ async def decide_next_speakers(
         return None
 
     current_log_feature.set("group_chat")
-    provider = create_provider(preset.provider, preset.model_id, settings, preset_name=preset.name)
+    provider = create_provider(
+        preset.provider, preset.model_id, settings,
+        preset_name=preset.name,
+        timeout_seconds=preset.timeout_seconds,
+    )
 
     try:
         raw = await provider.generate(

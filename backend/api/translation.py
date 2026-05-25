@@ -83,6 +83,7 @@ async def translate_text(request: Request, body: TranslateRequest) -> TranslateR
             settings,
             thinking_level=preset.thinking_level or "default",
             preset_name=preset.name,
+            timeout_seconds=preset.timeout_seconds,
         )
     except Exception as e:
         _log.error("翻訳: プロバイダー生成失敗 preset=%s error=%s", preset_id, e)

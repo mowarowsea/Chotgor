@@ -53,6 +53,8 @@ interface Props {
   onRetryDirector?: () => void;
   /** 任意参加者の手動指名コールバック。司会を介さず指定キャラクターを発言させる。 */
   onRequestCharacter?: (charName: string) => void;
+  /** char_msg_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
+  elapsedMap?: Record<string, number>;
 }
 
 /** グループチャットのレイアウトコンポーネント。 */
@@ -74,6 +76,7 @@ export default function GroupChatView({
   directorErrored = false,
   onRetryDirector,
   onRequestCharacter,
+  elapsedMap,
 }: Props) {
   // ユーザターン中かつ送信処理中でないときだけ手動操作バーを表示する。
   const showActionBar = isUserTurn && !sending;
@@ -92,6 +95,7 @@ export default function GroupChatView({
         emptyMessage="グループチャットを始めましょう"
         onRetry={onRetry}
         onHeaderVisibilityChange={onHeaderVisibilityChange}
+        elapsedMap={elapsedMap}
       />
       {showActionBar && (
         <div

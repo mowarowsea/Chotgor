@@ -186,6 +186,7 @@ class EnsembleEngine:
             model=preset.model_id,
             settings=settings,
             preset_name=preset.name,
+            timeout_seconds=getattr(preset, "timeout_seconds", 300),
         )
 
         # 4. ストリーミング受信＆パース

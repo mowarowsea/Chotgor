@@ -34,6 +34,8 @@ interface Props {
     onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
     /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
     msgLogIds?: Record<string, string>;
+    /** char_msg_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
+    elapsedMap?: Record<string, number>;
 }
 
 /**
@@ -53,6 +55,7 @@ export default function MessageList({
     onHeaderVisibilityChange,
     onRetry,
     msgLogIds = {},
+    elapsedMap = {},
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
     /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
@@ -105,6 +108,7 @@ export default function MessageList({
                         colored={colored}
                         sending={sending}
                         logMessageId={msgLogIds[msg.id]}
+                        elapsedMs={elapsedMap[msg.id]}
                         onRegenerate={onRetry ? () => {
                             const precedingUser = [...messages]
                                 .slice(0, idx)

@@ -43,6 +43,13 @@
                     <option value="high">High</option>
                 </select>
             </div>
+            <div class="form-group" style="flex:1;margin-bottom:0">
+                <label for="new-timeout-seconds">タイムアウト秒
+                    <span class="label-hint">既定300=5分</span>
+                </label>
+                <input type="number" id="new-timeout-seconds" name="timeout_seconds" class="form-control"
+                       min="1" step="1" value="300">
+            </div>
             <div style="padding-top:22px;flex-shrink:0">
                 <button type="button" class="btn btn-primary" onclick="submitNew()">追加</button>
             </div>
@@ -61,6 +68,7 @@
                 <th>プロバイダー</th>
                 <th>モデルID</th>
                 <th>思考レベル</th>
+                <th>タイムアウト秒</th>
                 <th>操作</th>
             </tr>
         </thead>
@@ -105,6 +113,13 @@
                     </select>
                 </td>
                 <td>
+                    <span class="preset-display" id="timeout-display-{{ preset.id }}">
+                        {{ preset.timeout_seconds or 300 }}
+                    </span>
+                    <input type="number" class="form-control preset-edit-field" id="timeout-edit-{{ preset.id }}"
+                           value="{{ preset.timeout_seconds or 300 }}" min="1" step="1" style="display:none">
+                </td>
+                <td>
                     <!-- td の display は変えず、内側の div に flex を当てる -->
                     <div class="preset-actions">
                         <button type="button" class="btn btn-secondary btn-sm"
@@ -117,6 +132,7 @@
                             <input type="hidden" name="provider" id="edit-provider-{{ preset.id }}">
                             <input type="hidden" name="model_id" id="edit-modelid-{{ preset.id }}">
                             <input type="hidden" name="thinking_level" id="edit-thinking-{{ preset.id }}">
+                            <input type="hidden" name="timeout_seconds" id="edit-timeout-{{ preset.id }}">
                             <button type="button" class="btn btn-primary btn-sm"
                                     onclick="submitEdit('{{ preset.id }}')">保存</button>
                             <button type="button" class="btn btn-secondary btn-sm"
@@ -233,7 +249,7 @@ document.getElementById('new-provider').addEventListener('change', function() {
 
 /** 行を編集モードに切り替える。 */
 function startEdit(id) {
-    ['name', 'provider', 'modelid', 'thinking'].forEach(field => {
+    ['name', 'provider', 'modelid', 'thinking', 'timeout'].forEach(field => {
         document.getElementById(`${field}-display-${id}`).style.display = 'none';
         document.getElementById(`${field}-edit-${id}`).style.display = '';
     });
@@ -250,7 +266,7 @@ function startEdit(id) {
 
 /** 編集モードをキャンセルして表示モードに戻す。 */
 function cancelEdit(id) {
-    ['name', 'provider', 'modelid', 'thinking'].forEach(field => {
+    ['name', 'provider', 'modelid', 'thinking', 'timeout'].forEach(field => {
         document.getElementById(`${field}-display-${id}`).style.display = '';
         document.getElementById(`${field}-edit-${id}`).style.display = 'none';
     });
@@ -272,6 +288,8 @@ function submitEdit(id) {
         document.getElementById(`modelid-edit-${id}`).value;
     document.getElementById(`edit-thinking-${id}`).value =
         document.getElementById(`thinking-edit-${id}`).value;
+    document.getElementById(`edit-timeout-${id}`).value =
+        document.getElementById(`timeout-edit-${id}`).value;
     document.getElementById(`edit-form-${id}`).submit();
 }
 </script>

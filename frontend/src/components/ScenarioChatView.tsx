@@ -82,6 +82,8 @@ interface Props {
   onDiscard: () => void;
   /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
+  /** turn_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
+  elapsedMap?: Record<string, number>;
 }
 
 /** 文字列の末尾空白・改行を取り除く（表示時のノイズ除去）。 */
@@ -373,6 +375,8 @@ interface GMBubbleRowProps {
   onDiscard?: () => void;
   /** アバタークリック時のコールバック。既知 NPC のみ渡される（押下可能になる）。 */
   onAvatarClick?: () => void;
+  /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。末尾 GM バブルにのみ意味がある。 */
+  elapsedMs?: number;
 }
 
 /**
@@ -397,6 +401,7 @@ function GMBubbleRowImpl({
   onRegenerate,
   onDiscard,
   onAvatarClick,
+  elapsedMs,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
   // 操作バー（コピー / 破棄 / 再生成）。ターン末尾の GM バブルにのみ表示する。
@@ -408,6 +413,7 @@ function GMBubbleRowImpl({
       regenerateTitle="このターンを再生成"
       onDiscard={onDiscard}
       discardTitle="この応答を破棄してユーザ入力に戻す"
+      elapsedMs={elapsedMs}
     />
   ) : null;
 
@@ -494,7 +500,8 @@ const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
     prev.content === next.content &&
     prev.avatarSrc === next.avatarSrc &&
     prev.isLastGM === next.isLastGM &&
-    prev.copyText === next.copyText
+    prev.copyText === next.copyText &&
+    prev.elapsedMs === next.elapsedMs
   );
 });
 
@@ -511,6 +518,7 @@ export default function ScenarioChatView({
   onRegenerate,
   onDiscard,
   onHeaderVisibilityChange,
+  elapsedMap,
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
   const [npcDialogTarget, setNpcDialogTarget] = useState<ScenarioNpc | null>(null);
@@ -659,6 +667,9 @@ export default function ScenarioChatView({
               onDiscard={onDiscard}
               onAvatarClick={
                 npcForAvatar ? () => setNpcDialogTarget(npcForAvatar) : undefined
+              }
+              elapsedMs={
+                t.id === lastGMTurnId ? elapsedMap?.[t.id] : undefined
               }
             />
           );

@@ -54,10 +54,12 @@ class OllamaProvider(BaseLLMProvider):
     DEFAULT_MODEL = DEFAULT_MODEL
     REQUIRES_API_KEY = False
 
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "", timeout: int = 60, no_think: bool = False):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "", timeout: int = 300, no_think: bool = False):
         """OllamaProviderを初期化する。
 
         Args:
+            timeout: リクエストタイムアウト秒数。デフォルトは5分（300秒）。
+                     プリセット単位の timeout_seconds が from_config 経由で渡される。
             no_think: Trueのとき、Qwen3系のthinkingモードを/no_thinkトークンで無効化する。
                       Ollama 0.7+のthink: Falseパラメータが効かない場合の代替手段。
         """
@@ -68,9 +70,19 @@ class OllamaProvider(BaseLLMProvider):
 
     @classmethod
     def from_config(cls, model: str, settings: dict, **kwargs) -> "OllamaProvider":
-        """設定からOllamaProviderを生成するファクトリメソッド。"""
+        """設定からOllamaProviderを生成するファクトリメソッド。
+
+        timeout_seconds が kwargs で渡されればそれを優先する（プリセット単位の設定）。
+        未指定時は 300秒（5分）をデフォルトとする。
+        """
         base_url = settings.get("ollama_base_url", "http://localhost:11434")
-        timeout = int(settings.get("ollama_timeout", 60))
+        timeout_kw = kwargs.get("timeout_seconds")
+        try:
+            timeout = int(timeout_kw) if timeout_kw is not None else 300
+        except (TypeError, ValueError):
+            timeout = 300
+        if timeout <= 0:
+            timeout = 300
         no_think_raw = settings.get("ollama_no_think", "false")
         no_think = str(no_think_raw).lower() in ("true", "1", "yes")
         return cls(base_url=base_url, model=model, timeout=timeout, no_think=no_think)

@@ -186,6 +186,7 @@ async def _build_chat_request(
         self_reflection_preset_id=character.self_reflection_preset_id or "",
         self_reflection_n_turns=character.self_reflection_n_turns,
         allowed_tools=getattr(character, "allowed_tools", None) or {},
+        timeout_seconds=preset.timeout_seconds,
     )
 
 

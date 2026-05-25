@@ -145,6 +145,7 @@ async def _stream_character_response(
         current_preset_name=preset.name,
         current_preset_id=preset.id,
         allowed_tools=getattr(char, "allowed_tools", None) or {},
+        timeout_seconds=preset.timeout_seconds,
     )
 
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする

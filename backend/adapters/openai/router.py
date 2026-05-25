@@ -35,14 +35,21 @@ def _derive_session_id(character_id: str, messages: list) -> str:
 
 
 def _available_providers(settings: dict) -> set[str]:
-    """APIキーが設定済みのプロバイダーを返す (claude_cli は常に含む)。
-    settings の全キーを走査し `{provider}_api_key` 形式のものを自動検出するため、
-    新プロバイダー追加時もこの関数の変更は不要。
+    """利用可能なプロバイダーIDのセットを返す。
+
+    PROVIDER_REGISTRY を引いて REQUIRES_API_KEY=False のプロバイダー
+    （claude_cli, ollama など）は常に含む。APIキー必須のプロバイダーは
+    settings に `{provider_id}_api_key` が設定済みのもののみ含む。
+
+    新プロバイダー追加時は PROVIDER_REGISTRY への登録だけでこの関数に反映される。
     """
-    result = {"claude_cli"}
-    for key, value in settings.items():
-        if key.endswith("_api_key") and value:
-            result.add(key.removesuffix("_api_key"))
+    from backend.providers.registry import PROVIDER_REGISTRY
+    result: set[str] = set()
+    for provider_id, cls in PROVIDER_REGISTRY.items():
+        if not cls.REQUIRES_API_KEY:
+            result.add(provider_id)
+        elif settings.get(f"{provider_id}_api_key"):
+            result.add(provider_id)
     return result
 
 
@@ -194,6 +201,7 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         self_reflection_preset_id=character.self_reflection_preset_id or "",
         self_reflection_n_turns=character.self_reflection_n_turns,
         allowed_tools=getattr(character, "allowed_tools", None) or {},
+        timeout_seconds=preset.timeout_seconds,
     )
 
     chat_service = state.chat_service

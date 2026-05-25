@@ -160,6 +160,7 @@ class SelfReflector:
             trigger_provider = create_provider(
                 preset.provider, preset.model_id or "", settings,
                 preset_name=preset.name,
+                timeout_seconds=preset.timeout_seconds,
             )
         except Exception as e:
             _log.warning(

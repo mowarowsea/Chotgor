@@ -386,6 +386,17 @@ async def model_presets_list(request: Request):
     )
 
 
+def _parse_timeout_seconds(raw: str | None) -> int:
+    """フォーム入力からタイムアウト秒数を解釈する。空欄・不正値はデフォルト300秒（5分）。"""
+    if not raw:
+        return 300
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 300
+    return value if value > 0 else 300
+
+
 @router.post("/model-presets/new")
 async def create_model_preset(request: Request):
     form = await request.form()
@@ -396,12 +407,14 @@ async def create_model_preset(request: Request):
         return RedirectResponse(url="/ui/model-presets", status_code=303)
     preset_id = str(uuid.uuid4())
     thinking_level = form.get("thinking_level") or "default"
+    timeout_seconds = _parse_timeout_seconds(form.get("timeout_seconds"))
     request.app.state.sqlite.create_model_preset(
         preset_id=preset_id,
         name=name,
         provider=provider,
         model_id=model_id,
         thinking_level=thinking_level,
+        timeout_seconds=timeout_seconds,
     )
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 
@@ -413,6 +426,7 @@ async def update_model_preset(request: Request, preset_id: str):
     provider = (form.get("provider") or "").strip()
     model_id = (form.get("model_id") or "").strip()
     thinking_level = form.get("thinking_level") or "default"
+    timeout_seconds = _parse_timeout_seconds(form.get("timeout_seconds"))
     if name and provider:
         request.app.state.sqlite.update_model_preset(
             preset_id,
@@ -420,6 +434,7 @@ async def update_model_preset(request: Request, preset_id: str):
             provider=provider,
             model_id=model_id,
             thinking_level=thinking_level,
+            timeout_seconds=timeout_seconds,
         )
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 

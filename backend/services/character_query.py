@@ -127,6 +127,7 @@ async def ask_character(
             settings,
             thinking_level=preset.thinking_level or "default",
             preset_name=preset.name,
+            timeout_seconds=preset.timeout_seconds,
         )
     except Exception as e:
         _log.warning(
@@ -246,6 +247,7 @@ async def ask_character_with_tools(
             preset_name=preset.name,
             character_id=character_id,
             session_id=session_id,
+            timeout_seconds=preset.timeout_seconds,
         )
     except Exception as e:
         _log.warning(

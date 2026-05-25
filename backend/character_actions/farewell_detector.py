@@ -265,7 +265,9 @@ class FarewellDetector:
         try:
             current_log_feature.set("farewell")
             provider = create_provider(
-                preset.provider, preset.model_id, settings, preset_name=preset.name
+                preset.provider, preset.model_id, settings,
+                preset_name=preset.name,
+                timeout_seconds=preset.timeout_seconds,
             )
         except Exception as e:
             _log.warning("FarewellDetector: プロバイダー生成失敗 provider=%s error=%s", preset.provider, e)

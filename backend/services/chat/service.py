@@ -266,6 +266,7 @@ class ChatService:
             current_preset_id=preset.get("preset_id", ""),
             available_presets=[],
             messages=new_messages,
+            timeout_seconds=preset.get("timeout_seconds", 300),
         )
 
     async def _prepare_context(self, request: ChatRequest) -> _Context:
@@ -347,6 +348,7 @@ class ChatService:
             character_id=request.character_id,
             session_id=request.session_id or "",
             allowed_tools=request.allowed_tools,
+            timeout_seconds=request.timeout_seconds,
         )
 
         # --- システムプロンプト構築 ---

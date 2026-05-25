@@ -39,6 +39,8 @@ interface Props {
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
   msgLogIds?: Record<string, string>;
+  /** char_msg_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
+  elapsedMap?: Record<string, number>;
 }
 
 /** 1on1チャットのレイアウトコンポーネント。 */
@@ -55,6 +57,7 @@ export default function ChatView({
   onRetry,
   onHeaderVisibilityChange,
   msgLogIds,
+  elapsedMap,
 }: Props) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -69,6 +72,7 @@ export default function ChatView({
         onRetry={onRetry}
         onHeaderVisibilityChange={onHeaderVisibilityChange}
         msgLogIds={msgLogIds}
+        elapsedMap={elapsedMap}
       />
       <MessageInput
         sessionId={sessionId}

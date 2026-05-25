@@ -54,3 +54,6 @@ class ChatRequest:
     self_reflection_n_turns: int = 5             # 自己参照に使う直近ターン数
     # 外部ツール許可設定（ClaudeCliProvider の --tools フラグに反映される）
     allowed_tools: dict = field(default_factory=dict)
+    # プロバイダーAPIリクエストのタイムアウト秒数。プリセット単位で設定可能。
+    # 現状は OllamaProvider のみが参照する。0 以下は無効として扱われ、各プロバイダー側でデフォルト値が使われる。
+    timeout_seconds: int = 300

@@ -141,5 +141,6 @@ def build_available_presets(character, current_preset, sqlite) -> list[dict]:
             "additional_instructions": cfg.get("additional_instructions", ""),
             "thinking_level": p.thinking_level or "default",
             "when_to_switch": cfg.get("when_to_switch", ""),
+            "timeout_seconds": p.timeout_seconds or 300,
         })
     return result

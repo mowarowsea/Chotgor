@@ -7,13 +7,27 @@ class PresetStoreMixin:
     """LLMモデルプリセットの作成・取得・更新・削除を担う Mixin。"""
 
     def create_model_preset(
-        self, preset_id: str, name: str, provider: str, model_id: str, thinking_level: str = "default"
+        self,
+        preset_id: str,
+        name: str,
+        provider: str,
+        model_id: str,
+        thinking_level: str = "default",
+        timeout_seconds: int = 300,
     ):
-        """LLMモデルプリセットを新規作成する。"""
+        """LLMモデルプリセットを新規作成する。
+
+        timeout_seconds はプロバイダーAPIリクエストのタイムアウト秒数（デフォルト5分）。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import LLMModelPreset
             preset = LLMModelPreset(
-                id=preset_id, name=name, provider=provider, model_id=model_id, thinking_level=thinking_level
+                id=preset_id,
+                name=name,
+                provider=provider,
+                model_id=model_id,
+                thinking_level=thinking_level,
+                timeout_seconds=timeout_seconds,
             )
             session.add(preset)
             session.commit()
