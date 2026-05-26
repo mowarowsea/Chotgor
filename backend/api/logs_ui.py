@@ -564,6 +564,10 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
     user_message / response / reasoning を取得し、それ以外（farewell/trigger等）は
     sub_types バッジ表示用に収集する。raw_dir があればツール呼び出しを解析する。
 
+    再生成時は同一 request_id で複数のメイン行が生成される。
+    `character_response` / `reasoning_text` は最新試行の値を使い、
+    `attempts` に各試行の要約リストを格納してアコーディオン表示に使う。
+
     Args:
         rows: get_debug_log_entries_by_request_id() が返すエントリ辞書のリスト（昇順）。
 
@@ -573,15 +577,18 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
     if not rows:
         return {}
 
-    _MAIN_SOURCE_TYPES = {"chat", "scenario", "group_chat"}
+    _MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat", "group_chat"}
 
     # メイン行（ユーザー発言を持つ行）を優先して選択
     main_row = next((r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES), rows[0])
-    latest_row = rows[-1]  # 再生成などで複数試行がある場合は最新を参照
+
+    # メインタイプ行を時系列順に収集（再生成の試行ごとに1行ずつ存在する）
+    main_rows = [r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES]
+    latest_main = main_rows[-1] if main_rows else rows[-1]
 
     request_id = main_row["request_id"]
     source_type = main_row["source_type"]
-    dt = latest_row["created_at"] or main_row["created_at"]
+    dt = latest_main["created_at"] or main_row["created_at"]
 
     # source_type 一覧（ユニーク・出現順）
     seen: set[str] = set()
@@ -591,13 +598,13 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
             seen.add(r["source_type"])
             source_types.append(r["source_type"])
 
-    # raw_dir からツール呼び出しを解析（ファイルが残っている場合）
+    # raw_dir からツール呼び出しを解析（最新試行のファイルが残っている場合）
     tool_calls: list[dict] = []
     warnings: list[dict] = []
     has_error = any(r["has_error"] for r in rows)
     warn_reason = next((r["warn_reason"] for r in rows if r["warn_reason"]), "")
 
-    raw_dir = main_row.get("raw_dir") or latest_row.get("raw_dir")
+    raw_dir = latest_main.get("raw_dir") or main_row.get("raw_dir")
     if raw_dir:
         raw_path = Path(raw_dir)
         if raw_path.exists():
@@ -618,9 +625,23 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
             file_names = sorted(p.name for p in raw_path.iterdir() if p.is_file())
 
     # モデル ID 組み立て（後方互換のため target@preset 形式で保持）
-    target = main_row.get("target") or latest_row.get("target") or ""
-    preset = main_row.get("preset") or latest_row.get("preset") or ""
+    target = main_row.get("target") or latest_main.get("target") or ""
+    preset = latest_main.get("preset") or main_row.get("preset") or ""
     model_id = f"{target}@{preset}" if target and preset else target or preset
+
+    # 再生成の各試行サマリーリスト（attempt_count > 1 のときアコーディオン表示に使う）
+    _PREVIEW_LEN = 200
+    attempts = [
+        {
+            "index": i + 1,
+            "preset": r.get("preset") or "",
+            "response_preview": (r.get("response") or "")[:_PREVIEW_LEN],
+            "response_truncated": len(r.get("response") or "") > _PREVIEW_LEN,
+            "dt_str": r["created_at"].strftime("%H:%M:%S") if r.get("created_at") else "",
+            "has_error": bool(r.get("has_error")),
+        }
+        for i, r in enumerate(main_rows)
+    ]
 
     return {
         "message_id": request_id,
@@ -633,15 +654,16 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
         "source_types": source_types,
         "source": "system" if source_type not in _MAIN_SOURCE_TYPES else "ユーザ",
         "user_message": main_row.get("user_message") or "",
-        "character_response": latest_row.get("response") or "",
-        "reasoning_text": latest_row.get("reasoning") or "",
+        "character_response": latest_main.get("response") or "",
+        "reasoning_text": latest_main.get("reasoning") or "",
         "tool_calls": tool_calls,
         "warnings": warnings,
         "files": file_names,
         "has_error": has_error,
         "warn_reason": warn_reason,
-        # 再生成の試行数（同一 request_id の行数のうちメインタイプの件数）
-        "attempt_count": sum(1 for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES),
+        # 再生成の試行数とサマリーリスト
+        "attempt_count": len(main_rows),
+        "attempts": attempts,
     }
 
 

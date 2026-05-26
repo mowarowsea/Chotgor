@@ -32,6 +32,9 @@
             <span class="log-model text-muted">[system]</span>
             {% endif %}
             {% endif %}
+            {% if e.attempt_count > 1 %}
+            <span class="log-attempt-badge" title="{{ e.attempt_count }}回生成">×{{ e.attempt_count }}</span>
+            {% endif %}
             {% if e.has_error and e.warn_reason %}
             {# WARN のときは一覧でも理由が分かるよう、応答プレビューより理由を優先表示する #}
             <span class="log-preview log-warn-reason">{{ e.warn_reason }}</span>
@@ -56,6 +59,31 @@
                 <span class="log-label">発信元</span>
                 <span>{{ e.source }}</span>
             </div>
+
+            <!-- 試行履歴（再生成が複数回行われた場合のみ表示） -->
+            {% if e.attempt_count > 1 %}
+            <div class="log-row">
+                <span class="log-label">試行履歴</span>
+                <div class="log-attempts">
+                    {% for a in e.attempts %}
+                    <div class="log-attempt-item {% if loop.last %}log-attempt-latest{% endif %}">
+                        <span class="log-attempt-index">#{{ a.index }}</span>
+                        <span class="log-attempt-dt">{{ a.dt_str }}</span>
+                        {% if a.preset %}
+                        <span class="log-attempt-preset">{{ a.preset }}</span>
+                        {% endif %}
+                        {% if a.has_error %}
+                        <span class="log-attempt-preview log-warn-reason">(エラー)</span>
+                        {% elif a.response_preview %}
+                        <span class="log-attempt-preview">{{ a.response_preview }}{% if a.response_truncated %}…{% endif %}</span>
+                        {% else %}
+                        <span class="log-attempt-preview text-muted">(応答なし)</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
 
             <!-- リクエスト内容 -->
             {% if e.user_message %}
