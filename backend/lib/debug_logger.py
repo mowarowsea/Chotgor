@@ -84,8 +84,8 @@ class ChotgorLogger:
         """
         if not self.is_debug_enabled():
             return
-        from .log_context import current_message_id, next_log_index
-        msg_id = current_message_id.get()
+        from .log_context import current_log_dir_id, next_log_index
+        msg_id = current_log_dir_id.get()
         idx = next_log_index()
         folder = os.path.join(self.DEBUG_DIR, msg_id)
         os.makedirs(folder, exist_ok=True)
@@ -104,8 +104,8 @@ class ChotgorLogger:
         """
         if not self.is_debug_enabled():
             return None
-        from .log_context import current_message_id
-        return f"{self.DEBUG_DIR}/{current_message_id.get()}"
+        from .log_context import current_log_dir_id
+        return f"{self.DEBUG_DIR}/{current_log_dir_id.get()}"
 
     # --- ファイルログメソッド ---
 

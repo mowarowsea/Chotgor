@@ -11,7 +11,12 @@ import uuid as _uuid_mod
 from contextvars import ContextVar
 
 # リクエスト識別子（チャット1回ごと、chronicle/forgetキャラごとにセット）
+# 再生成時は旧 request_id を引き継ぐためにここだけ上書きされる。
 current_message_id: ContextVar[str] = ContextVar("current_message_id", default="--------")
+
+# ファイルログフォルダ用 ID — new_message_id() で常に fresh な値にリセット。
+# current_message_id が再利用される再生成でも、ファイルは別フォルダに書き出せる。
+current_log_dir_id: ContextVar[str] = ContextVar("current_log_dir_id", default="--------")
 
 # 現在のLLM呼び出し機能名（chat / power_recall / trigger / reflection / forget / chronicle / group_chat）
 current_log_feature: ContextVar[str] = ContextVar("current_log_feature", default="chat")
@@ -48,6 +53,7 @@ def new_message_id() -> str:
     """
     msg_id = _uuid_mod.uuid4().hex[:8]
     current_message_id.set(msg_id)
+    current_log_dir_id.set(msg_id)  # ファイルフォルダ用 ID も同時にリセット
     _log_call_counter.set(0)
     current_log_session_id.set(None)
     current_log_target.set(None)

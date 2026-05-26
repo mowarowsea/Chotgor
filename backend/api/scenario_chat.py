@@ -557,6 +557,8 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
     settings = sqlite.get_all_settings()
 
     async def sse_generator():
+        # GM の発話内容を収集して最後に log_front_output() に渡す
+        _gm_parts: list[str] = []
         async for event_type, payload in run_scenario_turn(
             session_id=session_id,
             user_message=body.content,
@@ -566,6 +568,16 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
         ):
             data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
             yield f"data: {data}\n\n"
+            if event_type == "speaker_end":
+                turn = payload.get("turn", {})
+                if turn.get("speaker_type") != "user":
+                    name = turn.get("speaker_name", "")
+                    content = turn.get("content", "")
+                    if content:
+                        _gm_parts.append(f"[{name}]\n{content}" if name else content)
+        # ストリーム完了後に DB の response カラムを更新する
+        if _gm_parts:
+            debug_logger.log_front_output("\n\n".join(_gm_parts))
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
