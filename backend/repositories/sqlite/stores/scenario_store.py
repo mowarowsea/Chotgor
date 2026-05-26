@@ -34,14 +34,22 @@ class ScenarioChatStoreMixin:
         intro: Optional[str] = None,
         history_max_turns: Optional[int] = None,
         history_max_chars: Optional[int] = None,
+        custom_system_prompt: Optional[str] = None,
     ):
         """シナリオテンプレートを新規作成する。
 
         場所・空気・語り口・テンポなどはすべて `scenario` テキストにまとめて記述する。
         intro はセッション開始時に固定ターンとして挿入される導入部（@キャラ: 記法）。
+        custom_system_prompt はGMシステムプロンプトの完全カスタマイズ。
+                         空の場合、デフォルトテンプレートが自動設定される。
 
         GM の LLM プリセットはテンプレートには持たない（セッション単位で選択する）。
         """
+        # custom_system_prompt が None または空の場合、デフォルトテンプレートを設定
+        if not custom_system_prompt:
+            from backend.services.scenario_chat.prompt_builder import DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE
+            custom_system_prompt = DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE
+
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Scenario
             obj = Scenario(
@@ -52,6 +60,7 @@ class ScenarioChatStoreMixin:
                 user_alias=user_alias,
                 history_max_turns=history_max_turns,
                 history_max_chars=history_max_chars,
+                custom_system_prompt=custom_system_prompt,
             )
             session.add(obj)
             session.commit()

@@ -72,6 +72,36 @@
             </div>
         </div>
 
+        <!-- カスタムシステムプロンプト -->
+        <div class="form-group">
+            <label for="custom_system_prompt">Custom System Prompt
+                <span class="label-hint">
+                設定するとGMへの自動生成プロンプト（役割定義・出力規則等）を完全に置き換えます。直近の履歴とプレイヤー発話は末尾に自動追加されます。
+                <br/>
+                <strong>使用可能なテンプレートタグ:</strong>
+                <code>{user_alias}</code> (プレイヤー呼称),
+                <code>{narrator_name}</code> (ナレーター名),
+                <code>{scenario}</code> (シナリオテキスト),
+                <code>{npcs_summary}</code> (NPC一覧),
+                <code>{auto_synopsis}</code> (自動あらすじ),
+                <code>{synopsis_manual}</code> (プレイヤー補足),
+                <code>{npc_details}</code> (NPC詳細),
+                <code>{history_block}</code> (直近の流れ)
+                <br/>
+                空欄に戻すと通常の自動生成ロジックが復活します。
+                </span>
+            </label>
+            <textarea id="custom_system_prompt" name="custom_system_prompt" class="form-control textarea-tall"
+                placeholder="e.g. あなたは……">{% if scenario %}{{ scenario.custom_system_prompt or '' }}{% endif %}</textarea>
+        </div>
+
+        <!-- デフォルトに戻すボタン（既存シナリオのみ） -->
+        {% if scenario %}
+        <div class="form-group">
+            <button type="button" class="btn btn-secondary" onclick="resetCustomSystemPrompt()">Reset to Default</button>
+        </div>
+        {% endif %}
+
         {% if not scenario %}
         <button type="submit" class="btn btn-primary">Create</button>
         {% endif %}
@@ -158,4 +188,23 @@
     </form>
 </div>
 {% endif %}
+
+<script>
+function resetCustomSystemPrompt() {
+    // APIからデフォルトのシステムプロンプトテンプレートを取得して自動入力
+    fetch('/api/scenario_chat/default-system-prompt-template')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('custom_system_prompt').value = data.template;
+            // autosave トリガー
+            document.getElementById('custom_system_prompt').dispatchEvent(new Event('input', {bubbles:true}));
+        })
+        .catch(error => {
+            console.error('Failed to fetch default template:', error);
+            // エラー時は空にする
+            document.getElementById('custom_system_prompt').value = '';
+            document.getElementById('custom_system_prompt').dispatchEvent(new Event('input', {bubbles:true}));
+        });
+}
+</script>
 {% endblock %}

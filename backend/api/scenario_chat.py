@@ -66,6 +66,7 @@ class ScenarioCreate(BaseModel):
 
     GM プリセットはテンプレートではなくセッション単位（SessionStart.gm_preset_id）で
     指定するため、本リクエストには含めない。
+    custom_system_prompt を設定するとGMシステムプロンプトをカスタマイズできる。
     """
 
     title: str = Field(min_length=1)
@@ -74,6 +75,7 @@ class ScenarioCreate(BaseModel):
     intro: Optional[str] = None
     history_max_turns: Optional[int] = None
     history_max_chars: Optional[int] = None
+    custom_system_prompt: Optional[str] = None
 
 
 class ScenarioUpdate(BaseModel):
@@ -85,6 +87,7 @@ class ScenarioUpdate(BaseModel):
     intro: Optional[str] = None
     history_max_turns: Optional[int] = None
     history_max_chars: Optional[int] = None
+    custom_system_prompt: Optional[str] = None
 
 
 class NpcCreate(BaseModel):
@@ -589,3 +592,16 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/default-system-prompt-template")
+async def get_default_system_prompt_template():
+    """デフォルトのGMシステムプロンプト（テンプレートタグ版）を返す。
+
+    「デフォルトに戻す」ボタンで custom_system_prompt 欄に自動入力される。
+    実行時にはテンプレートタグが実際の値に置き換えられる。
+    """
+    from backend.services.scenario_chat.prompt_builder import DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE
+    return {
+        "template": DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE
+    }

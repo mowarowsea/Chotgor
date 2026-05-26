@@ -274,6 +274,7 @@ class Scenario(Base):
     user_alias = Column(String, nullable=False)            # ユーザの @タグ用エイリアス
     history_max_turns = Column(Integer, nullable=True)     # 送信履歴の最大ターン数。NULL=settings 既定
     history_max_chars = Column(Integer, nullable=True)     # 送信履歴の最大文字数。NULL=settings 既定
+    custom_system_prompt = Column(Text, nullable=True)     # GMシステムプロンプトの完全カスタマイズ。NULLなら自動生成ロジック使用
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -428,6 +429,7 @@ class SQLiteStore(
         self._migrate_add_synopsis_preset_id()
         self._migrate_add_debug_log_entries()
         self._migrate_add_scenario_turn_log_request_id()
+        self._migrate_add_scenario_custom_system_prompt()
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。
@@ -596,6 +598,33 @@ class SQLiteStore(
             if "log_request_id" not in cols:
                 conn.exec_driver_sql(
                     "ALTER TABLE scenario_turns ADD COLUMN log_request_id TEXT"
+                )
+
+    def _migrate_add_scenario_custom_system_prompt(self) -> None:
+        """`scenarios` に `custom_system_prompt` 列を追加し、既存シナリオに規定プロンプトを設定する。
+
+        GMシステムプロンプトをシナリオ単位でカスタマイズするためのカラム。
+        既存シナリオには DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE を設定する。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenarios)"
+                ).fetchall()
+            }
+            if "custom_system_prompt" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenarios ADD COLUMN custom_system_prompt TEXT"
+                )
+                # カラム追加後、既存シナリオにデフォルトプロンプトを設定
+                from backend.services.scenario_chat.prompt_builder import (
+                    DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE,
+                )
+
+                conn.exec_driver_sql(
+                    "UPDATE scenarios SET custom_system_prompt = ? WHERE custom_system_prompt IS NULL",
+                    (DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE,),
                 )
 
     def get_session(self) -> Session:

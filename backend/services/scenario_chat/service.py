@@ -55,6 +55,7 @@ def scenario_to_dict(scenario: Any) -> dict:
         "user_alias": scenario.user_alias,
         "history_max_turns": scenario.history_max_turns,
         "history_max_chars": scenario.history_max_chars,
+        "custom_system_prompt": scenario.custom_system_prompt,
         "created_at": scenario.created_at.isoformat() if scenario.created_at else None,
         "updated_at": scenario.updated_at.isoformat() if scenario.updated_at else None,
     }

@@ -505,6 +505,7 @@ async def create_scenario(request: Request):
         intro=(form.get("intro") or "") or None,
         history_max_turns=_coalesce_optional_int(form, "history_max_turns"),
         history_max_chars=_coalesce_optional_int(form, "history_max_chars"),
+        custom_system_prompt=(form.get("custom_system_prompt") or "") or None,
     )
     return RedirectResponse(url=f"/ui/scenarios/{sid}/edit", status_code=303)
 
@@ -538,6 +539,7 @@ async def update_scenario(request: Request, scenario_id: str):
         "intro": (form.get("intro") or "") or None,
         "history_max_turns": _coalesce_optional_int(form, "history_max_turns"),
         "history_max_chars": _coalesce_optional_int(form, "history_max_chars"),
+        "custom_system_prompt": (form.get("custom_system_prompt") or "") or None,
     }
     # タイトルは必須項目。空欄なら更新しない（自動保存の空入力対策）。
     title = (form.get("title") or "").strip()

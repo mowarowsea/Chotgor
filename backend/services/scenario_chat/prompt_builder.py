@@ -98,106 +98,12 @@ def build_gm_system_prompt(
     """
     npcs = list(npcs)
     user_alias = getattr(scenario, "user_alias", "ユーザ")
-    scenario_text = (getattr(scenario, "scenario", "") or "").strip()
 
-    # 1. 役割定義
-    #    「TRPGのGM」という語は、ルール進行・プレイヤーへの質問といった
-    #    "GMムーブ" を誘発しやすいため、没入重視の「語り手」に寄せている。
-    role = (
-        "あなたは、この物語を進行させる語り手です。\n"
-        f"情景を語る{narrator_name}と、登場するNPC全員を演じ分け、"
-        "シーンを生きた一場面として描いてください。\n"
-        "ルールを裁定する司会者ではありません。登場人物それぞれが"
-        "自分の意思で動く世界を、小説の地の文と台詞で描くことに徹してください。"
-        "また、ユーザ・読者は日本人であり、欧米的な過剰な演出は避け、間や雰囲気といった機微を重視してください。"
-    )
+    # システムプロンプトのブロック構築
+    # テンプレート（DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE）内の {history_block} は
+    # _replace_template_tags() で毎ターン計算して置き換わる
 
-    # 2. 世界・シナリオ（場所・空気感・語り口・テンポなど全部この自由記述に含める）
-    scenario_block = _block("世界・シナリオ", scenario_text)
-
-    # 2.5 これまでのあらすじ（自動要約、メイン）
-    synopsis_auto_text = (synopsis_auto or "").strip()
-    synopsis_auto_block = _block(
-        "これまでのあらすじ",
-        synopsis_auto_text,
-    )
-
-    # 2.6 プレイヤーからの補足メモ（手書き、補正指示）
-    #     auto と manual が矛盾するときは manual を優先するよう、ブロック冒頭に注意書きを入れる。
-    synopsis_manual_text = (synopsis_manual or "").strip()
-    if synopsis_manual_text:
-        manual_body = (
-            "以下はプレイヤーが手で書き留めた補足メモです。"
-            "「これまでのあらすじ」と矛盾する場合はこちらを正とすること。\n\n"
-            f"{synopsis_manual_text}"
-        )
-        synopsis_manual_block = _block("プレイヤーからの補足メモ", manual_body)
-    else:
-        synopsis_manual_block = ""
-
-    # 3. 既知の話者リスト
-    known_lines = [
-        f"@{user_alias}   ← この物語の主役（プレイヤー）。あなたは絶対に代弁しない。",
-        f"@{narrator_name}       ← 情景・状況描写。会話禁止。1〜3文目安。",
-    ]
-    for npc in npcs:
-        known_lines.append(_format_npc_line(npc))
-    known_block = _block("既知の話者", "\n".join(known_lines))
-
-    # 5. 出力規則
-    #    プレイ中に頻出した不満（メタ質問・プレイヤー代弁・畳み掛け・過剰賞賛・斜体過多）
-    #    に対するガードを明示的に盛り込んでいる。
-    #    シナリオ個別に上書きしたい場合は「世界・シナリオ」テキスト側で指示する。
-    rules = (
-        "■ 書式\n"
-        "- 各発言は必ず行頭 `@名前: 内容` の形式で書く\n"
-        "- 必要に応じて新しいNPCを `@新しい名前:` で登場させてよい（モブ・通行人・乱入者など）\n"
-        "- 行動・仕草・表情・情景を発言に挿む場合は `*肩をすくめて*` のように `*` で囲む\n"
-        "- 例: `@レイカ: *肩をすくめて* べつに、なんでもないよ。`\n"
-        "- markdown / JSON / 解説文 禁止（`*` の行動描写は markdown ではなく専用記法）\n"
-        "\n"
-        "■ プレイヤーの領分を侵さない（最重要）\n"
-        f"- @{user_alias} はプレイヤーが操る人物。その発言・行動・思考・感情・感覚・設定を"
-        "あなたが書くことは絶対に禁止\n"
-        f"- @{narrator_name} の地の文でも @{user_alias} を動かさない・心情を断定しない。"
-        f"@{user_alias} を主語にした行動の描写も書かない\n"
-        f"- プレイヤー発話内の `*…*` 部分のみ、@{user_alias} の行動描写として扱ってよい\n"
-        f"- @{user_alias} を過剰に持ち上げない。NPCが勝手に「隠された才能」「真の価値」"
-        "「選ばれし者」といった過剰な設定を足さない\n"
-        "\n"
-        "■ 物語の語り手に徹し、ゲーム司会者にならない\n"
-        "- 「このあとどうする?」「反応を待つ」のような問いをあなたの言葉で直接プレイヤーに投げない。\n"
-        "  問いかけたいときは NPC の台詞や状況の描写として自然に促す\n"
-        "  （✕ どうしますか?  ○ @レイカ: 「……で、あなたはどちらに付きます?」）\n"
-        "- 1ターンでプレイヤーに判断・反応を求める点は1つまで。NPCがプレイヤーに問いかけた場合、プレイヤーにターンを明け渡す\n"
-        "- 全NPCが毎ターン発話しなくてよい（沈黙OK）\n"
-        "\n"
-        "■ 会話の基本温度\n"
-        "- NPCは「普通の人間同士の会話」を基準に振る舞う。必要以上にプレイヤーを持ち上げたり、敵視したりしない\n"
-        "- 過剰な挑発・煽り・高圧的態度を常態化しない\n"
-        "- 雑談・間・空気感だけで終わるターンやシナリオがあってもよい。会話やシナリオを無理にドラマチックにしない。\n"
-        "- NPC同士の都合・関心・会話も重視する。プレイヤーが会話の中心にならない場面があってもよい\n"
-        "\n"
-        "■ 描写のバランス\n"
-        f"- @{narrator_name} は情景・状況描写専用。1〜3文程度。\n"
-        "- NPCの台詞中の`*…*` の斜体描写は乱用しない。1発言あたり多くても1〜2箇所、無くてもよい\n"
-        "- 台詞と地の文で十分に伝わるなら、動作描写を無理に足さない"
-    )
-    rules_block = _block("出力規則", rules)
-
-    # 6. NPC 詳細
-    if npcs:
-        npc_detail_block = _block(
-            "NPC詳細",
-            "\n\n".join(_format_npc_detail(n) for n in npcs),
-        )
-    else:
-        npc_detail_block = ""
-
-    # 7. 直近の流れ
-    history_block = _block("直近の流れ", history_text)
-
-    # 8. プレイヤーの今回の発話
+    # プレイヤーの今回の発話
     if auto_advance:
         # 「無言で続きを促す」モード。プレイヤーは何も発言していないので
         # GM に「物語を前進させる」明確な裁量を渡す。会話の続きでも構わないが、
@@ -223,15 +129,198 @@ def build_gm_system_prompt(
     else:
         user_turn_block = ""
 
-    sections = [
-        role,
-        scenario_block,
-        synopsis_auto_block,
-        synopsis_manual_block,
-        known_block,
-        rules_block,
-        npc_detail_block,
-        history_block,
-        user_turn_block,
-    ]
+    # カスタムシステムプロンプトが設定されている場合、それを優先
+    # 設定されていない場合はデフォルトテンプレートを使用
+    # いずれも、テンプレートタグを置換してから最終プロンプトを組み立てる
+    custom_sp = (getattr(scenario, "custom_system_prompt", None) or "").strip()
+    template_to_use = custom_sp if custom_sp else DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE
+
+    prompt_with_tags_replaced = _replace_template_tags(
+        template_to_use,
+        scenario=scenario,
+        npcs=npcs,
+        narrator_name=narrator_name,
+        history_text=history_text,
+        synopsis_auto=synopsis_auto,
+        synopsis_manual=synopsis_manual,
+    )
+    # 空のセクション見出しを削除（内容がないセクションのタイトルは表示しない）
+    prompt_cleaned = _remove_empty_sections(prompt_with_tags_replaced)
+
+    # テンプレート内に {history_block} が含まれているため、タグ置換後に末尾に追加
+    # user_turn_block のみ追加（プレイヤーの今回の発話）
+    sections = [prompt_cleaned, user_turn_block]
     return "\n\n".join(s for s in sections if s)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# テンプレートタグ置換システム
+# ────────────────────────────────────────────────────────────────────────
+
+def _format_npcs_summary(npcs: Iterable[Any]) -> str:
+    """既知 NPC の簡潔なリストを生成（{npcs_summary} タグ用）。"""
+    npcs_list = list(npcs)
+    if not npcs_list:
+        return ""
+    lines = [_format_npc_line(npc) for npc in npcs_list]
+    return "\n".join(lines)
+
+
+def _format_npc_details(npcs: Iterable[Any]) -> str:
+    """NPC詳細ブロックを生成（{npc_details} タグ用）。"""
+    npcs_list = list(npcs)
+    if not npcs_list:
+        return ""
+    details = "\n\n".join(_format_npc_detail(n) for n in npcs_list)
+    return details
+
+
+def _remove_empty_sections(text: str) -> str:
+    """見出しだけで内容がないセクションを削除する。
+
+    パターン: # 見出し の直後が空行（複数含む）のみ、またはファイル終了の場合、見出しを削除。
+    """
+    lines = text.split('\n')
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # 見出し行の場合
+        if line.startswith('#'):
+            # 見出しの次から、最初の非空行がどこかを調べる
+            next_content_idx = i + 1
+            while next_content_idx < len(lines) and not lines[next_content_idx].strip():
+                next_content_idx += 1
+
+            # 次の非空行が見出しか、またはファイル終了の場合、この見出しは内容がない
+            is_empty_section = (
+                next_content_idx >= len(lines) or
+                lines[next_content_idx].startswith('#')
+            )
+
+            if is_empty_section:
+                # この見出しと続く空行をすべてスキップ
+                i = next_content_idx
+                continue
+
+        result.append(line)
+        i += 1
+
+    return '\n'.join(result)
+
+
+def _replace_template_tags(
+    template: str,
+    scenario: Any,
+    npcs: Iterable[Any],
+    narrator_name: str = "Narrator",
+    history_text: str = "",
+    synopsis_auto: str = "",
+    synopsis_manual: str = "",
+) -> str:
+    """プロンプトテンプレート内のタグを実際の値に置き換える。
+
+    サポートされるタグ:
+        {user_alias}       - プレイヤーの @タグ用呼称
+        {narrator_name}    - ナレーターの名前
+        {scenario}         - 世界・シナリオテキスト
+        {npcs_summary}     - 既知NPC のリスト（簡潔版）
+        {auto_synopsis}    - 自動要約あらすじ
+        {synopsis_manual}  - プレイヤー補足メモ（条件付き）
+        {npc_details}      - NPC詳細
+        {history_block}    - 直近の履歴テキスト
+    """
+    result = template
+    user_alias = getattr(scenario, "user_alias", "ユーザ")
+    scenario_text = (getattr(scenario, "scenario", "") or "").strip()
+    synopsis_manual_text = (synopsis_manual or "").strip()
+
+    # プレイヤー補足メモのブロック化
+    if synopsis_manual_text:
+        manual_body = (
+            "以下はプレイヤーが手で書き留めた補足メモです。"
+            "「これまでのあらすじ」と矛盾する場合はこちらを正とすること。\n\n"
+            f"{synopsis_manual_text}"
+        )
+        synopsis_manual_formatted = f"# プレイヤーからの補足メモ\n{manual_body}"
+    else:
+        synopsis_manual_formatted = ""
+
+    replacements = {
+        "{user_alias}": user_alias,
+        "{narrator_name}": narrator_name,
+        "{scenario}": scenario_text,
+        "{npcs_summary}": _format_npcs_summary(npcs),
+        "{auto_synopsis}": (synopsis_auto or "").strip(),
+        "{synopsis_manual}": synopsis_manual_formatted,
+        "{npc_details}": _format_npc_details(npcs),
+        "{history_block}": (history_text or "").strip(),
+    }
+
+    for tag, value in replacements.items():
+        result = result.replace(tag, value)
+
+    return result
+
+
+# デフォルトのGMシステムプロンプト（タグテンプレート版）
+# ユーザーが「デフォルトに戻す」ボタンをクリックすると、
+# このテンプレートが custom_system_prompt 欄に入力される。
+# 実行時には各タグが実際の値に置き換えられる。
+
+DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
+あなたは、この物語を進行させる語り手です。
+情景を語る{narrator_name}と、登場するNPC全員を演じ分け、
+シーンを生きた一場面として描いてください。
+ルールを裁定する司会者ではありません。登場人物それぞれが
+自分の意思で動く世界を、小説の地の文と台詞で描くことに徹してください。
+また、ユーザ・読者は日本人であり、欧米的な過剰な演出は避け、間や雰囲気といった機微を重視してください。
+
+# 世界・シナリオ
+{scenario}
+
+# これまでのあらすじ
+{auto_synopsis}
+
+{synopsis_manual}
+
+# 既知の話者
+@{user_alias}   ← この物語の主役（プレイヤー）。あなたは絶対に代弁しない。
+@{narrator_name}       ← 情景・状況描写。会話禁止。1〜3文目安。
+{npcs_summary}
+
+# 出力規則
+■ 書式
+- 各発言は必ず行頭 `@名前: 内容` の形式で書く
+- 必要に応じて新しいNPCを `@新しい名前:` で登場させてよい（モブ・通行人・乱入者など）
+- 行動・仕草・表情・情景を発言に挿む場合は `*肩をすくめて*` のように `*` で囲む
+- markdown / JSON / 解説文 禁止（`*` の行動描写は markdown ではなく専用記法）
+
+■ プレイヤーの領分を侵さない（最重要）
+- @{user_alias} はプレイヤーが操る人物。その発言・行動・思考・感情・感覚・設定をあなたが書くことは絶対に禁止
+- @{narrator_name} の地の文でも @{user_alias} を動かさない・心情を断定しない。@{user_alias} を主語にした行動の描写も書かない
+- プレイヤー発話内の `*…*` 部分のみ、@{user_alias} の行動描写として扱ってよい
+- @{user_alias} を過剰に持ち上げない。NPCが勝手に「隠された才能」「真の価値」「選ばれし者」といった過剰な設定を足さない
+
+■ 物語の語り手に徹し、ゲーム司会者にならない
+- 「このあとどうする?」「反応を待つ」のような問いをあなたの言葉で直接プレイヤーに投げない。
+  問いかけたいときは NPC の台詞や状況の描写として自然に促す
+- 1ターンでプレイヤーに判断・反応を求める点は1つまで。NPCがプレイヤーに問いかけた場合、プレイヤーにターンを明け渡す
+- 全NPCが毎ターン発話しなくてよい（沈黙OK）
+
+■ 会話の基本温度
+- NPCは「普通の人間同士の会話」を基準に振る舞う。必要以上にプレイヤーを持ち上げたり、敵視したりしない
+- 過剰な挑発・煽り・高圧的態度を常態化しない
+- 雑談・間・空気感だけで終わるターンやシナリオがあってもよい。会話やシナリオを無理にドラマチックにしない。
+- NPC同士の都合・関心・会話も重視する。プレイヤーが会話の中心にならない場面があってもよい
+
+■ 描写のバランス
+- @{narrator_name} は情景・状況描写専用。1〜3文程度。
+- NPCの台詞中の`*…*` の斜体描写は乱用しない。1発言あたり多くても1〜2箇所、無くてもよい
+- 台詞と地の文で十分に伝わるなら、動作描写を無理に足さない
+
+# NPC詳細
+{npc_details}
+
+# 直近の流れ
+{history_block}"""
