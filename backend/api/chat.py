@@ -355,7 +355,6 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     """
     log_msg_id = new_message_id()
     current_log_session_id.set(session_id)
-    logger.log_front_input(body.model_dump())
 
     state = request.app.state
 
@@ -365,8 +364,12 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
     effective_model_id = body.model_id or session.model_id
 
+    # current_log_target を log_front_input より先にセットしないと
+    # _insert_main_entry が target=None で DB に INSERT してしまう
     char_name_for_check = effective_model_id.split("@")[0] if "@" in effective_model_id else effective_model_id
     current_log_target.set(char_name_for_check)
+
+    logger.log_front_input(body.model_dump())
 
     # estranged チェック: relationship_status="estranged" のキャラクターへのリクエストをSSEで拒否する
     char_for_estranged = state.sqlite.get_character_by_name(char_name_for_check)

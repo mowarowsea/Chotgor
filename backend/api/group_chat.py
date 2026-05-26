@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.group_chat.service import run_group_turn
-from backend.api.resource_resolver import require_character, require_preset
+from backend.api.resource_resolver import parse_model_id, require_character, require_preset
 from backend.api.utils import message_to_dict, session_to_dict
 
 router = APIRouter(prefix="/api/group", tags=["group_chat"])
@@ -69,24 +69,6 @@ class GroupMessageCreate(BaseModel):
     target_character: Optional[str] = None
 
 
-def _parse_participant(model_id: str) -> dict:
-    """"{char_name}@{preset_name_or_id}" 形式の文字列をパースして (char_name, preset_key) を返す。
-
-    Args:
-        model_id: "{char_name}@{preset_name_or_id}" 形式の文字列。
-
-    Returns:
-        {"char_name": str, "preset_key": str} の辞書。preset_key は名前またはIDの文字列。
-
-    Raises:
-        ValueError: フォーマットが不正な場合。
-    """
-    if "@" not in model_id:
-        raise ValueError(f"Invalid participant model_id format: '{model_id}' (expected 'CharName@PresetName')")
-    char_name, preset_key = model_id.rsplit("@", 1)
-    return {"char_name": char_name, "preset_key": preset_key}
-
-
 # --- エンドポイント ---
 
 @router.post("/sessions", status_code=201)
@@ -101,20 +83,17 @@ async def create_group_session(request: Request, body: GroupSessionCreate):
     state = request.app.state
 
     # 参加者をパースして存在チェックし、preset_id を解決する
-    try:
-        parsed = [_parse_participant(p.model_id) for p in body.participants]
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+    # parse_model_id は "@" 不正時に HTTPException 400 を送出する
     participants = []
-    for p in parsed:
-        char = require_character(state.sqlite, p["char_name"])
-        preset = require_preset(state.sqlite, p["preset_key"])
+    for p_model in body.participants:
+        char_name, preset_key = parse_model_id(p_model.model_id)
+        char = require_character(state.sqlite, char_name)
+        preset = require_preset(state.sqlite, preset_key)
         # 実体参照は ID（プリセット名変更の影響を受けない）。
         # preset_name はヘッダー表示用のスナップショット（多少古くても表示にしか使わない）。
         participants.append(
             {
-                "char_name": p["char_name"],
+                "char_name": char_name,
                 "preset_id": preset.id,
                 "preset_name": preset.name,
             }

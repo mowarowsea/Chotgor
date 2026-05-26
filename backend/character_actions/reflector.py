@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from backend.providers.registry import create_provider, PROVIDER_REGISTRY
 from backend.lib.log_context import current_log_feature
-from backend.lib.character_context import build_character_context
+from backend.character_actions.character_context import build_character_context
 from backend.services.character_query import ask_character, ask_character_with_tools
 
 if TYPE_CHECKING:

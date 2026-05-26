@@ -111,55 +111,15 @@ class AnthropicProvider(BaseLLMProvider):
             self._log_error(err)
             return err
 
-    @_api_guard("anthropic")
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
         """Anthropic APIからテキストチャンクをストリーミングで取得する。
 
-        同期SDKのストリーミングをthreading + asyncio.Queueで非同期ジェネレータに変換する。
+        generate_stream_typed() を呼び出し、思考ブロック ("thinking", ...) を除いた
+        通常テキスト ("text", ...) のみ文字列としてyieldする。
         """
-        import threading
-
-        import anthropic
-
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-        client = anthropic.Anthropic(api_key=self.api_key)
-        api_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
-
-        params: dict = {
-            "model": self.model,
-            "system": system_prompt,
-            "messages": api_messages,
-            "max_tokens": 4096,
-            **_build_thinking_params(self.model, self.thinking_level),
-        }
-        self._log_request(params)
-
-        def run():
-            """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
-            accumulated = []
-            try:
-                with client.messages.stream(**params) as stream:
-                    for text in stream.text_stream:
-                        accumulated.append(text)
-                        loop.call_soon_threadsafe(queue.put_nowait, text)
-            except Exception as e:
-                accumulated.append(f"\n[Anthropic API error: {e}]")
-                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
-            finally:
-                self._log_response("".join(accumulated))
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-
-        threading.Thread(target=run, daemon=True).start()
-
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, RuntimeError):
-                yield f"[Anthropic API error: {item}]"
-                break
-            yield item
+        async for chunk_type, text in self.generate_stream_typed(system_prompt, messages):
+            if chunk_type == "text":
+                yield text
 
     @_api_guard("anthropic")
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):

@@ -176,26 +176,25 @@ class OllamaProvider(BaseLLMProvider):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
-    async def generate(self, system_prompt: str, messages: list[dict]) -> str:
-        """Ollamaから応答テキストを非同期で生成する。
+    async def _call_and_log_raw(self, system_prompt: str, messages: list[dict]) -> str:
+        """_call_api を実行してログ出力し、生レスポンス文字列を返す内部ヘルパー。
 
-        Qwen3系の <think>...</think> ブロックは本文から除去して返す。
-        司会AIや非ストリームパスでは思考は使わないため破棄でよい。
+        generate / generate_stream_typed の共通API呼び出しロジックを集約する。
+        エラー時はエラーメッセージ文字列を返す（例外は送出しない）。
 
-        _log_request / _log_response は asyncioコンテキスト（スレッド外）で呼び出す。
-        GoogleProviderと同様の責務分離パターンに合わせている。
+        Args:
+            system_prompt: システムプロンプト文字列。
+            messages: _build_messages() で変換済みのメッセージリスト。
+
+        Returns:
+            /api/generate の "response" フィールド文字列。エラー時はエラー文字列。
         """
         clean_messages = self._build_messages(messages)
         self._log_request({"model": self.model, "system_prompt": system_prompt, "messages": clean_messages})
-
         try:
             result = await asyncio.to_thread(self._call_api, system_prompt, clean_messages)
-            # 生のレスポンスdictをそのまま記録して文字化けなどの原因調査を可能にする
             self._log_response(result)
-            # /api/generate は "response" フィールド（/api/chat の "message.content" とは異なる）
-            raw = result.get("response", "")
-            _, clean = _split_think(raw)
-            return clean
+            return result.get("response", "")
         except urllib.error.URLError as e:
             err = f"[Ollama接続エラー: {e.reason}. Ollamaが起動しているか確認してください]"
             self._log_error(err)
@@ -204,6 +203,16 @@ class OllamaProvider(BaseLLMProvider):
             err = f"[Ollama エラー: {e}]"
             self._log_error(err)
             return err
+
+    async def generate(self, system_prompt: str, messages: list[dict]) -> str:
+        """Ollamaから応答テキストを非同期で生成する。
+
+        Qwen3系の <think>...</think> ブロックは本文から除去して返す。
+        司会AIや非ストリームパスでは思考は使わないため破棄でよい。
+        """
+        raw = await self._call_and_log_raw(system_prompt, messages)
+        _, clean = _split_think(raw)
+        return clean
 
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
         """generate() の結果を単一チャンクとしてyieldするストリーム互換メソッド。"""
@@ -220,25 +229,7 @@ class OllamaProvider(BaseLLMProvider):
         Qwen3系の <think>...</think> がない通常モデル（qwen2.5など）では
         thinking 側が空文字となり、("text", ...) のみが流れる。
         """
-        # generate() は本文しか返さないため、ここでは生レスポンスから直接分離する。
-        clean_messages = self._build_messages(messages)
-        self._log_request({"model": self.model, "system_prompt": system_prompt, "messages": clean_messages})
-
-        try:
-            result = await asyncio.to_thread(self._call_api, system_prompt, clean_messages)
-            self._log_response(result)
-            raw = result.get("response", "")
-        except urllib.error.URLError as e:
-            err = f"[Ollama接続エラー: {e.reason}. Ollamaが起動しているか確認してください]"
-            self._log_error(err)
-            yield ("text", err)
-            return
-        except Exception as e:
-            err = f"[Ollama エラー: {e}]"
-            self._log_error(err)
-            yield ("text", err)
-            return
-
+        raw = await self._call_and_log_raw(system_prompt, messages)
         thinking, clean = _split_think(raw)
         if thinking:
             yield ("thinking", thinking)

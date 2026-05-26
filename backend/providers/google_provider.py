@@ -94,13 +94,13 @@ class GoogleProvider(BaseLLMProvider):
         return cls(api_key=settings.get("google_api_key", ""), model=model, thinking_level=thinking_level)
 
     @classmethod
-    async def list_models(cls, settings: dict) -> list[dict]:
-        """Google Generative Language API からモデル一覧を取得して返す。
+    async def _fetch_google_models_raw(cls, api_key: str) -> list[dict]:
+        """Google Generative Language API から全モデルリストを取得する内部ヘルパー。
 
-        generateContent をサポートするモデルのみ返す。
+        APIキー未設定・取得失敗時は空リストを返す。
+        list_models / list_embedding_models の共通処理を集約する。
         """
         import httpx
-        api_key = settings.get("google_api_key", "")
         if not api_key:
             return []
         try:
@@ -110,17 +110,26 @@ class GoogleProvider(BaseLLMProvider):
                     params={"key": api_key},
                 )
                 resp.raise_for_status()
-                data = resp.json()
-            models = []
-            for m in data.get("models", []):
-                if "generateContent" not in m.get("supportedGenerationMethods", []):
-                    continue
-                # "models/gemini-2.0-flash" → "gemini-2.0-flash"
-                model_id = m["name"].removeprefix("models/")
-                models.append({"id": model_id, "name": m.get("displayName", model_id)})
-            return sorted(models, key=lambda m: m["id"])
+                return resp.json().get("models", [])
         except Exception:
             return []
+
+    @classmethod
+    async def list_models(cls, settings: dict) -> list[dict]:
+        """Google Generative Language API からモデル一覧を取得して返す。
+
+        generateContent をサポートするモデルのみ返す。
+        """
+        api_key = settings.get("google_api_key", "")
+        raw = await cls._fetch_google_models_raw(api_key)
+        models = []
+        for m in raw:
+            if "generateContent" not in m.get("supportedGenerationMethods", []):
+                continue
+            # "models/gemini-2.0-flash" → "gemini-2.0-flash"
+            model_id = m["name"].removeprefix("models/")
+            models.append({"id": model_id, "name": m.get("displayName", model_id)})
+        return sorted(models, key=lambda m: m["id"])
 
     @classmethod
     async def list_embedding_models(cls, settings: dict) -> list[dict]:
@@ -128,27 +137,15 @@ class GoogleProvider(BaseLLMProvider):
 
         embedContent をサポートするモデルのみ返す。
         """
-        import httpx
         api_key = settings.get("google_api_key", "")
-        if not api_key:
-            return []
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    "https://generativelanguage.googleapis.com/v1beta/models",
-                    params={"key": api_key},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            models = []
-            for m in data.get("models", []):
-                if "embedContent" not in m.get("supportedGenerationMethods", []):
-                    continue
-                model_id = m["name"].removeprefix("models/")
-                models.append({"id": model_id, "name": m.get("displayName", model_id)})
-            return sorted(models, key=lambda m: m["id"])
-        except Exception:
-            return []
+        raw = await cls._fetch_google_models_raw(api_key)
+        models = []
+        for m in raw:
+            if "embedContent" not in m.get("supportedGenerationMethods", []):
+                continue
+            model_id = m["name"].removeprefix("models/")
+            models.append({"id": model_id, "name": m.get("displayName", model_id)})
+        return sorted(models, key=lambda m: m["id"])
 
     def _build_contents(self, messages: list[dict]) -> list:
         """Google Gemini 用の contents リストを構築する内部ヘルパー。
