@@ -90,16 +90,6 @@
                         </summary>
                         <div class="log-attempt-body">
 
-                            <!-- レスポンス -->
-                            <div class="log-row">
-                                <span class="log-label">レスポンス</span>
-                                {% if a.response %}
-                                <div class="log-body-preview {% if a.has_error %}log-body-error{% endif %}">{{ a.response[:800] }}{% if a.response|length > 800 %}…{% endif %}</div>
-                                {% else %}
-                                <span class="text-muted">(なし)</span>
-                                {% endif %}
-                            </div>
-
                             <!-- 思考（Reasoning） -->
                             {% if a.reasoning %}
                             <div class="log-row">
@@ -123,10 +113,10 @@
                             </div>
                             {% endif %}
 
-                            <!-- ツール呼び出し -->
+                            <!-- API 呼び出し（Request/Response JSON + ツールタグ）-->
                             {% if a.tool_calls %}
                             <div class="log-row">
-                                <span class="log-label">ツール</span>
+                                <span class="log-label">API</span>
                                 <div class="log-tool-list">
                                     {% for tc in a.tool_calls %}
                                     <div class="log-tool-block">
@@ -216,10 +206,10 @@
             {% else %}
             {# ─── メイン行なし（chronicle / forget 等バッチ処理）の旧来レイアウト ─── #}
 
-            <!-- ツール呼び出し -->
+            <!-- API 呼び出し（chronicle / forget 等バッチ処理） -->
             {% if e.tool_calls %}
             <div class="log-row">
-                <span class="log-label">ツール</span>
+                <span class="log-label">API</span>
                 <div class="log-tool-list">
                     {% for tc in e.tool_calls %}
                     <div class="log-tool-block">
@@ -365,7 +355,7 @@ function fixRawControlChars(text) {
  * @returns {string} <pre> の中身として挿入できる HTML 文字列。
  */
 function renderJsonHtml(text) {
-    const HIGHLIGHT_KEYS = new Set(['text', 'content', 'thought', 'system_prompt', 'system_instruction', 'conversation', 'thinking', 'result']);
+    const HIGHLIGHT_KEYS = new Set(['text', 'content', 'thought', 'system_prompt', 'system_instruction', 'conversation', 'thinking', 'result', 'context', 'query']);
     const KV_RE = /^(\s*)"([^"]+)"(\s*:\s*)(.+)$/;
 
     function tryParse(t) {

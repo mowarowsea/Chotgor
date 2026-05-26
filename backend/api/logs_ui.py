@@ -838,7 +838,7 @@ async def log_raw_file(message_id: str, filename: str):
 
 
 # JSON ビュー表示でハイライトするキー名のセット（Claude CLI 向けキーも含む）
-_HIGHLIGHT_JSON_KEYS = {"text", "content", "thought", "system_prompt", "conversation", "thinking", "result", "system_instruction"}
+_HIGHLIGHT_JSON_KEYS = {"text", "content", "thought", "system_prompt", "conversation", "thinking", "result", "system_instruction", "context", "query"}
 
 # JSON 整形ビュー用: key-value 行マッチパターン（indent=2 の json.dumps 前提）
 _JSON_KV_LINE_RE = re.compile(r'^(\s*)"([^"]+)"(\s*:\s*)(.+)$')
