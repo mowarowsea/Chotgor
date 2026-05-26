@@ -1,0 +1,221 @@
+{% if e.attempts %}
+<!-- ─── 試行履歴（メイン行が1件でも同じ構造で表示）─── -->
+<div class="log-row log-row-attempts">
+    <span class="log-label">試行履歴</span>
+    <div class="log-attempts-accordion" style="min-width:0;width:100%">
+        {% for a in e.attempts %}
+        <details class="log-attempt-detail" {% if loop.last %}open{% endif %}>
+            <summary class="log-attempt-summary">
+                <span class="log-toggle-icon">&#9654;</span>
+                <span class="log-attempt-index">#{{ a.index }}</span>
+                <span class="log-attempt-dt">{{ a.dt_str }}</span>
+                {% if a.preset %}<span class="log-attempt-preset">{{ a.preset }}</span>{% endif %}
+                {% if a.has_error %}
+                <span class="log-attempt-preview log-warn-reason">(エラー)</span>
+                {% elif a.response %}
+                <span class="log-attempt-preview">{{ a.response[:120] }}{% if a.response|length > 120 %}…{% endif %}</span>
+                {% else %}
+                <span class="log-attempt-preview text-muted">(応答なし)</span>
+                {% endif %}
+            </summary>
+            <div class="log-attempt-body">
+
+                <!-- 思考（Reasoning） -->
+                {% if a.reasoning %}
+                <div class="log-row">
+                    <span class="log-label">思考</span>
+                    <div style="min-width:0">
+                        <details class="log-reasoning-block">
+                            <summary class="log-reasoning-summary">
+                                <span class="log-toggle-icon">&#9654;</span>
+                                想起した記憶・スケッチ
+                                <button class="log-translate-btn"
+                                        onclick="event.preventDefault();event.stopPropagation();translateReasoning(this, {{ a.reasoning | tojson }})">
+                                    翻訳
+                                </button>
+                            </summary>
+                            <div class="log-reasoning-content">
+                                <pre class="log-body-preview" style="white-space:pre-wrap">{{ a.reasoning[:2000] }}{% if a.reasoning|length > 2000 %}…{% endif %}</pre>
+                            </div>
+                            <div class="log-translation-result" style="display:none"></div>
+                        </details>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- API 呼び出し（Request/Response JSON + ツールタグ）-->
+                {% if a.tool_calls %}
+                <div class="log-row">
+                    <span class="log-label">API</span>
+                    <div class="log-tool-list">
+                        {% for tc in a.tool_calls %}
+                        <div class="log-tool-block">
+                            <div class="log-tool-header">
+                                <span class="log-tool-tag">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
+                                {% if tc.request_file %}
+                                <button class="log-inline-btn"
+                                        onclick="toggleInlineLog(this,'{{ a.dir_id }}','{{ tc.request_file }}')">▶ Request</button>
+                                {% endif %}
+                                {% if tc.response_file %}
+                                <button class="log-inline-btn"
+                                        onclick="toggleInlineLog(this,'{{ a.dir_id }}','{{ tc.response_file }}')">▶ Response</button>
+                                {% endif %}
+                            </div>
+                            {% if tc.request_file %}
+                            <div class="log-inline-body" data-filename="{{ tc.request_file }}" style="display:none"></div>
+                            {% endif %}
+                            {% if tc.response_file %}
+                            <div class="log-inline-body" data-filename="{{ tc.response_file }}" style="display:none"></div>
+                            {% endif %}
+                            {% if tc.tags %}
+                            <div class="log-tag-list">
+                                {% for tag in tc.tags %}
+                                <div class="log-tag-item">
+                                    <span class="log-tag-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
+                                    {% if tag.tag_name == "INSCRIBE_MEMORY" %}
+                                    <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
+                                    {% elif tag.tag_name == "CARVE_NARRATIVE" %}
+                                    <span class="log-tag-meta">{{ tag.fields.モード }}</span>
+                                    {% elif tag.tag_name == "SWITCH_ANGLE" %}
+                                    <span class="log-tag-meta">→ {{ tag.fields.プリセット }}</span>
+                                    {% endif %}
+                                    {% if tag.preview %}
+                                    <div class="log-tag-preview">{{ tag.preview[:200] }}{% if tag.preview|length > 200 %}…{% endif %}</div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- 警告ノート -->
+                {% if a.warnings %}
+                <div class="log-row">
+                    <span class="log-label">警告</span>
+                    <div class="log-tool-list">
+                        {% for w in a.warnings %}
+                        <div class="log-tool-block">
+                            <div class="log-tool-header">
+                                <span class="log-tool-tag" style="background:var(--warn,#b45309);color:#fff">{{ w.tag }}</span>
+                                <a href="/ui/logs/{{ a.dir_id }}/raw/{{ w.file }}"
+                                   target="_blank" class="log-file-link">詳細 ↗</a>
+                            </div>
+                            {% if w.message %}
+                            <div class="log-tag-preview">{{ w.message }}</div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- ID / Files -->
+                {% if a.dir_id %}
+                <div class="log-row">
+                    <span class="log-label">ID / Files</span>
+                    <div>
+                        <span style="font-family:var(--mono);font-size:0.75rem;color:var(--t3);margin-right:0.8rem">{{ a.dir_id }}</span>
+                        {% for fname in a.files %}
+                        <a href="/ui/logs/{{ a.dir_id }}/raw/{{ fname }}"
+                           target="_blank" class="log-raw-link" title="{{ fname }}">{{ fname }}</a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+            </div>{# /.log-attempt-body #}
+        </details>
+        {% endfor %}
+    </div>
+</div>
+
+{% else %}
+{# ─── メイン行なし（chronicle / forget 等バッチ処理）の旧来レイアウト ─── #}
+
+<!-- API 呼び出し（chronicle / forget 等バッチ処理） -->
+{% if e.tool_calls %}
+<div class="log-row">
+    <span class="log-label">API</span>
+    <div class="log-tool-list">
+        {% for tc in e.tool_calls %}
+        <div class="log-tool-block">
+            <div class="log-tool-header">
+                <span class="log-tool-tag">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
+                {% if tc.request_file %}
+                <button class="log-inline-btn"
+                        onclick="toggleInlineLog(this,'{{ e.dir_id }}','{{ tc.request_file }}')">▶ Request</button>
+                {% endif %}
+                {% if tc.response_file %}
+                <button class="log-inline-btn"
+                        onclick="toggleInlineLog(this,'{{ e.dir_id }}','{{ tc.response_file }}')">▶ Response</button>
+                {% endif %}
+            </div>
+            {% if tc.request_file %}
+            <div class="log-inline-body" data-filename="{{ tc.request_file }}" style="display:none"></div>
+            {% endif %}
+            {% if tc.response_file %}
+            <div class="log-inline-body" data-filename="{{ tc.response_file }}" style="display:none"></div>
+            {% endif %}
+            {% if tc.tags %}
+            <div class="log-tag-list">
+                {% for tag in tc.tags %}
+                <div class="log-tag-item">
+                    <span class="log-tag-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
+                    {% if tag.tag_name == "INSCRIBE_MEMORY" %}
+                    <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
+                    {% elif tag.tag_name == "CARVE_NARRATIVE" %}
+                    <span class="log-tag-meta">{{ tag.fields.モード }}</span>
+                    {% elif tag.tag_name == "SWITCH_ANGLE" %}
+                    <span class="log-tag-meta">→ {{ tag.fields.プリセット }}</span>
+                    {% endif %}
+                    {% if tag.preview %}
+                    <div class="log-tag-preview">{{ tag.preview[:200] }}{% if tag.preview|length > 200 %}…{% endif %}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- 警告ノート -->
+{% if e.warnings %}
+<div class="log-row">
+    <span class="log-label">警告</span>
+    <div class="log-tool-list">
+        {% for w in e.warnings %}
+        <div class="log-tool-block">
+            <div class="log-tool-header">
+                <span class="log-tool-tag" style="background:var(--warn,#b45309);color:#fff">{{ w.tag }}</span>
+                <a href="/ui/logs/{{ e.dir_id }}/raw/{{ w.file }}"
+                   target="_blank" class="log-file-link">詳細 ↗</a>
+            </div>
+            {% if w.message %}
+            <div class="log-tag-preview">{{ w.message }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- ID / Files（バッチ処理用） -->
+<div class="log-row">
+    <span class="log-label">ID / Files</span>
+    <div>
+        <span style="font-family:var(--mono);font-size:0.75rem;color:var(--t3);margin-right:0.8rem">{{ e.message_id }}</span>
+        {% for fname in e.files %}
+        <a href="/ui/logs/{{ e.dir_id }}/raw/{{ fname }}"
+           target="_blank" class="log-raw-link" title="{{ fname }}">{{ fname }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+{% endif %}

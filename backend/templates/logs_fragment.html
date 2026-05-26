@@ -1,0 +1,88 @@
+<div data-total="{{ total }}">
+{% if not debug_enabled %}
+<div class="alert alert-warning">
+    <strong>CHOTGOR_DEBUG=1</strong> が設定されていないため、リクエスト単位のデバッグログが記録されていません。<br>
+    環境変数 <code>CHOTGOR_DEBUG=1</code> を設定してサーバを再起動してください。
+</div>
+{% elif entries %}
+
+<div class="log-list">
+    {% for e in entries %}
+    <details class="log-entry" data-message-id="{{ e.message_id }}">
+        <summary class="log-summary">
+            <span class="log-toggle-icon">&#9654;</span>
+            <span class="badge {% if e.has_error %}badge-deleted{% else %}badge-info{% endif %}"
+                  {% if e.has_error and e.warn_reason %}title="{{ e.warn_reason }}"{% endif %}>{% if e.has_error %}WARN{% else %}INFO{% endif %}</span>
+            <span class="log-dt">{{ e.dt_str }}</span>
+            {% if e.model_id %}
+            <span class="log-model">{{ e.character }}{% if e.preset %}<span class="text-muted">@{{ e.preset }}</span>{% endif %}</span>
+            {% else %}
+            {# モデルIDなし = chronicle / forget などシステム起動ツール #}
+            {% if e.tool_calls %}
+            <span class="log-model text-muted">[{{ e.tool_calls[0].feature or e.tool_calls[0].preset }}]</span>
+            {% else %}
+            <span class="log-model text-muted">[system]</span>
+            {% endif %}
+            {% endif %}
+            {% if e.attempt_count > 1 %}
+            <span class="log-attempt-badge" title="{{ e.attempt_count }}回生成">×{{ e.attempt_count }}</span>
+            {% endif %}
+            {% if e.has_error and e.warn_reason %}
+            {# WARN のときは一覧でも理由が分かるよう、応答プレビューより理由を優先表示する #}
+            <span class="log-preview log-warn-reason">{{ e.warn_reason }}</span>
+            {% elif e.character_response %}
+            <span class="log-preview">{{ e.character_response[:120] }}{% if e.character_response|length > 120 %}…{% endif %}</span>
+            {% elif e.user_message %}
+            <span class="log-preview text-muted">{{ e.user_message[:120] }}{% if e.user_message|length > 120 %}…{% endif %}</span>
+            {% endif %}
+        </summary>
+
+        <div class="log-detail">
+            <!-- WARN 理由 -->
+            {% if e.has_error %}
+            <div class="log-row">
+                <span class="log-label">WARN 理由</span>
+                <span class="log-warn-reason">{{ e.warn_reason or "応答にエラーまたは欠落があります" }}</span>
+            </div>
+            {% endif %}
+
+            <!-- 発信元 -->
+            <div class="log-row">
+                <span class="log-label">発信元</span>
+                <span>{{ e.source }}</span>
+            </div>
+
+            <!-- リクエスト内容 -->
+            {% if e.user_message %}
+            <div class="log-row">
+                <span class="log-label">リクエスト</span>
+                <div class="log-body-preview">{{ e.user_message[:800] }}{% if e.user_message|length > 800 %}…{% endif %}</div>
+            </div>
+            {% endif %}
+
+            <!-- 試行履歴・API詳細: アコーディオンを開いたときに遅延ロード -->
+            <div class="log-attempts-lazy"></div>
+        </div>
+    </details>
+    {% endfor %}
+</div>
+
+<!-- ページネーション -->
+{% if total_pages > 1 %}
+<div class="log-pagination">
+    {% if page > 1 %}
+    <a href="?type={{ current_type }}&page={{ page - 1 }}" class="btn btn-secondary btn-sm">← Prev</a>
+    {% endif %}
+    <span>{{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="?type={{ current_type }}&page={{ page + 1 }}" class="btn btn-secondary btn-sm">Next →</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="empty-state">
+    <p>ログがありません。</p>
+</div>
+{% endif %}
+</div>

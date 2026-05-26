@@ -557,31 +557,32 @@ def set_sqlite_store(sqlite) -> None:
     _store = sqlite
 
 
-def _build_attempt_detail(r: dict, index: int, char_index: dict) -> dict:
+def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: bool = False) -> dict:
     """DB の1行（1試行）から試行アコーディオン表示用の詳細データを構築する。
 
-    raw_dir が存在すればファイルを読み込んでツール呼び出し・警告・ファイル一覧を
-    組み立てる。raw_dir がない場合（CHOTGOR_DEBUG=0 等）は DB の値のみで構成する。
+    skip_files=True のときはファイルシステムへのアクセスをスキップし、
+    DB の値のみで構成する（一覧の高速表示用）。
+    skip_files=False のときは raw_dir を読んでツール呼び出し・警告・ファイル一覧を組み立てる。
 
     Args:
         r: get_debug_log_entries_by_request_id() が返す1行の辞書。
         index: 試行番号（0始まり）。表示は +1 して使う。
         char_index: chotgor.log から構築した {msg_id: char_label} 辞書。
+        skip_files: True のときファイルI/Oをスキップする。
 
     Returns:
         試行アコーディオンが期待するデータ辞書。
     """
     raw_dir = r.get("raw_dir") or ""
-    dir_id = ""
+    dir_id = Path(raw_dir).name if raw_dir else ""
     tool_calls: list[dict] = []
     warnings: list[dict] = []
     file_names: list[str] = []
     has_error = bool(r.get("has_error"))
     warn_reason = r.get("warn_reason") or ""
 
-    if raw_dir:
+    if not skip_files and raw_dir:
         raw_path = Path(raw_dir)
-        dir_id = raw_path.name  # フォルダ名がファイルリンクに使う ID
         if raw_path.exists():
             parsed = _parse_entry(dir_id, raw_path, char_index)
             tool_calls = parsed.get("tool_calls", [])
@@ -609,7 +610,7 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict) -> dict:
     }
 
 
-def _build_entry_from_db_rows(rows: list[dict]) -> dict:
+def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict:
     """同一 request_id の DB 行リストからログ一覧表示用エントリを組み立てる。
 
     メイン行（chat/scenario 等）は試行ごとに1行存在し、`attempts` リストに
@@ -618,6 +619,7 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
 
     Args:
         rows: get_debug_log_entries_by_request_id() が返すエントリ辞書のリスト（昇順）。
+        skip_files: True のときファイルI/Oをスキップする（一覧高速表示用）。
 
     Returns:
         ログ一覧 UI が期待するエントリ辞書。
@@ -648,20 +650,21 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
     preset = latest_main.get("preset") or main_row.get("preset") or ""
     model_id = f"{target}@{preset}" if target and preset else target or preset
 
-    # char_index はファイルが存在する場合のみ構築（コスト節約）
-    needs_files = any(r.get("raw_dir") for r in rows)
+    # ファイルI/Oが必要なときだけ char_index を構築する
+    needs_files = not skip_files and any(r.get("raw_dir") for r in rows)
     char_index = _build_char_index() if needs_files else {}
 
-    # メイン行を試行ごとに詳細データへ変換（ツール呼び出し・ファイル含む）
+    # メイン行を試行ごとに詳細データへ変換（skip_files=True なら DB の値のみ）
     attempts = [
-        _build_attempt_detail(r, i, char_index) for i, r in enumerate(main_rows)
+        _build_attempt_detail(r, i, char_index, skip_files=skip_files)
+        for i, r in enumerate(main_rows)
     ]
 
     # 非メイン行（chronicle/forget 等）向けの top-level tool_calls（旧来互換）
     top_tool_calls: list[dict] = []
     top_warnings: list[dict] = []
     top_file_names: list[str] = []
-    if not main_rows:
+    if not main_rows and not skip_files:
         # メイン行が無いエントリは従来通り最初の行の raw_dir を使う
         raw_dir = rows[0].get("raw_dir") or ""
         if raw_dir:
@@ -709,7 +712,9 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
     }
 
 
-def _load_entries(page: int = 1, per_page: int = 50) -> tuple[list[dict], int]:
+def _load_entries(
+    page: int = 1, per_page: int = 50, request_type: str = "chat"
+) -> tuple[list[dict], int]:
     """デバッグログエントリを読み込んでページネーションして返す。
 
     SQLiteStore が利用可能な場合は DB から読み込む。
@@ -718,33 +723,45 @@ def _load_entries(page: int = 1, per_page: int = 50) -> tuple[list[dict], int]:
     Args:
         page: ページ番号（1始まり）。
         per_page: 1ページあたりの件数。
+        request_type: フィルタ種別（'chat'/'scenario'/'batch'/'all'）。
 
     Returns:
         (エントリリスト, 総件数) のタプル。
     """
     sqlite = _sqlite_store()
     if sqlite is not None:
-        return _load_entries_from_db(sqlite, page, per_page)
+        return _load_entries_from_db(sqlite, page, per_page, request_type)
     return _load_entries_from_files(page, per_page)
 
 
-def _load_entries_from_db(sqlite, page: int, per_page: int) -> tuple[list[dict], int]:
+def _load_entries_from_db(
+    sqlite, page: int, per_page: int, request_type: str = "chat"
+) -> tuple[list[dict], int]:
     """DB からログエントリをページネーションして返す。
+
+    IN 句で全件を一括取得してN+1クエリを回避する。
+    一覧表示ではファイルI/Oをスキップして高速化する。
 
     Args:
         sqlite: SQLiteStore インスタンス。
         page: ページ番号（1始まり）。
         per_page: 1ページあたりの件数。
+        request_type: フィルタ種別（'chat'/'scenario'/'batch'/'all'）。
 
     Returns:
         (エントリリスト, 総件数) のタプル。
     """
-    request_ids, total = sqlite.get_debug_log_request_ids_paged(page=page, per_page=per_page)
+    request_ids, total = sqlite.get_debug_log_request_ids_paged(
+        page=page, per_page=per_page, request_type=request_type
+    )
+    # IN 句で一括取得（N+1 解消）
+    rows_map = sqlite.get_debug_log_entries_by_request_ids(request_ids)
     entries = []
     for req_id in request_ids:
-        rows = sqlite.get_debug_log_entries_by_request_id(req_id)
+        rows = rows_map.get(req_id, [])
         if rows:
-            entries.append(_build_entry_from_db_rows(rows))
+            # 一覧ではファイルI/Oをスキップして高速化
+            entries.append(_build_entry_from_db_rows(rows, skip_files=True))
     return entries, total
 
 
@@ -784,30 +801,66 @@ def _load_entries_from_files(page: int, per_page: int) -> tuple[list[dict], int]
 
 
 @router.get("/", response_class=HTMLResponse)
-async def logs_list(request: Request, page: int = 1):
+async def logs_list(request: Request, page: int = 1, type: str = "chat", partial: bool = False):
     """ログ一覧ページを返す。
 
     debug/ フォルダ内のリクエスト単位ログをページネーションして表示する。
+    partial=True のとき、ログリスト部分のHTMLフラグメントのみを返す（AJAXタブ切り替え用）。
 
     Args:
         request: FastAPIリクエストオブジェクト。
         page: ページ番号（デフォルト1）。
+        type: 表示するリクエスト種別（'chat'/'scenario'/'batch'、デフォルト'chat'）。
+        partial: True のとき logs_fragment.html のみを返す。
     """
     per_page = 50
-    entries, total = _load_entries(page=page, per_page=per_page)
+    # 不正な値はデフォルトにフォールバック
+    valid_types = {"chat", "scenario", "batch"}
+    current_type = type if type in valid_types else "chat"
+
+    entries, total = _load_entries(page=page, per_page=per_page, request_type=current_type)
     total_pages = max(1, (total + per_page - 1) // per_page)
     debug_enabled = DEBUG_BASE.exists()
 
+    context = {
+        "request": request,
+        "entries": entries,
+        "total": total,
+        "page": page,
+        "total_pages": total_pages,
+        "debug_enabled": debug_enabled,
+        "current_type": current_type,
+    }
+
+    template = "logs_fragment.html" if partial else "logs.html"
+    return get_templates().TemplateResponse(template, context)
+
+
+@router.get("/{message_id}/detail", response_class=HTMLResponse)
+async def log_entry_detail(request: Request, message_id: str):
+    """指定リクエストの試行詳細（tool_calls 含む）を HTML フラグメントで返す。
+
+    アコーディオン開き時のAJAX遅延ロード用。ファイルI/Oを含む完全な詳細を返す。
+
+    Args:
+        request: FastAPIリクエストオブジェクト。
+        message_id: リクエストID（8桁hex）。
+    """
+    if not re.fullmatch(r"[0-9a-f]{8}", message_id):
+        return HTMLResponse("Invalid message_id", status_code=400)
+
+    sqlite = _sqlite_store()
+    if sqlite is None:
+        return HTMLResponse("DB未接続", status_code=503)
+
+    rows = sqlite.get_debug_log_entries_by_request_id(message_id)
+    if not rows:
+        return HTMLResponse("", status_code=404)
+
+    entry = _build_entry_from_db_rows(rows, skip_files=False)
     return get_templates().TemplateResponse(
-        "logs.html",
-        {
-            "request": request,
-            "entries": entries,
-            "total": total,
-            "page": page,
-            "total_pages": total_pages,
-            "debug_enabled": debug_enabled,
-        },
+        "logs_entry_detail.html",
+        {"request": request, "e": entry},
     )
 
 

@@ -564,6 +564,41 @@ code {
 
 /* ── Log Viewer ──────────────────────────────────────────────── */
 
+/* タイプ別タブ */
+.log-type-tabs {
+  display: flex;
+  gap: 0.15rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+
+.log-type-tab {
+  display: inline-block;
+  padding: 0.4rem 1.1rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--t2);
+  text-decoration: none;
+  border-radius: var(--r) var(--r) 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  margin-bottom: -1px;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.log-type-tab:hover {
+  color: var(--t1);
+  background: var(--surface);
+}
+
+.log-type-tab.active {
+  color: var(--t1);
+  background: var(--surface);
+  border-color: var(--border);
+  border-bottom-color: var(--surface);
+}
+
 /* ログ一覧リスト */
 .log-list {
   display: flex;

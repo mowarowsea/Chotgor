@@ -137,8 +137,40 @@ class DebugLogStoreMixin:
             )
             return [_entry_to_dict(r) for r in rows]
 
+    def get_debug_log_entries_by_request_ids(
+        self, request_ids: list[str]
+    ) -> dict[str, list[dict]]:
+        """複数の request_id のエントリを IN 句で一括取得して返す。
+
+        N+1 クエリを避けるための一括取得メソッド。
+        結果は {request_id: [エントリ辞書, ...]} の形式で、各リストは作成日時昇順。
+
+        Args:
+            request_ids: リクエスト識別子のリスト。
+
+        Returns:
+            {request_id: エントリ辞書のリスト} の辞書。
+        """
+        from backend.repositories.sqlite.store import DebugLogEntry
+        from sqlalchemy import asc
+        if not request_ids:
+            return {}
+        with self.get_session() as sess:
+            rows = (
+                sess.query(DebugLogEntry)
+                .filter(DebugLogEntry.request_id.in_(request_ids))
+                .order_by(asc(DebugLogEntry.created_at))
+                .all()
+            )
+            # request_ids の順序を保持するため先に空リストを用意する
+            result: dict[str, list[dict]] = {rid: [] for rid in request_ids}
+            for r in rows:
+                if r.request_id in result:
+                    result[r.request_id].append(_entry_to_dict(r))
+            return result
+
     def get_debug_log_request_ids_paged(
-        self, page: int = 1, per_page: int = 50
+        self, page: int = 1, per_page: int = 50, request_type: Optional[str] = None
     ) -> tuple[list[str], int]:
         """ユニークな request_id を最新順でページネーションして返す。
 
@@ -148,22 +180,84 @@ class DebugLogStoreMixin:
         Args:
             page: ページ番号（1始まり）。
             per_page: 1ページあたりの件数。
+            request_type: フィルタ種別。None/'all'=全件, 'chat'=チャット系,
+                          'scenario'=シナリオ系, 'batch'=それ以外。
 
         Returns:
             (request_id のリスト, 総ユニーク件数) のタプル。
         """
         from backend.repositories.sqlite.store import DebugLogEntry
         from sqlalchemy import func, desc
+
+        # タイプ別 source_type セット定義
+        _CHAT_TYPES = ("chat", "group_chat", "farewell", "trigger")
+        _SCENARIO_TYPES = ("scenario", "scenario_chat")
+        _ALL_TYPED = _CHAT_TYPES + _SCENARIO_TYPES
+
         with self.get_session() as sess:
-            # ユニーク request_id ごとの最大 created_at を取得
-            subq = (
-                sess.query(
-                    DebugLogEntry.request_id,
-                    func.max(DebugLogEntry.created_at).label("latest_at"),
+            base_q = sess.query(DebugLogEntry.request_id)
+
+            if request_type == "chat":
+                # chat/group_chat/farewell/trigger のいずれかを含む request_id
+                matched_ids = (
+                    base_q.filter(DebugLogEntry.source_type.in_(_CHAT_TYPES))
+                    .distinct()
+                    .subquery()
                 )
-                .group_by(DebugLogEntry.request_id)
-                .subquery()
-            )
+                filter_subq = matched_ids
+            elif request_type == "scenario":
+                # scenario/scenario_chat のいずれかを含む request_id
+                matched_ids = (
+                    base_q.filter(DebugLogEntry.source_type.in_(_SCENARIO_TYPES))
+                    .distinct()
+                    .subquery()
+                )
+                filter_subq = matched_ids
+            elif request_type == "batch":
+                # chat系・scenario系のどちらにも属さない request_id
+                typed_ids = (
+                    base_q.filter(DebugLogEntry.source_type.in_(_ALL_TYPED))
+                    .distinct()
+                    .subquery()
+                )
+                untyped_ids = (
+                    base_q.filter(
+                        ~DebugLogEntry.request_id.in_(
+                            sess.query(typed_ids.c.request_id)
+                        )
+                    )
+                    .distinct()
+                    .subquery()
+                )
+                filter_subq = untyped_ids
+            else:
+                filter_subq = None
+
+            # ユニーク request_id ごとの最大 created_at を取得
+            if filter_subq is not None:
+                subq = (
+                    sess.query(
+                        DebugLogEntry.request_id,
+                        func.max(DebugLogEntry.created_at).label("latest_at"),
+                    )
+                    .filter(
+                        DebugLogEntry.request_id.in_(
+                            sess.query(filter_subq.c.request_id)
+                        )
+                    )
+                    .group_by(DebugLogEntry.request_id)
+                    .subquery()
+                )
+            else:
+                subq = (
+                    sess.query(
+                        DebugLogEntry.request_id,
+                        func.max(DebugLogEntry.created_at).label("latest_at"),
+                    )
+                    .group_by(DebugLogEntry.request_id)
+                    .subquery()
+                )
+
             total = sess.query(func.count()).select_from(subq).scalar() or 0
             offset = (page - 1) * per_page
             rows = (

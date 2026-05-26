@@ -30,7 +30,9 @@ from fastapi.testclient import TestClient
 
 import backend.api.logs_ui as logs_ui_module
 from backend.api.logs_ui import (
+    _build_attempt_detail,
     _build_char_index,
+    _build_entry_from_db_rows,
     _extract_function_calls_from_json,
     _extract_tags_from_file,
     _load_entries,
@@ -1513,3 +1515,169 @@ class TestParseEntryToolUseRoundTrip:
         assert entry["tool_calls"][1]["response_file"] == "06_chat_Response_Gemini.log"
         assert entry["tool_calls"][2]["request_file"] == "04_chat_Request_Gemini.log"
         assert entry["tool_calls"][2]["response_file"] == "07_chat_Response_Gemini.log"
+
+
+# ─── _build_attempt_detail: skip_files ───────────────────────────────────────
+
+
+class TestBuildAttemptDetailSkipFiles:
+    """_build_attempt_detail() の skip_files オプションを検証するテストクラス。
+
+    一覧の高速化のためにファイルI/Oをスキップする skip_files=True（デフォルト）動作と、
+    詳細エンドポイント用の skip_files=False（ファイル読み込みあり）動作を確認する。
+    """
+
+    def _make_row(self, raw_dir=None, **kwargs):
+        """テスト用の DB 行辞書を生成するヘルパ。"""
+        defaults = {
+            "raw_dir": raw_dir,
+            "has_error": False,
+            "warn_reason": "",
+            "preset": "ClaudeCode",
+            "response": "応答テキスト",
+            "reasoning": "",
+            "created_at": None,
+        }
+        defaults.update(kwargs)
+        return defaults
+
+    def test_skip_files_true_returns_empty_tool_calls(self, tmp_path):
+        """skip_files=True のとき raw_dir が存在しても tool_calls/warnings/files が空であること。
+
+        ディレクトリが存在していても読み込まないことを確認する（アクセス不要）。
+        """
+        raw_dir = tmp_path / "abc12345"
+        raw_dir.mkdir()
+        (raw_dir / "02_chat_Request_ClaudeCode.log").write_text("{}", encoding="utf-8")
+        (raw_dir / "03_chat_Response_ClaudeCode.log").write_text("応答", encoding="utf-8")
+
+        result = _build_attempt_detail(self._make_row(raw_dir=str(raw_dir)), 0, {}, skip_files=True)
+
+        assert result["tool_calls"] == []
+        assert result["warnings"] == []
+        assert result["files"] == []
+
+    def test_skip_files_true_preserves_db_fields(self):
+        """skip_files=True のとき DB 由来のフィールド（response/preset/index 等）は正しく返ること。"""
+        row = self._make_row(response="キャラの返答", preset="Gemini", has_error=True, warn_reason="エラー")
+        result = _build_attempt_detail(row, 2, {}, skip_files=True)
+
+        assert result["index"] == 3  # 0始まり + 1
+        assert result["response"] == "キャラの返答"
+        assert result["preset"] == "Gemini"
+        assert result["has_error"] is True
+        assert result["warn_reason"] == "エラー"
+
+    def test_skip_files_true_with_nonexistent_raw_dir_no_error(self):
+        """skip_files=True のとき raw_dir が存在しないパスでも例外を送出しないこと。"""
+        row = self._make_row(raw_dir="/nonexistent/path/abc12345")
+        result = _build_attempt_detail(row, 0, {}, skip_files=True)
+        assert result["tool_calls"] == []
+
+    def test_skip_files_false_reads_tool_calls_from_files(self, tmp_path):
+        """skip_files=False のとき raw_dir のファイルを読み込んで tool_calls を返すこと。"""
+        raw_dir = tmp_path / "abc12345"
+        raw_dir.mkdir()
+        (raw_dir / "02_chat_Request_ClaudeCode.log").write_text("{}", encoding="utf-8")
+        (raw_dir / "03_chat_Response_ClaudeCode.log").write_text("応答テキスト", encoding="utf-8")
+
+        result = _build_attempt_detail(self._make_row(raw_dir=str(raw_dir)), 0, {}, skip_files=False)
+
+        assert len(result["tool_calls"]) == 1
+        assert result["tool_calls"][0]["feature"] == "chat"
+        assert result["files"] != []
+
+    def test_skip_files_false_with_none_raw_dir_returns_empty(self):
+        """skip_files=False でも raw_dir が None の場合、tool_calls は空であること。"""
+        result = _build_attempt_detail(self._make_row(raw_dir=None), 0, {}, skip_files=False)
+        assert result["tool_calls"] == []
+        assert result["dir_id"] == ""
+
+
+# ─── _build_entry_from_db_rows: skip_files ───────────────────────────────────
+
+
+class TestBuildEntryFromDbRowsSkipFiles:
+    """_build_entry_from_db_rows() の skip_files オプションを検証するテストクラス。
+
+    一覧では skip_files=True（デフォルト）、詳細エンドポイントでは skip_files=False
+    を使い分けることで、一覧の高速化と詳細の情報完全性を両立させることを確認する。
+    """
+
+    def _make_row(self, **kwargs):
+        """テスト用の DB 行辞書を生成するヘルパ。"""
+        from datetime import datetime
+        defaults = {
+            "request_id": "abc12345",
+            "source_type": "chat",
+            "created_at": datetime(2026, 5, 1, 12, 0, 0),
+            "target": "はる",
+            "preset": "ClaudeCode",
+            "user_message": "こんにちは",
+            "response": "こんにちは！",
+            "reasoning": "",
+            "has_error": False,
+            "warn_reason": "",
+            "raw_dir": None,
+        }
+        defaults.update(kwargs)
+        return defaults
+
+    def test_skip_files_true_is_default(self, tmp_path):
+        """引数省略時（デフォルト）は skip_files=True として動作すること。
+
+        raw_dir が存在しない場合でも例外を送出せず、tool_calls が空のエントリを返すこと。
+        """
+        rows = [self._make_row(raw_dir=str(tmp_path / "nonexistent"))]
+        entry = _build_entry_from_db_rows(rows)
+
+        assert entry["character"] == "はる"
+        assert entry["attempt_count"] == 1
+        assert entry["attempts"][0]["tool_calls"] == []
+
+    def test_skip_files_true_builds_entry_from_db_only(self):
+        """skip_files=True のとき、サマリー表示に必要なフィールドが DB から正しく構築されること。"""
+        rows = [self._make_row(
+            response="応答テキスト",
+            user_message="質問テキスト",
+            has_error=True,
+            warn_reason="タイムアウト",
+        )]
+        entry = _build_entry_from_db_rows(rows, skip_files=True)
+
+        assert entry["character_response"] == "応答テキスト"
+        assert entry["user_message"] == "質問テキスト"
+        assert entry["has_error"] is True
+        assert entry["warn_reason"] == "タイムアウト"
+
+    def test_skip_files_false_reads_file_tool_calls(self, tmp_path):
+        """skip_files=False のとき raw_dir からファイルを読み込んで tool_calls を取得すること。"""
+        raw_dir = tmp_path / "abc12345"
+        raw_dir.mkdir()
+        (raw_dir / "02_chat_Request_ClaudeCode.log").write_text("{}", encoding="utf-8")
+        (raw_dir / "03_chat_Response_ClaudeCode.log").write_text("応答テキスト", encoding="utf-8")
+
+        rows = [self._make_row(raw_dir=str(raw_dir))]
+        entry = _build_entry_from_db_rows(rows, skip_files=False)
+
+        assert len(entry["attempts"][0]["tool_calls"]) == 1
+
+    def test_multiple_attempts_all_skip_files(self, tmp_path):
+        """複数試行がある場合、全試行で skip_files=True が適用されること。
+
+        シナリオ再生成で3回試行したケースを想定し、全試行の tool_calls が空であることを確認する。
+        """
+        from datetime import datetime, timedelta
+        rows = [
+            self._make_row(
+                raw_dir=str(tmp_path / f"attempt{i}"),
+                response=f"{i}回目の応答",
+                created_at=datetime(2026, 5, 1, 12, 0, i),
+            )
+            for i in range(3)
+        ]
+        entry = _build_entry_from_db_rows(rows, skip_files=True)
+
+        assert entry["attempt_count"] == 3
+        for attempt in entry["attempts"]:
+            assert attempt["tool_calls"] == []

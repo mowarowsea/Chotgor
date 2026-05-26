@@ -267,3 +267,130 @@ class TestGetRequestIdsPaged:
         store.insert_debug_log_entry(request_id="req_old", source_type="scenario")
         ids, _ = store.get_debug_log_request_ids_paged()
         assert ids[0] == "req_old"
+
+    def test_filter_chat_type_includes_farewell_and_trigger(self, store):
+        """request_type='chat': chat/group_chat/farewell/trigger を含む request_id のみ返ること。
+
+        farewell・trigger は Chat のサブタイプとして同じ request_id に混在するため、
+        それらを含む request_id は Chat タブに表示される。
+        """
+        store.insert_debug_log_entry(request_id="chat001", source_type="chat")
+        store.insert_debug_log_entry(request_id="chat001", source_type="farewell")
+        store.insert_debug_log_entry(request_id="grp001", source_type="group_chat")
+        store.insert_debug_log_entry(request_id="scen001", source_type="scenario")
+        store.insert_debug_log_entry(request_id="batch001", source_type="chronicle")
+        ids, total = store.get_debug_log_request_ids_paged(request_type="chat")
+        assert set(ids) == {"chat001", "grp001"}
+        assert total == 2
+
+    def test_filter_scenario_type(self, store):
+        """request_type='scenario': scenario/scenario_chat を含む request_id のみ返ること。"""
+        store.insert_debug_log_entry(request_id="scen001", source_type="scenario")
+        store.insert_debug_log_entry(request_id="scen_chat001", source_type="scenario_chat")
+        store.insert_debug_log_entry(request_id="chat001", source_type="chat")
+        store.insert_debug_log_entry(request_id="batch001", source_type="chronicle")
+        ids, total = store.get_debug_log_request_ids_paged(request_type="scenario")
+        assert set(ids) == {"scen001", "scen_chat001"}
+        assert total == 2
+
+    def test_filter_batch_type_excludes_chat_and_scenario(self, store):
+        """request_type='batch': chat 系・scenario 系のどちらにも属さない request_id のみ返ること。"""
+        store.insert_debug_log_entry(request_id="batch001", source_type="chronicle")
+        store.insert_debug_log_entry(request_id="batch002", source_type="forget")
+        store.insert_debug_log_entry(request_id="chat001", source_type="chat")
+        store.insert_debug_log_entry(request_id="scen001", source_type="scenario")
+        ids, total = store.get_debug_log_request_ids_paged(request_type="batch")
+        assert set(ids) == {"batch001", "batch002"}
+        assert total == 2
+
+    def test_filter_none_returns_all(self, store):
+        """request_type=None（デフォルト）: 全件返ること。"""
+        store.insert_debug_log_entry(request_id="chat001", source_type="chat")
+        store.insert_debug_log_entry(request_id="scen001", source_type="scenario")
+        store.insert_debug_log_entry(request_id="batch001", source_type="chronicle")
+        ids, total = store.get_debug_log_request_ids_paged(request_type=None)
+        assert total == 3
+        assert set(ids) == {"chat001", "scen001", "batch001"}
+
+
+# ─── get_debug_log_entries_by_request_ids ────────────────────────────────────
+
+
+class TestGetEntriesByRequestIds:
+    """get_debug_log_entries_by_request_ids() の動作を検証するテストクラス。
+
+    N+1 クエリ解消のために追加された IN 句一括取得メソッドを検証する。
+    単体クエリ版（get_debug_log_entries_by_request_id）と同じ結果を
+    1回の SQL 呼び出しで返すことが求められる。
+    """
+
+    def test_empty_list_returns_empty_dict(self, store):
+        """空リストを渡した場合、空辞書を返すこと。"""
+        result = store.get_debug_log_entries_by_request_ids([])
+        assert result == {}
+
+    def test_single_id_returns_matching_rows(self, store):
+        """1件の request_id を渡した場合、その行が返ること。"""
+        store.insert_debug_log_entry(request_id="req_a", source_type="chat", response="回答A")
+        result = store.get_debug_log_entries_by_request_ids(["req_a"])
+        assert "req_a" in result
+        assert len(result["req_a"]) == 1
+        assert result["req_a"][0]["response"] == "回答A"
+
+    def test_multiple_ids_returns_all(self, store):
+        """複数の request_id を渡した場合、すべての行が返ること。"""
+        store.insert_debug_log_entry(request_id="req_a", source_type="chat")
+        store.insert_debug_log_entry(request_id="req_b", source_type="scenario")
+        store.insert_debug_log_entry(request_id="req_c", source_type="chronicle")
+        result = store.get_debug_log_entries_by_request_ids(["req_a", "req_b", "req_c"])
+        assert set(result.keys()) == {"req_a", "req_b", "req_c"}
+        assert len(result["req_a"]) == 1
+        assert len(result["req_b"]) == 1
+        assert len(result["req_c"]) == 1
+
+    def test_nonexistent_id_returns_empty_list(self, store):
+        """存在しない request_id のキーは空リストになること。"""
+        store.insert_debug_log_entry(request_id="req_a", source_type="chat")
+        result = store.get_debug_log_entries_by_request_ids(["req_a", "nonexistent"])
+        assert len(result["req_a"]) == 1
+        assert result["nonexistent"] == []
+
+    def test_multiple_rows_same_id_returned_ascending(self, store):
+        """同一 request_id の複数行が作成日時昇順で返ること。
+
+        chat → farewell の順で INSERT されたとき、その順序で返ること（単体クエリ版と同じ仕様）。
+        """
+        store.insert_debug_log_entry(request_id="multi", source_type="chat", response="1回目")
+        store.insert_debug_log_entry(request_id="multi", source_type="farewell", response="2回目")
+        result = store.get_debug_log_entries_by_request_ids(["multi"])
+        rows = result["multi"]
+        assert len(rows) == 2
+        assert rows[0]["response"] == "1回目"
+        assert rows[1]["response"] == "2回目"
+
+    def test_excludes_unrequested_ids(self, store):
+        """渡していない request_id の行は含まれないこと。"""
+        store.insert_debug_log_entry(request_id="req_a", source_type="chat")
+        store.insert_debug_log_entry(request_id="req_b", source_type="chat")
+        result = store.get_debug_log_entries_by_request_ids(["req_a"])
+        assert "req_b" not in result
+
+    def test_matches_single_query_method_result(self, store):
+        """IN 句一括取得の結果が単体クエリ版と一致すること。
+
+        get_debug_log_entries_by_request_id（1件ずつ）と
+        get_debug_log_entries_by_request_ids（一括）が同じ結果を返すことを確認する。
+        """
+        store.insert_debug_log_entry(
+            request_id="cmp001", source_type="chat",
+            target="はる", preset="CC", response="応答X"
+        )
+        store.insert_debug_log_entry(request_id="cmp001", source_type="farewell")
+
+        single = store.get_debug_log_entries_by_request_id("cmp001")
+        bulk = store.get_debug_log_entries_by_request_ids(["cmp001"])["cmp001"]
+
+        assert len(single) == len(bulk)
+        for s, b in zip(single, bulk):
+            assert s["source_type"] == b["source_type"]
+            assert s["response"] == b["response"]
