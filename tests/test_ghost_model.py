@@ -346,6 +346,7 @@ async def test_run_chronicle_uses_ghost_model_preset(sqlite_store, working_memor
         sqlite_store.get_all_settings(),
         thinking_level="default",
         preset_name="TestPreset",
+        timeout_seconds=300,
     )
 
 

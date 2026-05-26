@@ -608,7 +608,7 @@ code {
   flex-shrink: 0;
   transition: transform var(--dur) var(--ease);
 }
-details[open] .log-toggle-icon { transform: rotate(90deg); }
+details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
 
 /* 日時 */
 .log-dt {
@@ -1246,30 +1246,41 @@ hr {
   letter-spacing: 0.02em;
 }
 
-/* 試行履歴リストのコンテナ */
-.log-attempts {
+/* ─── 試行履歴アコーディオン ─── */
+
+/* 試行 <details> 群を縦並びにまとめるコンテナ */
+.log-attempts-accordion {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  width: 100%;
 }
 
-/* 各試行の1行 */
-.log-attempt-item {
+/* 各試行の <details> */
+.log-attempt-detail {
+  border: 1px solid var(--sep2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+/* 試行の <summary> 行 */
+.log-attempt-summary {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  font-size: 0.75rem;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-size: 0.78rem;
   background: var(--sep1);
-  color: var(--t2);
 }
+.log-attempt-summary::-webkit-details-marker { display: none; }
+.log-attempt-summary::marker               { display: none; }
 
-/* 最新試行は少し目立たせる */
-.log-attempt-latest {
-  background: color-mix(in srgb, var(--sep2) 60%, transparent);
-  color: var(--t1);
+/* 試行の展開本文 */
+.log-attempt-body {
+  padding: 0.4rem 0.5rem 0.2rem;
+  background: var(--bg2);
 }
 
 .log-attempt-index {

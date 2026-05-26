@@ -574,7 +574,7 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
                     name = turn.get("speaker_name", "")
                     content = turn.get("content", "")
                     if content:
-                        _gm_parts.append(f"[{name}]\n{content}" if name else content)
+                        _gm_parts.append(content)
         # ストリーム完了後に DB の response カラムを更新する
         if _gm_parts:
             debug_logger.log_front_output("\n\n".join(_gm_parts))

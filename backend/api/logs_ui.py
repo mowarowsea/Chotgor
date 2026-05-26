@@ -557,16 +557,64 @@ def set_sqlite_store(sqlite) -> None:
     _store = sqlite
 
 
+def _build_attempt_detail(r: dict, index: int, char_index: dict) -> dict:
+    """DB の1行（1試行）から試行アコーディオン表示用の詳細データを構築する。
+
+    raw_dir が存在すればファイルを読み込んでツール呼び出し・警告・ファイル一覧を
+    組み立てる。raw_dir がない場合（CHOTGOR_DEBUG=0 等）は DB の値のみで構成する。
+
+    Args:
+        r: get_debug_log_entries_by_request_id() が返す1行の辞書。
+        index: 試行番号（0始まり）。表示は +1 して使う。
+        char_index: chotgor.log から構築した {msg_id: char_label} 辞書。
+
+    Returns:
+        試行アコーディオンが期待するデータ辞書。
+    """
+    raw_dir = r.get("raw_dir") or ""
+    dir_id = ""
+    tool_calls: list[dict] = []
+    warnings: list[dict] = []
+    file_names: list[str] = []
+    has_error = bool(r.get("has_error"))
+    warn_reason = r.get("warn_reason") or ""
+
+    if raw_dir:
+        raw_path = Path(raw_dir)
+        dir_id = raw_path.name  # フォルダ名がファイルリンクに使う ID
+        if raw_path.exists():
+            parsed = _parse_entry(dir_id, raw_path, char_index)
+            tool_calls = parsed.get("tool_calls", [])
+            warnings_parsed = parsed.get("warnings", [])
+            if warnings_parsed:
+                warnings = warnings_parsed
+            if not has_error:
+                has_error = parsed.get("has_error", False)
+            if not warn_reason:
+                warn_reason = parsed.get("warn_reason", "")
+            file_names = sorted(p.name for p in raw_path.iterdir() if p.is_file())
+
+    return {
+        "index": index + 1,
+        "preset": r.get("preset") or "",
+        "response": r.get("response") or "",
+        "reasoning": r.get("reasoning") or "",
+        "dt_str": r["created_at"].strftime("%H:%M:%S") if r.get("created_at") else "",
+        "has_error": has_error,
+        "warn_reason": warn_reason,
+        "tool_calls": tool_calls,
+        "warnings": warnings,
+        "files": file_names,
+        "dir_id": dir_id,
+    }
+
+
 def _build_entry_from_db_rows(rows: list[dict]) -> dict:
     """同一 request_id の DB 行リストからログ一覧表示用エントリを組み立てる。
 
-    複数行がある場合は source_type='chat'/'scenario' の行をメインとして
-    user_message / response / reasoning を取得し、それ以外（farewell/trigger等）は
-    sub_types バッジ表示用に収集する。raw_dir があればツール呼び出しを解析する。
-
-    再生成時は同一 request_id で複数のメイン行が生成される。
-    `character_response` / `reasoning_text` は最新試行の値を使い、
-    `attempts` に各試行の要約リストを格納してアコーディオン表示に使う。
+    メイン行（chat/scenario 等）は試行ごとに1行存在し、`attempts` リストに
+    完全な詳細データを格納する。再生成で複数試行ある場合は attempt_count > 1 になる。
+    非メイン行（farewell/trigger/chronicle 等）は tool_calls を top-level で保持する。
 
     Args:
         rows: get_debug_log_entries_by_request_id() が返すエントリ辞書のリスト（昇順）。
@@ -579,10 +627,7 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
 
     _MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat", "group_chat"}
 
-    # メイン行（ユーザー発言を持つ行）を優先して選択
     main_row = next((r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES), rows[0])
-
-    # メインタイプ行を時系列順に収集（再生成の試行ごとに1行ずつ存在する）
     main_rows = [r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES]
     latest_main = main_rows[-1] if main_rows else rows[-1]
 
@@ -590,7 +635,6 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
     source_type = main_row["source_type"]
     dt = latest_main["created_at"] or main_row["created_at"]
 
-    # source_type 一覧（ユニーク・出現順）
     seen: set[str] = set()
     source_types: list[str] = []
     for r in rows:
@@ -598,50 +642,46 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
             seen.add(r["source_type"])
             source_types.append(r["source_type"])
 
-    # raw_dir からツール呼び出しを解析（最新試行のファイルが残っている場合）
-    tool_calls: list[dict] = []
-    warnings: list[dict] = []
     has_error = any(r["has_error"] for r in rows)
     warn_reason = next((r["warn_reason"] for r in rows if r["warn_reason"]), "")
-
-    raw_dir = latest_main.get("raw_dir") or main_row.get("raw_dir")
-    if raw_dir:
-        raw_path = Path(raw_dir)
-        if raw_path.exists():
-            char_index = _build_char_index()
-            parsed = _parse_entry(request_id, raw_path, char_index)
-            tool_calls = parsed.get("tool_calls", [])
-            warnings = parsed.get("warnings", [])
-            if not has_error:
-                has_error = parsed.get("has_error", False)
-            if not warn_reason:
-                warn_reason = parsed.get("warn_reason", "")
-
-    # ファイルリスト（raw_dir があれば列挙）
-    file_names: list[str] = []
-    if raw_dir:
-        raw_path = Path(raw_dir)
-        if raw_path.exists():
-            file_names = sorted(p.name for p in raw_path.iterdir() if p.is_file())
-
-    # モデル ID 組み立て（後方互換のため target@preset 形式で保持）
     target = main_row.get("target") or latest_main.get("target") or ""
     preset = latest_main.get("preset") or main_row.get("preset") or ""
     model_id = f"{target}@{preset}" if target and preset else target or preset
 
-    # 再生成の各試行サマリーリスト（attempt_count > 1 のときアコーディオン表示に使う）
-    _PREVIEW_LEN = 200
+    # char_index はファイルが存在する場合のみ構築（コスト節約）
+    needs_files = any(r.get("raw_dir") for r in rows)
+    char_index = _build_char_index() if needs_files else {}
+
+    # メイン行を試行ごとに詳細データへ変換（ツール呼び出し・ファイル含む）
     attempts = [
-        {
-            "index": i + 1,
-            "preset": r.get("preset") or "",
-            "response_preview": (r.get("response") or "")[:_PREVIEW_LEN],
-            "response_truncated": len(r.get("response") or "") > _PREVIEW_LEN,
-            "dt_str": r["created_at"].strftime("%H:%M:%S") if r.get("created_at") else "",
-            "has_error": bool(r.get("has_error")),
-        }
-        for i, r in enumerate(main_rows)
+        _build_attempt_detail(r, i, char_index) for i, r in enumerate(main_rows)
     ]
+
+    # 非メイン行（chronicle/forget 等）向けの top-level tool_calls（旧来互換）
+    top_tool_calls: list[dict] = []
+    top_warnings: list[dict] = []
+    top_file_names: list[str] = []
+    if not main_rows:
+        # メイン行が無いエントリは従来通り最初の行の raw_dir を使う
+        raw_dir = rows[0].get("raw_dir") or ""
+        if raw_dir:
+            raw_path = Path(raw_dir)
+            dir_id = raw_path.name
+            if raw_path.exists():
+                parsed = _parse_entry(dir_id, raw_path, char_index)
+                top_tool_calls = parsed.get("tool_calls", [])
+                top_warnings = parsed.get("warnings", [])
+                if not has_error:
+                    has_error = parsed.get("has_error", False)
+                if not warn_reason:
+                    warn_reason = parsed.get("warn_reason", "")
+                top_file_names = sorted(
+                    p.name for p in raw_path.iterdir() if p.is_file()
+                )
+
+    # top-level の dir_id（旧来の ID/Files 表示と JSON API 用）
+    top_raw_dir = latest_main.get("raw_dir") or main_row.get("raw_dir") or ""
+    top_dir_id = Path(top_raw_dir).name if top_raw_dir else request_id
 
     return {
         "message_id": request_id,
@@ -654,14 +694,16 @@ def _build_entry_from_db_rows(rows: list[dict]) -> dict:
         "source_types": source_types,
         "source": "system" if source_type not in _MAIN_SOURCE_TYPES else "ユーザ",
         "user_message": main_row.get("user_message") or "",
+        # 後方互換（JSON API・サマリー表示用）
         "character_response": latest_main.get("response") or "",
         "reasoning_text": latest_main.get("reasoning") or "",
-        "tool_calls": tool_calls,
-        "warnings": warnings,
-        "files": file_names,
+        # 非メイン行エントリ向け（attempts が空の場合のみ HTML で使う）
+        "tool_calls": top_tool_calls,
+        "warnings": top_warnings,
+        "files": top_file_names,
+        "dir_id": top_dir_id,
         "has_error": has_error,
         "warn_reason": warn_reason,
-        # 再生成の試行数とサマリーリスト
         "attempt_count": len(main_rows),
         "attempts": attempts,
     }
