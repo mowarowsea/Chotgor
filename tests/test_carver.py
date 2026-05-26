@@ -14,6 +14,9 @@ from backend.character_actions.carver import (
     CARVE_NARRATIVE_TAG_GUIDE,
     CARVE_NARRATIVE_TOOL_DESCRIPTION,
     CARVE_NARRATIVE_TOOLS_HINT,
+    build_carve_narrative_tools_hint,
+    build_carve_narrative_tag_guide,
+    _RECOMMENDED_NARRATIVE_LEN,
 )
 
 
@@ -291,3 +294,39 @@ class TestCarverExportedConstants:
     def test_carve_narrative_tool_description_is_nonempty(self):
         """CARVE_NARRATIVE_TOOL_DESCRIPTION が空でないこと。"""
         assert CARVE_NARRATIVE_TOOL_DESCRIPTION.strip()
+
+
+class TestBuildCarveNarrativeHints:
+    """build_carve_narrative_tools_hint / build_carve_narrative_tag_guide の動的文字数警告を検証する。"""
+
+    def test_tools_hint_within_limit_returns_static(self):
+        """推奨文字数以内のとき、静的ヒントをそのまま返すこと。"""
+        result = build_carve_narrative_tools_hint(_RECOMMENDED_NARRATIVE_LEN)
+        assert result == CARVE_NARRATIVE_TOOLS_HINT
+
+    def test_tools_hint_zero_len_returns_static(self):
+        """文字数0のとき、静的ヒントをそのまま返すこと。"""
+        result = build_carve_narrative_tools_hint(0)
+        assert result == CARVE_NARRATIVE_TOOLS_HINT
+
+    def test_tools_hint_over_limit_prepends_warning(self):
+        """推奨文字数超過のとき、警告行が先頭に追加されること。"""
+        over = _RECOMMENDED_NARRATIVE_LEN + 1
+        result = build_carve_narrative_tools_hint(over)
+        assert result != CARVE_NARRATIVE_TOOLS_HINT
+        assert str(over) in result
+        assert str(_RECOMMENDED_NARRATIVE_LEN) in result
+        assert CARVE_NARRATIVE_TOOLS_HINT in result
+
+    def test_tag_guide_within_limit_returns_static(self):
+        """推奨文字数以内のとき、静的タグガイドをそのまま返すこと。"""
+        result = build_carve_narrative_tag_guide(_RECOMMENDED_NARRATIVE_LEN)
+        assert result == CARVE_NARRATIVE_TAG_GUIDE
+
+    def test_tag_guide_over_limit_prepends_warning(self):
+        """推奨文字数超過のとき、警告行が先頭に追加されること。"""
+        over = _RECOMMENDED_NARRATIVE_LEN + 500
+        result = build_carve_narrative_tag_guide(over)
+        assert result != CARVE_NARRATIVE_TAG_GUIDE
+        assert str(over) in result
+        assert CARVE_NARRATIVE_TAG_GUIDE in result

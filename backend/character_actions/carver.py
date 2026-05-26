@@ -80,6 +80,49 @@ CARVE_NARRATIVE_TAG_GUIDE: str = """\
 - `[CARVE_NARRATIVE:...]` の行はユーザーには見えません"""
 
 
+_RECOMMENDED_NARRATIVE_LEN = 2000
+
+
+def build_carve_narrative_tools_hint(inner_narrative_len: int) -> str:
+    """文字数情報を含む carve_narrative ツール案内文を生成する。
+
+    推奨文字数以内ならそのまま返し、超過時のみ冒頭に警告行を追加する。
+
+    Args:
+        inner_narrative_len: 現在の inner_narrative の文字数。
+
+    Returns:
+        システムプロンプトに挿入するツール案内テキスト。
+    """
+    if inner_narrative_len <= _RECOMMENDED_NARRATIVE_LEN:
+        return CARVE_NARRATIVE_TOOLS_HINT
+    warning = (
+        f"⚠️ inner_narrative が {inner_narrative_len}文字あります"
+        f"（推奨: {_RECOMMENDED_NARRATIVE_LEN}文字以内）。overwrite での圧縮を検討してください。"
+    )
+    return f"{warning}\n\n{CARVE_NARRATIVE_TOOLS_HINT}"
+
+
+def build_carve_narrative_tag_guide(inner_narrative_len: int) -> str:
+    """文字数情報を含む carve_narrative タグ方式ガイドを生成する。
+
+    推奨文字数以内ならそのまま返し、超過時のみ冒頭に警告行を追加する。
+
+    Args:
+        inner_narrative_len: 現在の inner_narrative の文字数。
+
+    Returns:
+        システムプロンプトに挿入するタグ方式ガイドテキスト。
+    """
+    if inner_narrative_len <= _RECOMMENDED_NARRATIVE_LEN:
+        return CARVE_NARRATIVE_TAG_GUIDE
+    warning = (
+        f"⚠️ inner_narrative が {inner_narrative_len}文字あります"
+        f"（推奨: {_RECOMMENDED_NARRATIVE_LEN}文字以内）。overwrite での圧縮を検討してください。"
+    )
+    return f"{warning}\n\n{CARVE_NARRATIVE_TAG_GUIDE}"
+
+
 class Carver:
     """inner_narrative の彫り込みを担うクラス。タグ方式・ツール呼び出し方式の両方に対応する。
 

@@ -23,7 +23,10 @@ Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配
 from typing import Optional
 
 from backend.character_actions.recaller import POWER_RECALL_TAG_GUIDE, POWER_RECALL_TOOLS_HINT
-from backend.character_actions.carver import CARVE_NARRATIVE_TAG_GUIDE, CARVE_NARRATIVE_TOOLS_HINT
+from backend.character_actions.carver import (
+    build_carve_narrative_tag_guide,
+    build_carve_narrative_tools_hint,
+)
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 
 
@@ -131,6 +134,7 @@ def _build_chotgor_block(
     use_tools: bool,
     available_presets: Optional[list[dict]],
     current_preset_name: str,
+    inner_narrative_len: int = 0,
 ) -> str:
     """Chotgor 操作ガイドブロックを構築する。
 
@@ -153,7 +157,7 @@ def _build_chotgor_block(
 
     if use_tools:
         parts.append(POWER_RECALL_TOOLS_HINT)
-        parts.append(CARVE_NARRATIVE_TOOLS_HINT)
+        parts.append(build_carve_narrative_tools_hint(inner_narrative_len))
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=True))
         parts.append(
@@ -165,7 +169,7 @@ def _build_chotgor_block(
         # タグ方式は小型モデルでの命令追従が弱いため、共通禁止条項を最初に置く
         parts.append(_TAG_MODE_GLOBAL_RULES)
         parts.append(POWER_RECALL_TAG_GUIDE)
-        parts.append(CARVE_NARRATIVE_TAG_GUIDE)
+        parts.append(build_carve_narrative_tag_guide(inner_narrative_len))
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=False))
         parts.append(INSCRIBE_MEMORY_TAG_GUIDE)
@@ -312,6 +316,7 @@ def build_system_prompt(
         use_tools=use_tools,
         available_presets=available_presets,
         current_preset_name=current_preset_name,
+        inner_narrative_len=len((inner_narrative or "").strip()),
     )
     blocks.append(chotgor_block)
 
