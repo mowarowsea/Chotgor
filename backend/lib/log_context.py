@@ -19,12 +19,29 @@ current_log_feature: ContextVar[str] = ContextVar("current_log_feature", default
 # デバッグログファイルの通し番号（リクエストごとに new_message_id() でリセット）
 _log_call_counter: ContextVar[int] = ContextVar("_log_call_counter", default=0)
 
+# --- DB書き込み用コンテキスト変数 ---
+
+# セッション ID（chat_sessions.id / scenario_sessions.id）
+current_log_session_id: ContextVar[str | None] = ContextVar("current_log_session_id", default=None)
+
+# リクエスト先の識別名（キャラ名 / シナリオ名 / バッチ対象名）
+current_log_target: ContextVar[str | None] = ContextVar("current_log_target", default=None)
+
+# セッション内ターン番号（シナリオ等で使用）
+current_log_turn_sequence: ContextVar[int | None] = ContextVar("current_log_turn_sequence", default=None)
+
+# ユーザー発言テキスト本文（log_front_input で設定）
+current_log_user_message: ContextVar[str | None] = ContextVar("current_log_user_message", default=None)
+
+# 現在作成中のメインDB行の id（log_front_input で INSERT 後に設定、log_front_output で UPDATE に使用）
+current_log_db_entry_id: ContextVar[int | None] = ContextVar("current_log_db_entry_id", default=None)
+
 
 def new_message_id() -> str:
     """ログ追跡用の短縮IDを生成して current_message_id にセットして返す。
 
     チャットリクエスト開始時・chronicle/forget の各キャラ処理開始時に呼び出す。
-    デバッグログの通し番号もここでリセットする。
+    デバッグログの通し番号と DB 書き込み用コンテキスト変数もここでリセットする。
 
     Returns:
         生成した8文字の16進数ID。
@@ -32,6 +49,11 @@ def new_message_id() -> str:
     msg_id = _uuid_mod.uuid4().hex[:8]
     current_message_id.set(msg_id)
     _log_call_counter.set(0)
+    current_log_session_id.set(None)
+    current_log_target.set(None)
+    current_log_turn_sequence.set(None)
+    current_log_user_message.set(None)
+    current_log_db_entry_id.set(None)
     return msg_id
 
 
@@ -92,12 +114,12 @@ def setup_logging() -> None:
     console_handler.setFormatter(fmt)
     root.addHandler(console_handler)
 
-    # ファイル出力（DEBUG以上、RotatingFileHandler: 10MB × 5世代）
+    # ファイル出力（DEBUG以上、RotatingFileHandler: 10MB × 10世代）
     os.makedirs("logs", exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
         "logs/chotgor.log",
         maxBytes=10 * 1024 * 1024,
-        backupCount=5,
+        backupCount=10,
         encoding="utf-8",
     )
     file_handler.setLevel(logging.DEBUG)

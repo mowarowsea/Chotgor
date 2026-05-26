@@ -20,7 +20,11 @@ from pydantic import BaseModel
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.chat.models import ChatRequest, Message
 from backend.lib.debug_logger import logger
-from backend.lib.log_context import new_message_id
+from backend.lib.log_context import (
+    new_message_id,
+    current_log_session_id,
+    current_log_target,
+)
 from backend.lib.time_awareness import compute_time_awareness
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from backend.api.utils import build_1on1_history, build_available_presets, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
@@ -350,6 +354,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     別れの検出は FarewellDetector がバックグラウンドで行い、次リクエスト時に反映される。
     """
     log_msg_id = new_message_id()
+    current_log_session_id.set(session_id)
     logger.log_front_input(body.model_dump())
 
     state = request.app.state
@@ -361,6 +366,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     effective_model_id = body.model_id or session.model_id
 
     char_name_for_check = effective_model_id.split("@")[0] if "@" in effective_model_id else effective_model_id
+    current_log_target.set(char_name_for_check)
 
     # estranged チェック: relationship_status="estranged" のキャラクターへのリクエストをSSEで拒否する
     char_for_estranged = state.sqlite.get_character_by_name(char_name_for_check)

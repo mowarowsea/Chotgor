@@ -99,6 +99,12 @@ async def lifespan(app: FastAPI):
     # ログUIにも同じテンプレートインスタンスを共有する
     logs_ui_module.templates = ui_module.templates
 
+    # debug_logger に SQLiteStore をセットして DB ログ書き込みを有効化する
+    from backend.lib.debug_logger import logger as debug_logger
+    debug_logger.set_store(sqlite)
+    # logs_ui に SQLiteStore をセットして DB からログを読み込めるようにする
+    logs_ui_module.set_sqlite_store(sqlite)
+
     _log.info("Chotgor backend 起動 sqlite=%s", SQLITE_DB_PATH)
 
     asyncio.create_task(_chronicle_scheduler(app))

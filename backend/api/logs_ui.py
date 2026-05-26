@@ -533,8 +533,161 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
     }
 
 
+def _sqlite_store():
+    """FastAPI app.state から SQLiteStore を取得する。
+
+    logs_ui はルーターなので app.state に直接アクセスできないため、
+    グローバル変数 `_store` に起動時にセットする方式を取る。
+    セットされていない場合（テスト時等）は None を返す。
+    """
+    return _store
+
+
+# main.py の lifespan から呼んで SQLiteStore をセットする
+_store = None
+
+
+def set_sqlite_store(sqlite) -> None:
+    """SQLiteStore をセットする。main.py の lifespan から起動時に呼ぶ。
+
+    Args:
+        sqlite: SQLiteStore インスタンス。
+    """
+    global _store
+    _store = sqlite
+
+
+def _build_entry_from_db_rows(rows: list[dict]) -> dict:
+    """同一 request_id の DB 行リストからログ一覧表示用エントリを組み立てる。
+
+    複数行がある場合は source_type='chat'/'scenario' の行をメインとして
+    user_message / response / reasoning を取得し、それ以外（farewell/trigger等）は
+    sub_types バッジ表示用に収集する。raw_dir があればツール呼び出しを解析する。
+
+    Args:
+        rows: get_debug_log_entries_by_request_id() が返すエントリ辞書のリスト（昇順）。
+
+    Returns:
+        ログ一覧 UI が期待するエントリ辞書。
+    """
+    if not rows:
+        return {}
+
+    _MAIN_SOURCE_TYPES = {"chat", "scenario", "group_chat"}
+
+    # メイン行（ユーザー発言を持つ行）を優先して選択
+    main_row = next((r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES), rows[0])
+    latest_row = rows[-1]  # 再生成などで複数試行がある場合は最新を参照
+
+    request_id = main_row["request_id"]
+    source_type = main_row["source_type"]
+    dt = latest_row["created_at"] or main_row["created_at"]
+
+    # source_type 一覧（ユニーク・出現順）
+    seen: set[str] = set()
+    source_types: list[str] = []
+    for r in rows:
+        if r["source_type"] not in seen:
+            seen.add(r["source_type"])
+            source_types.append(r["source_type"])
+
+    # raw_dir からツール呼び出しを解析（ファイルが残っている場合）
+    tool_calls: list[dict] = []
+    warnings: list[dict] = []
+    has_error = any(r["has_error"] for r in rows)
+    warn_reason = next((r["warn_reason"] for r in rows if r["warn_reason"]), "")
+
+    raw_dir = main_row.get("raw_dir") or latest_row.get("raw_dir")
+    if raw_dir:
+        raw_path = Path(raw_dir)
+        if raw_path.exists():
+            char_index = _build_char_index()
+            parsed = _parse_entry(request_id, raw_path, char_index)
+            tool_calls = parsed.get("tool_calls", [])
+            warnings = parsed.get("warnings", [])
+            if not has_error:
+                has_error = parsed.get("has_error", False)
+            if not warn_reason:
+                warn_reason = parsed.get("warn_reason", "")
+
+    # ファイルリスト（raw_dir があれば列挙）
+    file_names: list[str] = []
+    if raw_dir:
+        raw_path = Path(raw_dir)
+        if raw_path.exists():
+            file_names = sorted(p.name for p in raw_path.iterdir() if p.is_file())
+
+    # モデル ID 組み立て（後方互換のため target@preset 形式で保持）
+    target = main_row.get("target") or latest_row.get("target") or ""
+    preset = main_row.get("preset") or latest_row.get("preset") or ""
+    model_id = f"{target}@{preset}" if target and preset else target or preset
+
+    return {
+        "message_id": request_id,
+        "dt": dt,
+        "dt_str": dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "",
+        "character": target,
+        "preset": preset,
+        "model_id": model_id,
+        "source_type": source_type,
+        "source_types": source_types,
+        "source": "system" if source_type not in _MAIN_SOURCE_TYPES else "ユーザ",
+        "user_message": main_row.get("user_message") or "",
+        "character_response": latest_row.get("response") or "",
+        "reasoning_text": latest_row.get("reasoning") or "",
+        "tool_calls": tool_calls,
+        "warnings": warnings,
+        "files": file_names,
+        "has_error": has_error,
+        "warn_reason": warn_reason,
+        # 再生成の試行数（同一 request_id の行数のうちメインタイプの件数）
+        "attempt_count": sum(1 for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES),
+    }
+
+
 def _load_entries(page: int = 1, per_page: int = 50) -> tuple[list[dict], int]:
-    """debug/ ディレクトリからログエントリを読み込んでページネーションして返す。
+    """デバッグログエントリを読み込んでページネーションして返す。
+
+    SQLiteStore が利用可能な場合は DB から読み込む。
+    未セット（テスト・起動直後等）の場合はファイルシステムにフォールバックする。
+
+    Args:
+        page: ページ番号（1始まり）。
+        per_page: 1ページあたりの件数。
+
+    Returns:
+        (エントリリスト, 総件数) のタプル。
+    """
+    sqlite = _sqlite_store()
+    if sqlite is not None:
+        return _load_entries_from_db(sqlite, page, per_page)
+    return _load_entries_from_files(page, per_page)
+
+
+def _load_entries_from_db(sqlite, page: int, per_page: int) -> tuple[list[dict], int]:
+    """DB からログエントリをページネーションして返す。
+
+    Args:
+        sqlite: SQLiteStore インスタンス。
+        page: ページ番号（1始まり）。
+        per_page: 1ページあたりの件数。
+
+    Returns:
+        (エントリリスト, 総件数) のタプル。
+    """
+    request_ids, total = sqlite.get_debug_log_request_ids_paged(page=page, per_page=per_page)
+    entries = []
+    for req_id in request_ids:
+        rows = sqlite.get_debug_log_entries_by_request_id(req_id)
+        if rows:
+            entries.append(_build_entry_from_db_rows(rows))
+    return entries, total
+
+
+def _load_entries_from_files(page: int, per_page: int) -> tuple[list[dict], int]:
+    """ファイルシステムからログエントリを読み込む（フォールバック）。
+
+    DB 未セット時（テスト等）に使用する旧来の実装。
 
     Args:
         page: ページ番号（1始まり）。
@@ -561,7 +714,6 @@ def _load_entries(page: int = 1, per_page: int = 50) -> tuple[list[dict], int]:
     end = start + per_page
     page_folders = folders[start:end]
 
-    # chotgor.log インデックスは1回だけ構築して全エントリで共有する
     char_index = _build_char_index()
     entries = [_parse_entry(name, folder, char_index) for _, name, folder in page_folders]
     return entries, total
@@ -750,11 +902,21 @@ async def get_log_entry(log_message_id: str):
     # パストラバーサル防止: 8桁英数字のみ許可
     if not re.fullmatch(r"[0-9a-f]{8}", log_message_id):
         raise HTTPException(status_code=400, detail="不正なlog_message_idです")
+
+    # DB から取得を試みる
+    sqlite = _sqlite_store()
+    if sqlite is not None:
+        rows = sqlite.get_debug_log_entries_by_request_id(log_message_id)
+        if rows:
+            entry = _build_entry_from_db_rows(rows)
+            entry_json = {k: v for k, v in entry.items() if k != "dt"}
+            return {"entry": entry_json, "debug_enabled": True}
+
+    # DB にない場合はファイルにフォールバック
     folder = DEBUG_BASE / log_message_id
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=404, detail="ログエントリが見つかりません")
     char_index = _build_char_index()
     entry = _parse_entry(log_message_id, folder, char_index)
-    # datetime オブジェクト ("dt" キー) は JSON シリアライズ不可なため除外する
     entry_json = {k: v for k, v in entry.items() if k != "dt"}
     return {"entry": entry_json, "debug_enabled": True}

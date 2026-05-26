@@ -34,7 +34,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, TYPE_CHECKING
 
-from backend.lib.log_context import new_message_id
+from backend.lib.log_context import new_message_id, current_log_feature, current_log_target
 from backend.repositories.sqlite.store import SQLiteStore
 from backend.services.character_query import ask_character
 from backend.services.memory.manager import InscribedMemoryManager
@@ -542,6 +542,8 @@ async def run_pending_chronicles(
 
     for char in targets:
         new_message_id()
+        current_log_feature.set("chronicle")
+        current_log_target.set(char.name)
         try:
             await run_chronicle(
                 character_id=char.id,

@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Optional
 
-from backend.lib.log_context import new_message_id
+from backend.lib.log_context import new_message_id, current_log_feature, current_log_target
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.repositories.sqlite.store import SQLiteStore
@@ -206,6 +206,8 @@ async def run_pending_forget(sqlite: SQLiteStore, memory_manager: InscribedMemor
 
     for char in characters:
         new_message_id()
+        current_log_feature.set("forget")
+        current_log_target.set(char.name)
         threshold = 0.2
         try:
             await run_forget_process(

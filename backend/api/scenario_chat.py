@@ -37,7 +37,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.lib.debug_logger import logger as debug_logger
-from backend.lib.log_context import current_log_feature, new_message_id
+from backend.lib.log_context import (
+    current_log_feature,
+    current_log_session_id,
+    current_log_target,
+    current_log_turn_sequence,
+    new_message_id,
+)
 from backend.services.scenario_chat.service import (
     maybe_update_auto_synopsis,
     run_scenario_turn,
@@ -472,7 +478,8 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
     # こうしないと synopsis 蒸留の debug ログが 1on1 の "chat" 扱いで出力され、
     # 「どのモデルで蒸留されたか」を debug フォルダ名から追えなくなる。
     new_message_id()
-    current_log_feature.set("scenario_chat")
+    current_log_feature.set("synopsis")
+    current_log_session_id.set(session_id)
 
     state = request.app.state
     sqlite = state.sqlite
@@ -517,7 +524,8 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
     # リクエスト識別子を発行（debug ログのフォルダ名・ログ行のトレース ID に使う）。
     # 既存 1on1 chat の stream エンドポイントと同じパターン。
     new_message_id()
-    debug_logger.log_front_input(body.model_dump())
+    current_log_session_id.set(session_id)
+    current_log_feature.set("scenario")
 
     state = request.app.state
     sqlite = state.sqlite
@@ -526,6 +534,14 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     if sess.status != "active":
         raise HTTPException(status_code=400, detail="セッションは終了しています")
+
+    # シナリオタイトルとターン番号をログコンテキストに設定する
+    _scenario = sqlite.get_scenario(sess.scenario_id)
+    if _scenario:
+        current_log_target.set(_scenario.title)
+    _next_turn = sqlite.get_next_scenario_turn_index(session_id)
+    current_log_turn_sequence.set(_next_turn)
+    debug_logger.log_front_input(body.model_dump())
 
     settings = sqlite.get_all_settings()
 

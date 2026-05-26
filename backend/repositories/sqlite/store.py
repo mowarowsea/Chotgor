@@ -33,6 +33,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.repositories.sqlite.stores.character_store import CharacterStoreMixin
 from backend.repositories.sqlite.stores.chat_store import ChatStoreMixin
+from backend.repositories.sqlite.stores.debug_log_store import DebugLogStoreMixin
 from backend.repositories.sqlite.stores.drift_store import DriftStoreMixin
 from backend.repositories.sqlite.stores.inscribed_memory_store import (
     InscribedMemoryStoreMixin,
@@ -350,6 +351,34 @@ class ScenarioSession(Base):
     )
 
 
+class DebugLogEntry(Base):
+    """デバッグログエントリ — 1LLM呼び出し単位のログレコード。
+
+    1ユーザーリクエスト内に複数の LLM 呼び出し（chat/farewell/trigger 等）が
+    あった場合、それぞれが独立した行として記録される。同一ユーザーリクエストの行は
+    request_id が共通し、Logs 画面ではまとめて1行として表示される。
+    シナリオの再生成は同一 request_id で行を追加することで試行履歴として保持する。
+    """
+
+    __tablename__ = "debug_log_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String, nullable=False, index=True)  # 8桁hex、ユーザーリクエスト単位で共有
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())
+    source_type = Column(String, nullable=False)  # 'chat'/'scenario'/'farewell'/'trigger'/'batch' 等
+    session_id = Column(String, nullable=True)     # chat_sessions.id または scenario_sessions.id
+    turn_sequence = Column(Integer, nullable=True) # セッション内ターン番号
+    target = Column(String, nullable=True)         # キャラ名/シナリオ名/バッチ対象名
+    preset = Column(String, nullable=True)         # 使用プリセット名
+    user_message = Column(Text, nullable=True)     # ユーザー発言本文（chat/scenario のみ）
+    response = Column(Text, nullable=True)         # 応答テキスト本文
+    reasoning = Column(Text, nullable=True)        # 思考ブロック等の推論テキスト
+    mcp_calls_json = Column(Text, nullable=True)   # MCPツール呼び出しのJSON配列
+    has_error = Column(Integer, nullable=False, default=0)  # 1=エラーあり
+    warn_reason = Column(Text, nullable=True)      # 警告・エラーの人間可読な理由文
+    raw_dir = Column(String, nullable=True)        # 生ファイルフォルダのパス
+
+
 class ScenarioTurn(Base):
     """シナリオセッションの発話ターン — ユーザ・Narrator・NPC・(将来)既存キャラを多態で格納する。"""
 
@@ -375,6 +404,7 @@ class SQLiteStore(
     DriftStoreMixin,
     WorkingMemoryStoreMixin,
     ScenarioChatStoreMixin,
+    DebugLogStoreMixin,
 ):
     """SQLite永続化ストア — 全テーブルへのCRUD操作を提供するファサードクラス。
 
@@ -395,6 +425,7 @@ class SQLiteStore(
         self._migrate_gm_preset_id_to_session()
         self._migrate_add_preset_timeout_seconds()
         self._migrate_add_synopsis_preset_id()
+        self._migrate_add_debug_log_entries()
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。
@@ -515,6 +546,37 @@ class SQLiteStore(
                 "ALTER TABLE llm_model_presets "
                 "ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300"
             )
+
+    def _migrate_add_debug_log_entries(self) -> None:
+        """`debug_log_entries` テーブルが存在しない既存 DB への互換マイグレーション。
+
+        `Base.metadata.create_all` が新規テーブルを作るが、既存 DB には
+        インデックスが追加されない場合があるため、インデックスだけ別途作成する。
+        新規 DB（既に新スキーマ）では何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "debug_log_entries" not in tables:
+                # テーブルがない場合は create_all で作成済みのはずだが念のため
+                return
+            # request_id インデックスが存在しなければ作成（冪等）
+            indexes = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='index' "
+                    "AND tbl_name='debug_log_entries'"
+                ).fetchall()
+            }
+            if "ix_debug_log_entries_request_id" not in indexes:
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_debug_log_entries_request_id "
+                    "ON debug_log_entries (request_id)"
+                )
 
     def get_session(self) -> Session:
         """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""

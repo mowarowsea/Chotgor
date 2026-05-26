@@ -22,7 +22,7 @@ from backend.services.chat.indexer import get_participant_char_ids, index_messag
 from backend.services.chat.models import ChatRequest, Message
 from backend.services.chat.service import ChatService
 from backend.services.memory.format import format_recalled_memories, format_recalled_threads
-from backend.lib.log_context import current_log_feature, new_message_id
+from backend.lib.log_context import current_log_feature, current_log_target, new_message_id
 from backend.lib.time_awareness import compute_time_awareness
 from backend.services.group_chat import context as ctx
 from backend.services.group_chat.director import decide_next_speakers
@@ -88,6 +88,7 @@ async def _stream_character_response(
     # また機能名を group_chat にセットして、デバッグログのファイル名から識別できるようにする。
     new_message_id()
     current_log_feature.set("group_chat")
+    current_log_target.set(char_name)
 
     # キャラクター情報を取得する
     char = sqlite.get_character_by_name(char_name) or sqlite.get_character(char_name)
