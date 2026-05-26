@@ -432,6 +432,8 @@ export interface ScenarioTurn {
   speaker_name: string;
   content: string;
   raw_response: string | null;
+  /** debug_log_entries との紐付け。再生成ログをまとめるために使う。 */
+  log_request_id?: string | null;
   created_at: string;
 }
 
@@ -683,18 +685,26 @@ export async function regenerateScenarioSynopsis(
  *
  * autoAdvance=true なら「ユーザは無言で続きを促す」モードで、
  * content は無視され、user turn も保存されない。
+ * regenerateRequestId を指定すると、再生成ログを同一エントリにまとめる。
  */
 export async function* streamScenarioMessage(
   sessionId: string,
   content: string,
   autoAdvance: boolean = false,
+  regenerateRequestId?: string,
 ): AsyncGenerator<ScenarioStreamEvent> {
   const res = await fetch(
     `/api/scenario_chat/sessions/${sessionId}/stream`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, auto_advance: autoAdvance }),
+      body: JSON.stringify({
+        content,
+        auto_advance: autoAdvance,
+        ...(regenerateRequestId
+          ? { regenerate_request_id: regenerateRequestId }
+          : {}),
+      }),
     },
   );
   if (!res.ok) throw new Error("シナリオストリームの送信に失敗しました");

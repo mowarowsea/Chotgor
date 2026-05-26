@@ -381,6 +381,7 @@ class ScenarioChatStoreMixin:
         content: str,
         speaker_id: Optional[str] = None,
         raw_response: Optional[str] = None,
+        log_request_id: Optional[str] = None,
     ):
         """発話ターンを作成する。
 
@@ -394,6 +395,7 @@ class ScenarioChatStoreMixin:
             speaker_id: npc 種別なら scenario_npcs.id、character 種別なら characters.id。
                         user / narrator / 未知 NPC は NULL。
             raw_response: GM の単一呼出で得たターン全体の生出力（デバッグ用）。
+            log_request_id: debug_log_entries.request_id との紐付け。再生成時に引き継ぐ。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioTurn
@@ -406,11 +408,28 @@ class ScenarioChatStoreMixin:
                 speaker_name=speaker_name,
                 content=content,
                 raw_response=raw_response,
+                log_request_id=log_request_id,
             )
             session.add(obj)
             session.commit()
             session.refresh(obj)
             return obj
+
+    def update_scenario_turn_log_request_id(
+        self, turn_id: str, log_request_id: str
+    ) -> None:
+        """発話ターンの log_request_id を更新する。
+
+        Args:
+            turn_id: 更新対象ターンの UUID。
+            log_request_id: セットする debug_log_entries.request_id。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioTurn
+            obj = session.get(ScenarioTurn, turn_id)
+            if obj:
+                obj.log_request_id = log_request_id
+                session.commit()
 
     def list_scenario_turns(self, session_id: str) -> list:
         """セッション内の全ターンを turn_index 昇順で返す。"""

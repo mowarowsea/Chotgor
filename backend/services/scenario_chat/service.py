@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
 
-from backend.lib.log_context import current_log_feature
+from backend.lib.log_context import current_log_feature, current_message_id
 from backend.services.scenario_chat.context import resolve_history_limits
 from backend.services.scenario_chat.engine import (
     EngineResult,
@@ -116,6 +116,7 @@ def scenario_turn_to_dict(turn: Any) -> dict:
         "speaker_name": turn.speaker_name,
         "content": turn.content,
         "raw_response": turn.raw_response,
+        "log_request_id": getattr(turn, "log_request_id", None),
         "created_at": turn.created_at.isoformat() if turn.created_at else None,
     }
 
@@ -386,6 +387,7 @@ async def run_scenario_turn(
             content=rec.content,
             speaker_id=rec.speaker_id,
             raw_response=raw_response,
+            attach_log_request_id=True,
         )
         saved_turn_ids.append(saved.id)
         yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
@@ -523,10 +525,16 @@ def _save_turn(
     content: str,
     speaker_id: Optional[str] = None,
     raw_response: Optional[str] = None,
+    attach_log_request_id: bool = False,
 ):
-    """ターンを次の turn_index で保存して返す共通ヘルパ。"""
+    """ターンを次の turn_index で保存して返す共通ヘルパ。
+
+    attach_log_request_id=True のとき、現在の current_message_id を log_request_id として保存する。
+    GM ターン保存時のみ True にする（ユーザーターン・intro はログとの紐付け不要）。
+    """
     turn_id = str(uuid.uuid4())
     next_index = sqlite.get_next_scenario_turn_index(session_id)
+    log_req_id = current_message_id.get() if attach_log_request_id else None
     return sqlite.create_scenario_turn(
         turn_id=turn_id,
         session_id=session_id,
@@ -536,4 +544,5 @@ def _save_turn(
         content=content,
         speaker_id=speaker_id,
         raw_response=raw_response,
+        log_request_id=log_req_id,
     )

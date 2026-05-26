@@ -603,9 +603,14 @@ export default function App() {
    *
    * autoAdvance=true なら「ユーザは無言で続きを促す」モード。
    * content は何が来てもサーバ側で無視され、user turn も保存されない。
+   * regenerateRequestId を指定すると、再生成ログを同一エントリにまとめる。
    */
   const handleScenarioSend = useCallback(
-    async (content: string, autoAdvance: boolean = false) => {
+    async (
+      content: string,
+      autoAdvance: boolean = false,
+      regenerateRequestId?: string,
+    ) => {
       if (!activeScenarioSession) return;
       setError(null);
       setSending(true);
@@ -615,7 +620,12 @@ export default function App() {
       try {
         const sessionId = activeScenarioSession.id;
         const newPending: PendingBubble[] = [];
-        for await (const ev of streamScenarioMessage(sessionId, content, autoAdvance)) {
+        for await (const ev of streamScenarioMessage(
+          sessionId,
+          content,
+          autoAdvance,
+          regenerateRequestId,
+        )) {
           if (ev.type === "user_saved") {
             // user_saved はユーザ発話を確定ターンとしてリストに追加する
             setScenarioTurns((prev) => [...prev, ev.turn]);
@@ -734,17 +744,22 @@ export default function App() {
 
     // 直前に user 発話があるかを見て、通常 / auto_advance を判別。
     const prev = lastTurnStart > 0 ? scenarioTurns[lastTurnStart - 1] : null;
+    // 再生成対象の先頭 GM ターンの log_request_id を引き継ぐ（ログをまとめるため）
+    const gmLogRequestId =
+      scenarioTurns[lastTurnStart]?.speaker_type !== "user"
+        ? (scenarioTurns[lastTurnStart]?.log_request_id ?? undefined)
+        : undefined;
     let pivot: ScenarioTurn;
     let resend: () => Promise<void>;
     if (prev && prev.speaker_type === "user") {
       // 通常ターン: user を含めて削除し、同じ発話で再ストリーム
       pivot = prev;
       const content = prev.content;
-      resend = () => handleScenarioSend(content, false);
+      resend = () => handleScenarioSend(content, false, gmLogRequestId);
     } else if (scenarioTurns[lastTurnStart].speaker_type !== "user") {
       // auto_advance ターン: GM 列先頭から削除して auto_advance で再ストリーム
       pivot = scenarioTurns[lastTurnStart];
-      resend = () => handleScenarioSend("", true);
+      resend = () => handleScenarioSend("", true, gmLogRequestId);
     } else {
       // 末尾が user で GM 応答が無い特殊状態（前回ストリームエラー後など）
       pivot = scenarioTurns[lastTurnStart];

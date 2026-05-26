@@ -42,6 +42,7 @@ from backend.lib.log_context import (
     current_log_session_id,
     current_log_target,
     current_log_turn_sequence,
+    current_message_id,
     new_message_id,
 )
 from backend.services.scenario_chat.service import (
@@ -147,10 +148,15 @@ class StreamRequest(BaseModel):
 
     auto_advance=True なら「ユーザは無言で続きを促す」モード。
     content は無視され、user turn は保存されない（履歴に痕跡を残さない）。
+
+    regenerate_request_id を指定すると、そのログエントリに追記する形で
+    再生成ログをまとめる。フロントは再生成ボタン押下時のみ前ターンの
+    log_request_id を渡す（過去ターン編集時は渡さない）。
     """
 
     content: str = ""
     auto_advance: bool = False
+    regenerate_request_id: Optional[str] = None
 
 
 # ─── プリセット一覧（GM プリセット選択用） ──────────────────────────────────
@@ -521,8 +527,7 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
     既存 chat と同じく、リクエストごとに log_message_id を発行して
     `debug/<8 桁hex>/` フォルダ内に各種ログを保存できるようにする。
     """
-    # リクエスト識別子を発行（debug ログのフォルダ名・ログ行のトレース ID に使う）。
-    # 既存 1on1 chat の stream エンドポイントと同じパターン。
+    # リクエスト識別子を発行。再生成時は前ターンの log_request_id を引き継ぐ。
     new_message_id()
     current_log_session_id.set(session_id)
     current_log_feature.set("scenario")
@@ -541,6 +546,12 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
         current_log_target.set(_scenario.title)
     _next_turn = sqlite.get_next_scenario_turn_index(session_id)
     current_log_turn_sequence.set(_next_turn)
+
+    # 再生成時は前ターンの log_request_id を引き継いで同一ログエントリにまとめる。
+    # 過去ターン編集や新規ターンの場合は引き継がない（新規 ID のまま）。
+    if body.regenerate_request_id:
+        current_message_id.set(body.regenerate_request_id)
+
     debug_logger.log_front_input(body.model_dump())
 
     settings = sqlite.get_all_settings()

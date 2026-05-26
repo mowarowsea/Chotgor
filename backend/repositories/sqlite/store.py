@@ -392,6 +392,7 @@ class ScenarioTurn(Base):
     speaker_name = Column(String, nullable=False)                  # 表示・履歴整形用のスナップショット名（NPC 名変更後も履歴保護）
     content = Column(Text, nullable=False)
     raw_response = Column(Text, nullable=True)                     # GM の単一呼出で得たターン全体の生出力（デバッグ用）
+    log_request_id = Column(String, nullable=True)                 # debug_log_entries.request_id との紐付け（再生成で引き継ぐ）
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -426,6 +427,7 @@ class SQLiteStore(
         self._migrate_add_preset_timeout_seconds()
         self._migrate_add_synopsis_preset_id()
         self._migrate_add_debug_log_entries()
+        self._migrate_add_scenario_turn_log_request_id()
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。
@@ -576,6 +578,24 @@ class SQLiteStore(
                 conn.exec_driver_sql(
                     "CREATE INDEX IF NOT EXISTS ix_debug_log_entries_request_id "
                     "ON debug_log_entries (request_id)"
+                )
+
+    def _migrate_add_scenario_turn_log_request_id(self) -> None:
+        """`scenario_turns` に `log_request_id` 列を追加する。
+
+        再生成時に同一 request_id を引き継ぐためのカラム。
+        既存 DB には列がないため ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenario_turns)"
+                ).fetchall()
+            }
+            if "log_request_id" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_turns ADD COLUMN log_request_id TEXT"
                 )
 
     def get_session(self) -> Session:
