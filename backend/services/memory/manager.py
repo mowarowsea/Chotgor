@@ -476,14 +476,14 @@ class InscribedMemoryManager:
             self.vector_store.delete_all_inscribed_memories(character_id)
         return result
 
-    def list_memories(
+    def list_inscribed_memories(
         self,
         character_id: str,
         category: Optional[str] = None,
         include_deleted: bool = False,
         sort_by: str = "created_at",
     ) -> list[dict]:
-        """キャラクターの記憶一覧を dict リストで返す。"""
+        """キャラクターの保存記憶一覧を dict リストで返す。"""
         mems = self.sqlite.list_inscribed_memories(character_id, category, include_deleted, sort_by)
         return [
             {

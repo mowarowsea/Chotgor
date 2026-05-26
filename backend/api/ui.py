@@ -266,7 +266,7 @@ async def delete_character(request: Request, character_id: str):
 
 # --- Memories ---
 
-@router.get("/memories/{character_id}", response_class=HTMLResponse)
+@router.get("/inscribed_memories/{character_id}", response_class=HTMLResponse)
 async def memories_view(
     request: Request,
     character_id: str,
@@ -297,7 +297,7 @@ async def memories_view(
         {
             "request": request,
             "character": char,
-            "inscribed_memories": memories,
+            "memories": memories,
             "categories": categories,
             "selected_category": category,
             "deleted_only": deleted_only,
@@ -306,7 +306,7 @@ async def memories_view(
     )
 
 
-@router.post("/memories/{character_id}/{memory_id}/delete")
+@router.post("/inscribed_memories/{character_id}/{memory_id}/delete")
 async def delete_memory(request: Request, character_id: str, memory_id: str):
     request.app.state.memory_manager.delete_inscribed_memory(memory_id, character_id)
     return RedirectResponse(url=f"/ui/inscribed_memories/{character_id}", status_code=303)
