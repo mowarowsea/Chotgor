@@ -9,7 +9,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Optional, Set
+from typing import Optional
 
 _log = logging.getLogger(__name__)
 
@@ -33,7 +33,6 @@ class DebugLogStoreMixin:
         has_error: bool = False,
         warn_reason: Optional[str] = None,
         raw_dir: Optional[str] = None,
-        created_at: Optional[datetime] = None,
     ) -> int:
         """デバッグログエントリを新規 INSERT して返した主キー id を返す。
 
@@ -59,7 +58,7 @@ class DebugLogStoreMixin:
         with self.get_session() as sess:
             entry = DebugLogEntry(
                 request_id=request_id,
-                created_at=created_at or datetime.now(),
+                created_at=datetime.now(),
                 source_type=source_type,
                 session_id=session_id,
                 turn_sequence=turn_sequence,
@@ -117,17 +116,6 @@ class DebugLogStoreMixin:
             if warn_reason is not None:
                 entry.warn_reason = warn_reason
             sess.commit()
-
-    def get_all_debug_log_request_ids(self) -> Set[str]:
-        """DB に登録済みの全 request_id の集合を返す。マイグレーションの冪等チェック用。
-
-        Returns:
-            全 request_id の set。
-        """
-        from backend.repositories.sqlite.store import DebugLogEntry
-        with self.get_session() as sess:
-            rows = sess.query(DebugLogEntry.request_id).distinct().all()
-            return {r[0] for r in rows}
 
     def get_debug_log_entries_by_request_id(self, request_id: str) -> list[dict]:
         """指定 request_id の全エントリを作成日時昇順で返す。
