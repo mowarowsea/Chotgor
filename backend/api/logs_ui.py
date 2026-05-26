@@ -14,8 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
 from backend.character_actions import tool_tags
@@ -962,7 +962,6 @@ async def get_log_entry(log_message_id: str):
     Args:
         log_message_id: debug フォルダ名（8桁 hex）。
     """
-    from fastapi import HTTPException
     # パストラバーサル防止: 8桁英数字のみ許可
     if not re.fullmatch(r"[0-9a-f]{8}", log_message_id):
         raise HTTPException(status_code=400, detail="不正なlog_message_idです")
@@ -984,3 +983,83 @@ async def get_log_entry(log_message_id: str):
     entry = _parse_entry(log_message_id, folder, char_index)
     entry_json = {k: v for k, v in entry.items() if k != "dt"}
     return {"entry": entry_json, "debug_enabled": True}
+
+
+# debug/ フォルダのファイルログをDBに取り込む際に「メイン」と判定する feature 名
+_MAIN_FEATURES = {"chat", "scenario_chat", "scenario", "group_chat"}
+
+
+@json_router.post("/migrate-from-files", response_class=JSONResponse)
+async def migrate_logs_from_files():
+    """debug/ フォルダの既存ファイルログを debug_log_entries テーブルへ一括移行する。
+
+    DB に request_id が存在しないフォルダを対象に1行 INSERT する（冪等）。
+    created_at にはフォルダの mtime を使用する。
+    source_type はファイル名の feature から決定し、chat/scenario_chat 等を優先する。
+
+    Returns:
+        {"migrated": N, "skipped": K, "errors": [...]} 形式の JSON。
+    """
+    sqlite = _sqlite_store()
+    if sqlite is None:
+        raise HTTPException(status_code=503, detail="DB未初期化")
+
+    if not DEBUG_BASE.exists():
+        return {"migrated": 0, "skipped": 0, "errors": []}
+
+    existing: set[str] = sqlite.get_all_debug_log_request_ids()
+
+    # mtime 昇順（古い順）でフォルダを処理する
+    try:
+        folders = sorted(
+            [f for f in DEBUG_BASE.iterdir() if f.is_dir() and f.name != "trush"],
+            key=lambda f: f.stat().st_mtime,
+        )
+    except OSError:
+        folders = []
+
+    char_index = _build_char_index()
+    migrated = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for folder in folders:
+        msg_id = folder.name
+        if msg_id in existing:
+            skipped += 1
+            continue
+
+        try:
+            dt = datetime.fromtimestamp(folder.stat().st_mtime)
+            parsed = _parse_entry(msg_id, folder, char_index)
+
+            # ファイル名の feature からメイン source_type を決定する
+            # chat / scenario_chat 等が存在すればそれを優先し、なければ先頭の feature を使う
+            source_type = "chat"
+            for tc in parsed["tool_calls"]:
+                feat = tc.get("feature") or ""
+                if feat in _MAIN_FEATURES:
+                    source_type = feat
+                    break
+            else:
+                if parsed["tool_calls"]:
+                    source_type = parsed["tool_calls"][0].get("feature") or "chat"
+
+            sqlite.insert_debug_log_entry(
+                request_id=msg_id,
+                source_type=source_type,
+                target=parsed["character"] or None,
+                preset=parsed["preset"] or None,
+                user_message=parsed["user_message"] or None,
+                response=parsed["character_response"] or None,
+                reasoning=parsed["reasoning_text"] or None,
+                has_error=parsed["has_error"],
+                warn_reason=parsed["warn_reason"] or None,
+                raw_dir=str(folder),
+                created_at=dt,
+            )
+            migrated += 1
+        except Exception as e:
+            errors.append(f"{msg_id}: {e}")
+
+    return {"migrated": migrated, "skipped": skipped, "errors": errors}
