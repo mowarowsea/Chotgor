@@ -411,6 +411,10 @@ export default function App() {
       setSessions((prev) => [session, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
+      // 新セッションで選んだキャラ/プリセットを selectedModel に反映する。
+      // これをやらないと直前セッションの selectedModel が残り続け、
+      // 最初の送信が body.model_id 経由で別キャラへ届いてしまう。
+      setSelectedModel(modelId);
       // リロード後に同じセッションを復元できるようにハッシュを更新する
       window.location.hash = session.id;
     } catch (e) {
