@@ -147,6 +147,47 @@ class GoogleProvider(BaseLLMProvider):
             models.append({"id": model_id, "name": m.get("displayName", model_id)})
         return sorted(models, key=lambda m: m["id"])
 
+    @staticmethod
+    def _extract_block_reason(response_or_chunk) -> str | None:
+        """レスポンス/ストリームチャンクからブロック理由を抽出する内部ヘルパー。
+
+        PROHIBITED_CONTENT 等で API がコンテンツを返さなかった場合に、
+        prompt_feedback.block_reason または candidates[0].finish_reason を
+        文字列として返す。通常応答（テキストを含む / STOP で終わる）の場合は None を返す。
+
+        generate_stream_typed のチャンクと _tool_turn のレスポンスの両方を
+        同じロジックで処理できるよう、属性アクセスは getattr 経由で行う。
+
+        Args:
+            response_or_chunk: google-genai SDK の GenerateContentResponse または
+                ストリーミング中の各チャンク。
+
+        Returns:
+            ブロック理由を示す文字列。ブロックされていない（通常応答）場合は None。
+        """
+        # 1. prompt_feedback.block_reason を最優先で見る
+        pf = getattr(response_or_chunk, "prompt_feedback", None)
+        if pf is not None:
+            block_reason = getattr(pf, "block_reason", None)
+            if block_reason:
+                return str(block_reason)
+
+        # 2. candidates[0].finish_reason が STOP/MAX_TOKENS 以外で
+        #    content が空ならブロック扱いとする
+        candidates = getattr(response_or_chunk, "candidates", None) or []
+        if candidates:
+            first = candidates[0]
+            finish_reason = getattr(first, "finish_reason", None)
+            if finish_reason:
+                reason_str = str(finish_reason)
+                # 正常終了パターン（STOP / MAX_TOKENS）は除外する
+                if not any(reason_str.endswith(s) for s in ("STOP", "MAX_TOKENS")):
+                    content = getattr(first, "content", None)
+                    # content が無い or parts が空ならブロック扱い
+                    if content is None or not getattr(content, "parts", None):
+                        return reason_str
+        return None
+
     def _build_contents(self, messages: list[dict]) -> list:
         """Google Gemini 用の contents リストを構築する内部ヘルパー。
 
@@ -324,7 +365,12 @@ class GoogleProvider(BaseLLMProvider):
                     candidates = getattr(chunk, "candidates", None)
                     if not candidates:
                         accumulated.append(_chunk_diagnostic(chunk, "missing_candidates"))
-                        if getattr(chunk, "text", None):
+                        block = self._extract_block_reason(chunk)
+                        if block:
+                            err_msg = f"[Google API blocked: {block}]"
+                            accumulated.append(err_msg)
+                            loop.call_soon_threadsafe(queue.put_nowait, ("text", err_msg))
+                        elif getattr(chunk, "text", None):
                             accumulated.append(chunk.text)
                             loop.call_soon_threadsafe(queue.put_nowait, ("text", chunk.text))
                         continue
@@ -333,7 +379,12 @@ class GoogleProvider(BaseLLMProvider):
                         content = candidates[0].content
                         if content is None:
                             accumulated.append(_chunk_diagnostic(chunk, "missing_candidate_content"))
-                            if getattr(chunk, "text", None):
+                            block = self._extract_block_reason(chunk)
+                            if block:
+                                err_msg = f"[Google API blocked: {block}]"
+                                accumulated.append(err_msg)
+                                loop.call_soon_threadsafe(queue.put_nowait, ("text", err_msg))
+                            elif getattr(chunk, "text", None):
                                 accumulated.append(chunk.text)
                                 loop.call_soon_threadsafe(queue.put_nowait, ("text", chunk.text))
                             continue
@@ -484,6 +535,16 @@ class GoogleProvider(BaseLLMProvider):
                         name=fc.name,
                         input=dict(fc.args) if fc.args else {},
                     ))
+
+        # text/thinking/tool_calls 全部空のとき、PROHIBITED_CONTENT 等でブロックされた可能性を確認する。
+        # ブロック理由が検出できれば error=True で返し、上位の generate_with_tools が
+        # LLMApiError を送出して service 層経由で UI にエラーが流れるようにする。
+        if not text and not thinking and not tool_calls:
+            block = self._extract_block_reason(response)
+            if block:
+                err_msg = f"[Google API blocked: {block}]"
+                self._log_error(err_msg)
+                return ToolTurnResult(text=err_msg, tool_calls=[], error=True)
 
         # _raw に (contents, response) を格納し _extend_messages_with_results で利用する
         return ToolTurnResult(text=text, thinking=thinking, tool_calls=tool_calls, _raw=(contents, response))

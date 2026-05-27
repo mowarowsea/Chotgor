@@ -531,6 +531,204 @@ class TestThoughtFiltering:
 
 
 # ---------------------------------------------------------------------------
+# _extract_block_reason / PROHIBITED_CONTENT 等のブロック検出
+# ---------------------------------------------------------------------------
+
+
+def _make_blocked_chunk(block_reason: str | None = None, finish_reason: str | None = None, has_content: bool = False):
+    """ブロック検出テスト用の chunk/response モックを生成するヘルパー。
+
+    PROHIBITED_CONTENT のような状況を再現するため、prompt_feedback.block_reason や
+    candidates[0].finish_reason をセットできる柔軟なモックを返す。
+
+    Args:
+        block_reason: prompt_feedback.block_reason の値（None なら未設定）。
+        finish_reason: candidates[0].finish_reason の値（None なら candidates 自体を空にする）。
+        has_content: True なら candidate.content をテキスト付きで生成、False なら content=None。
+    """
+    obj = MagicMock()
+    if block_reason is not None:
+        pf = MagicMock()
+        pf.block_reason = block_reason
+        obj.prompt_feedback = pf
+    else:
+        obj.prompt_feedback = None
+
+    if finish_reason is not None:
+        candidate = MagicMock()
+        candidate.finish_reason = finish_reason
+        if has_content:
+            part = _make_mock_part("回答", None)
+            content = MagicMock()
+            content.parts = [part]
+            candidate.content = content
+        else:
+            candidate.content = None
+        obj.candidates = [candidate]
+    else:
+        obj.candidates = []
+    return obj
+
+
+class TestExtractBlockReason:
+    """_extract_block_reason の動作を検証するテストクラス。
+
+    PROHIBITED_CONTENT 等で API がコンテンツを返さなかった場合に、
+    prompt_feedback.block_reason または candidates[0].finish_reason を
+    正しく抽出することを確認する。通常応答に対しては None を返すべき。
+    """
+
+    def test_returns_block_reason_from_prompt_feedback(self):
+        """prompt_feedback.block_reason がある場合、その値を文字列で返すこと。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        obj = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT")
+        assert GoogleProvider._extract_block_reason(obj) == "PROHIBITED_CONTENT"
+
+    def test_returns_finish_reason_when_content_empty(self):
+        """finish_reason が STOP/MAX_TOKENS 以外かつ content=None のとき finish_reason を返すこと。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        obj = _make_blocked_chunk(finish_reason="SAFETY", has_content=False)
+        assert GoogleProvider._extract_block_reason(obj) == "SAFETY"
+
+    def test_returns_none_for_normal_stop(self):
+        """finish_reason=STOP の通常応答に対しては None を返すこと。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        obj = _make_blocked_chunk(finish_reason="STOP", has_content=True)
+        assert GoogleProvider._extract_block_reason(obj) is None
+
+    def test_returns_none_for_max_tokens(self):
+        """finish_reason=MAX_TOKENS は正常終了扱いで None を返すこと（途中まで応答あり）。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        obj = _make_blocked_chunk(finish_reason="MAX_TOKENS", has_content=True)
+        assert GoogleProvider._extract_block_reason(obj) is None
+
+    def test_returns_none_when_no_block_info(self):
+        """ブロック情報も candidates もない通常チャンクに対しては None を返すこと。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        obj = _make_blocked_chunk()  # 何も設定しない
+        assert GoogleProvider._extract_block_reason(obj) is None
+
+    def test_prompt_feedback_takes_priority_over_finish_reason(self):
+        """prompt_feedback.block_reason と finish_reason が両方ある場合、block_reason を優先すること。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        obj = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT", finish_reason="SAFETY")
+        assert GoogleProvider._extract_block_reason(obj) == "PROHIBITED_CONTENT"
+
+
+class TestBlockedResponseHandling:
+    """PROHIBITED_CONTENT 等で応答が空になった場合のエラー伝搬を検証するテストクラス。
+
+    _tool_turn と generate_stream_typed の両方で、ブロック理由が検出された場合に
+    UI に届くエラーメッセージが生成されることを確認する。これがないと
+    「Gemini が拒否しただけなのに UI に何も表示されない」現象が起きる。
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_turn_returns_error_on_blocked(self):
+        """_tool_turn が PROHIBITED_CONTENT のとき error=True とエラーテキストを返すこと。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        response = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT")
+        response.model_dump = MagicMock(return_value={})
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = response
+
+        provider = GoogleProvider(api_key="dummy", model="gemma-4-31b-it")
+
+        with _patch_provider(mock_client):
+            result = await provider._tool_turn("sys", [{"role": "user", "content": "hi"}])
+
+        assert result.error is True, "ブロック時は error=True を返すべき"
+        assert "PROHIBITED_CONTENT" in result.text, \
+            f"ブロック理由がエラーメッセージに含まれていない: {result.text!r}"
+        assert result.tool_calls == []
+
+    @pytest.mark.asyncio
+    async def test_tool_turn_no_error_on_normal_response(self):
+        """_tool_turn が通常応答に対しては error=False のままであること（誤検知防止）。"""
+        from backend.providers.google_provider import GoogleProvider
+
+        response = _make_mock_response([("通常応答", None)])
+        response.model_dump = MagicMock(return_value={})
+        # 通常応答にも prompt_feedback がついてくる場合がある（block_reason=None）
+        pf = MagicMock()
+        pf.block_reason = None
+        response.prompt_feedback = pf
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = response
+
+        provider = GoogleProvider(api_key="dummy", model="gemma-4-31b-it")
+
+        with _patch_provider(mock_client):
+            result = await provider._tool_turn("sys", [{"role": "user", "content": "hi"}])
+
+        assert result.error is False
+        assert result.text == "通常応答"
+
+    @pytest.mark.asyncio
+    async def test_stream_typed_yields_error_on_blocked_missing_candidates(self):
+        """generate_stream_typed が missing_candidates ケースでブロック理由をテキストとして yield すること。
+
+        実ログ（gemma-4-31b-it の PROHIBITED_CONTENT）と同じ構造を再現する:
+        chunk.candidates が空かつ prompt_feedback.block_reason がセットされている状態。
+        """
+        from backend.providers.google_provider import GoogleProvider
+
+        chunk = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT")
+        chunk.text = None  # chunk.text フォールバックも発火しないこと
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content_stream.return_value = iter([chunk])
+
+        provider = GoogleProvider(api_key="dummy", model="gemma-4-31b-it")
+
+        with _patch_provider(mock_client):
+            items = []
+            async for item in provider.generate_stream_typed("sys", [{"role": "user", "content": "hi"}]):
+                items.append(item)
+
+        # ("text", "[Google API blocked: PROHIBITED_CONTENT]") が含まれること
+        assert any(
+            t == "text" and "PROHIBITED_CONTENT" in msg
+            for t, msg in items
+        ), f"ブロック理由のテキストが yield されていない: {items}"
+
+    @pytest.mark.asyncio
+    async def test_stream_typed_yields_error_on_blocked_missing_content(self):
+        """generate_stream_typed が candidate.content=None ケースでもブロック理由を yield すること。
+
+        candidates は存在するが finish_reason=SAFETY 等で content が None になるパターン。
+        """
+        from backend.providers.google_provider import GoogleProvider
+
+        chunk = _make_blocked_chunk(finish_reason="SAFETY", has_content=False)
+        chunk.text = None
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content_stream.return_value = iter([chunk])
+
+        provider = GoogleProvider(api_key="dummy", model="gemma-4-31b-it")
+
+        with _patch_provider(mock_client):
+            items = []
+            async for item in provider.generate_stream_typed("sys", [{"role": "user", "content": "hi"}]):
+                items.append(item)
+
+        assert any(
+            t == "text" and "SAFETY" in msg
+            for t, msg in items
+        ), f"ブロック理由のテキストが yield されていない: {items}"
+
+
+# ---------------------------------------------------------------------------
 # generate — Gemmaモデルで system_instruction が使われること
 # ---------------------------------------------------------------------------
 
