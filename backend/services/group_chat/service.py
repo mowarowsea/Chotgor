@@ -29,16 +29,6 @@ from backend.services.group_chat.director import decide_next_speakers
 logger = logging.getLogger(__name__)
 
 
-def _extract_last_user_text(history: list) -> str:
-    """履歴から最後のユーザーメッセージのテキストを抽出する。"""
-    for msg in reversed(history):
-        if msg.role == "user":
-            content = msg.content
-            if isinstance(content, str):
-                return content
-    return ""
-
-
 def _build_exit_message(char_name: str, reason: str) -> str:
     """退席通知テキストを生成する。"""
     if reason:
@@ -116,9 +106,6 @@ async def _stream_character_response(
         for m in ctx.format_group_history_for_character(history, char_name, sqlite=sqlite, uploads_dir=uploads_dir)
     ]
 
-    # タグなしの生テキストを記憶想起クエリに使う
-    last_user_text = _extract_last_user_text(history)
-
     # 時刻認識パラメータを計算する（1on1チャットと同様）
     now = datetime.now()
     ta = compute_time_awareness(settings, char.id, sqlite, now)
@@ -138,7 +125,6 @@ async def _stream_character_response(
         provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",
         settings=settings,
-        recall_query_override=last_user_text,
         enable_time_awareness=ta.enabled,
         current_time_str=ta.current_time_str,
         time_since_last_interaction=ta.time_since_last_interaction,

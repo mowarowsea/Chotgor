@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -284,14 +285,13 @@ class ChatService:
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
         # --- 1. 記憶の想起 ---
-        if request.recall_query_override:
-            last_user_msg = request.recall_query_override
-        else:
-            last_user_msg = ""
-            for m in reversed(messages):
-                if m.get("role") == "user":
-                    last_user_msg = extract_text_content(m.get("content"))
-                    break
+        # XML タグ（グループチャットの <user>...</user> 等）を除去してから想起クエリにする。
+        last_user_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                raw = extract_text_content(m.get("content"))
+                last_user_msg = re.sub(r"<[^>]+>", "", raw).strip()
+                break
 
         recalled_identity: list[dict] = []
         recalled: list[dict] = []
