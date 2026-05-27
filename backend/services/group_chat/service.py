@@ -13,17 +13,17 @@
 """
 
 import asyncio
+import json
 import logging
 import uuid
-from datetime import datetime
 from typing import Any, AsyncGenerator
 
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
-from backend.services.chat.models import ChatRequest, Message
+from backend.services.chat.models import Message
+from backend.services.chat.request_factory import build_available_presets, build_character_request
 from backend.services.chat.service import ChatService
 from backend.services.memory.format import format_recalled_memories, format_recalled_threads
 from backend.lib.log_context import current_log_feature, current_log_target, new_message_id
-from backend.lib.time_awareness import compute_time_awareness
 from backend.services.group_chat import context as ctx
 from backend.services.group_chat.director import decide_next_speakers
 logger = logging.getLogger(__name__)
@@ -98,43 +98,17 @@ async def _stream_character_response(
         logger.error("プリセット未発見 char=%s preset_id=%s", char_name, preset_id)
         raise ValueError(f"プリセット '{preset_id}' が見つかりません")
 
-    model_config = (char.enabled_providers or {}).get(preset.id, {})
-
     # グループ履歴を指定キャラクター視点の Message リストに変換する（画像も含む）
     messages = [
         Message(role=m["role"], content=m["content"])
         for m in ctx.format_group_history_for_character(history, char_name, sqlite=sqlite, uploads_dir=uploads_dir)
     ]
 
-    # 時刻認識パラメータを計算する（1on1チャットと同様）
-    now = datetime.now()
-    ta = compute_time_awareness(settings, char.id, sqlite, now)
-    sqlite.set_setting(f"last_interaction_{char.id}", now.isoformat())
-
-    # ChatRequest を構築して ChatService に委譲する
-    request = ChatRequest(
-        character_id=char.id,
-        character_name=char_name,
-        provider=preset.provider,
-        model=preset.model_id,
-        messages=messages,
-        character_system_prompt=char.system_prompt_block1,
-        self_history=char.self_history,
-        relationship_state=char.relationship_state,
-        inner_narrative=char.inner_narrative,
-        provider_additional_instructions=model_config.get("additional_instructions", ""),
-        thinking_level=preset.thinking_level or "default",
-        settings=settings,
-        enable_time_awareness=ta.enabled,
-        current_time_str=ta.current_time_str,
-        time_since_last_interaction=ta.time_since_last_interaction,
-        session_id=session_id,
-        current_preset_name=preset.name,
-        current_preset_id=preset.id,
-        allowed_tools=getattr(char, "allowed_tools", None) or {},
-        timeout_seconds=preset.timeout_seconds,
-        farewell_config=getattr(char, "farewell_config", None),
-        farewell_relationship_status=getattr(char, "relationship_status", "active"),
+    # 1on1と同様のファクトリで ChatRequest を構築する（時刻認識・self_reflection等も含む）
+    available_presets = build_available_presets(char, preset, sqlite)
+    request = build_character_request(
+        char, preset, messages, session_id, settings, sqlite,
+        available_presets=available_presets,
     )
 
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする
@@ -159,6 +133,14 @@ async def _stream_character_response(
             full_text += content
             if content:
                 yield ("character_chunk", {"character": char_name, "content": content})
+        elif chunk_type == "angle_switched":
+            # キャラクターがプリセットを切り替えた: 呼び出し元で group_config を更新させる
+            yield ("character_angle_switched", {
+                "character": char_name,
+                "model_id": content["model_id"],
+                "preset_id": content["preset_id"],
+                "preset_name": content["preset_name"],
+            })
 
     # 1on1チャットと同様に想起記憶・ワーキングメモリ・思考ブロックをreasoningにまとめてDBに保存する
     combined = (memory_text + wm_text + "".join(thinking_parts)).strip()
@@ -330,6 +312,18 @@ async def run_group_turn(
                             ))
                         # message ORM を dict に変換してからyieldする
                         yield (chunk_type, {**payload, "message": message_to_dict(payload["message"])})
+                    elif chunk_type == "character_angle_switched":
+                        # グループ参加者のプリセットIDを更新して永続化する
+                        new_preset_id = payload["preset_id"]
+                        new_preset_name = payload["preset_name"]
+                        for p in participants:
+                            if p["char_name"] == payload["character"]:
+                                p["preset_id"] = new_preset_id
+                                p["preset_name"] = new_preset_name
+                                break
+                        group_config["participants"] = participants
+                        sqlite.update_chat_session(session_id, group_config=json.dumps(group_config))
+                        yield (chunk_type, payload)
                     else:
                         yield (chunk_type, payload)
             except Exception as e:

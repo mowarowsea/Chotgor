@@ -171,7 +171,7 @@ export default function App() {
     if (!isGroupSession || !activeSession?.group_config) return [];
     try {
       const cfg = JSON.parse(activeSession.group_config);
-      return cfg.participants as Array<{ char_name: string; preset_name: string }>;
+      return cfg.participants as Array<{ char_name: string; preset_id: string; preset_name: string }>;
     } catch {
       return [];
     }
@@ -916,6 +916,10 @@ export default function App() {
           setGroupStreamingContent(null);
           setGroupStreamingReasoning(null);
           // waitingCharacter は次の character_start か user_turn まで維持する
+        } else if (ev.type === "character_angle_switched") {
+          // キャラクターがプリセットを切り替えた。
+          // バックエンドが group_config を永続化済みのため、ストリーム終了後の finally で
+          // セッション再取得すれば参加者のプリセット情報が更新される。
         } else if (ev.type === "director_error") {
           // 司会エラー：エラー表示しユーザターンへ戻す。司会再試行・手動指名で復帰可能。
           setGroupWaitingCharacter(null);

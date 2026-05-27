@@ -573,7 +573,11 @@ class ChatService:
                     yield ("text", clean_text)
                 async for event in self.execute_stream(switched):
                     yield event
-                yield ("angle_switched", f"{request.character_name}@{switch_info[0]}")
+                yield ("angle_switched", {
+                    "model_id": f"{request.character_name}@{switch_info[0]}",
+                    "preset_id": switched.current_preset_id,
+                    "preset_name": switch_info[0],
+                })
                 return
 
         # FrontOutput は reflector タスク起動より前にログする。

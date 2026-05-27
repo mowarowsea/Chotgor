@@ -10,22 +10,22 @@ SELF_DRIFT: chat_drifts.py
 import asyncio
 import json
 import uuid
-from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
-from backend.services.chat.models import ChatRequest, Message
+from backend.services.chat.models import Message
 from backend.lib.debug_logger import logger
 from backend.lib.log_context import (
     new_message_id,
     current_log_session_id,
     current_log_target,
 )
-from backend.lib.time_awareness import compute_time_awareness
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
-from backend.api.utils import build_1on1_history, build_available_presets, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
+from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
+from backend.services.chat.request_factory import build_character_request, build_available_presets
 from backend.services.chat.content import apply_context_window
 from backend.services.memory.format import format_recalled_threads
 
@@ -129,8 +129,11 @@ async def _build_chat_request(
     history_messages: list,
     user_content: str | list,
     model_id: str | None = None,
-) -> ChatRequest:
+):
     """セッション情報からChatRequestを構築する内部ヘルパー。
+
+    1on1 固有の処理（コンテキストウィンドウ適用・available_presets 構築）を行った後、
+    共通ファクトリ build_character_request に委譲する。
 
     Args:
         model_id: 使用するモデルIDを明示的に指定する場合に渡す。省略時はセッションの model_id を使う。
@@ -142,14 +145,10 @@ async def _build_chat_request(
 
     character = require_character(state.sqlite, char_name)
     preset = require_preset(state.sqlite, preset_name)
-    model_config = require_model_config(character, preset)
+    # プリセットがキャラクターで有効化されているか検証する（無効なら HTTPException 400）
+    require_model_config(character, preset)
 
     settings = state.sqlite.get_all_settings()
-
-    # 時刻認識
-    now = datetime.now()
-    ta = compute_time_awareness(settings, character.id, state.sqlite, now)
-    state.sqlite.set_setting(f"last_interaction_{character.id}", now.isoformat())
 
     # chronicle済みメッセージの保持上限をグローバル設定から取得（デフォルト: 10件）
     max_chronicled = int(settings.get("context_window_max_chronicled", 10))
@@ -164,33 +163,9 @@ async def _build_chat_request(
 
     available_presets = build_available_presets(character, preset, state.sqlite)
 
-    return ChatRequest(
-        character_id=character.id,
-        character_name=character.name,
-        provider=preset.provider,
-        model=preset.model_id,
-        messages=messages,
-        character_system_prompt=character.system_prompt_block1,
-        self_history=character.self_history,
-        relationship_state=character.relationship_state,
-        inner_narrative=character.inner_narrative,
-        provider_additional_instructions=model_config.get("additional_instructions", ""),
-        thinking_level=preset.thinking_level or "default",
-        settings=settings,
-        enable_time_awareness=ta.enabled,
-        current_time_str=ta.current_time_str,
-        time_since_last_interaction=ta.time_since_last_interaction,
-        session_id=session.id,
+    return build_character_request(
+        character, preset, messages, session.id, settings, state.sqlite,
         available_presets=available_presets,
-        current_preset_name=preset.name,
-        current_preset_id=preset.id,
-        self_reflection_mode=character.self_reflection_mode,
-        self_reflection_preset_id=character.self_reflection_preset_id or "",
-        self_reflection_n_turns=character.self_reflection_n_turns,
-        allowed_tools=getattr(character, "allowed_tools", None) or {},
-        timeout_seconds=preset.timeout_seconds,
-        farewell_config=getattr(character, "farewell_config", None),
-        farewell_relationship_status=getattr(character, "relationship_status", "active"),
     )
 
 
@@ -507,11 +482,11 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                         data = json.dumps({"type": "chunk", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
                 elif chunk_type == "angle_switched":
-                    effective_model_id = content
+                    effective_model_id = content["model_id"]
                     # Frontend が selectedModel を更新できるよう SSE で通知する。
                     # 通知しないと次ターン以降も古い model_id でリクエストされ、
                     # switch_angle の効果がそのターン限りで消えてしまう。
-                    data = json.dumps({"type": "angle_switched", "model_id": content}, ensure_ascii=False)
+                    data = json.dumps({"type": "angle_switched", "model_id": content["model_id"]}, ensure_ascii=False)
                     yield f"data: {data}\n\n"
         except Exception as e:
             err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)

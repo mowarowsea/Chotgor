@@ -569,8 +569,9 @@ class TestChatServiceExecuteStreamWithSwitch:
         assert "angle_switched" in event_types
 
         angle_switched_event = next(e for e in events if e[0] == "angle_switched")
-        assert "Alice" in angle_switched_event[1]
-        assert "fastModel" in angle_switched_event[1]
+        payload = angle_switched_event[1]
+        assert "Alice" in payload["model_id"]
+        assert "fastModel" in payload["preset_name"]
 
     @pytest.mark.asyncio
     async def test_execute_stream_switch_text_from_second_provider(self, monkeypatch):

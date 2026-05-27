@@ -65,7 +65,7 @@ export interface ChatMessage {
  * group_config には含まれない（システム設定 ``group_director_preset_id`` で一元管理）。
  */
 export interface GroupConfig {
-  participants: Array<{ char_name: string; preset_name: string }>;
+  participants: Array<{ char_name: string; preset_id: string; preset_name: string }>;
   max_auto_turns: number;
   turn_timeout_sec: number;
 }
@@ -82,6 +82,8 @@ export type GroupStreamEvent =
   | { type: "character_chunk"; character: string; content: string }
   /** DB保存完了（確定済みメッセージ） */
   | { type: "character_done"; character: string; message: ChatMessage }
+  /** キャラクターがプリセット（アングル）を切り替えた */
+  | { type: "character_angle_switched"; character: string; model_id: string; preset_id: string; preset_name: string }
   /** 司会エラー（手動再試行・手動指名で復帰可能） */
   | { type: "director_error"; message: string }
   | { type: "user_turn"; auto_turns_used: number }
