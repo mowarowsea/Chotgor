@@ -1,8 +1,6 @@
 """チャットセッション・メッセージ・画像 CRUD — SQLiteStore Mixin。"""
 
 from datetime import datetime
-from typing import Optional
-
 
 class ChatStoreMixin:
     """チャットセッション・メッセージ・添付画像の作成・取得・更新・削除を担う Mixin。"""
@@ -15,8 +13,8 @@ class ChatStoreMixin:
         model_id: str,
         title: str = "新しいチャット",
         session_type: str = "1on1",
-        group_config: Optional[str] = None,
-        afterglow_session_id: Optional[str] = None,
+        group_config: str | None = None,
+        afterglow_session_id: str | None = None,
     ):
         """チャットセッションを作成する。
 
@@ -94,12 +92,12 @@ class ChatStoreMixin:
         session_id: str,
         role: str,
         content: str,
-        reasoning: Optional[str] = None,
-        images: Optional[list] = None,
-        character_name: Optional[str] = None,
-        preset_name: Optional[str] = None,
+        reasoning: str | None = None,
+        images: list | None = None,
+        character_name: str | None = None,
+        preset_name: str | None = None,
         is_system_message: bool = False,
-        log_message_id: Optional[str] = None,
+        log_message_id: str | None = None,
     ):
         """チャットメッセージを作成する。
 
@@ -154,8 +152,8 @@ class ChatStoreMixin:
         return all_msgs[-(n_turns * 2):]
 
     def find_latest_session_for_character(
-        self, character_name: str, exclude_session_id: Optional[str] = None
-    ) -> Optional[str]:
+        self, character_name: str, exclude_session_id: str | None = None
+    ) -> str | None:
         """Afterglow用: 指定キャラクターの最新1on1セッションIDを返す。
 
         同キャラクターの新規セッション作成時に引き継ぎ元セッションを自動特定するために使用する。
@@ -282,7 +280,7 @@ class ChatStoreMixin:
         image_id: str,
         session_id: str,
         mime_type: str,
-        message_id: Optional[str] = None,
+        message_id: str | None = None,
     ):
         """添付画像レコードを作成する。"""
         with self.get_session() as session:

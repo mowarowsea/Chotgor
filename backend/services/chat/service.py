@@ -20,7 +20,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 _log = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ from backend.character_actions.switcher import Switcher
 from backend.character_actions.farewell_detector import FarewellDetector
 
 
-def extract_text_content(content: Union[str, list, None]) -> str:
+def extract_text_content(content: str | list | None) -> str:
     """メッセージの content (str or list) からプレーンテキストのみを抽出する。"""
     if not content:
         return ""
@@ -603,13 +603,13 @@ class ChatService:
 
         # 別れ検出: ストリーム完了後にバックグラウンドタスクとして起動する。
         # 結果はDBに保存し、次リクエスト時の already_exited チェックで検知される。
+        # farewell_config / farewell_relationship_status はリクエスト構築時にキャッシュ済みのため
+        # ここでは get_character() を呼ばない。
         if request.session_id:
-            char_for_farewell = self.memory_manager.sqlite.get_character(request.character_id)
             if (
-                char_for_farewell
-                and getattr(char_for_farewell, "farewell_config", None)
-                and getattr(char_for_farewell, "self_reflection_preset_id", None)
-                and getattr(char_for_farewell, "relationship_status", "active") != "estranged"
+                request.farewell_config
+                and request.self_reflection_preset_id
+                and request.farewell_relationship_status != "estranged"
             ):
                 farewell_messages = [*ctx.messages, {"role": "assistant", "content": clean_text}]
                 detector = FarewellDetector(self.memory_manager.sqlite)
@@ -619,8 +619,8 @@ class ChatService:
                         character_id=request.character_id,
                         character_name=request.character_name,
                         session_id=request.session_id,
-                        preset_id=char_for_farewell.self_reflection_preset_id,
-                        farewell_config=char_for_farewell.farewell_config,
+                        preset_id=request.self_reflection_preset_id,
+                        farewell_config=request.farewell_config,
                         messages=farewell_messages,
                         settings=request.settings,
                         vector_store=self.memory_manager.vector_store,

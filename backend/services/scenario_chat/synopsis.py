@@ -17,7 +17,7 @@ GM (LLM) が経緯を忘れ、存在しない過去を捏造してしまう問�
 """
 
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from backend.providers.registry import create_provider
 from backend.services.scenario_chat.context import format_history_for_gm
@@ -87,7 +87,7 @@ async def update_auto_synopsis(
     synopsis_preset_id: str,
     provider_factory: Callable[..., Any] = create_provider,
     narrator_name: str = "Narrator",
-) -> Optional[str]:
+) -> str | None:
     """既存 `existing_auto` と `new_turns` を統合し、全体を再蒸留した結果を返す。
 
     呼び出し元 (service.py) は本関数の戻り値（None でなければ）を

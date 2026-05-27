@@ -9,7 +9,7 @@ SQLite への debug_log_entries 書き込み、および標準 logging モジュ
 import json
 import logging as _logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 
 class ChotgorLogger:
@@ -94,7 +94,7 @@ class ChotgorLogger:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
 
-    def _raw_dir(self) -> Optional[str]:
+    def _raw_dir(self) -> str | None:
         """現在のリクエストの生ファイルフォルダパスを返す。
 
         CHOTGOR_DEBUG=1 が無効な場合は None を返す。

@@ -1,4 +1,4 @@
-"""Routine to identify and forget memories that have time-decayed below a threshold.
+"""時間経過で重要度が閾値を下回った記憶を特定して忘却するルーティン。
 
 forget バッチもキャラクターへの問い合わせ処理であり、Chronicle と同様に
 ask_character() / ask_character_with_tools() の共通インタフェースを使う。
@@ -10,8 +10,6 @@ emotion/body/relation 固定注入（Block 7）が 1on1 と同じ形で入る。
 
 import logging
 import re
-from typing import Optional
-
 from backend.lib.log_context import new_message_id, current_log_feature, current_log_target
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
@@ -46,7 +44,7 @@ async def run_forget_process(
     sqlite: SQLiteStore,
     settings: dict,
     threshold: float = 0.2,
-    ghost_model: Optional[str] = None,
+    ghost_model: str | None = None,
 ) -> dict:
     """Run forget process for a character.
 
@@ -176,7 +174,7 @@ async def run_forget_process(
             memory_manager.delete_inscribed_memory(m.id, character_id)
         else:
             kept_count += 1
-            # Touching it gives it a boost and prevents it from being forgotten soon.
+            # recall_inscribed_memory でアクセス日時を更新し、直近の忘却を防ぐ。
             sqlite.recall_inscribed_memory(m.id)
 
     logger.info(

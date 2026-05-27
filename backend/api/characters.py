@@ -1,10 +1,8 @@
-"""Character CRUD REST API."""
+"""キャラクター CRUD REST API。"""
 
 import base64
 import logging
 import uuid
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from backend.api.schemas import CharacterCreate, CharacterUpdate

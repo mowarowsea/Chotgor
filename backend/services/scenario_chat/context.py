@@ -18,7 +18,7 @@ GM への送信時に、`scenario_turns` 全件のうち直近 N ターン（ま
 """
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 
 # settings から読む既定値（main.py または settings UI で上書き可能）
@@ -51,7 +51,7 @@ def _coalesce_int(value: Any, fallback: int) -> int:
 
 def resolve_history_limits(
     scenario: Any,
-    settings: Optional[dict] = None,
+    settings: dict | None = None,
 ) -> tuple[int, int]:
     """シナリオごとの履歴切り出し上限を解決する。
 

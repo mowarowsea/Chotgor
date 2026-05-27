@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Protocol
+from typing import Protocol
 
 
 class EmbeddingFunction(Protocol):
@@ -147,7 +147,7 @@ def get_embedding_function(
     model: str,
     api_key: str,
     base_url: str = "http://localhost:7997",
-) -> Optional[EmbeddingFunction]:
+) -> EmbeddingFunction | None:
     """プロバイダー名から EmbeddingFunction を解決する。
 
     LanceStore は ``"default"`` を非サポート（None を返すと初期化エラーになる）。

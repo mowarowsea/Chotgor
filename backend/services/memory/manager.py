@@ -8,8 +8,6 @@ source of truth、LanceStore はベクトル + 検索インデックス。
 import logging
 import uuid
 from datetime import datetime
-from typing import Optional
-
 from backend.repositories.lance.store import LanceStore
 from backend.repositories.sqlite.store import SQLiteStore
 from backend.services.memory.decay import (
@@ -42,7 +40,7 @@ class InscribedMemoryManager:
     # 現役カテゴリ。これ以外は contextual と同じ速度で減衰させる
     _KNOWN_CATEGORIES = frozenset({"contextual", "semantic", "identity", "user"})
 
-    def calculate_decayed_score(self, memory, now: Optional[datetime] = None) -> float:
+    def calculate_decayed_score(self, memory, now: datetime | None = None) -> float:
         """記憶の時間減衰込み importance score を計算する。
 
         Importance ロジック:
@@ -87,7 +85,7 @@ class InscribedMemoryManager:
                 setattr(m, '_decayed_score', score)
                 candidates.append(m)
 
-        # Sort by score ascending (lowest score first)
+        # スコア昇順でソートする（最低スコア優先）
         candidates.sort(key=lambda x: getattr(x, '_decayed_score', 0))
         return candidates[:limit]
 
@@ -120,7 +118,7 @@ class InscribedMemoryManager:
         semantic_importance: float = 0.5,
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
-        source_preset_id: Optional[str] = None,
+        source_preset_id: str | None = None,
         force_insert: bool = False,
     ) -> str:
         """記憶を SQLite と LanceStore に書き込む。類似記憶があれば in-place 更新、なければ新規作成。
@@ -219,7 +217,7 @@ class InscribedMemoryManager:
         character_id: str,
         query: str,
         top_k: int = 5,
-        where: Optional[dict] = None,
+        where: dict | None = None,
     ) -> list[dict]:
         """類似度検索＋時間減衰リランクで記憶を想起する。
 
@@ -234,13 +232,13 @@ class InscribedMemoryManager:
             top_k: 返す最大件数。
             where: ベクトルストアの where フィルタ。recall_with_identity から使用。
         """
-        # Fetch more candidates for reranking
+        # リランク用に多めに候補を取得する
         fetch_k = top_k * 2
         results = self.vector_store.recall_inscribed_memory(query, character_id, fetch_k, where=where)
 
         now = datetime.now()
 
-        # Rerank and inject metadata
+        # リランクとメタデータ注入
         reranked = []
         for mem in results:
             mem_id = mem.get("id")
@@ -263,13 +261,13 @@ class InscribedMemoryManager:
                     )
                     continue
 
-                # Calculate True Decayed Score
+                # 真の減衰スコアを計算する
                 decayed_score = self.calculate_decayed_score(m, now)
 
                 # cosine distance: 0=identical, 2=opposite。distance を similarity に変換する
                 semantic_similarity = distance_to_similarity(mem.get("distance", 1.0))
 
-                # Hybrid score: Semantic Similarity + Decayed Score
+                # ハイブリッドスコア: 意味的類似度 + 減衰スコア
                 hybrid_score = (semantic_similarity * 0.5) + (decayed_score * 0.5)
 
                 mem["hybrid_score"] = hybrid_score
@@ -283,7 +281,7 @@ class InscribedMemoryManager:
             except Exception:
                 pass
 
-        # Sort by hybrid_score descending
+        # ハイブリッドスコア降順でソートする
         reranked.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
         final_results = reranked[:top_k]
 
@@ -479,7 +477,7 @@ class InscribedMemoryManager:
     def list_inscribed_memories(
         self,
         character_id: str,
-        category: Optional[str] = None,
+        category: str | None = None,
         include_deleted: bool = False,
         sort_by: str = "created_at",
     ) -> list[dict]:

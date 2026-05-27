@@ -15,8 +15,6 @@
 """
 
 from datetime import datetime
-from typing import Optional
-
 
 class ScenarioChatStoreMixin:
     """シナリオテンプレ・セッション・NPC・ターンの作成・取得・更新・削除を担う Mixin。"""
@@ -30,11 +28,11 @@ class ScenarioChatStoreMixin:
         scenario_id: str,
         title: str,
         user_alias: str,
-        scenario: Optional[str] = None,
-        intro: Optional[str] = None,
-        history_max_turns: Optional[int] = None,
-        history_max_chars: Optional[int] = None,
-        custom_system_prompt: Optional[str] = None,
+        scenario: str | None = None,
+        intro: str | None = None,
+        history_max_turns: int | None = None,
+        history_max_chars: int | None = None,
+        custom_system_prompt: str | None = None,
     ):
         """シナリオテンプレートを新規作成する。
 
@@ -151,8 +149,8 @@ class ScenarioChatStoreMixin:
         npc_id: str,
         scenario_id: str,
         name: str,
-        description: Optional[str] = None,
-        image_data: Optional[str] = None,
+        description: str | None = None,
+        image_data: str | None = None,
     ):
         """シナリオテンプレート内 NPC を作成する。
 
@@ -301,7 +299,7 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def get_scenario_session_synopsis(self, session_id: str) -> Optional[dict]:
+    def get_scenario_session_synopsis(self, session_id: str) -> dict | None:
         """セッションのあらすじ（auto / manual / last_turn_index）を取得する。
 
         Returns:
@@ -325,10 +323,10 @@ class ScenarioChatStoreMixin:
         self,
         session_id: str,
         *,
-        auto: Optional[str] = None,
-        manual: Optional[str] = None,
-        last_turn_index: Optional[int] = None,
-    ) -> Optional[dict]:
+        auto: str | None = None,
+        manual: str | None = None,
+        last_turn_index: int | None = None,
+    ) -> dict | None:
         """セッションのあらすじを部分更新する。
 
         引数で None を渡したフィールドは触らない。auto を None にすれば
@@ -388,9 +386,9 @@ class ScenarioChatStoreMixin:
         speaker_type: str,
         speaker_name: str,
         content: str,
-        speaker_id: Optional[str] = None,
-        raw_response: Optional[str] = None,
-        log_request_id: Optional[str] = None,
+        speaker_id: str | None = None,
+        raw_response: str | None = None,
+        log_request_id: str | None = None,
     ):
         """発話ターンを作成する。
 

@@ -15,7 +15,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from backend.lib.log_context import current_log_feature
 from backend.providers.registry import create_provider
@@ -172,7 +172,7 @@ def _format_thresholds(thresholds: dict) -> str:
     return "\n".join(lines) if lines else "  （閾値未設定）"
 
 
-def _parse_judge_response(response_text: str) -> Optional[dict]:
+def _parse_judge_response(response_text: str) -> dict | None:
     """judge LLM のレスポンスから JSON を抽出・パースする。
 
     コードブロック（```json ... ```）に包まれていても対応する。
@@ -224,7 +224,7 @@ class FarewellDetector:
         farewell_config: dict,
         messages: list[dict],
         settings: dict,
-    ) -> Optional[FarewellResult]:
+    ) -> FarewellResult | None:
         """感情状態を判定し、退席すべきか返す。
 
         毎ターン後にバックグラウンドで呼ばれる。

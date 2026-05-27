@@ -26,7 +26,7 @@ CLAUDE.md 準拠の注意:
     auto と矛盾する場合は manual を優先するよう文言で誘導する。
 """
 
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 
 def _block(title: str, body: str) -> str:
@@ -66,7 +66,7 @@ def build_gm_system_prompt(
     scenario: Any,
     npcs: Iterable[Any],
     history_text: str,
-    user_message: Optional[str] = None,
+    user_message: str | None = None,
     narrator_name: str = "Narrator",
     auto_advance: bool = False,
     synopsis_auto: str = "",

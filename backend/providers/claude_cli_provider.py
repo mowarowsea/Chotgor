@@ -1,12 +1,12 @@
-"""Claude Code CLI provider.
+"""Claude Code CLI プロバイダー。
 
-Calls the `claude` CLI as a subprocess using asyncio.to_thread (Windows-safe).
+`claude` CLI を asyncio.to_thread 経由のサブプロセスとして呼び出す（Windows 対応）。
 
-Public helpers
---------------
+パブリックヘルパー
+------------------
 invoke_claude_cli(system_prompt, input_text) -> str
-    Generic single-turn Claude CLI call shared by digest.py / forget.py.
-    Raises RuntimeError on non-zero exit.
+    digest.py / forget.py が共用するシングルターン CLI 呼び出し。
+    終了コードが非ゼロの場合は RuntimeError を送出する。
 """
 
 import asyncio
@@ -66,9 +66,9 @@ def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default"
         args.extend(["--effort", effort])
     return args
 
-# Env vars that must be stripped before spawning the Claude subprocess.
-# CLAUDECODE  : prevents nested-session error.
-# ANTHROPIC_API_KEY : forces OAuth fallback instead of using a possibly invalid key.
+# Claude サブプロセス起動前に除去すべき環境変数。
+# CLAUDECODE          : ネストされたセッションエラーを防ぐ。
+# ANTHROPIC_API_KEY   : 無効なキーによるOAuth迂回を防ぎ、OAuth認証を優先させる。
 _CLAUDE_ENV_EXCLUDES = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
 
 

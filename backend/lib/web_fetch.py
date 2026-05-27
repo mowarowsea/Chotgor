@@ -1,4 +1,4 @@
-"""URL detection and web content fetching.
+"""URLの検出とWebコンテンツ取得ユーティリティ。
 
 ユーザーメッセージ内のURLを検出し、内容を取得してLLMのコンテキストに注入する。
 """

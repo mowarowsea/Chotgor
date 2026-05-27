@@ -29,10 +29,12 @@ Chronicle は通常チャットと同じ ask_character() / build_system_prompt()
     （操作対象データ用）の両方に現れるが、役割が異なるため重複は許容する。
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from backend.lib.log_context import new_message_id, current_log_feature, current_log_target
 from backend.repositories.sqlite.store import SQLiteStore
@@ -286,7 +288,7 @@ def _apply_distillation(
     character_id: str,
     parsed: dict,
     sqlite: SQLiteStore,
-    memory_manager: Optional[InscribedMemoryManager],
+    memory_manager: InscribedMemoryManager | None,
 ) -> dict:
     """蒸留結果（inscribe / carve）を長期記憶・inner_narrative へ反映する。
 
@@ -339,7 +341,7 @@ def _apply_distillation(
 async def _check_estrangement(
     char,
     sqlite: SQLiteStore,
-    vector_store: Optional["LanceStore"],
+    vector_store: "LanceStore" | None,
 ) -> None:
     """疎遠化条件を確認し、閾値超過で relationship_status を "estranged" に更新する。
 
@@ -383,9 +385,9 @@ async def run_chronicle(
     sqlite: SQLiteStore,
     target_date: str | None = None,   # "YYYY-MM-DD" — 省略時は chronicled_at IS NULL で選択
     settings: dict | None = None,
-    vector_store: Optional["LanceStore"] = None,
-    memory_manager: Optional[InscribedMemoryManager] = None,
-    working_memory_manager: Optional[WorkingMemoryManager] = None,
+    vector_store: "LanceStore" | None = None,
+    memory_manager: InscribedMemoryManager | None = None,
+    working_memory_manager: WorkingMemoryManager | None = None,
 ) -> dict:
     """chronicle 処理を実行する（ワーキングメモリの棚卸し＋蒸留）。
 
@@ -519,9 +521,9 @@ async def run_chronicle(
 
 async def run_pending_chronicles(
     sqlite: SQLiteStore,
-    vector_store: Optional["LanceStore"] = None,
-    memory_manager: Optional[InscribedMemoryManager] = None,
-    working_memory_manager: Optional[WorkingMemoryManager] = None,
+    vector_store: "LanceStore" | None = None,
+    memory_manager: InscribedMemoryManager | None = None,
+    working_memory_manager: WorkingMemoryManager | None = None,
 ) -> None:
     """全キャラクターに対して chronicle を実行する。
 

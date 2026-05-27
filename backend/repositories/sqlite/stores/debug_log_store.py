@@ -9,8 +9,6 @@
 import json
 import logging
 from datetime import datetime
-from typing import Optional
-
 _log = logging.getLogger(__name__)
 
 
@@ -22,17 +20,17 @@ class DebugLogStoreMixin:
         *,
         request_id: str,
         source_type: str,
-        session_id: Optional[str] = None,
-        turn_sequence: Optional[int] = None,
-        target: Optional[str] = None,
-        preset: Optional[str] = None,
-        user_message: Optional[str] = None,
-        response: Optional[str] = None,
-        reasoning: Optional[str] = None,
-        mcp_calls_json: Optional[str] = None,
+        session_id: str | None = None,
+        turn_sequence: int | None = None,
+        target: str | None = None,
+        preset: str | None = None,
+        user_message: str | None = None,
+        response: str | None = None,
+        reasoning: str | None = None,
+        mcp_calls_json: str | None = None,
         has_error: bool = False,
-        warn_reason: Optional[str] = None,
-        raw_dir: Optional[str] = None,
+        warn_reason: str | None = None,
+        raw_dir: str | None = None,
     ) -> int:
         """デバッグログエントリを新規 INSERT して返した主キー id を返す。
 
@@ -82,11 +80,11 @@ class DebugLogStoreMixin:
         self,
         entry_id: int,
         *,
-        response: Optional[str] = None,
-        reasoning: Optional[str] = None,
-        mcp_calls_json: Optional[str] = None,
-        has_error: Optional[bool] = None,
-        warn_reason: Optional[str] = None,
+        response: str | None = None,
+        reasoning: str | None = None,
+        mcp_calls_json: str | None = None,
+        has_error: bool | None = None,
+        warn_reason: str | None = None,
     ) -> None:
         """指定 id のデバッグログエントリを部分更新する。
 
@@ -170,7 +168,7 @@ class DebugLogStoreMixin:
             return result
 
     def get_debug_log_request_ids_paged(
-        self, page: int = 1, per_page: int = 50, request_type: Optional[str] = None
+        self, page: int = 1, per_page: int = 50, request_type: str | None = None
     ) -> tuple[list[str], int]:
         """ユニークな request_id を最新順でページネーションして返す。
 

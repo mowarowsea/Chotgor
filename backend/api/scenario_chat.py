@@ -30,8 +30,6 @@
 
 import json
 import uuid
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -71,23 +69,23 @@ class ScenarioCreate(BaseModel):
 
     title: str = Field(min_length=1)
     user_alias: str = Field(min_length=1)
-    scenario: Optional[str] = None
-    intro: Optional[str] = None
-    history_max_turns: Optional[int] = None
-    history_max_chars: Optional[int] = None
-    custom_system_prompt: Optional[str] = None
+    scenario: str | None = None
+    intro: str | None = None
+    history_max_turns: int | None = None
+    history_max_chars: int | None = None
+    custom_system_prompt: str | None = None
 
 
 class ScenarioUpdate(BaseModel):
     """シナリオテンプレート更新リクエスト（部分更新）。"""
 
-    title: Optional[str] = None
-    user_alias: Optional[str] = None
-    scenario: Optional[str] = None
-    intro: Optional[str] = None
-    history_max_turns: Optional[int] = None
-    history_max_chars: Optional[int] = None
-    custom_system_prompt: Optional[str] = None
+    title: str | None = None
+    user_alias: str | None = None
+    scenario: str | None = None
+    intro: str | None = None
+    history_max_turns: int | None = None
+    history_max_chars: int | None = None
+    custom_system_prompt: str | None = None
 
 
 class NpcCreate(BaseModel):
@@ -98,16 +96,16 @@ class NpcCreate(BaseModel):
     """
 
     name: str = Field(min_length=1)
-    description: Optional[str] = None
-    image_data: Optional[str] = None
+    description: str | None = None
+    image_data: str | None = None
 
 
 class NpcUpdate(BaseModel):
     """NPC 更新リクエスト（部分更新）。"""
 
-    name: Optional[str] = None
-    description: Optional[str] = None
-    image_data: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    image_data: str | None = None
 
 
 class SessionStart(BaseModel):
@@ -122,16 +120,16 @@ class SessionStart(BaseModel):
     scenario_id: str = Field(min_length=1)
     gm_preset_id: str = Field(min_length=1)
     synopsis_preset_id: str = Field(min_length=1)
-    title: Optional[str] = None  # 省略時はシナリオ title を使う
+    title: str | None = None  # 省略時はシナリオ title を使う
 
 
 class SessionUpdate(BaseModel):
     """プレイセッション更新リクエスト（タイトル / status / GM モデル / あらすじモデル）。"""
 
-    title: Optional[str] = None
-    status: Optional[str] = None
-    gm_preset_id: Optional[str] = None
-    synopsis_preset_id: Optional[str] = None
+    title: str | None = None
+    status: str | None = None
+    gm_preset_id: str | None = None
+    synopsis_preset_id: str | None = None
 
 
 class SynopsisUpdate(BaseModel):
@@ -142,8 +140,8 @@ class SynopsisUpdate(BaseModel):
     削除・修正するため）。
     """
 
-    auto: Optional[str] = None
-    manual: Optional[str] = None
+    auto: str | None = None
+    manual: str | None = None
 
 
 class StreamRequest(BaseModel):
@@ -159,7 +157,7 @@ class StreamRequest(BaseModel):
 
     content: str = ""
     auto_advance: bool = False
-    regenerate_request_id: Optional[str] = None
+    regenerate_request_id: str | None = None
 
 
 # ─── プリセット一覧（GM プリセット選択用） ──────────────────────────────────

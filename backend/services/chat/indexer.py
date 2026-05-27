@@ -12,8 +12,6 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import Optional
-
 logger = logging.getLogger(__name__)
 
 # チャット履歴インデックス書き込みのリトライ設定
@@ -24,7 +22,7 @@ _CHAT_INDEX_RETRY_INTERVAL_SEC = 30.0
 def build_chat_doc_and_metadata(
     message,
     user_name: str = "ユーザ",
-) -> Optional[tuple[str, dict]]:
+) -> tuple[str, dict] | None:
     """メッセージから LanceDB upsert 用の (document, metadata) を構築する。
 
     indexer（通常書き込み）と reindex_service（embedding 再構築）の双方から

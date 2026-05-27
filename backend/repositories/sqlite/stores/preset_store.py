@@ -1,7 +1,5 @@
 """LLMモデルプリセット CRUD — SQLiteStore Mixin。"""
 
-from typing import Optional
-
 
 class PresetStoreMixin:
     """LLMモデルプリセットの作成・取得・更新・削除を担う Mixin。"""

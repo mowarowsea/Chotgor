@@ -6,7 +6,7 @@
 
 import base64
 import os
-from typing import Any, Union
+from typing import Any
 
 from backend.services.chat.models import Message
 
@@ -100,7 +100,7 @@ def build_1on1_history(
             messages.append(Message(role="assistant", content=msg.content))
         else:
             image_ids = list(getattr(msg, "images", None) or [])
-            content: Union[str, list] = build_message_content(
+            content: str | list = build_message_content(
                 msg.content, image_ids, sqlite, uploads_dir
             )
             messages.append(Message(role="user", content=content))

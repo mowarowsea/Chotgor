@@ -7,8 +7,6 @@ SELF_DRIFT: chat_drifts.py
 
 import os
 import uuid
-from typing import List
-
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
@@ -19,7 +17,7 @@ router = APIRouter(prefix="/api/chat", tags=["chat_images"])
 async def upload_images(
     request: Request,
     session_id: str,
-    files: List[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),
 ):
     """複数の画像ファイルをアップロードしてセッションに紐づける。
 

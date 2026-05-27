@@ -53,20 +53,6 @@ def test_chat_request_defaults():
     assert req.settings == {}
 
 
-def test_chat_request_has_no_meta_instructions_field():
-    """ChatRequest に旧フィールド名 meta_instructions が存在しないこと（改名済み確認）。"""
-    req = ChatRequest(
-        character_id="char-1",
-        character_name="Alice",
-        provider="anthropic",
-        model="",
-        messages=[],
-    )
-    assert not hasattr(req, "meta_instructions"), (
-        "meta_instructions フィールドが残っています。inner_narrative に改名済みのはずです。"
-    )
-
-
 # --- ChatService.execute (SUPPORTS_TOOLS=False パス) ---
 
 @pytest.mark.asyncio

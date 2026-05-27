@@ -5,8 +5,6 @@
 """
 
 from datetime import datetime
-from typing import Optional
-
 
 class InscribedMemoryStoreMixin:
     """保存記憶レコードの作成・取得・更新・削除を担う Mixin。"""
@@ -21,7 +19,7 @@ class InscribedMemoryStoreMixin:
         semantic_importance: float = 0.5,
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
-        source_preset_id: Optional[str] = None,
+        source_preset_id: str | None = None,
     ):
         """保存記憶レコードを新規作成する。"""
         with self.get_session() as session:
@@ -51,7 +49,7 @@ class InscribedMemoryStoreMixin:
     def list_inscribed_memories(
         self,
         character_id: str,
-        category: Optional[str] = None,
+        category: str | None = None,
         include_deleted: bool = False,
         sort_by: str = "created_at",
     ) -> list:

@@ -22,8 +22,6 @@ task/topic のみ heat = importance × 時間減衰 × relevance でスコアリ
 import logging
 import uuid
 from datetime import datetime
-from typing import Optional
-
 from backend.repositories.lance.store import LanceStore
 from backend.repositories.sqlite.store import SQLiteStore
 from backend.services.memory.decay import (
@@ -143,8 +141,8 @@ class WorkingMemoryManager:
         summary: str,
         atmosphere_tag: str = "",
         importance: float = 0.5,
-        relation_target: Optional[str] = None,
-        content: Optional[str] = None,
+        relation_target: str | None = None,
+        content: str | None = None,
     ) -> dict:
         """ワーキングメモリスレッドを新規作成する。
 
@@ -233,9 +231,9 @@ class WorkingMemoryManager:
     def update_thread(
         self,
         thread_id: str,
-        summary: Optional[str] = None,
-        atmosphere_tag: Optional[str] = None,
-        importance: Optional[float] = None,
+        summary: str | None = None,
+        atmosphere_tag: str | None = None,
+        importance: float | None = None,
     ) -> dict:
         """スレッドの summary / atmosphere_tag / importance を部分更新する。
 
@@ -295,7 +293,7 @@ class WorkingMemoryManager:
     def get_fixed_threads(
         self,
         character_id: str,
-        participants: Optional[list[str]] = None,
+        participants: list[str] | None = None,
     ) -> list[dict]:
         """固定注入対象（emotion / body / relation）のスレッドを返す。
 
@@ -320,7 +318,7 @@ class WorkingMemoryManager:
             result.append(self._thread_to_dict(t, include_latest_post=True))
         return result
 
-    def get_thread_detail(self, thread_id: str) -> Optional[dict]:
+    def get_thread_detail(self, thread_id: str) -> dict | None:
         """スレッド1件＋全ポストを dict で返す（open_working_memory_thread ツール用）。
 
         Returns:
@@ -334,8 +332,8 @@ class WorkingMemoryManager:
     def list_threads_by_type(
         self,
         character_id: str,
-        type: Optional[str] = None,
-        is_open: Optional[bool] = None,
+        type: str | None = None,
+        is_open: bool | None = None,
     ) -> list[dict]:
         """type / is_open で絞り込んだスレッド一覧を返す（Chronicle・UI 用）。"""
         threads = self.sqlite.list_working_memory_threads(character_id, type=type, is_open=is_open)

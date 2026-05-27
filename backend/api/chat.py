@@ -11,8 +11,6 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
-from typing import List, Optional, Union
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -85,7 +83,7 @@ class SessionCreate(BaseModel):
     """
 
     model_id: str       # "{char_name}@{preset_name}"
-    title: Optional[str] = None
+    title: str | None = None
     afterglow: bool = False
 
 
@@ -99,8 +97,8 @@ class MessageCreate(BaseModel):
     """メッセージ送信リクエスト。"""
 
     content: str
-    image_ids: Optional[List[str]] = None
-    model_id: Optional[str] = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
+    image_ids: list[str] | None = None
+    model_id: str | None = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
 
 
 def _prepend_afterglow(state, session, history_messages: list) -> list:
@@ -129,8 +127,8 @@ async def _build_chat_request(
     request: Request,
     session,
     history_messages: list,
-    user_content: Union[str, list],
-    model_id: Optional[str] = None,
+    user_content: str | list,
+    model_id: str | None = None,
 ) -> ChatRequest:
     """セッション情報からChatRequestを構築する内部ヘルパー。
 
@@ -191,6 +189,8 @@ async def _build_chat_request(
         self_reflection_n_turns=character.self_reflection_n_turns,
         allowed_tools=getattr(character, "allowed_tools", None) or {},
         timeout_seconds=preset.timeout_seconds,
+        farewell_config=getattr(character, "farewell_config", None),
+        farewell_relationship_status=getattr(character, "relationship_status", "active"),
     )
 
 
@@ -227,7 +227,7 @@ async def create_session(request: Request, body: SessionCreate):
     title = body.title or "新しいチャット"
 
     # Afterglow: 同キャラの最新セッションを特定する
-    afterglow_session_id: Optional[str] = None
+    afterglow_session_id: str | None = None
     if body.afterglow:
         char_name = body.model_id.split("@")[0] if "@" in body.model_id else body.model_id
         afterglow_session_id = request.app.state.sqlite.find_latest_session_for_character(
@@ -465,7 +465,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     else:
         effective_title = session.title
 
-    user_content: Union[str, list] = build_message_content(
+    user_content: str | list = build_message_content(
         body.content, body.image_ids or [], state.sqlite, state.uploads_dir
     )
 

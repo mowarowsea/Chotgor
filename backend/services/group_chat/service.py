@@ -16,7 +16,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator
 
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.chat.models import ChatRequest, Message
@@ -147,6 +147,8 @@ async def _stream_character_response(
         current_preset_id=preset.id,
         allowed_tools=getattr(char, "allowed_tools", None) or {},
         timeout_seconds=preset.timeout_seconds,
+        farewell_config=getattr(char, "farewell_config", None),
+        farewell_relationship_status=getattr(char, "relationship_status", "active"),
     )
 
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする

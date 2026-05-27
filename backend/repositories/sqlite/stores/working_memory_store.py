@@ -1,8 +1,6 @@
 """ワーキングメモリ（短期記憶スレッド・ポスト）CRUD — SQLiteStore Mixin。"""
 
 from datetime import datetime
-from typing import Optional
-
 
 class WorkingMemoryStoreMixin:
     """WorkingMemoryThread / WorkingMemoryPost の作成・取得・更新・削除を担う Mixin。
@@ -24,7 +22,7 @@ class WorkingMemoryStoreMixin:
         summary: str = "",
         atmosphere_tag: str = "",
         importance: float = 0.5,
-        relation_target: Optional[str] = None,
+        relation_target: str | None = None,
     ):
         """ワーキングメモリスレッドを新規作成する。"""
         with self.get_session() as session:
@@ -55,8 +53,8 @@ class WorkingMemoryStoreMixin:
     def list_working_memory_threads(
         self,
         character_id: str,
-        type: Optional[str] = None,
-        is_open: Optional[bool] = None,
+        type: str | None = None,
+        is_open: bool | None = None,
     ) -> list:
         """キャラクターのスレッド一覧を返す（updated_at 降順）。
 
@@ -93,10 +91,10 @@ class WorkingMemoryStoreMixin:
     def update_working_memory_thread(
         self,
         thread_id: str,
-        summary: Optional[str] = None,
-        atmosphere_tag: Optional[str] = None,
-        importance: Optional[float] = None,
-        is_open: Optional[bool] = None,
+        summary: str | None = None,
+        atmosphere_tag: str | None = None,
+        importance: float | None = None,
+        is_open: bool | None = None,
         touch: bool = False,
     ) -> bool:
         """スレッドのフィールドを部分更新する。None の引数は変更しない。

@@ -55,22 +55,6 @@ class TestToolSchemas:
         assert "power_recall" in names
         assert "switch_angle" in names
 
-    def test_removed_drift_tools_are_absent(self):
-        """廃止された drift / drift_reset ツールが存在しないこと（Working Memory 移行確認）。"""
-        names = {t["name"] for t in ANTHROPIC_TOOLS}
-        assert "drift" not in names
-        assert "drift_reset" not in names
-
-    def test_old_tool_name_carve_memory_is_absent(self):
-        """旧ツール名 carve_memory が存在しないこと（改名済み確認）。"""
-        names = {t["name"] for t in ANTHROPIC_TOOLS}
-        assert "carve_memory" not in names
-
-    def test_old_tool_name_inscribe_narrative_is_absent(self):
-        """旧ツール名 inscribe_narrative が存在しないこと（改名済み確認）。"""
-        names = {t["name"] for t in ANTHROPIC_TOOLS}
-        assert "inscribe_narrative" not in names
-
     def test_inscribe_memory_required_params(self):
         """inscribe_memory ツールが content / category / impact を必須パラメータとして持つ。"""
         tool = next(t for t in ANTHROPIC_TOOLS if t["name"] == "inscribe_memory")

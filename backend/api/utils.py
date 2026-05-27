@@ -5,8 +5,6 @@ session_to_dict / message_to_dict / char_to_dict を一元管理し、各エン�
 """
 
 from datetime import datetime
-from typing import Optional
-
 from backend.services.chat.content import build_1on1_history, build_message_content
 from backend.services.memory.format import format_recalled_memories
 
@@ -22,7 +20,7 @@ __all__ = [
 ]
 
 
-def fmt_dt(dt: Optional[datetime]) -> Optional[str]:
+def fmt_dt(dt: datetime | None) -> str | None:
     """datetime を ISO 形式文字列に変換する。None の場合は None を返す。
 
     21箇所に散在していた `dt.isoformat() if dt else None` パターンを集約。

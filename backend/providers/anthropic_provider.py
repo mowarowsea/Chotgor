@@ -1,4 +1,4 @@
-"""Anthropic API provider (direct API, not CLI)。"""
+"""Anthropic API プロバイダー（direct API、CLI 非使用）。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
-# thinking_level → budget_tokens (for 4.5 and older models)
+# thinking_level → budget_tokens（4.5以前のモデル向け）
 _BUDGET_TOKENS = {
     "low": 1024,
     "medium": 5000,
@@ -101,7 +101,7 @@ class AnthropicProvider(BaseLLMProvider):
             self._log_request(params)
             response = client.messages.create(**params)
             self._log_response(response.model_dump())
-            # Filter out thinking blocks; return only text blocks
+            # thinking ブロックを除外してテキストブロックのみ返す
             return "".join(b.text for b in response.content if b.type == "text")
 
         try:

@@ -23,8 +23,6 @@ LLM (GM) からのストリーム出力を逐次的に消費しつつ、`@話者
 """
 
 from dataclasses import dataclass
-from typing import Optional
-
 
 @dataclass
 class UtteranceDelta:
@@ -40,7 +38,7 @@ class UtteranceDelta:
     """
 
     speaker_type: str
-    speaker_id: Optional[str]
+    speaker_id: str | None
     speaker_name: str
     content_delta: str
     is_speaker_change: bool
@@ -73,7 +71,7 @@ class ScenarioChatParser:
 
     def __init__(
         self,
-        known_npc_names: Optional[dict[str, str]] = None,
+        known_npc_names: dict[str, str] | None = None,
         user_alias: str = "ユーザ",
         narrator_name: str = "Narrator",
     ) -> None:
@@ -92,7 +90,7 @@ class ScenarioChatParser:
         self._buffer: str = ""
         # 現在の話者状態。初期値は Narrator（行頭`@`なしのテキストは Narrator に吸収）。
         self._cur_type: str = "narrator"
-        self._cur_id: Optional[str] = None
+        self._cur_id: str | None = None
         self._cur_name: str = self._narrator_name
         self._cur_is_known: bool = True
         # ユーザ代弁ブロック中は出力を捨てる。
@@ -295,7 +293,7 @@ class ScenarioChatParser:
             self._cur_is_known = False
         self._emitted_for_current_speaker = False
 
-    def _emit_text(self, text: str) -> Optional[UtteranceDelta]:
+    def _emit_text(self, text: str) -> UtteranceDelta | None:
         """現在話者として本文 delta を発行する。空文字や suppress 中は None。"""
         if not text:
             return None

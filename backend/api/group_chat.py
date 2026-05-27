@@ -7,8 +7,6 @@
 import asyncio
 import json
 import uuid
-from typing import List, Optional
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -49,7 +47,7 @@ class GroupSessionCreate(BaseModel):
     participants: list[ParticipantModel] = Field(min_length=2)
     max_auto_turns: int = Field(default=3, ge=1, le=10)
     turn_timeout_sec: int = Field(default=30, ge=10, le=120)
-    title: Optional[str] = None
+    title: str | None = None
 
 
 class GroupMessageCreate(BaseModel):
@@ -64,9 +62,9 @@ class GroupMessageCreate(BaseModel):
     """
 
     content: str
-    image_ids: Optional[List[str]] = None
+    image_ids: list[str] | None = None
     skip: bool = False
-    target_character: Optional[str] = None
+    target_character: str | None = None
 
 
 # --- エンドポイント ---

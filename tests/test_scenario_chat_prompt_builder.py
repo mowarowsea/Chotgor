@@ -15,8 +15,6 @@ backend.services.scenario_chat.prompt_builder.build_gm_system_prompt() を検証
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
-
 from backend.services.scenario_chat.prompt_builder import build_gm_system_prompt
 
 
@@ -28,7 +26,7 @@ class FakeSession:
     """ScenarioSession 風のダミーオブジェクト。"""
 
     user_alias: str = "プレイヤー"
-    scenario: Optional[str] = None
+    scenario: str | None = None
 
 
 @dataclass
@@ -36,8 +34,8 @@ class FakeNpc:
     """ScenarioNpc 風のダミーオブジェクト。"""
 
     name: str
-    description: Optional[str] = None
-    image_data: Optional[str] = None
+    description: str | None = None
+    image_data: str | None = None
 
 
 # ─── 基本構造 ────────────────────────────────────────────────────────────────

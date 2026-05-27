@@ -1,4 +1,4 @@
-"""Chotgor backend — FastAPI application entry point."""
+"""Chotgor バックエンド — FastAPI アプリケーションエントリーポイント。"""
 
 import asyncio
 import logging
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
     _log = logging.getLogger(__name__)
 
-    # Startup: initialize stores
+    # 起動時: ストアを初期化する
     os.makedirs(os.path.dirname(os.path.abspath(SQLITE_DB_PATH)), exist_ok=True)
     os.makedirs(UPLOADS_DIR, exist_ok=True)
 
@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.uploads_dir = UPLOADS_DIR
 
-    # Seed optional Tavily key from environment if not already set
+    # 環境変数から Tavily API キーを設定に反映する（未設定時のみ）
     if not sqlite.get_setting("tavily_api_key"):
         env_key = os.getenv("TAVILY_API_KEY", "")
         if env_key:
@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI):
     if not sqlite.get_setting("claude_model"):
         sqlite.set_setting("claude_model", os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"))
 
-    # Initialize UI templates
+    # UI テンプレートを初期化する
     from fastapi.templating import Jinja2Templates
 
     ui_module.templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -179,11 +179,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
+# 静的ファイルをマウントする
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Include routers
+# ルーターをアプリへ登録する
 app.include_router(openai_router.router)
 app.include_router(characters.router)
 app.include_router(inscribed_memories.router)

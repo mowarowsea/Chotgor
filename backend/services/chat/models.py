@@ -1,13 +1,11 @@
 """フロントエンド非依存のドメインモデル。"""
 
 from dataclasses import dataclass, field
-from typing import Union
-
 
 @dataclass
 class Message:
     role: str                          # "user" | "system" | "assistant"（※ API 仕様上の呼称。内部ではキャラクターターンとして扱う）
-    content: Union[str, list, None]
+    content: str | list | None
 
 
 @dataclass
@@ -57,3 +55,7 @@ class ChatRequest:
     # プロバイダーAPIリクエストのタイムアウト秒数。プリセット単位で設定可能。
     # 現状は OllamaProvider のみが参照する。0 以下は無効として扱われ、各プロバイダー側でデフォルト値が使われる。
     timeout_seconds: int = 300
+    # 別れ検出用: _build_chat_request でキャラクターから一度だけ取得してサービス層に渡す。
+    # ストリーム完了後の get_character() 再クエリを省略するためのキャッシュ。
+    farewell_config: dict | None = None
+    farewell_relationship_status: str = "active"

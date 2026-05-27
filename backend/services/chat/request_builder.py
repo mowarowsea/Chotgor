@@ -1,4 +1,4 @@
-"""System prompt builder for Chotgor characters.
+"""Chotgor キャラクター向けシステムプロンプトビルダー。
 
 システムプロンプトを以下の順で構築する:
   Block 1:  キャラクター設定（何者かを確立）
@@ -19,8 +19,6 @@ Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配
   4. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（ワーキングメモリ操作・ちょくちょく）
   5. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
 """
-
-from typing import Optional
 
 from backend.character_actions.recaller import POWER_RECALL_TAG_GUIDE, POWER_RECALL_TOOLS_HINT
 from backend.character_actions.carver import (
@@ -132,7 +130,7 @@ def _build_switch_angle_block(
 
 def _build_chotgor_block(
     use_tools: bool,
-    available_presets: Optional[list[dict]],
+    available_presets: list[dict] | None,
     current_preset_name: str,
     inner_narrative_len: int = 0,
 ) -> str:
@@ -181,19 +179,19 @@ def _build_chotgor_block(
 
 def build_system_prompt(
     character_system_prompt: str,
-    recalled_memories: Optional[list[dict]] = None,
-    recalled_identity_memories: Optional[list[dict]] = None,
-    fetched_contents: Optional[list[dict]] = None,
+    recalled_memories: list[dict] | None = None,
+    recalled_identity_memories: list[dict] | None = None,
+    fetched_contents: list[dict] | None = None,
     inner_narrative: str = "",
     provider_additional_instructions: str = "",
     enable_time_awareness: bool = False,
-    current_time_str: Optional[str] = None,
-    time_since_last_interaction: Optional[str] = None,
-    wm_all_threads: Optional[list[dict]] = None,
-    wm_fixed_threads: Optional[list[dict]] = None,
-    wm_recalled_threads: Optional[list[dict]] = None,
+    current_time_str: str | None = None,
+    time_since_last_interaction: str | None = None,
+    wm_all_threads: list[dict] | None = None,
+    wm_fixed_threads: list[dict] | None = None,
+    wm_recalled_threads: list[dict] | None = None,
     use_tools: bool = False,
-    available_presets: Optional[list[dict]] = None,
+    available_presets: list[dict] | None = None,
     current_preset_name: str = "",
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。

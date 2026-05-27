@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from backend.providers.openai_provider import OpenAIProvider
 
-# xAI has no "medium" reasoning level; map it to "low"
+# xAI に "medium" 推論レベルはないため "low" にマップする
 _XAI_REASONING = {
     "low": "low",
     "medium": "low",

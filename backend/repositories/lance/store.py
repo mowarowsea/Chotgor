@@ -33,8 +33,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Optional
-
 import lancedb
 import pyarrow as pa
 
@@ -184,7 +182,7 @@ class LanceStore:
             )
 
         # vector 次元は遅延決定する。既存テーブルがあれば open 時に schema から読む。
-        self._vector_dim: Optional[int] = None
+        self._vector_dim: int | None = None
 
         # テーブル作成時の dim 決定 race condition 回避用のロック。
         self._write_lock = threading.RLock()
@@ -331,7 +329,7 @@ class LanceStore:
         memory_id: str,
         content: str,
         character_id: str,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         """保存記憶を ``inscribed_memories`` テーブルに upsert する（merge_insert）。
 
@@ -370,7 +368,7 @@ class LanceStore:
         query: str,
         character_id: str,
         top_k: int = 5,
-        where: Optional[dict] = None,
+        where: dict | None = None,
     ) -> list[dict]:
         """類似度検索で保存記憶を取得する。
 
@@ -440,7 +438,7 @@ class LanceStore:
         character_id: str,
         category: str,
         threshold: float = 0.15,
-    ) -> Optional[str]:
+    ) -> str | None:
         """同一キャラクター・カテゴリ内で類似する記憶 ID を返す（重複排除用）。
 
         find_similar 系は「文書同士の比較」なので、検索クエリも文書プレフィックスで embed する。
@@ -520,7 +518,7 @@ class LanceStore:
         message_id: str,
         content: str,
         character_id: str,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         """チャット履歴ターンを ``chat_turns`` テーブルに upsert する。
 
@@ -716,7 +714,7 @@ class LanceStore:
         thread_id: str,
         index_text: str,
         character_id: str,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         """ワーキングメモリスレッドを ``working_memory_threads`` テーブルに upsert する。
 
@@ -756,7 +754,7 @@ class LanceStore:
         query: str,
         character_id: str,
         top_k: int = 5,
-        where: Optional[dict] = None,
+        where: dict | None = None,
     ) -> list[dict]:
         """類似度検索でワーキングメモリスレッドを取得する（heat 想起用）。
 

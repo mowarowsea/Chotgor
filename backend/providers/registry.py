@@ -1,18 +1,18 @@
-"""Provider registry and factory.
+"""プロバイダーレジストリとファクトリ。
 
-Usage
------
+使い方
+------
 from backend.providers.registry import create_provider, PROVIDER_REGISTRY
 
 provider = create_provider("google", model="gemini-2.0-flash", settings=settings_dict)
 response = await provider.generate(system_prompt, messages)
 
-Adding a new provider
----------------------
-1. Create a class in its own module, subclassing BaseLLMProvider.
-2. Set PROVIDER_ID, DEFAULT_MODEL, REQUIRES_API_KEY.
-3. Implement from_config(model, settings, **kwargs) and generate().
-4. Register it in PROVIDER_REGISTRY below — that's all.
+新しいプロバイダーの追加
+------------------------
+1. BaseLLMProvider を継承したクラスをモジュール内に作成する。
+2. PROVIDER_ID / DEFAULT_MODEL / REQUIRES_API_KEY を設定する。
+3. from_config(model, settings, **kwargs) と generate() を実装する。
+4. 下記の PROVIDER_REGISTRY に登録するだけで完了。
 """
 
 from backend.providers.anthropic_provider import AnthropicProvider
@@ -34,7 +34,7 @@ PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
     OllamaProvider.PROVIDER_ID: OllamaProvider,
 }
 
-# Human-readable labels (used by the UI)
+# UI で表示するプロバイダーラベル
 PROVIDER_LABELS: dict[str, str] = {
     "claude_cli": "Claude Code CLI (OAuth)",
     "anthropic": "Anthropic API",
@@ -45,7 +45,7 @@ PROVIDER_LABELS: dict[str, str] = {
     "ollama": "Ollama (ローカル)",
 }
 
-# Display order in the UI
+# UI での表示順
 PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "openrouter", "ollama"]
 
 

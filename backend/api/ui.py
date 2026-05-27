@@ -1,9 +1,7 @@
-"""Settings UI routes using Jinja2 templates."""
+"""設定 UI ルーター（Jinja2 テンプレート使用）。"""
 
 import base64
 import uuid
-from typing import Optional
-
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -79,7 +77,7 @@ def _build_enabled_providers(form) -> dict:
     return enabled_providers
 
 
-async def _read_image_data(form) -> Optional[str]:
+async def _read_image_data(form) -> str | None:
     """フォームから画像を読み込みbase64 data URIとして返す。画像がなければNone。"""
     image_file = form.get("image")
     if not image_file or not hasattr(image_file, "read"):
@@ -125,7 +123,7 @@ def setup_templates(templates_dir: str) -> Jinja2Templates:
     return Jinja2Templates(directory=templates_dir)
 
 
-templates: Optional[Jinja2Templates] = None
+templates: Jinja2Templates | None = None
 
 
 def get_templates() -> Jinja2Templates:
@@ -270,7 +268,7 @@ async def delete_character(request: Request, character_id: str):
 async def memories_view(
     request: Request,
     character_id: str,
-    category: Optional[str] = None,
+    category: str | None = None,
     deleted_only: bool = False,
 ):
     """記憶一覧ページ。deleted_only=True のときは論理削除済み記憶のみ表示する。"""
@@ -316,7 +314,7 @@ async def delete_memory(request: Request, character_id: str, memory_id: str):
 async def working_memory_view(
     request: Request,
     character_id: str,
-    type: Optional[str] = None,
+    type: str | None = None,
     archived: bool = False,
 ):
     """ワーキングメモリのスレッド一覧ページ（読み取り専用）。

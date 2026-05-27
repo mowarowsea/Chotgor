@@ -18,8 +18,6 @@ LLM プロバイダはモック化する: provider_factory を差し替えて
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Optional
-
 import pytest
 
 from backend.services.scenario_chat.engine import (
@@ -42,9 +40,9 @@ class FakeScenario:
     """
 
     user_alias: str = "プレイヤー"
-    scenario: Optional[str] = None
-    history_max_turns: Optional[int] = None
-    history_max_chars: Optional[int] = None
+    scenario: str | None = None
+    history_max_turns: int | None = None
+    history_max_chars: int | None = None
 
 
 @dataclass
@@ -53,8 +51,8 @@ class FakeNpc:
 
     id: str
     name: str
-    description: Optional[str] = None
-    image_data: Optional[str] = None
+    description: str | None = None
+    image_data: str | None = None
     scenario_id: str = "scenario-001"
 
 
@@ -65,7 +63,7 @@ class FakeTurn:
     speaker_type: str
     speaker_name: str
     content: str
-    speaker_id: Optional[str] = None
+    speaker_id: str | None = None
 
 
 @dataclass
@@ -88,8 +86,8 @@ class FakeProvider:
                     type は "text" / "thinking" など。
         """
         self.chunks = chunks
-        self.received_system_prompt: Optional[str] = None
-        self.received_messages: Optional[list[dict]] = None
+        self.received_system_prompt: str | None = None
+        self.received_messages: list[dict] | None = None
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """指定チャンクを 1 つずつ yield する。"""
@@ -101,7 +99,7 @@ class FakeProvider:
 
 def _make_engine(
     chunks: list[tuple[str, str]],
-    preset: Optional[FakePreset] = None,
+    preset: FakePreset | None = None,
 ) -> tuple[EnsembleEngine, FakeProvider]:
     """指定チャンクを返す FakeProvider 付きエンジンを構築する。"""
     provider = FakeProvider(chunks)

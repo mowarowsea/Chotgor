@@ -1,8 +1,6 @@
 """キャラクター CRUD — SQLiteStore Mixin。"""
 
 from datetime import datetime
-from typing import Optional, Union
-
 
 class CharacterStoreMixin:
     """キャラクターの作成・取得・更新・削除を担う Mixin。"""
@@ -15,18 +13,18 @@ class CharacterStoreMixin:
         inner_narrative: str = "",
         self_history: str = "",
         relationship_state: str = "",
-        cleanup_config: Optional[dict] = None,
-        enabled_providers: Optional[dict] = None,
-        ghost_model: Optional[str] = None,
-        image_data: Optional[str] = None,
+        cleanup_config: dict | None = None,
+        enabled_providers: dict | None = None,
+        ghost_model: str | None = None,
+        image_data: str | None = None,
         switch_angle_enabled: bool = False,
         afterglow_default: int = 0,
         self_reflection_mode: str = "disabled",
-        self_reflection_preset_id: Optional[str] = None,
+        self_reflection_preset_id: str | None = None,
         self_reflection_n_turns: int = 5,
-        farewell_config: Optional[dict] = None,
+        farewell_config: dict | None = None,
         relationship_status: str = "active",
-        allowed_tools: Optional[dict] = None,
+        allowed_tools: dict | None = None,
     ):
         """キャラクターを新規作成する。
 

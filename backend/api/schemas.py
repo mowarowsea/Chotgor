@@ -1,11 +1,9 @@
-"""Pydantic schemas for the REST API."""
-
-from typing import Optional
+"""REST API 用 Pydantic スキーマ。"""
 
 from pydantic import BaseModel
 
 
-# --- Character API Schemas ---
+# --- キャラクター API スキーマ ---
 
 class CharacterCreate(BaseModel):
     """キャラクター作成リクエストスキーマ。"""
@@ -14,7 +12,7 @@ class CharacterCreate(BaseModel):
     system_prompt_block1: str = ""
     inner_narrative: str = ""
     cleanup_config: dict = {}
-    ghost_model: Optional[str] = None
+    ghost_model: str | None = None
     allowed_tools: dict = {}
 
 
@@ -28,13 +26,13 @@ class CharacterUpdate(BaseModel):
         "estranged" になるとそのキャラクターへの全リクエストが恒久的に拒否される。
     """
 
-    name: Optional[str] = None
-    system_prompt_block1: Optional[str] = None
-    inner_narrative: Optional[str] = None
-    self_history: Optional[str] = None
-    relationship_state: Optional[str] = None
-    cleanup_config: Optional[dict] = None
-    ghost_model: Optional[str] = None
-    farewell_config: Optional[dict] = None
-    relationship_status: Optional[str] = None
-    allowed_tools: Optional[dict] = None
+    name: str | None = None
+    system_prompt_block1: str | None = None
+    inner_narrative: str | None = None
+    self_history: str | None = None
+    relationship_state: str | None = None
+    cleanup_config: dict | None = None
+    ghost_model: str | None = None
+    farewell_config: dict | None = None
+    relationship_status: str | None = None
+    allowed_tools: dict | None = None

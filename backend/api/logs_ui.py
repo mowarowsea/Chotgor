@@ -12,8 +12,6 @@ import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
@@ -57,7 +55,7 @@ _TAG_META: dict[str, dict] = {
 }
 
 # UIテンプレートインスタンス（main.py から注入される）
-templates: Optional[Jinja2Templates] = None
+templates: Jinja2Templates | None = None
 
 
 def get_templates() -> Jinja2Templates:

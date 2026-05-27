@@ -6,12 +6,10 @@ xAI / Grok は xai_provider.py に分離されている。
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
-
 from backend.character_actions.executor import OPENAI_TOOLS, ToolCall, ToolTurnResult
 from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn
 
-# thinking_level → reasoning_effort
+# thinking_level → reasoning_effort 変換テーブル
 _OPENAI_REASONING = {
     "low": "low",
     "medium": "medium",
@@ -30,7 +28,7 @@ class OpenAIProvider(BaseLLMProvider):
 
     _REASONING_MAP = _OPENAI_REASONING
 
-    def __init__(self, api_key: str, model: str = "", base_url: Optional[str] = None, thinking_level: str = "default"):
+    def __init__(self, api_key: str, model: str = "", base_url: str | None = None, thinking_level: str = "default"):
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
         self.base_url = base_url
@@ -71,7 +69,7 @@ class OpenAIProvider(BaseLLMProvider):
         except Exception:
             return []
 
-    def _reasoning_effort(self) -> Optional[str]:
+    def _reasoning_effort(self) -> str | None:
         """thinking_level に対応する reasoning_effort 文字列を返す。"""
         return self._REASONING_MAP.get(self.thinking_level)
 
@@ -94,7 +92,7 @@ class OpenAIProvider(BaseLLMProvider):
         def run():
             call_kwargs: dict = {"model": self.model, "messages": api_messages}
             if effort:
-                # o-series models use reasoning_effort + max_completion_tokens
+                # o系モデルは reasoning_effort + max_completion_tokens を使用する
                 call_kwargs["reasoning_effort"] = effort
                 call_kwargs["max_completion_tokens"] = 16000
             else:

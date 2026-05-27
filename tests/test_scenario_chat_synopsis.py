@@ -18,8 +18,6 @@ update_auto_synopsis 自体は LLM プロバイダー呼出を含むため、本
 """
 
 from dataclasses import dataclass
-from typing import Optional
-
 import pytest
 
 from backend.services.scenario_chat.synopsis import (
@@ -40,7 +38,7 @@ class FakeScenario:
     """
 
     user_alias: str = "プレイヤー"
-    scenario: Optional[str] = None
+    scenario: str | None = None
 
 
 @dataclass
@@ -66,7 +64,7 @@ class FakePreset:
 class FakeProvider:
     """generate_stream_typed() で固定の (type, chunk) 列を返すスタブ。"""
 
-    def __init__(self, chunks: list[tuple[str, str]], raises: Optional[Exception] = None):
+    def __init__(self, chunks: list[tuple[str, str]], raises: Exception | None = None):
         """
         Args:
             chunks: yield する (type, content) ペアのリスト。
@@ -74,7 +72,7 @@ class FakeProvider:
         """
         self.chunks = chunks
         self.raises = raises
-        self.received_system_prompt: Optional[str] = None
+        self.received_system_prompt: str | None = None
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """テスト用の固定出力をストリーミング風に返す。"""
@@ -139,7 +137,7 @@ class TestBuildSynopsisSystemPrompt:
 # ─── update_auto_synopsis（end-to-end with mock provider） ──────────────────
 
 
-def _loader_for(preset: Optional[FakePreset]):
+def _loader_for(preset: FakePreset | None):
     """preset_loader 関数を作る（preset が None なら常に None を返す）。"""
     def loader(preset_id: str):
         return preset
