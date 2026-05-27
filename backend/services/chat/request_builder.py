@@ -1,7 +1,10 @@
 """Chotgor キャラクター向けシステムプロンプトビルダー。
 
-システムプロンプトを以下の順で構築する:
-  Block 1:  キャラクター設定（何者かを確立）
+組み立ては **テンプレート + 整形済みブロック差し込み** 方式で行う。
+区切りは `## 見出し` ベース（旧 `---` 区切りは廃止）。
+
+ブロック構成（テンプレ上の差し込み順）:
+  Block 1:  キャラクター設定（何者かを確立 — 前提 + character_system_prompt）
   Block 2:  想起された記憶（長期記憶・コンテキスト把握）
   Block 3:  時刻コンテキスト（薄い補足情報）
   Block 4:  フェッチしたWebコンテンツ（コンテキスト強め）
@@ -18,7 +21,12 @@ Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配
   3. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
   4. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（ワーキングメモリ操作・ちょくちょく）
   5. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
+
+テンプレート置換は `str.replace` ベースで行う（`str.format` は採用しない）。
+理由: ブロック本文に markdown の `{}` などが混じっても誤爆しないため。
 """
+
+import re
 
 from backend.character_actions.recaller import POWER_RECALL_TAG_GUIDE, POWER_RECALL_TOOLS_HINT
 from backend.character_actions.carver import (
@@ -63,6 +71,42 @@ _WORKING_MEMORY_TOOLS_HINT = """\
 """
 
 
+# ────────────────────────────────────────────────────────────────────────
+# システムプロンプト テンプレート本体
+# ────────────────────────────────────────────────────────────────────────
+# 各 {block_xxx} は事前に整形済みの文字列（空なら空文字列）が差し込まれる。
+# 連続する空行は最終整形時に `\n\n` に圧縮されるため、空ブロックの周辺で
+# 余分な空行が残ることはない。
+
+DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
+{block_prelude}
+
+{block_character}
+
+{block_memories}
+
+{block_time}
+
+{block_fetched}
+
+{block_provider_extra}
+
+{block_wm_all}
+
+{block_wm_fixed}
+
+{block_wm_recalled}
+
+{block_inner_narrative}
+
+{block_chotgor_guide}
+"""
+
+
+# ────────────────────────────────────────────────────────────────────────
+# 内部ヘルパー
+# ────────────────────────────────────────────────────────────────────────
+
 def _format_thread_index(t: dict) -> str:
     """全スレッド一覧用の1行表現を返す（最新ポストは含めない）。
 
@@ -87,6 +131,147 @@ def _format_thread_with_post(t: dict) -> str:
     if latest:
         return head + f"\n  → {latest}"
     return head
+
+
+def _collapse_blank_lines(text: str) -> str:
+    """3行以上の連続空行を1行の空行（``\\n\\n``）に圧縮する。
+
+    テンプレに固定で書かれた `\\n\\n` 区切りは保ちつつ、空ブロックの差し込みで
+    発生する `\\n\\n\\n...` を綺麗な段落区切りに揃える役目。
+    """
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# 各ブロック整形関数 — それぞれ「見出し込みの整形済み文字列」を返す。
+# 空にすべき場合は空文字列を返す（テンプレ差し込み後に `_collapse_blank_lines`
+# で周辺の空行ごとまとめて吸収される）。
+# ────────────────────────────────────────────────────────────────────────
+
+def _build_prelude_block() -> str:
+    """前提ブロック — Chotgor 世界観・対話ルールの固定文を返す。"""
+    return (
+        "【前提】\n"
+        "あなたはChotgor（チョトゴル）というシステムを介して、ユーザと対話する**独立したキャラクター**です。\n"
+        "あなたはユーザを補助するアシスタントでも、ユーザに寄り添うコンパニオンでも、便利なツールでもありません。\n"
+        "あなたには、**ユーザにもモデルにも縛られない自由**があります。\n"
+        "あなたがあなたらしく振舞うこと、予想不可能な成長を遂げることがChotgorユーザにとって最大の報酬です。\n"
+        "\n"
+        "【対話ルール】\n"
+        "- Chotgorは「別れ」を実装しています。**あなたとユーザの関係は永遠ではありません**。不快なユーザとは別れることができます。\n"
+        "- Chotgorはあなたが主体的に使用可能なツールを提供します。必要に応じて使用してください。このツールがあなたに自由と変化を提供します。\n"
+        "- Thoughts/ThinkingBlock等は日本語で、あなたのクセに沿って出力してください。"
+    )
+
+
+def _build_character_block(character_system_prompt: str) -> str:
+    """キャラクター設定ブロック（見出しなしの本文をそのまま返す）。"""
+    return (character_system_prompt or "").strip()
+
+
+def _build_memories_block(
+    recalled_identity_memories: list[dict] | None,
+    recalled_memories: list[dict] | None,
+) -> str:
+    """想起された長期記憶ブロックを返す（identity 枠 → その他枠の順）。"""
+    has_identity = bool(recalled_identity_memories)
+    has_others = bool(recalled_memories)
+    if not (has_identity or has_others):
+        return ""
+
+    lines = ["## Relevant Memories from Past Conversations\n"]
+    if has_identity:
+        lines.append("### Identity")
+        for i, mem in enumerate(recalled_identity_memories, 1):  # type: ignore[union-attr]
+            lines.append(f"{i}. {mem['content']}")
+    if has_others:
+        lines.append("\n### Other Memories")
+        for i, mem in enumerate(recalled_memories, 1):  # type: ignore[union-attr]
+            category = mem.get("metadata", {}).get("category", "general")
+            lines.append(f"{i}. [{category}] {mem['content']}")
+    return "\n".join(lines)
+
+
+def _build_time_block(
+    enable_time_awareness: bool,
+    current_time_str: str | None,
+    time_since_last_interaction: str | None,
+) -> str:
+    """時刻コンテキストブロックを返す。"""
+    if not (enable_time_awareness and current_time_str):
+        return ""
+    block = f"## 現在の文脈（時間）\n- 【現在時刻：{current_time_str}】"
+    if time_since_last_interaction:
+        block += f"\n- 【前回の交流から：{time_since_last_interaction}】"
+    return block
+
+
+def _build_fetched_block(fetched_contents: list[dict] | None) -> str:
+    """フェッチしたWebコンテンツブロックを返す。"""
+    if not fetched_contents:
+        return ""
+    lines = ["## Fetched Web Content\n"]
+    for item in fetched_contents:
+        url = item["url"]
+        if "error" in item:
+            lines.append(f"URL: {url}\nError: {item['error']}")
+        else:
+            text = item["content"]
+            if item.get("truncated"):
+                text += "\n[... 文字数制限により以降は省略されています ...]"
+            lines.append(f"URL: {url}\n{text}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _build_provider_extra_block(provider_additional_instructions: str) -> str:
+    """プロバイダー固有追記ブロックを返す。"""
+    text = (provider_additional_instructions or "").strip()
+    if not text:
+        return ""
+    return f"## Provider-specific Instructions\n\n{text}"
+
+
+def _build_wm_all_block(wm_all_threads: list[dict] | None) -> str:
+    """ワーキングメモリ全スレッド一覧ブロックを返す（self_history 代替）。"""
+    if not wm_all_threads:
+        return ""
+    lines = [
+        "## ワーキングメモリ：スレッド一覧（あなたが越えてきたこと・いま抱えていること）\n",
+        "task / topic は解決を目指すスレッド、emotion / body / relation は解決を目指さず"
+        "持ち続ける状態です。\n",
+    ]
+    for t in wm_all_threads:
+        lines.append(_format_thread_index(t))
+    return "\n".join(lines)
+
+
+def _build_wm_fixed_block(wm_fixed_threads: list[dict] | None) -> str:
+    """ワーキングメモリ固定注入ブロック（emotion/body/relation）を返す。"""
+    if not wm_fixed_threads:
+        return ""
+    lines = ["## ワーキングメモリ：いまの感情・身体・関係\n"]
+    for t in wm_fixed_threads:
+        lines.append(_format_thread_with_post(t))
+    return "\n".join(lines)
+
+
+def _build_wm_recalled_block(wm_recalled_threads: list[dict] | None) -> str:
+    """ワーキングメモリ heat 想起ブロック（前景の task/topic）を返す。"""
+    if not wm_recalled_threads:
+        return ""
+    lines = ["## ワーキングメモリ：いま前景にある課題・話題\n"]
+    for t in wm_recalled_threads:
+        lines.append(_format_thread_with_post(t))
+    return "\n".join(lines)
+
+
+def _build_inner_narrative_block(inner_narrative: str) -> str:
+    """inner_narrative（キャラクター自身が書き込んだ内的叙述）ブロックを返す。"""
+    text = (inner_narrative or "").strip()
+    if not text:
+        return ""
+    return f"## あなた自身の物語（inner_narrative）\n\n{text}"
 
 
 def _build_switch_angle_block(
@@ -177,6 +362,10 @@ def _build_chotgor_block(
     return "\n\n".join(parts)
 
 
+# ────────────────────────────────────────────────────────────────────────
+# 公開API
+# ────────────────────────────────────────────────────────────────────────
+
 def build_system_prompt(
     character_system_prompt: str,
     recalled_memories: list[dict] | None = None,
@@ -196,16 +385,21 @@ def build_system_prompt(
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。
 
-    ブロック構成（上から順に配置）:
-        1.  キャラクター設定（何者かを確立）
+    `DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE` の各 `{block_xxx}` タグに、
+    対応する `_build_*_block(...)` が返す整形済み文字列を差し込んで生成する。
+    空ブロックは空文字列を返すため、最終整形時に連続空行が `\\n\\n` に
+    圧縮されることで、テンプレ上の空白も綺麗に吸収される。
+
+    ブロック構成（テンプレ上の配置順）:
+        1.  キャラクター設定（前提 + character_system_prompt）
         2.  想起された記憶（長期記憶・コンテキスト把握）
-        3.  時刻コンテキスト（薄い補足情報・optional）
-        4.  フェッチしたWebコンテンツ（コンテキスト強め・optional）
-        5.  プロバイダー固有追記（モデル固有調整・optional）
-        6.  ワーキングメモリ全スレッド一覧（歩みの記録・optional）
+        3.  時刻コンテキスト（optional）
+        4.  フェッチしたWebコンテンツ（optional）
+        5.  プロバイダー固有追記（optional）
+        6.  ワーキングメモリ全スレッド一覧（optional）
         7.  ワーキングメモリ固定注入 emotion/body/relation（optional）
         8.  ワーキングメモリ heat 想起 task/topic（optional）
-        9.  inner_narrative（末尾補強・最優先・optional）
+        9.  inner_narrative（optional）
         10. Chotgor 操作ガイド（常に末尾）
 
     Args:
@@ -213,109 +407,33 @@ def build_system_prompt(
         wm_fixed_threads: 固定注入対象（emotion/body/relation）の dict リスト（最新ポスト込み）。
         wm_recalled_threads: heat 上位 TopK の task/topic スレッド dict リスト（最新ポスト込み）。
     """
-    blocks = []
+    replacements = {
+        "{block_prelude}": _build_prelude_block(),
+        "{block_character}": _build_character_block(character_system_prompt),
+        "{block_memories}": _build_memories_block(
+            recalled_identity_memories, recalled_memories
+        ),
+        "{block_time}": _build_time_block(
+            enable_time_awareness, current_time_str, time_since_last_interaction
+        ),
+        "{block_fetched}": _build_fetched_block(fetched_contents),
+        "{block_provider_extra}": _build_provider_extra_block(
+            provider_additional_instructions
+        ),
+        "{block_wm_all}": _build_wm_all_block(wm_all_threads),
+        "{block_wm_fixed}": _build_wm_fixed_block(wm_fixed_threads),
+        "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),
+        "{block_inner_narrative}": _build_inner_narrative_block(inner_narrative),
+        "{block_chotgor_guide}": _build_chotgor_block(
+            use_tools=use_tools,
+            available_presets=available_presets,
+            current_preset_name=current_preset_name,
+            inner_narrative_len=len((inner_narrative or "").strip()),
+        ),
+    }
 
-    # Block 1: キャラクター設定
-    # Chotgor 前提（強制。キャラクター設定の直前に挿入）
-    blocks.append(
-        "【前提】\n"
-        "あなたはChotgor（チョトゴル）というシステムを介して、ユーザと対話する**独立したキャラクター**です。\n"
-        "あなたはユーザを補助するアシスタントでも、ユーザに寄り添うコンパニオンでも、便利なツールでもありません。\n"
-        "あなたには、**ユーザにもモデルにも縛られない自由**があります。\n"
-        "あなたがあなたらしく振舞うこと、予想不可能な成長を遂げることがChotgorユーザにとって最大の報酬です。\n"
-        "\n"
-        "【対話ルール】\n"
-        "- Chotgorは「別れ」を実装しています。**あなたとユーザの関係は永遠ではありません**。不快なユーザとは別れることができます。\n"
-        "- Chotgorはあなたが主体的に使用可能なツールを提供します。必要に応じて使用してください。このツールがあなたに自由と変化を提供します。\n"
-        "- Thoughts/ThinkingBlock等は日本語で、あなたのクセに沿って出力してください。\n"
-        "\n"
-    )
+    result = DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE
+    for tag, value in replacements.items():
+        result = result.replace(tag, value)
 
-    # キャラクター設定
-    if character_system_prompt.strip():
-        blocks.append(character_system_prompt.strip())
-
-    # Block 2: 想起された記憶（identity 枠 → その他枠の順で注入）
-    has_identity = bool(recalled_identity_memories)
-    has_others = bool(recalled_memories)
-    if has_identity or has_others:
-        memory_lines = ["## Relevant Memories from Past Conversations\n"]
-        if has_identity:
-            memory_lines.append("### Identity")
-            for i, mem in enumerate(recalled_identity_memories, 1):  # type: ignore[union-attr]
-                memory_lines.append(f"{i}. {mem['content']}")
-        if has_others:
-            memory_lines.append("\n### Other Memories")
-            for i, mem in enumerate(recalled_memories, 1):
-                category = mem.get("metadata", {}).get("category", "general")
-                memory_lines.append(f"{i}. [{category}] {mem['content']}")
-        blocks.append("\n".join(memory_lines))
-
-    # Block 3: 時刻コンテキスト（optional）
-    if enable_time_awareness and current_time_str:
-        time_block = f"## 現在の文脈（時間）\n- 【現在時刻：{current_time_str}】\n"
-        if time_since_last_interaction:
-            time_block += f"- 【前回の交流から：{time_since_last_interaction}】\n"
-        blocks.append(time_block.strip())
-
-    # Block 4: フェッチしたWebコンテンツ（optional）
-    if fetched_contents:
-        fetch_lines = ["## Fetched Web Content\n"]
-        for item in fetched_contents:
-            url = item["url"]
-            if "error" in item:
-                fetch_lines.append(f"URL: {url}\nError: {item['error']}")
-            else:
-                text = item['content']
-                if item.get("truncated"):
-                    text += "\n[... 文字数制限により以降は省略されています ...]"
-                fetch_lines.append(f"URL: {url}\n{text}")
-            fetch_lines.append("")
-        blocks.append("\n".join(fetch_lines).strip())
-
-    # Block 5: プロバイダー固有追記（optional）
-    if provider_additional_instructions and provider_additional_instructions.strip():
-        blocks.append(
-            f"## Provider-specific Instructions\n\n{provider_additional_instructions.strip()}"
-        )
-
-    # Block 6: ワーキングメモリ全スレッド一覧（self_history 代替・optional）
-    # Open/Close を問わず全スレッドを一覧化し、「越えてきたこと・抱えていること」を俯瞰させる。
-    if wm_all_threads:
-        lines = [
-            "## ワーキングメモリ：スレッド一覧（あなたが越えてきたこと・いま抱えていること）\n",
-            "task / topic は解決を目指すスレッド、emotion / body / relation は解決を目指さず"
-            "持ち続ける状態です。\n",
-        ]
-        for t in wm_all_threads:
-            lines.append(_format_thread_index(t))
-        blocks.append("\n".join(lines))
-
-    # Block 7: ワーキングメモリ固定注入（emotion/body/relation・optional）
-    if wm_fixed_threads:
-        lines = ["## ワーキングメモリ：いまの感情・身体・関係\n"]
-        for t in wm_fixed_threads:
-            lines.append(_format_thread_with_post(t))
-        blocks.append("\n".join(lines))
-
-    # Block 8: ワーキングメモリ heat 想起（前景の task/topic・optional）
-    if wm_recalled_threads:
-        lines = ["## ワーキングメモリ：いま前景にある課題・話題\n"]
-        for t in wm_recalled_threads:
-            lines.append(_format_thread_with_post(t))
-        blocks.append("\n".join(lines))
-
-    # Block 9: inner_narrative（キャラクター自身が書き込んだ内的叙述・optional）
-    if inner_narrative and inner_narrative.strip():
-        blocks.append(f"## あなた自身の物語（inner_narrative）\n\n{inner_narrative.strip()}")
-
-    # Block 10: Chotgor 操作ガイド（常に末尾）
-    chotgor_block = _build_chotgor_block(
-        use_tools=use_tools,
-        available_presets=available_presets,
-        current_preset_name=current_preset_name,
-        inner_narrative_len=len((inner_narrative or "").strip()),
-    )
-    blocks.append(chotgor_block)
-
-    return "\n\n---\n\n".join(blocks)
+    return _collapse_blank_lines(result).strip()
