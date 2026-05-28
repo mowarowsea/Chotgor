@@ -402,12 +402,11 @@ export default function App() {
    * 新規チャット作成。
    *
    * @param modelId - "{char_name}@{preset_name}" 形式のモデルID。
-   * @param afterglow - Afterglow（感情継続機構）を有効にする場合は true。
    */
-  const handleNewChat = useCallback(async (modelId: string, afterglow = false) => {
+  const handleNewChat = useCallback(async (modelId: string) => {
     setError(null);
     try {
-      const session = await createSession(modelId, afterglow);
+      const session = await createSession(modelId);
       setSessions((prev) => [session, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
@@ -1198,7 +1197,6 @@ export default function App() {
 
       <Sidebar
         models={models}
-        characters={characters}
         sessions={combinedSessions}
         activeSessionId={activeSessionId}
         isOpen={sidebarOpen}

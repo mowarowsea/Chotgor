@@ -114,6 +114,7 @@ async def _stream_character_response(
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする
     full_text = ""
     memory_text = ""
+    recall_error_text = ""
     wm_text = ""
     thinking_parts: list[str] = []
 
@@ -122,6 +123,10 @@ async def _stream_character_response(
             memory_text = format_recalled_memories(content)
             if memory_text:
                 yield ("character_reasoning", {"character": char_name, "content": memory_text})
+        elif chunk_type == "recall_error":
+            # 想起失敗メッセージを reasoning 行として流す（フロントではスケッチ欄に表示される）。
+            recall_error_text = content + "\n"
+            yield ("character_reasoning", {"character": char_name, "content": recall_error_text})
         elif chunk_type == "working_memory_threads":
             wm_text = format_recalled_threads(content)
             if wm_text:
@@ -143,7 +148,8 @@ async def _stream_character_response(
             })
 
     # 1on1チャットと同様に想起記憶・ワーキングメモリ・思考ブロックをreasoningにまとめてDBに保存する
-    combined = (memory_text + wm_text + "".join(thinking_parts)).strip()
+    # 想起失敗メッセージもリロード後に残るよう combined に含める
+    combined = (memory_text + recall_error_text + wm_text + "".join(thinking_parts)).strip()
     reasoning_text = combined if combined else None
 
     msg_id = str(uuid.uuid4())

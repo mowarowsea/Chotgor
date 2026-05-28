@@ -33,7 +33,6 @@ def char_to_dict(char) -> dict:
     """Character ORM オブジェクトを API レスポンス用 dict に変換する。
 
     image_data / enabled_providers は含まない（サイズ・センシティビティのため）。
-    afterglow_default はフロントエンドの新規チャット作成UIのデフォルト値表示に使用する。
     """
     return {
         "id": char.id,
@@ -44,7 +43,6 @@ def char_to_dict(char) -> dict:
         "relationship_state": char.relationship_state,
         "cleanup_config": char.cleanup_config,
         "ghost_model": char.ghost_model,
-        "afterglow_default": bool(getattr(char, "afterglow_default", 0)),
         "allowed_tools": getattr(char, "allowed_tools", None) or {},
         "created_at": fmt_dt(char.created_at),
         "updated_at": fmt_dt(char.updated_at),
@@ -54,7 +52,7 @@ def char_to_dict(char) -> dict:
 def session_to_dict(s) -> dict:
     """ChatSession ORMオブジェクトを辞書に変換する。
 
-    group_config / afterglow_session_id / exited_chars は存在する場合のみレスポンスに含める。
+    group_config / exited_chars は存在する場合のみレスポンスに含める。
     """
     result = {
         "id": s.id,
@@ -67,9 +65,6 @@ def session_to_dict(s) -> dict:
     group_config = getattr(s, "group_config", None)
     if group_config:
         result["group_config"] = group_config
-    afterglow_session_id = getattr(s, "afterglow_session_id", None)
-    if afterglow_session_id:
-        result["afterglow_session_id"] = afterglow_session_id
     exited_chars = getattr(s, "exited_chars", None)
     if exited_chars:
         result["exited_chars"] = exited_chars

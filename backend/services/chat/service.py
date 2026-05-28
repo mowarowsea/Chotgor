@@ -34,6 +34,7 @@ from backend.character_actions.carver import Carver
 from backend.character_actions.inscriber import Inscriber
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
+from backend.repositories.lance.store import EmbeddingError
 from backend.providers.base import LLMApiError
 from backend.providers.registry import create_provider
 from backend.services.chat.request_builder import build_system_prompt
@@ -183,6 +184,8 @@ class _Context:
     wm_recalled: list[dict]
     provider_impl: object
     system_prompt: str
+    # 記憶想起に失敗したときの UI 表示用メッセージ（成功時は None）。
+    recall_error: str | None = None
 
 
 class ChatService:
@@ -295,13 +298,19 @@ class ChatService:
 
         recalled_identity: list[dict] = []
         recalled: list[dict] = []
+        recall_error: str | None = None
         if last_user_msg:
             try:
                 recalled_identity, recalled = self.memory_manager.recall_with_identity(
                     request.character_id, last_user_msg
                 )
+            except EmbeddingError as e:
+                # embedding サーバ（infinity 等）に接続できないケース。原因が分かるよう専用メッセージにする。
+                _log.warning("記憶想起失敗（embedding）char=%s error=%s", request.character_id, e)
+                recall_error = "記憶の想起に失敗しました（embedding接続エラー）"
             except Exception as e:
                 _log.warning("記憶想起失敗 char=%s error=%s", request.character_id, e)
+                recall_error = "記憶の想起に失敗しました"
 
         # --- 1b. ワーキングメモリ（スレッド）を取得 ---
         # 全スレッド一覧（self_history 代替）／emotion・body・relation の固定注入／
@@ -378,6 +387,7 @@ class ChatService:
             wm_recalled=wm_recalled_threads or [],
             provider_impl=provider_impl,
             system_prompt=system_prompt,
+            recall_error=recall_error,
         )
 
     def _log_debug(self, label: str, request: ChatRequest, messages: list[dict], clean_text: str) -> None:
@@ -447,6 +457,7 @@ class ChatService:
         Yields:
             tuple[str, Any]:
                 ("inscribed_memories",      list[dict])          : 想起した記憶リスト（最初に1回だけyield）
+                ("recall_error",  str)                  : 想起失敗時のUI表示メッセージ（失敗時のみ1回）
                 ("thinking",      str)                  : 思考ブロック（リアルタイム）
                 ("text",          str)                  : クリーンな応答テキスト（最後に1回）
         """
@@ -456,6 +467,9 @@ class ChatService:
         all_recalled = ctx.recalled_identity + ctx.recalled
         if all_recalled:
             yield ("inscribed_memories", all_recalled)
+        # 想起に失敗していたら、その旨を想起欄に表示するためのメッセージをyieldする
+        if ctx.recall_error:
+            yield ("recall_error", ctx.recall_error)
         # ワーキングメモリスレッドをyield。
         # 固定注入（emotion/body/relation）と heat 想起（task/topic）の両方を
         # まとめて送り、フロントの想起セクションに全スレッドを表示させる。id で重複排除する。

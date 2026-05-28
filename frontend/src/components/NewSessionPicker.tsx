@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Character, Model, ScenarioPreset, ScenarioTemplate } from "../api";
+import type { Model, ScenarioPreset, ScenarioTemplate } from "../api";
 import {
   charNameOf,
   presetNameOf,
@@ -20,12 +20,10 @@ type SessionType = "1on1" | "group" | "scenario";
 interface Props {
   /** 利用可能なモデル一覧（"{char}@{preset}" 形式の id を持つ）。 */
   models: Model[];
-  /** キャラクター一覧（Afterglow デフォルト値の参照に使う）。 */
-  characters: Character[];
   /** モーダルを閉じるコールバック。 */
   onClose: () => void;
   /** 1on1 チャット作成コールバック。 */
-  onNewChat: (modelId: string, afterglow: boolean) => void;
+  onNewChat: (modelId: string) => void;
   /** グループチャット作成コールバック（司会モデルはシステム設定で管理するため引数に含まない）。 */
   onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオ起動コールバック。
@@ -64,7 +62,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 /** 新規セッション作成モーダル本体。 */
 export default function NewSessionPicker({
   models,
-  characters,
   onClose,
   onNewChat,
   onNewGroupChat,
@@ -88,7 +85,6 @@ export default function NewSessionPicker({
   /* ── 1on1 用 state ── */
   const [selChar, setSelChar] = useState("");
   const [selPreset, setSelPreset] = useState("");
-  const [afterglow, setAfterglow] = useState(false);
 
   /* ── group 用 state ── */
   const [groupSelected, setGroupSelected] = useState<Set<string>>(new Set());
@@ -116,12 +112,6 @@ export default function NewSessionPicker({
       setSelPreset(availablePresets[0]);
     }
   }, [selChar, availablePresets, selPreset]);
-
-  // 選択キャラの Afterglow デフォルト値を反映する。
-  useEffect(() => {
-    const char = characters.find((c) => c.name === selChar);
-    setAfterglow(char?.afterglow_default ?? false);
-  }, [selChar, characters]);
 
   // シナリオタブを開いたらテンプレートと GM プリセットの一覧を取得する。
   useEffect(() => {
@@ -169,7 +159,7 @@ export default function NewSessionPicker({
   const handleCreate = () => {
     if (!canCreate) return;
     if (type === "1on1") {
-      onNewChat(`${selChar}@${selPreset}`, afterglow);
+      onNewChat(`${selChar}@${selPreset}`);
     } else if (type === "group") {
       onNewGroupChat([...groupSelected], maxAutoTurns);
     } else {
@@ -293,20 +283,6 @@ export default function NewSessionPicker({
                   </div>
                 </div>
               )}
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={afterglow}
-                  onChange={(e) => setAfterglow(e.target.checked)}
-                  className="mt-0.5 shrink-0 accent-ch-accent"
-                />
-                <span className="text-ch-t2 text-xs leading-snug">
-                  前回の流れを引き継ぐ
-                  <span className="block text-ch-t3 mt-0.5">
-                    直近5ターンの会話を前置きとして引き継ぎます
-                  </span>
-                </span>
-              </label>
             </>
           )}
 

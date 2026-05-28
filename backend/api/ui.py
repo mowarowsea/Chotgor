@@ -175,7 +175,6 @@ async def create_character(request: Request):
     char_id = str(uuid.uuid4())
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = bool(form.get("switch_angle_enabled"))
-    afterglow_default = 1 if form.get("afterglow_default") else 0
     self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns = (
         _extract_self_reflection_params(form)
     )
@@ -188,7 +187,6 @@ async def create_character(request: Request):
         ghost_model=ghost_model,
         image_data=image_data,
         switch_angle_enabled=switch_angle_enabled,
-        afterglow_default=afterglow_default,
         self_reflection_mode=self_reflection_mode,
         self_reflection_preset_id=self_reflection_preset_id,
         self_reflection_n_turns=self_reflection_n_turns,
@@ -224,7 +222,6 @@ async def update_character(request: Request, character_id: str):
 
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
-    afterglow_default = 1 if form.get("afterglow_default") else 0
     self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns = (
         _extract_self_reflection_params(form)
     )
@@ -234,7 +231,6 @@ async def update_character(request: Request, character_id: str):
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         switch_angle_enabled=switch_angle_enabled,
-        afterglow_default=afterglow_default,
         self_reflection_mode=self_reflection_mode,
         self_reflection_preset_id=self_reflection_preset_id,
         self_reflection_n_turns=self_reflection_n_turns,

@@ -71,8 +71,6 @@ class ChatSession(Base):
     title = Column(String, nullable=False, default="新しいチャット")
     session_type = Column(String, nullable=False, default="1on1")   # "1on1" | "group"
     group_config = Column(Text, nullable=True)  # グループチャット設定JSON（session_type="group"時のみ）
-    # Afterglow（感情継続機構）: このセッションが引き継ぐ元セッションID。NULLなら引き継ぎなし。
-    afterglow_session_id = Column(String, nullable=True)
     # 退席者リスト: [{"char_name": "Alice", "reason": "理由"}]。NULLなら退席者なし。
     exited_chars = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
@@ -127,8 +125,6 @@ class Character(Base):
     ghost_model = Column(String, nullable=True)  # digest/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
     switch_angle_enabled = Column(Integer, nullable=False, default=0)  # 1=ON, 0=OFF
-    # Afterglow（感情継続機構）: 新規チャット作成時のデフォルト値。1=ON, 0=OFF
-    afterglow_default = Column(Integer, nullable=False, default=0)
     # 自己参照ループ設定
     self_reflection_mode = Column(String, nullable=False, default="disabled")  # disabled/local_trigger/always
     self_reflection_preset_id = Column(String, nullable=True)   # 契機判断モデルプリセットID（local_trigger 時）
@@ -430,6 +426,7 @@ class SQLiteStore(
         self._migrate_add_debug_log_entries()
         self._migrate_add_scenario_turn_log_request_id()
         self._migrate_add_scenario_custom_system_prompt()
+        self._migrate_drop_afterglow_columns()
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。
@@ -599,6 +596,44 @@ class SQLiteStore(
                 conn.exec_driver_sql(
                     "ALTER TABLE scenario_turns ADD COLUMN log_request_id TEXT"
                 )
+
+    def _migrate_drop_afterglow_columns(self) -> None:
+        """Afterglow（感情継続機構）廃止に伴い関連カラムを削除する。
+
+        - `chat_sessions.afterglow_session_id`
+        - `characters.afterglow_default`
+
+        SQLite 3.35+ の DROP COLUMN を使う。新規DBには列が無いため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "chat_sessions" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(chat_sessions)"
+                    ).fetchall()
+                }
+                if "afterglow_session_id" in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE chat_sessions DROP COLUMN afterglow_session_id"
+                    )
+            if "characters" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(characters)"
+                    ).fetchall()
+                }
+                if "afterglow_default" in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters DROP COLUMN afterglow_default"
+                    )
 
     def _migrate_add_scenario_custom_system_prompt(self) -> None:
         """`scenarios` に `custom_system_prompt` 列を追加し、既存シナリオに規定プロンプトを設定する。

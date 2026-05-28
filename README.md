@@ -154,7 +154,6 @@ docker-compose up -d openwebui
 | Name / Base Instruction | キャラクター名と基本人格定義。ここがあなたの責任領域 |
 | Inner Narrative | キャラクターが自己書き換えする行動指針。UIは読み取り専用。キャラクターだけが更新できる |
 | Enabled Providers | 使用するLLMプロバイダーとモデル。複数設定すれば `switch_angle` で切り替え可能 |
-| Afterglow | セッション間の感情状態の継続設定 |
 
 ### プロバイダー設定
 

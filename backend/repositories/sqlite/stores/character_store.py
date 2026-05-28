@@ -18,7 +18,6 @@ class CharacterStoreMixin:
         ghost_model: str | None = None,
         image_data: str | None = None,
         switch_angle_enabled: bool = False,
-        afterglow_default: int = 0,
         self_reflection_mode: str = "disabled",
         self_reflection_preset_id: str | None = None,
         self_reflection_n_turns: int = 5,
@@ -29,7 +28,6 @@ class CharacterStoreMixin:
         """キャラクターを新規作成する。
 
         Args:
-            afterglow_default: Afterglow（感情継続機構）の新規チャット作成時デフォルト値。1=ON, 0=OFF。
             self_history: chronicle で更新されるキャラクターの歴史・経緯。
             relationship_state: chronicle で更新されるユーザ・他キャラとの現在の関係。
             self_reflection_mode: 自己参照ループの動作モード。disabled/local_trigger/always。
@@ -53,7 +51,6 @@ class CharacterStoreMixin:
                 ghost_model=ghost_model,
                 image_data=image_data,
                 switch_angle_enabled=1 if switch_angle_enabled else 0,
-                afterglow_default=afterglow_default,
                 self_reflection_mode=self_reflection_mode,
                 self_reflection_preset_id=self_reflection_preset_id,
                 self_reflection_n_turns=self_reflection_n_turns,

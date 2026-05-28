@@ -4,7 +4,7 @@
  * セッション削除・タイトル編集を担当する。
  */
 import { useState, useRef } from "react";
-import type { Character, Model, ScenarioSession, Session } from "../api";
+import type { Model, ScenarioSession, Session } from "../api";
 import { charNameOf } from "../api";
 import NewSessionPicker from "./NewSessionPicker";
 import { CharacterAvatar } from "./ChatBubbles";
@@ -15,8 +15,6 @@ export type AnySession = Session | ScenarioSession;
 interface Props {
   /** 利用可能なモデル一覧 */
   models: Model[];
-  /** キャラクター一覧（Afterglowデフォルト値の取得に使用） */
-  characters: Character[];
   /** セッション一覧（1on1 / group / scenario が混在） */
   sessions: AnySession[];
   /** 現在選択中のセッションID */
@@ -30,9 +28,8 @@ interface Props {
   /**
    * 新規チャット作成時のコールバック。
    * @param modelId - "{char_name}@{preset_name}" 形式のモデルID。
-   * @param afterglow - Afterglow（感情継続機構）を有効にする場合は true。
    */
-  onNewChat: (modelId: string, afterglow: boolean) => void;
+  onNewChat: (modelId: string) => void;
   /** 新規グループチャット作成時のコールバック（司会モデルはシステム設定で管理） */
   onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオテンプレートからプレイセッションを起動するコールバック。
@@ -105,7 +102,6 @@ function SessionIcon({ session }: { session: AnySession }) {
 /** セッション一覧と新規作成UIを提供するサイドバー。モバイルはオーバーレイ表示、デスクトップはインライン表示。 */
 export default function Sidebar({
   models,
-  characters,
   sessions,
   activeSessionId,
   isOpen,
@@ -276,7 +272,6 @@ export default function Sidebar({
       {pickerOpen && (
         <NewSessionPicker
           models={models}
-          characters={characters}
           onClose={() => setPickerOpen(false)}
           onNewChat={onNewChat}
           onNewGroupChat={onNewGroupChat}

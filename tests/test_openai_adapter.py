@@ -202,7 +202,6 @@ def _make_character(char_id: str, char_name: str, switch_angle_enabled: int, ena
     c.self_history = ""
     c.relationship_state = ""
     c.inner_narrative = ""
-    c.afterglow_default = 0
     c.created_at = None
     return c
 
@@ -248,7 +247,6 @@ class TestAdapterAvailablePresets:
         sqlite_mock.get_setting.return_value = None
         sqlite_mock.set_setting.return_value = None
         sqlite_mock.list_model_presets.return_value = all_presets
-        sqlite_mock.find_latest_session_for_character.return_value = None
 
         captured_requests = []
 

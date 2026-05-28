@@ -447,3 +447,123 @@ async def test_execute_without_tools_does_not_use_tool_executor():
 
     assert result == "Hi!"
     mock_tool_executor_cls.assert_not_called()
+
+
+# --- ChatService.execute_stream — 想起失敗の UI 通知（recall_error） ---
+
+async def _collect_stream_events(service, request):
+    """execute_stream が yield する (type, content) タプルを全件リストに集める補助関数。
+
+    非同期ジェネレーターをテスト内で扱いやすくするため、全イベントを同期的なリストへ展開する。
+    """
+    events = []
+    async for ev in service.execute_stream(request):
+        events.append(ev)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_yields_recall_error_on_embedding_failure():
+    """記憶想起時に embedding が失敗（EmbeddingError）した場合、
+    execute_stream が embedding 専用のエラーメッセージを ("recall_error", ...) として yield すること。
+
+    背景: infinity 等の embedding サーバが落ちると _embed_query が EmbeddingError を送出する。
+    従来はこれが service 層で握り潰され、UI には何も出ず「想起ゼロ」と区別できなかった。
+    本テストは、その失敗が UI 表示用メッセージとしてストリームに乗ることを保証する
+    （フロントは想起欄のスケッチ行としてこのメッセージを表示する）。
+    """
+    from backend.repositories.lance.store import EmbeddingError
+
+    memory_manager = MagicMock()
+    # 想起呼び出しが embedding 失敗で例外送出するケースを模す
+    memory_manager.recall_with_identity.side_effect = EmbeddingError("connection refused")
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
+
+    with (
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        events = await _collect_stream_events(service, request)
+
+    # embedding 専用メッセージが recall_error として流れること
+    assert ("recall_error", "記憶の想起に失敗しました（embedding接続エラー）") in events
+    # 想起は空なので inscribed_memories は流れないこと
+    assert not any(t == "inscribed_memories" for t, _ in events)
+    # 応答テキスト自体は通常通り流れること
+    assert ("text", "Hi there!") in events
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_yields_generic_recall_error_on_other_failure():
+    """embedding 以外の理由で想起が失敗した場合、execute_stream が汎用エラーメッセージを
+    ("recall_error", ...) として yield すること。
+
+    EmbeddingError 以外（例: LanceDB 破損や予期せぬ例外）は原因を embedding と断定できないため、
+    embedding 専用メッセージではなく汎用の「記憶の想起に失敗しました」を表示する。
+    """
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.side_effect = RuntimeError("boom")
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
+
+    with (
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        events = await _collect_stream_events(service, request)
+
+    assert ("recall_error", "記憶の想起に失敗しました") in events
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_no_recall_error_on_success():
+    """想起が成功した通常時は recall_error イベントが一切流れないこと（回帰防止）。"""
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
+
+    with (
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        events = await _collect_stream_events(service, request)
+
+    assert not any(t == "recall_error" for t, _ in events)

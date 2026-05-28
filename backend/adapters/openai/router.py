@@ -160,23 +160,6 @@ async def chat_completions(request: Request, body: OAIChatRequest):
 
     available_presets = build_available_presets(character, preset, state.sqlite)
 
-    # Afterglow（感情継続機構）: 新規会話かつ afterglow_default が ON の場合、
-    # 同キャラの直近5ターンをメッセージ先頭に注入する。
-    # OpenWebUI は全履歴を毎回送信するため、user メッセージが1件のみのときを新規会話と判定する。
-    if len(messages) == 1 and messages[0].role == "user":
-        afterglow_default = getattr(character, "afterglow_default", 0)
-        if afterglow_default:
-            prev_session_id = state.sqlite.find_latest_session_for_character(
-                character_name=character.name,
-                exclude_session_id=session_id,
-            )
-            if prev_session_id:
-                from backend.services.chat.content import build_1on1_history
-                afterglow_raw = state.sqlite.get_recent_turns(prev_session_id, n_turns=5)
-                uploads_dir = getattr(state, "uploads_dir", "")
-                afterglow_msgs = build_1on1_history(afterglow_raw, state.sqlite, uploads_dir)
-                messages = afterglow_msgs + messages
-
     chat_request = ChatRequest(
         character_id=character.id,
         character_name=character.name,

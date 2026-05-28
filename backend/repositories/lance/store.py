@@ -53,6 +53,15 @@ _TABLE_DEFINITIONS = "definitions"
 _TABLE_WORKING_MEMORY_THREADS = "working_memory_threads"
 
 
+class EmbeddingError(Exception):
+    """embedding（ベクトル化）処理の失敗を表す例外。
+
+    infinity サーバ未起動・接続失敗・タイムアウト・HTTPエラーなど、
+    クエリや文書のベクトル化に失敗したケースを「想起そのものの失敗」と区別するために使う。
+    上位（service 層）はこの例外型を見て、UI へ embedding 起因のエラーであることを伝える。
+    """
+
+
 def _where_dict_to_sql(where: dict) -> str:
     """where dict を LanceDB の SQL 文字列に変換する。
 
@@ -202,10 +211,16 @@ class LanceStore:
 
         Infinity の場合は ``クエリ: `` プレフィックスを使い、検索精度を上げる。
         他プロバイダーは文書 embedding と同じ。
+
+        embedding サーバへの接続失敗等は ``EmbeddingError`` に変換して送出する。
+        想起呼び出し元（service 層）がこの型を見て、UI に embedding 起因のエラーを伝えるため。
         """
-        if isinstance(self._embedding_fn, InfinityEmbeddingFunction):
-            return list(self._embedding_fn.embed_query([text])[0])
-        return list(self._embedding_fn([text])[0])
+        try:
+            if isinstance(self._embedding_fn, InfinityEmbeddingFunction):
+                return list(self._embedding_fn.embed_query([text])[0])
+            return list(self._embedding_fn([text])[0])
+        except Exception as e:
+            raise EmbeddingError(str(e)) from e
 
     def _ensure_vector_dim(self) -> int:
         """vector 次元を決定する（未決定なら dummy embed を1回叩く）。"""
