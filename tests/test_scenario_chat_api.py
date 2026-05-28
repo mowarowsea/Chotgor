@@ -828,7 +828,11 @@ class TestSynopsisAPI:
         assert data["last_turn_index"] == 42
 
     def test_regenerate_without_dropped_returns_current(self, sqlite_store):
-        """履歴上限内なら regenerate は何もせず現状を返す（dropped が空のため）。"""
+        """履歴上限内なら regenerate は蒸留せず、現状の synopsis と進捗を返す。
+
+        レスポンスは {"synopsis": {...}, "progress": {...}} 形式。蒸留対象が
+        無いので synopsis は初期状態、progress も新規ターン 0 を返す。
+        """
         _seed_preset(sqlite_store)
         client = TestClient(_build_app(sqlite_store))
         sid = _create_scenario(client)["id"]
@@ -839,7 +843,12 @@ class TestSynopsisAPI:
         )
         assert res.status_code == 200
         data = res.json()
-        assert data == {"auto": "", "manual": "", "last_turn_index": -1}
+        assert data["synopsis"] == {"auto": "", "manual": "", "last_turn_index": -1}
+        # 進捗は新規ターン 0。上限は設定/デフォルトに依存するので存在のみ確認する。
+        assert data["progress"]["turns"] == 0
+        assert data["progress"]["chars"] == 0
+        assert "max_turns" in data["progress"]
+        assert "max_chars" in data["progress"]
 
     def test_regenerate_nonexistent_returns_404(self, sqlite_store):
         """存在しないセッションは 404。"""

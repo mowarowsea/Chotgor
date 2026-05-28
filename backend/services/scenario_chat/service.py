@@ -258,6 +258,48 @@ async def maybe_update_auto_synopsis(
         return None
 
 
+def compute_synopsis_progress(
+    sqlite, settings: dict, scenario, session_id: str
+) -> dict | None:
+    """前回あらすじ蒸留以降の累積（ターン数・文字数）と history 上限を返す。
+
+    あらすじ作成バーの進捗表示・自動表示判定に使う。LLM 蒸留は一切実行しない。
+    前回蒸留（synopsis_last_turn_index）以降の新規ターンを対象に、
+    「ターン数」「累積文字数」を数え、それぞれの上限（resolve_history_limits）と
+    併せて返す。閾値（50% / 80% など）の判定・色分けは UI 側に委ねる。
+
+    Args:
+        sqlite: SQLiteStore。
+        settings: グローバル設定辞書（history 上限の解決に使う）。
+        scenario: Scenario ORM（history 上限の解決に使う）。
+        session_id: 対象セッション ID。
+
+    Returns:
+        {"turns", "max_turns", "chars", "max_chars"} の dict。例外時は None。
+        履歴空・新規ターン無しでも turns=chars=0 の dict を返す（バー非表示は UI 判定）。
+    """
+    try:
+        history = sqlite.list_scenario_turns(session_id)
+        max_turns, max_chars = resolve_history_limits(scenario, settings)
+        synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
+            "last_turn_index": -1,
+        }
+        last_idx = int(synopsis.get("last_turn_index", -1))
+        new_turns = [
+            t for t in history if int(getattr(t, "turn_index", -1)) > last_idx
+        ]
+        total_chars = sum(len(getattr(t, "content", "") or "") for t in new_turns)
+        return {
+            "turns": len(new_turns),
+            "max_turns": max_turns,
+            "chars": total_chars,
+            "max_chars": max_chars,
+        }
+    except Exception:
+        logger.exception("compute_synopsis_progress 失敗 session=%s", session_id)
+        return None
+
+
 async def run_scenario_turn(
     session_id: str,
     user_message: str,
@@ -307,34 +349,17 @@ async def run_scenario_turn(
         )
         yield ("user_saved", {"turn": scenario_turn_to_dict(user_turn)})
 
-    # 2.5. あらすじ自動更新（best-effort）
-    #      履歴上限を超えるターン群があれば、それを LLM で要約して synopsis_auto に追記する。
-    #      閾値未満の場合・失敗時は何もしない（チャット本体は継続）。
-    #      ここで取得した synopsis を engine に渡し、GM プロンプトに含める。
-    #      蒸留は専用の synopsis_preset_id（未設定なら gm_preset_id にフォールバック）で行う。
-    #      GM 用とは別プリセットを指定できる設計でレートリミット節約を狙う。
+    # 2.5. 現在のあらすじ（auto / manual）を取得して GM プロンプトへ渡す。
+    #      あらすじの再蒸留はここでは実行しない。旧設計はターン開始前に同期蒸留して
+    #      いたが、GM 応答前に蒸留 LLM が走るため「謎の遅延」「気づかぬトークン消費」を
+    #      招いていた。再蒸留はターン完了後にユーザがモーダルから明示起動する
+    #      「あらすじ作成」フローへ移譲した（compute_synopsis_progress の値で UI が促す）。
     gm_preset_id = getattr(session, "gm_preset_id", "") or ""
-    synopsis_preset_id = (
-        getattr(session, "synopsis_preset_id", "") or gm_preset_id
-    )
-    updated_synopsis = await maybe_update_auto_synopsis(
-        sqlite=sqlite,
-        settings=settings,
-        scenario=scenario,
-        history=history,
-        session_id=session_id,
-        synopsis_preset_id=synopsis_preset_id,
-    )
-    if updated_synopsis is not None:
-        # クライアントへ更新を通知（UI 側のあらすじパネルを最新化させるため）。
-        yield ("synopsis_updated", {"synopsis": updated_synopsis})
-        current_synopsis = updated_synopsis
-    else:
-        current_synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
-            "auto": "",
-            "manual": "",
-            "last_turn_index": -1,
-        }
+    current_synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
+        "auto": "",
+        "manual": "",
+        "last_turn_index": -1,
+    }
 
     # 3. エンジン実行
     if engine is None:
@@ -397,6 +422,13 @@ async def run_scenario_turn(
     sqlite.update_scenario_session(session_id, status=session.status)
 
     yield ("turn_complete", {"turn_ids": saved_turn_ids})
+
+    # ターン完了直後にあらすじ進捗（前回蒸留以降のターン数・文字数と上限）を通知する。
+    # フロントはこの値でバーの表示/色（50%超で青・80%超で赤）と作成モーダル自動表示を判定する。
+    # LLM 蒸留はここでは走らせない（純粋な集計のみ。実際の蒸留はユーザ起動）。
+    progress = compute_synopsis_progress(sqlite, settings, scenario, session_id)
+    if progress is not None:
+        yield ("synopsis_progress", progress)
 
 
 def parse_intro_to_turns(

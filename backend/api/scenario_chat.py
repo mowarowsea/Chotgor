@@ -44,6 +44,7 @@ from backend.lib.log_context import (
     new_message_id,
 )
 from backend.services.scenario_chat.service import (
+    compute_synopsis_progress,
     maybe_update_auto_synopsis,
     run_scenario_turn,
     seed_intro_turns,
@@ -142,6 +143,17 @@ class SynopsisUpdate(BaseModel):
 
     auto: str | None = None
     manual: str | None = None
+
+
+class SynopsisRegenerate(BaseModel):
+    """あらすじ手動作成（強制蒸留）リクエスト。
+
+    `synopsis_preset_id` を指定すると、その preset をセッションへ永続化（記憶）した上で
+    蒸留に使う。フロントの「あらすじ作成モーダル」で選んだモデルが次回以降の既定にも
+    なる。省略時はセッション既定の `synopsis_preset_id` を使う。
+    """
+
+    synopsis_preset_id: str | None = None
 
 
 class StreamRequest(BaseModel):
@@ -474,12 +486,22 @@ async def patch_session_synopsis(
 
 
 @router.post("/sessions/{session_id}/synopsis/regenerate")
-async def regenerate_session_synopsis(request: Request, session_id: str):
-    """`synopsis_auto` への自動追記フローを手動起動する。
+async def regenerate_session_synopsis(
+    request: Request, session_id: str, body: SynopsisRegenerate | None = None
+):
+    """あらすじを強制的に再蒸留する（ユーザ起動の「あらすじ作成」フロー）。
 
-    通常チャットでは閾値（SYNOPSIS_AUTO_TRIGGER_RATIO × history 上限）未満では
-    自動更新を抑制しているため、ユーザが任意のタイミングで追記更新を強制したいときに使う。
-    既存 auto は**書き換えず**、新規分のみが末尾に追記される。
+    通常チャットでは閾値（SYNOPSIS_AUTO_TRIGGER_RATIO × history 上限）に達すると
+    UI 側で作成を促すが、蒸留自体は走らせない。本 API がその蒸留本体を force=True で
+    実行する。既存 auto は**書き換えず**、新規分のみが末尾に追記される。
+
+    `body.synopsis_preset_id` が指定されていれば、その preset をセッションへ永続化
+    （記憶）してから蒸留に使う。これにより、モーダルで選んだモデルが次回以降の
+    既定にもなり、「あらすじモデル切り替え忘れ」を防ぐ。
+
+    レスポンスは `{"synopsis": {...}, "progress": {...}}`。progress は蒸留後の
+    最新進捗（前回蒸留以降のターン数・文字数と上限）で、フロントが作成バーを
+    即時に更新（多くの場合 0 になり非表示化）できるようにするため。
     """
     # 通常の stream エンドポイントと同じく、リクエスト ID と feature タグを設定する。
     # こうしないと synopsis 蒸留の debug ログが 1on1 の "chat" 扱いで出力され、
@@ -493,6 +515,18 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
     sess = sqlite.get_scenario_session(session_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
+    # preset 指定があれば検証してセッションへ永続化し、最新の sess を取り直す。
+    requested_preset_id = body.synopsis_preset_id if body else None
+    if requested_preset_id:
+        if sqlite.get_model_preset(requested_preset_id) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"指定された synopsis_preset_id が見つかりません: {requested_preset_id}",
+            )
+        sqlite.update_scenario_session(
+            session_id, synopsis_preset_id=requested_preset_id
+        )
+        sess = sqlite.get_scenario_session(session_id)
     scenario = sqlite.get_scenario(sess.scenario_id)
     if scenario is None:
         raise HTTPException(status_code=400, detail="元シナリオが見つかりません")
@@ -513,12 +547,20 @@ async def regenerate_session_synopsis(request: Request, session_id: str):
     )
     if updated is None:
         # 追記対象が無い、または LLM 呼び出し失敗（best-effort）。現状を返す。
-        return sqlite.get_scenario_session_synopsis(session_id) or {
+        synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
             "auto": "",
             "manual": "",
             "last_turn_index": -1,
         }
-    return updated
+    else:
+        synopsis = updated
+    progress = compute_synopsis_progress(sqlite, settings, scenario, session_id) or {
+        "turns": 0,
+        "max_turns": 0,
+        "chars": 0,
+        "max_chars": 0,
+    }
+    return {"synopsis": synopsis, "progress": progress}
 
 
 @router.post("/sessions/{session_id}/stream")

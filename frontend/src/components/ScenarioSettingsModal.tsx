@@ -21,18 +21,14 @@ interface Props {
   presets: ScenarioPreset[];
   /** 現在セッションに紐付いている GM プリセット ID。 */
   currentGmPresetId: string;
-  /** 現在セッションに紐付いているあらすじ蒸留プリセット ID。 */
-  currentSynopsisPresetId: string;
   /** GM プリセット変更時のコールバック。 */
   onApplyGmPreset: (presetId: string) => void;
-  /** あらすじ蒸留プリセット変更時のコールバック。 */
-  onApplySynopsisPreset: (presetId: string) => void;
   /** セッションのあらすじ（未取得は null）。 */
   synopsis: ScenarioSynopsis | null;
   /** あらすじを部分更新（auto / manual のどちらか / 両方）。 */
   onSynopsisChange: (patch: { auto?: string; manual?: string }) => Promise<void>;
-  /** synopsis_auto への自動追記フローを手動起動する。 */
-  onSynopsisRegenerate: () => Promise<void>;
+  /** あらすじ作成モーダルを開く（Preset を選んでから蒸留する）。 */
+  onOpenSynopsisCreate: () => void;
   /** 送信中など、編集を無効化すべき状態。 */
   disabled: boolean;
   /** モーダルを閉じるコールバック。 */
@@ -97,12 +93,10 @@ function PresetButtons({
 export default function ScenarioSettingsModal({
   presets,
   currentGmPresetId,
-  currentSynopsisPresetId,
   onApplyGmPreset,
-  onApplySynopsisPreset,
   synopsis,
   onSynopsisChange,
-  onSynopsisRegenerate,
+  onOpenSynopsisCreate,
   disabled,
   onClose,
   initialTab = "model",
@@ -111,14 +105,12 @@ export default function ScenarioSettingsModal({
 
   /* ── モデルタブ用ローカル選択（適用ボタンで確定） ── */
   const [selGmId, setSelGmId] = useState(currentGmPresetId);
-  const [selSynopsisId, setSelSynopsisId] = useState(currentSynopsisPresetId);
 
   /* ── あらすじタブ用ドラフト（SynopsisModal と同じ振る舞い） ── */
   const [autoDraft, setAutoDraft] = useState(synopsis?.auto ?? "");
   const [manualDraft, setManualDraft] = useState(synopsis?.manual ?? "");
   const [savingAuto, setSavingAuto] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
 
   // サーバ最新値が変わったら、未保存の編集がない側を同期する。
   useEffect(() => {
@@ -130,9 +122,6 @@ export default function ScenarioSettingsModal({
   useEffect(() => {
     setSelGmId(currentGmPresetId);
   }, [currentGmPresetId]);
-  useEffect(() => {
-    setSelSynopsisId(currentSynopsisPresetId);
-  }, [currentSynopsisPresetId]);
 
   // Esc キーで閉じる。
   useEffect(() => {
@@ -143,20 +132,15 @@ export default function ScenarioSettingsModal({
     return () => document.removeEventListener("keydown", fn);
   }, [onClose]);
 
-  /** 「適用」ボタン: 変更されたプリセットだけ親に通知して、モーダルを閉じる。 */
+  /** 「適用」ボタン: GM プリセットが変わっていれば親に通知して、モーダルを閉じる。 */
   const applyPresets = () => {
     if (selGmId && selGmId !== currentGmPresetId) {
       onApplyGmPreset(selGmId);
     }
-    if (selSynopsisId && selSynopsisId !== currentSynopsisPresetId) {
-      onApplySynopsisPreset(selSynopsisId);
-    }
     onClose();
   };
 
-  const presetsDirty =
-    (selGmId !== "" && selGmId !== currentGmPresetId) ||
-    (selSynopsisId !== "" && selSynopsisId !== currentSynopsisPresetId);
+  const presetsDirty = selGmId !== "" && selGmId !== currentGmPresetId;
 
   const saveAuto = async () => {
     if (savingAuto) return;
@@ -175,16 +159,6 @@ export default function ScenarioSettingsModal({
       await onSynopsisChange({ manual: manualDraft });
     } finally {
       setSavingManual(false);
-    }
-  };
-
-  const regenerate = async () => {
-    if (regenerating) return;
-    setRegenerating(true);
-    try {
-      await onSynopsisRegenerate();
-    } finally {
-      setRegenerating(false);
     }
   };
 
@@ -262,16 +236,6 @@ export default function ScenarioSettingsModal({
                   onSelect={setSelGmId}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <div className="text-[11px] text-ch-t3">
-                  あらすじ作成用モデル（履歴を圧縮して保持。軽量モデルで節約可）
-                </div>
-                <PresetButtons
-                  presets={presets}
-                  selectedId={selSynopsisId}
-                  onSelect={setSelSynopsisId}
-                />
-              </div>
               <div className="flex justify-end pt-2">
                 <button
                   onClick={applyPresets}
@@ -293,13 +257,13 @@ export default function ScenarioSettingsModal({
                   <span>自動あらすじ（メイン。LLM が古い履歴を要約・追記）</span>
                   <div className="flex gap-2">
                     <button
-                      onClick={regenerate}
-                      disabled={disabled || regenerating}
+                      onClick={onOpenSynopsisCreate}
+                      disabled={disabled}
                       className="text-ch-t2 hover:text-ch-t1 text-[11px] px-2 py-0.5 rounded disabled:opacity-30"
                       style={{ border: "1px solid var(--ch-sep2)" }}
-                      title="今すぐ古い履歴を要約して追記する"
+                      title="モデルを選んであらすじを作成する"
                     >
-                      {regenerating ? "生成中…" : "追記更新"}
+                      自動作成
                     </button>
                     <button
                       onClick={saveAuto}

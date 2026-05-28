@@ -453,6 +453,26 @@ export interface ScenarioSynopsis {
   last_turn_index: number;
 }
 
+/**
+ * あらすじ作成バー用の進捗情報。
+ *
+ * 前回あらすじ蒸留以降に積み上がった「ターン数 / 文字数」とそれぞれの history 上限。
+ * フロントは max(turns/max_turns, chars/max_chars) の比率でバーの表示可否（>50%）と
+ * 色（>80% で赤）を決める。turn_complete 時とあらすじ作成（regenerate）時に更新される。
+ */
+export interface SynopsisProgress {
+  turns: number;
+  max_turns: number;
+  chars: number;
+  max_chars: number;
+}
+
+/** あらすじ作成（regenerate）APIのレスポンス。蒸留後の synopsis と最新の進捗。 */
+export interface SynopsisRegenerateResult {
+  synopsis: ScenarioSynopsis;
+  progress: SynopsisProgress;
+}
+
 /** シナリオストリーミング SSE イベントの型定義。 */
 export type ScenarioStreamEvent =
   | { type: "user_saved"; turn: ScenarioTurn }
@@ -466,7 +486,15 @@ export type ScenarioStreamEvent =
   | { type: "content_delta"; text: string }
   | { type: "speaker_end"; turn: ScenarioTurn }
   | { type: "turn_complete"; turn_ids: string[] }
-  | { type: "synopsis_updated"; synopsis: ScenarioSynopsis }
+  // ターン完了直後のあらすじ進捗（ターン数・文字数と上限）。
+  // フロントはこれでバーの表示/色と作成モーダルの自動表示を判定する。
+  | {
+      type: "synopsis_progress";
+      turns: number;
+      max_turns: number;
+      chars: number;
+      max_chars: number;
+    }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -658,22 +686,31 @@ export async function patchScenarioSynopsis(
   return res.json();
 }
 
-/** `synopsis_auto` への自動追記フローを手動で起動する。
+/** あらすじを強制的に再蒸留する（ユーザ起動の「あらすじ作成」フロー）。
  *
- * 通常チャットでは閾値未満は自動更新を抑制しているため、ユーザが任意の
- * タイミングで強制追記したい場合に使う。既存 auto は**書き換えず**、
- * 新規分だけが末尾に追記される。
+ * 通常チャットでは閾値到達時に作成を促すだけで蒸留は走らせない。本関数が
+ * その蒸留本体を起動する。既存 auto は**書き換えず**、新規分だけが末尾に追記される。
+ *
+ * `synopsisPresetId` を指定すると、その preset をセッションへ永続化（記憶）した上で
+ * 蒸留に使う。あらすじ作成モーダルで選んだモデルが次回以降の既定にもなる。
  */
 export async function regenerateScenarioSynopsis(
   sessionId: string,
-): Promise<ScenarioSynopsis> {
+  synopsisPresetId?: string,
+): Promise<SynopsisRegenerateResult> {
   const res = await fetch(
     `/api/scenario_chat/sessions/${sessionId}/synopsis/regenerate`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        synopsisPresetId ? { synopsis_preset_id: synopsisPresetId } : {},
+      ),
+    },
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? "あらすじの再生成に失敗しました");
+    throw new Error(err.detail ?? "あらすじの作成に失敗しました");
   }
   return res.json();
 }

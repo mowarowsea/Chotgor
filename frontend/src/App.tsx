@@ -41,6 +41,7 @@ import type {
   Character,
   ScenarioSession,
   ScenarioSynopsis,
+  SynopsisProgress,
   ScenarioTemplate,
   ScenarioPreset,
   ScenarioNpc,
@@ -94,6 +95,7 @@ import ExportDialog from "./components/ExportDialog";
 import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
 import CharPresetMenu from "./components/CharPresetMenu";
 import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
+import SynopsisCreateModal from "./components/SynopsisCreateModal";
 import { useTheme } from "./hooks/useTheme";
 
 /** アプリ全体のルートコンポーネント。 */
@@ -130,12 +132,22 @@ export default function App() {
     "model" | "synopsis" | null
   >(null);
   /**
-   * あらすじが更新されたがユーザがまだ確認していないことを示すフラグ。
-   * バックエンドの synopsis_updated イベント受信時に true、
-   * あらすじタブを開いた時 or セッション切替時に false。
-   * バッジは左上モデルチップに重ねて表示する。
+   * あらすじ進捗（前回蒸留以降のターン数・文字数と上限）。
+   * turn_complete とあらすじ作成（regenerate）時にバックエンドから受け取って更新する。
+   * 未取得（ターン未完了 / 非シナリオ）は null。バーの表示可否・色はこの比率から導出する。
    */
-  const [synopsisHasUpdate, setSynopsisHasUpdate] = useState(false);
+  const [synopsisProgress, setSynopsisProgress] =
+    useState<SynopsisProgress | null>(null);
+  /** あらすじ作成モーダルを表示中か（閾値到達時の自動表示 / バナー・設定からの手動表示）。 */
+  const [synopsisModalOpen, setSynopsisModalOpen] = useState(false);
+  /**
+   * 現在の「閾値超え区間」でモーダルを一度閉じた（キャンセルした）か。
+   * true の間は後続ターンで再び閾値を超えてもモーダルを自動表示しない（うざい再ポップ防止）。
+   * 比率が 50% 以下に戻る or あらすじ作成が走ると false へリセットする。
+   */
+  const [synopsisDismissed, setSynopsisDismissed] = useState(false);
+  /** 裏であらすじ蒸留が走っている最中か（控えめなインジケータ表示に使う）。 */
+  const [synopsisGenerating, setSynopsisGenerating] = useState(false);
   /**
    * 浮遊ヘッダーの表示状態。
    * 上スクロール（過去ログ閲覧）で隠れ、下スクロール・最下部・1画面に収まる場合は表示する。
@@ -337,7 +349,10 @@ export default function App() {
     setScenarioTurns([]);
     setScenarioPending([]);
     setScenarioSynopsis(null);
-    setSynopsisHasUpdate(false);
+    setSynopsisProgress(null);
+    setSynopsisModalOpen(false);
+    setSynopsisDismissed(false);
+    setSynopsisGenerating(false);
     setScenarioSettingsTab(null);
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
     window.location.hash = sessionId;
@@ -568,39 +583,6 @@ export default function App() {
     [activeScenarioSession],
   );
 
-  /** シナリオセッションのあらすじ蒸留プリセットを変更する。
-   *
-   * 左上ヘッダーのモーダル「あらすじ作成用モデル」タブから呼ばれる。
-   * GM プリセットとは独立で、レートリミット節約用に軽量モデルを割り当てる用途。
-   */
-  const handleScenarioSynopsisPresetChange = useCallback(
-    async (presetId: string) => {
-      if (!activeScenarioSession) return;
-      if (presetId === activeScenarioSession.synopsis_preset_id) return;
-      setError(null);
-      try {
-        const updated = await updateScenarioSession(activeScenarioSession.id, {
-          synopsis_preset_id: presetId,
-        });
-        setActiveScenarioSession((prev) =>
-          prev
-            ? { ...prev, synopsis_preset_id: updated.synopsis_preset_id }
-            : prev,
-        );
-        setScenarioSessions((prev) =>
-          prev.map((s) =>
-            s.id === updated.id
-              ? { ...s, synopsis_preset_id: updated.synopsis_preset_id }
-              : s,
-          ),
-        );
-      } catch (e) {
-        setError(String(e));
-      }
-    },
-    [activeScenarioSession],
-  );
-
   /**
    * シナリオ発話送信。SSE ストリームを消費しながら吹き出しを更新する。
    *
@@ -672,12 +654,15 @@ export default function App() {
                 return next;
               });
             }
-          } else if (ev.type === "synopsis_updated") {
-            // バックエンドが履歴上限を超えた古いターンを synopsis_auto に追記した。
-            // UI のあらすじパネルへ反映する。
-            setScenarioSynopsis(ev.synopsis);
-            // 未確認の更新が発生したことをあらすじボタンのインジケータで知らせる。
-            setSynopsisHasUpdate(true);
+          } else if (ev.type === "synopsis_progress") {
+            // ターン完了直後の進捗。バーの表示/色とモーダル自動表示は
+            // synopsisProgress を監視する useEffect 側で判定する。
+            setSynopsisProgress({
+              turns: ev.turns,
+              max_turns: ev.max_turns,
+              chars: ev.chars,
+              max_chars: ev.max_chars,
+            });
           } else if (ev.type === "error") {
             setError(ev.message);
             break;
@@ -1171,16 +1156,109 @@ export default function App() {
     [activeScenarioSession],
   );
 
-  /** あらすじの自動追記フローを手動起動する。ScenarioSettingsModal から呼ばれる。 */
-  const handleSynopsisRegenerate = useCallback(async () => {
-    if (!activeScenarioSession) return;
-    try {
-      const updated = await regenerateScenarioSynopsis(activeScenarioSession.id);
-      setScenarioSynopsis(updated);
-    } catch (e) {
-      setError(String(e));
+  /**
+   * あらすじ作成（強制蒸留）を裏で起動する。あらすじ作成モーダルの「作成」から呼ばれる。
+   *
+   * 旧設計はターン開始前に同期蒸留していたが、本フローは非ブロッキング。モーダルを閉じ、
+   * 控えめなインジケータを出してから蒸留を走らせ、その間もユーザはチャットを続けられる。
+   * 選んだ preset はサーバ側でセッションへ永続化（記憶）されるため、ローカルにも反映する。
+   */
+  const handleSynopsisCreate = useCallback(
+    (presetId: string) => {
+      if (!activeScenarioSession) return;
+      const sessionId = activeScenarioSession.id;
+      setSynopsisModalOpen(false);
+      setSynopsisDismissed(false);
+      setSynopsisGenerating(true);
+      // 選択 preset をローカルの session にも反映（次回モーダルの初期選択に効く）。
+      setActiveScenarioSession((prev) =>
+        prev && prev.id === sessionId
+          ? { ...prev, synopsis_preset_id: presetId }
+          : prev,
+      );
+      setScenarioSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId ? { ...s, synopsis_preset_id: presetId } : s,
+        ),
+      );
+      regenerateScenarioSynopsis(sessionId, presetId)
+        .then((res) => {
+          if (sessionId === activeSessionIdRef.current) {
+            // 蒸留後の synopsis と最新進捗で反映。進捗は通常 0 に戻りバーが消える。
+            setScenarioSynopsis(res.synopsis);
+            setSynopsisProgress(res.progress);
+          }
+        })
+        .catch((e) => setError(String(e)))
+        .finally(() => setSynopsisGenerating(false));
+    },
+    [activeScenarioSession],
+  );
+
+  /** あらすじ作成モーダルを開く（バー / 設定モーダルの「自動作成」から呼ばれる）。 */
+  const handleOpenSynopsisCreate = useCallback(() => {
+    setScenarioSettingsTab(null);
+    setSynopsisModalOpen(true);
+  }, []);
+
+  /** あらすじ作成モーダルをキャンセルする。以降はバーで作成を促し続ける（再ポップしない）。 */
+  const handleCancelSynopsisCreate = useCallback(() => {
+    setSynopsisModalOpen(false);
+    setSynopsisDismissed(true);
+  }, []);
+
+  /**
+   * あらすじ進捗（前回蒸留以降のターン数・文字数）と上限から比率を求める。
+   * ターン側・文字側それぞれの達成率のうち高い方（より限界に近い方）を採用する。
+   */
+  const synopsisRatio = useMemo(() => {
+    if (!synopsisProgress) return 0;
+    const { turns, max_turns, chars, max_chars } = synopsisProgress;
+    const rt = max_turns > 0 ? turns / max_turns : 0;
+    const rc = max_chars > 0 ? chars / max_chars : 0;
+    return Math.max(rt, rc);
+  }, [synopsisProgress]);
+
+  /**
+   * あらすじ作成バーの表示内容。比率が 50% 以下、生成中、モーダル表示中は null（非表示）。
+   * テキストはターン側・文字側のうち限界に近い方を「あらすじ未作成（X/Y…）」で表示し、
+   * 80% を超えたら danger（赤）にする。
+   */
+  const synopsisBar = useMemo(() => {
+    if (!synopsisProgress) return null;
+    if (synopsisGenerating || synopsisModalOpen) return null;
+    if (synopsisRatio <= 0.5) return null;
+    const { turns, max_turns, chars, max_chars } = synopsisProgress;
+    const rt = max_turns > 0 ? turns / max_turns : 0;
+    const rc = max_chars > 0 ? chars / max_chars : 0;
+    const text =
+      rt >= rc
+        ? `あらすじ未作成（${turns}/${max_turns}ターン）`
+        : `あらすじ未作成（${chars}/${max_chars}文字）`;
+    return { text, danger: synopsisRatio > 0.8 };
+  }, [synopsisProgress, synopsisGenerating, synopsisModalOpen, synopsisRatio]);
+
+  /**
+   * あらすじ進捗の変化に応じて作成モーダルの自動表示を制御する。
+   * - 比率 50% 以下: 「閾値超え区間」が終了したものとして dismissed をリセット
+   * - 比率 50% 超 かつ 未 dismissed・非生成中・未表示: 作成モーダルを自動表示
+   */
+  useEffect(() => {
+    if (!synopsisProgress) return;
+    if (synopsisRatio <= 0.5) {
+      if (synopsisDismissed) setSynopsisDismissed(false);
+      return;
     }
-  }, [activeScenarioSession]);
+    if (!synopsisDismissed && !synopsisGenerating && !synopsisModalOpen) {
+      setSynopsisModalOpen(true);
+    }
+  }, [
+    synopsisProgress,
+    synopsisRatio,
+    synopsisDismissed,
+    synopsisGenerating,
+    synopsisModalOpen,
+  ]);
 
   return (
     /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。 */
@@ -1237,16 +1315,11 @@ export default function App() {
                 style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
               >
                 {/* シナリオタイトル + GM プリセット名のチップ。クリックでシナリオ設定モーダルを開く。
-                    モーダル内でシナリオ用モデル・あらすじ用モデル・あらすじ閲覧/編集を切替可能。
-                    未確認のあらすじ更新があれば右上にバッジを表示する。 */}
+                    モーダル内でシナリオ用モデル・あらすじ用モデル・あらすじ閲覧/編集を切替可能。 */}
                 <button
                   onClick={() => setScenarioSettingsTab("model")}
                   className="relative flex items-center gap-2 min-w-0"
-                  title={
-                    synopsisHasUpdate
-                      ? "あらすじが更新されました（クリックで設定モーダルを開く）"
-                      : "シナリオ設定（モデル / あらすじ）"
-                  }
+                  title="シナリオ設定（モデル / あらすじ）"
                 >
                   <span className="shrink-0 w-6 h-6 rounded-full bg-ch-s1 flex items-center justify-center text-ch-t2 text-xs">✦</span>
                   <div className="min-w-0 text-left">
@@ -1256,13 +1329,6 @@ export default function App() {
                       <span className="text-ch-t4 ml-1">▾</span>
                     </div>
                   </div>
-                  {synopsisHasUpdate && (
-                    <span
-                      aria-label="未確認のあらすじ更新あり"
-                      className="absolute -top-1 -right-1 inline-block rounded-full bg-red-500"
-                      style={{ width: 8, height: 8, boxShadow: "0 0 0 1.5px var(--ch-bg)" }}
-                    />
-                  )}
                 </button>
               </div>
             ) : activeSessionId && isGroupSession ? (
@@ -1400,6 +1466,9 @@ export default function App() {
             onDiscard={handleScenarioDiscard}
             onHeaderVisibilityChange={setHeaderVisible}
             elapsedMap={elapsedMap}
+            synopsisBar={synopsisBar}
+            synopsisGenerating={synopsisGenerating}
+            onOpenSynopsisCreate={handleOpenSynopsisCreate}
           />
         ) : activeSessionId && isGroupSession ? (
           <GroupChatView
@@ -1477,20 +1546,26 @@ export default function App() {
           <ScenarioSettingsModal
             presets={scenarioPresets}
             currentGmPresetId={activeScenarioSession.gm_preset_id}
-            currentSynopsisPresetId={activeScenarioSession.synopsis_preset_id}
             onApplyGmPreset={handleScenarioPresetChange}
-            onApplySynopsisPreset={handleScenarioSynopsisPresetChange}
             synopsis={scenarioSynopsis}
             onSynopsisChange={handleSynopsisChange}
-            onSynopsisRegenerate={handleSynopsisRegenerate}
+            onOpenSynopsisCreate={handleOpenSynopsisCreate}
             disabled={sending}
             initialTab={scenarioSettingsTab}
-            onClose={() => {
-              // モーダルを閉じる際、あらすじ更新の未読バッジを下げる
-              // （ユーザがモーダルを開いた = 更新を意識した、という扱い）
-              setSynopsisHasUpdate(false);
-              setScenarioSettingsTab(null);
-            }}
+            onClose={() => setScenarioSettingsTab(null)}
+          />
+        )}
+
+      {/* あらすじ作成モーダル。閾値到達時の自動表示、または設定モーダル/バーから手動表示。
+          「作成」で裏蒸留、「キャンセル」でバー表示へ降格する。 */}
+      {synopsisModalOpen &&
+        isScenarioSession &&
+        activeScenarioSession && (
+          <SynopsisCreateModal
+            presets={scenarioPresets}
+            currentSynopsisPresetId={activeScenarioSession.synopsis_preset_id}
+            onCreate={handleSynopsisCreate}
+            onCancel={handleCancelSynopsisCreate}
           />
         )}
     </div>

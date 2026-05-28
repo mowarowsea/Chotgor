@@ -84,6 +84,16 @@ interface Props {
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** turn_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
   elapsedMap?: Record<string, number>;
+  /**
+   * あらすじ作成バーの表示内容。null なら非表示。
+   * `text` は「あらすじ未作成（X/Yターン）」等、`danger` が true（80%超）なら赤系で表示する。
+   * 入力欄上部に常駐し、タップで作成モーダルを開く。
+   */
+  synopsisBar?: { text: string; danger: boolean } | null;
+  /** 裏であらすじ蒸留が走っている最中か（控えめなインジケータ表示に使う）。 */
+  synopsisGenerating?: boolean;
+  /** あらすじ作成モーダルを開くコールバック（バーから呼ぶ）。 */
+  onOpenSynopsisCreate?: () => void;
 }
 
 /** 文字列の末尾空白・改行を取り除く（表示時のノイズ除去）。 */
@@ -519,6 +529,9 @@ export default function ScenarioChatView({
   onDiscard,
   onHeaderVisibilityChange,
   elapsedMap,
+  synopsisBar,
+  synopsisGenerating,
+  onOpenSynopsisCreate,
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
   const [npcDialogTarget, setNpcDialogTarget] = useState<ScenarioNpc | null>(null);
@@ -701,6 +714,42 @@ export default function ScenarioChatView({
         )}
        </div>
       </div>
+
+      {/* あらすじ作成中の控えめなインジケータ。生成は裏で走り、入力は継続できる。 */}
+      {synopsisGenerating && (
+        <div className="shrink-0 px-4 sm:px-6">
+          <div className="max-w-[760px] mx-auto py-1.5 text-ch-t3 text-[11px] flex items-center gap-1.5">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-ch-t3 animate-pulse" />
+            あらすじを作成中…
+          </div>
+        </div>
+      )}
+
+      {/* あらすじ作成バー。進捗が 50% を超えると表示（青）、80% 超で赤。
+          テキストはターン側・文字側のうち限界に近い方を親が決めて渡す。
+          生成中は上のインジケータに切り替わるため非表示。タップで作成モーダルを開く。 */}
+      {synopsisBar && !synopsisGenerating && (
+        <div className="shrink-0 px-4 sm:px-6">
+          <button
+            onClick={onOpenSynopsisCreate}
+            className="w-full max-w-[760px] mx-auto mb-1.5 rounded-lg px-3 py-2 flex items-center justify-between gap-3 text-xs transition-opacity hover:opacity-90"
+            style={{
+              background: synopsisBar.danger
+                ? "oklch(60% 0.18 25 / 0.12)"
+                : "oklch(50% 0.13 226 / 0.10)",
+              border: `1px solid ${
+                synopsisBar.danger ? "oklch(60% 0.18 25 / 0.45)" : "var(--ch-sep2)"
+              }`,
+              color: synopsisBar.danger
+                ? "oklch(55% 0.20 25)"
+                : "rgb(var(--ch-t2))",
+            }}
+          >
+            <span className="font-medium truncate">{synopsisBar.text}</span>
+            <span className="shrink-0 text-[11px] opacity-80">あらすじ作成 ›</span>
+          </button>
+        </div>
+      )}
 
       {/* 入力欄（1on1 / グループと共通の MessageInput を使う） */}
       {session.status === "active" ? (
