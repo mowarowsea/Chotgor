@@ -534,12 +534,19 @@ async def test_google_generate_stream_typed_empty_text_part_skipped():
 
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_parts_fallback_to_chunk_text():
-    """candidates へのアクセスが失敗したとき chunk.text にフォールバックして ("text", ...) をyieldする。"""
+    """candidates が空でブロックでもないとき chunk.text にフォールバックして ("text", ...) をyieldする。
+
+    PROHIBITED_CONTENT 等のブロック検出（_extract_block_reason）が追加されたため、
+    本シナリオは「ブロックではないが候補が取れず、chunk.text だけが使える」ケースを表す。
+    prompt_feedback を None にしておかないと、MagicMock が自動生成する truthy な
+    block_reason をブロックと誤検出し、フォールバックではなくエラーが出てしまうので明示する。
+    """
     from backend.providers.google_provider import GoogleProvider
 
-    # candidates アクセスで AttributeError を発生させるチャンク
+    # candidates が空（候補なし）・ブロックではない・chunk.text のみ存在するチャンク
     bad_chunk = MagicMock()
-    bad_chunk.candidates = []  # 空リスト → IndexError
+    bad_chunk.candidates = []  # 空リスト → 候補なし
+    bad_chunk.prompt_feedback = None  # ブロックではない（block_reason 誤検出を防ぐ）
     bad_chunk.text = "フォールバックテキスト"
 
     mock_client = MagicMock()
