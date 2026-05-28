@@ -94,6 +94,12 @@ interface Props {
   synopsisGenerating?: boolean;
   /** あらすじ作成モーダルを開くコールバック（バーから呼ぶ）。 */
   onOpenSynopsisCreate?: () => void;
+  /**
+   * あらすじへ蒸留済みの最後の `turn_index`（`ScenarioSynopsis.last_turn_index`）。
+   * 既定 -1（未蒸留）。これ以下の turn_index を持つバブルは「まとめ済み」、
+   * これを超えるバブルは「まだまとめてない」として、境界に区切り線を描く。
+   */
+  synopsisLastTurnIndex?: number;
 }
 
 /** 文字列の末尾空白・改行を取り除く（表示時のノイズ除去）。 */
@@ -515,6 +521,37 @@ const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
   );
 });
 
+/**
+ * あらすじまとめ済み／未まとめの境界を示す区切り線。
+ *
+ * 蒸留済みターン群（上）と未蒸留ターン群（下）の間に 1 本だけ挿入する。
+ * 中央に「ここまであらすじにまとめ済み」ラベルを置き、左右に細い水平線を伸ばす。
+ * 装飾的な目印なので `aria-hidden` とし、スクリーンリーダーには読み上げさせない。
+ */
+function SynopsisDivider() {
+  return (
+    <div className="flex items-center gap-3 -my-1 select-none" aria-hidden>
+      <div className="flex-1 h-px" style={{ background: "var(--ch-sep2)" }} />
+      <span className="text-[10px] text-ch-t4 flex items-center gap-1 whitespace-nowrap">
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+        ここまであらすじにまとめ済み
+      </span>
+      <div className="flex-1 h-px" style={{ background: "var(--ch-sep2)" }} />
+    </div>
+  );
+}
+
 /** メイン: シナリオチャットビュー本体。 */
 export default function ScenarioChatView({
   session,
@@ -532,6 +569,7 @@ export default function ScenarioChatView({
   synopsisBar,
   synopsisGenerating,
   onOpenSynopsisCreate,
+  synopsisLastTurnIndex,
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
   const [npcDialogTarget, setNpcDialogTarget] = useState<ScenarioNpc | null>(null);
@@ -550,6 +588,24 @@ export default function ScenarioChatView({
     () => Object.fromEntries(npcs.map((n) => [n.name, n])),
     [npcs],
   );
+
+  /**
+   * あらすじ区切り線を直前に挿入すべきターンの id を計算する。
+   *
+   * `turn_index <= synopsisLastTurnIndex` がまとめ済み、それを超えるものが未まとめ。
+   * その境界（=最初の未まとめターン）の id を返す。区切り線が無意味なケースは null:
+   *   - synopsisLastTurnIndex 未指定 / -1（まだ何も蒸留していない）
+   *   - まとめ済みターンが 1 つも無い（境界の上側が空 → 線を出す意味がない）
+   *   - 未まとめターンが 1 つも無い（全ターン蒸留済み → 末尾に線が出て邪魔なだけ）
+   */
+  const synopsisDividerTurnId = useMemo(() => {
+    const idx = synopsisLastTurnIndex ?? -1;
+    if (idx < 0) return null;
+    const hasSummarized = turns.some((t) => t.turn_index <= idx);
+    if (!hasSummarized) return null;
+    const firstUnsummarized = turns.find((t) => t.turn_index > idx);
+    return firstUnsummarized ? firstUnsummarized.id : null;
+  }, [turns, synopsisLastTurnIndex]);
 
   /**
    * 末尾 GM ターンのバブル一覧とそのまとめテキストを計算する。
@@ -645,46 +701,55 @@ export default function ScenarioChatView({
           </div>
         )}
         {turns.map((t) => {
+          // このターンが「最初の未まとめターン」なら、直前にあらすじ区切り線を挿す。
+          const divider =
+            t.id === synopsisDividerTurnId ? <SynopsisDivider /> : null;
+          let bubble: React.ReactNode;
           if (t.speaker_type === "user") {
-            return (
+            bubble = (
               <UserBubbleRow
-                key={t.id}
                 content={t.content}
                 speaker_name={t.speaker_name}
                 canEdit={session.status === "active" && !sending}
                 onCommit={(newContent) => onEditUserTurn(t.id, newContent)}
               />
             );
+          } else {
+            // 既知 NPC のときだけアバタークリックを有効化（詳細ダイアログを開く）。
+            // narrator や未知 NPC は対応する ScenarioNpc レコードが無いのでクリック無効。
+            const npcForAvatar =
+              t.speaker_type === "npc" || t.speaker_type === "character"
+                ? npcByName[t.speaker_name] ?? null
+                : null;
+            bubble = (
+              <GMBubbleRow
+                speaker_type={t.speaker_type}
+                speaker_name={t.speaker_name}
+                is_known={resolveIsKnown(t.speaker_type, t.speaker_name)}
+                content={t.content}
+                avatarSrc={resolveAvatar(t.speaker_type, t.speaker_name)}
+                isLastGM={
+                  t.id === lastGMTurnId &&
+                  session.status === "active" &&
+                  !sending
+                }
+                copyText={lastGMTurnCopyText}
+                onRegenerate={onRegenerate}
+                onDiscard={onDiscard}
+                onAvatarClick={
+                  npcForAvatar ? () => setNpcDialogTarget(npcForAvatar) : undefined
+                }
+                elapsedMs={
+                  t.id === lastGMTurnId ? elapsedMap?.[t.id] : undefined
+                }
+              />
+            );
           }
-          // 既知 NPC のときだけアバタークリックを有効化（詳細ダイアログを開く）。
-          // narrator や未知 NPC は対応する ScenarioNpc レコードが無いのでクリック無効。
-          const npcForAvatar =
-            t.speaker_type === "npc" || t.speaker_type === "character"
-              ? npcByName[t.speaker_name] ?? null
-              : null;
           return (
-            <GMBubbleRow
-              key={t.id}
-              speaker_type={t.speaker_type}
-              speaker_name={t.speaker_name}
-              is_known={resolveIsKnown(t.speaker_type, t.speaker_name)}
-              content={t.content}
-              avatarSrc={resolveAvatar(t.speaker_type, t.speaker_name)}
-              isLastGM={
-                t.id === lastGMTurnId &&
-                session.status === "active" &&
-                !sending
-              }
-              copyText={lastGMTurnCopyText}
-              onRegenerate={onRegenerate}
-              onDiscard={onDiscard}
-              onAvatarClick={
-                npcForAvatar ? () => setNpcDialogTarget(npcForAvatar) : undefined
-              }
-              elapsedMs={
-                t.id === lastGMTurnId ? elapsedMap?.[t.id] : undefined
-              }
-            />
+            <React.Fragment key={t.id}>
+              {divider}
+              {bubble}
+            </React.Fragment>
           );
         })}
         {pendingBubbles.map((b) => {

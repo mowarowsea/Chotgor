@@ -1469,6 +1469,7 @@ export default function App() {
             synopsisBar={synopsisBar}
             synopsisGenerating={synopsisGenerating}
             onOpenSynopsisCreate={handleOpenSynopsisCreate}
+            synopsisLastTurnIndex={scenarioSynopsis?.last_turn_index ?? -1}
           />
         ) : activeSessionId && isGroupSession ? (
           <GroupChatView
