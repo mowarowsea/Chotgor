@@ -1,292 +1,346 @@
 {% extends "base.html" %}
-{% block title %}{% if character %}{{ character.name }}{% else %}New Character{% endif %} &mdash; Chotgor{% endblock %}
+{% block title %}{% if character %}{{ character.name }}{% else %}new character{% endif %} &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ characters / {% if character %}{{ character.name }}{% else %}new{% endif %}{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>{% if character %}{{ character.name }}{% else %}New Character{% endif %}</h1>
-    <div style="display:flex;gap:0.5rem">
-        {% if character %}
-        <a href="/ui/inscribed_memories/{{ character.id }}" class="btn btn-secondary">Memories</a>
-        <a href="/ui/working-memory/{{ character.id }}" class="btn btn-secondary">Working Memory</a>
-        {% endif %}
-        <a href="/ui/" class="btn btn-secondary">Back</a>
-    </div>
-</div>
-
-<div class="form-card">
+<div class="ch-shell">
     <form method="post" action="{{ action }}" enctype="multipart/form-data"
           {% if character %}data-autosave{% endif %}>
 
+        {# ── ページヘッド（編集時はアバター・メタ、新規時は見出し） ── #}
         {% if character %}
-        <p class="autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
-        {% endif %}
-
-        <!-- アイコン -->
-        <div class="form-group">
-            <label>Character Icon
-                <span class="label-hint">PNG / JPG / WebP — 2MB まで</span>
-            </label>
-            <div class="image-upload-row">
-                <div id="icon-preview-container">
-                    {% if character and character.image_data %}
-                    <img src="{{ character.image_data }}" class="icon-preview" alt="current icon">
+        <div class="ch-pagehead">
+            <div id="icon-preview-container">
+                {% if character.image_data %}
+                <img src="{{ character.image_data }}" class="ch-pagehead__avatar" alt="{{ character.name }}">
+                {% else %}
+                <div class="ch-pagehead__avatar ch-pagehead__avatar--ph">{{ character.name[0] }}</div>
+                {% endif %}
+            </div>
+            <div class="ch-pagehead__body">
+                <div class="ch-pagehead__title">
+                    <h1 class="ch-pagehead__name">{{ character.name }}</h1>
+                    {% if character.relationship_status == 'estranged' %}
+                    <span class="ch-pill ch-pill--estranged"><span class="ch-dot"></span>estranged</span>
                     {% else %}
-                    <div class="icon-placeholder">?</div>
+                    <span class="ch-pill ch-pill--active"><span class="ch-dot"></span>active</span>
                     {% endif %}
                 </div>
-                <!-- data-no-autosave: 生画像の選択では保存せず、クロップ確定時に保存する -->
-                <input type="file" id="image-file-input" name="image" accept="image/*"
-                    style="display:none" data-no-autosave>
-                <div style="display:flex;flex-direction:column;gap:5px">
-                    <button type="button" class="btn btn-secondary btn-sm"
-                        onclick="document.getElementById('image-file-input').click()">
-                        画像を選択
-                    </button>
-                    <button type="button" id="remove-image-btn" class="btn btn-secondary btn-sm"
-                        style="{% if not (character and character.image_data) %}display:none{% endif %}"
-                        onclick="removeImage()">
-                        削除
-                    </button>
-                </div>
+            </div>
+            <div class="ch-pagehead__actions">
+                <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
+                <a href="/ui/working-memory/{{ character.id }}" class="ch-btn ch-btn--sm">working memory</a>
+                <a href="/ui/" class="ch-btn ch-btn--sm ch-btn--ghost">← 戻る</a>
             </div>
         </div>
-        <input type="hidden" id="remove-image-flag" name="remove_image" value="">
+        {% else %}
+        <header class="ch-hero">
+            <span class="ch-eyebrow ch-hero__eyebrow">new</span>
+            <h1 class="ch-display">new character</h1>
+        </header>
+        {% endif %}
 
-        <!-- 名前 -->
-        <div class="form-group">
-            <label for="name">Character Name</label>
-            <input type="text" id="name" name="name" class="form-control"
-                value="{% if character %}{{ character.name }}{% endif %}"
-                placeholder="e.g. Aria, Sage, Luna" required>
-        </div>
-
-        <!-- キャラクター定義 -->
-        <div class="form-group">
-            <label for="system_prompt_block1">Character Definition
-                <span class="label-hint">Block 1 — Who is this character?</span>
-            </label>
-            <textarea id="system_prompt_block1" name="system_prompt_block1"
-                class="form-control textarea-tall"
-                placeholder="Describe the character's personality, background, speaking style, values…">{% if character %}{{ character.system_prompt_block1 }}{% endif %}</textarea>
-        </div>
-
-        <hr>
-
-        <!-- 読み取り専用フィールド群 -->
-        <div class="form-group">
-            <label>Inner Narrative
-                <span class="label-hint">キャラクター自身が carve_narrative で書き込む内的叙述（読み取り専用）</span>
-            </label>
-            <textarea class="form-control textarea-medium" readonly
-                style="opacity:0.6;cursor:default"
-                placeholder="（まだ何も書かれていません）">{% if character %}{{ character.inner_narrative }}{% endif %}</textarea>
+        {# ════════════ CHAPTER 1 — inner ════════════ #}
+        <div class="ch-chapter">
+            <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 1</span></div>
+            <h2 class="ch-chapter__title">inner <small>— 人格と物語</small></h2>
         </div>
 
         {% if character %}
-        <div class="form-group">
-            <label>Working Memory
-                <span class="label-hint">歩み・課題・感情・関係はワーキングメモリのスレッドで管理されます</span>
-            </label>
-            <a href="/ui/working-memory/{{ character.id }}" class="btn btn-secondary btn-sm">スレッド一覧を開く</a>
-        </div>
+        <p class="ch-autosave-note">変更は自動的に保存される（保存ボタンは要らない）。</p>
         {% endif %}
 
-        <hr>
-
-        <!-- switch_angle -->
-        <div class="form-group" id="switch-angle-group" style="display:none">
-            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
-                <input type="checkbox" id="switch_angle_enabled" name="switch_angle_enabled" value="1"
-                    {% if character and character.switch_angle_enabled %}checked{% endif %}>
-                switch_angle を使用する
-                <span class="label-hint">ONにするとアングル切り替えが有効になります</span>
-            </label>
-        </div>
-
-        <!-- 外部ツール連携 -->
-        <div class="form-group">
-            <label>外部ツール連携
-                <span class="label-hint">このキャラクターに許可する外部ツール（Claude Code CLI プリセットのみ有効）</span>
-            </label>
-            {% set at = (character.allowed_tools or {}) if character else {} %}
-            <div style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.4rem">
-                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
-                    <input type="checkbox" name="tool_web_search" value="1"
-                        {% if at.get('web_search') %}checked{% endif %}>
-                    Web Search <span style="color:var(--t3);font-size:0.78rem">（WebSearch + WebFetch）</span>
-                </label>
-                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
-                    <input type="checkbox" name="tool_google_calendar" value="1"
-                        {% if at.get('google_calendar') %}checked{% endif %}>
-                    Google Calendar
-                </label>
-                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
-                    <input type="checkbox" name="tool_gmail" value="1"
-                        {% if at.get('gmail') %}checked{% endif %}>
-                    Gmail
-                </label>
-                <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
-                    <input type="checkbox" name="tool_google_drive" value="1"
-                        {% if at.get('google_drive') %}checked{% endif %}>
-                    Google Drive
-                </label>
+        {# ── identity ・ 自我 ── #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">identity <small>・ 自我</small></h3>
             </div>
-        </div>
 
-        <hr>
-
-        <!-- 利用モデル -->
-        <div class="form-group">
-            <label>利用モデル
-                <span class="label-hint">有効にしたモデルが OpenWebUI のモデルリストに表示されます</span>
-            </label>
-
-            <div class="accordion" id="model-accordion">
-                {% for preset in model_presets %}
-                {% set cfg = (character.enabled_providers or {}).get(preset.id) if character else none %}
-                {% if cfg is not none %}
-                <div class="accordion-item" data-preset-id="{{ preset.id }}">
-                    <input type="hidden" name="preset_ids" value="{{ preset.id }}">
-                    <div class="accordion-header">
-                        <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
-                        <strong style="font-size:0.82rem;color:var(--t1)">{{ preset.name }}</strong>
-                        <span class="provider-badge">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
-                        <button type="button" class="btn-remove"
-                            onclick="removePreset(this, '{{ preset.id }}')">✕</button>
+            {# アイコン #}
+            <div class="ch-field">
+                <span class="ch-label">アイコン <span class="ch-hint">PNG / JPG / WebP — 2MB まで</span></span>
+                <div class="image-upload-row">
+                    {% if not character %}
+                    <div id="icon-preview-container">
+                        <div class="icon-placeholder">?</div>
                     </div>
-                    <div class="accordion-body">
-                        <div class="form-group">
-                            <label>Additional Instructions
-                                <span class="label-hint">このモデル向けの追記指示（省略可）</span>
-                            </label>
-                            <textarea name="ai_{{ preset.id }}"
-                                class="form-control textarea-medium">{{ cfg.get('additional_instructions', '') }}</textarea>
-                        </div>
-                        <div class="form-group when-to-switch-field">
-                            <label>このモデルに切り替えるタイミング
-                                <span class="label-hint">switch_angle ツールの判断基準（省略可）</span>
-                            </label>
-                            <textarea name="wts_{{ preset.id }}"
-                                class="form-control textarea-small">{{ cfg.get('when_to_switch', '') }}</textarea>
-                        </div>
+                    {% endif %}
+                    <input type="file" id="image-file-input" name="image" accept="image/*"
+                        style="display:none" data-no-autosave>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                        <button type="button" class="ch-btn ch-btn--sm"
+                            onclick="document.getElementById('image-file-input').click()">画像を選択</button>
+                        <button type="button" id="remove-image-btn" class="ch-btn ch-btn--sm ch-btn--ghost"
+                            style="{% if not (character and character.image_data) %}display:none{% endif %}"
+                            onclick="removeImage()">削除</button>
                     </div>
                 </div>
-                {% endif %}
-                {% endfor %}
+            </div>
+            <input type="hidden" id="remove-image-flag" name="remove_image" value="">
+
+            {# 名前 #}
+            <div class="ch-field">
+                <label class="ch-label" for="name">名前</label>
+                <input type="text" id="name" name="name" class="ch-input"
+                    value="{% if character %}{{ character.name }}{% endif %}"
+                    placeholder="例: Aria, Sage, Luna" required>
             </div>
 
-            <div class="add-model-row">
-                <select id="preset-select" class="form-control">
-                    <option value="">-- モデルを選択 --</option>
-                    {% for preset in model_presets %}
-                    <option value="{{ preset.id }}" data-name="{{ preset.name }}"
-                        data-provider-label="{{ provider_labels.get(preset.provider, preset.provider) }}"
-                        {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}disabled{% endif %}>
-                        {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
-                    </option>
-                    {% endfor %}
-                </select>
-                <button type="button" class="btn btn-secondary" onclick="addPreset()">+ 追加</button>
-            </div>
-
-            {% if not model_presets %}
-            <p class="form-hint">
-                利用できるモデルがありません。
-                <a href="/ui/model-presets" style="color:var(--accent-text)">Models</a> でモデルを登録してください。
-            </p>
-            {% endif %}
-        </div>
-
-        <!-- Ghost Model -->
-        <div class="form-group">
-            <label for="ghost_model">Ghost Model
-                <span class="label-hint">ダイジェスト・忘却処理に使うモデル</span>
-            </label>
-            <select id="ghost_model" name="ghost_model" class="form-control">
-                <option value="">(未設定)</option>
-                {% for preset in model_presets %}
-                <option value="{{ preset.id }}"
-                    {% if character and character.ghost_model == preset.id %}selected{% endif %}>
-                    {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
-                </option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <!-- 自己参照ループ -->
-        <div class="form-group">
-            <label>Self Reflection
-                <span class="label-hint">返答生成後に自己参照ループを実行するかどうか</span>
-            </label>
-            <select id="self_reflection_mode" name="self_reflection_mode" class="form-control"
-                onchange="toggleSelfReflectionOptions(this.value)">
-                <option value="disabled"
-                    {% if not character or character.self_reflection_mode == 'disabled' %}selected{% endif %}>
-                    Disabled
-                </option>
-                <option value="local_trigger"
-                    {% if character and character.self_reflection_mode == 'local_trigger' %}selected{% endif %}>
-                    Local Trigger（Ollamaで契機判断 → パブリックLLMで自己参照）
-                </option>
-                <option value="always"
-                    {% if character and character.self_reflection_mode == 'always' %}selected{% endif %}>
-                    Always（毎ターン パブリックLLMで自己参照）
-                </option>
-            </select>
-        </div>
-
-        <div id="self_reflection_options"
-            style="{% if not character or character.self_reflection_mode == 'disabled' %}display:none{% endif %}">
-            <div class="form-group" id="self_reflection_preset_group"
-                style="{% if not character or character.self_reflection_mode != 'local_trigger' %}display:none{% endif %}">
-                <label for="self_reflection_preset_id">契機判断モデル
-                    <span class="label-hint">Ollama プリセットを選択（Local Trigger 時）</span>
+            {# キャラクター定義 #}
+            <div class="ch-field">
+                <label class="ch-label" for="system_prompt_block1">キャラクター定義
+                    <span class="ch-hint">Block 1 — このキャラクターは何者か</span>
                 </label>
-                <select id="self_reflection_preset_id" name="self_reflection_preset_id" class="form-control">
+                <textarea id="system_prompt_block1" name="system_prompt_block1"
+                    class="ch-textarea ch-textarea--mono" rows="12"
+                    placeholder="人格・背景・話し方・価値観などを書く…">{% if character %}{{ character.system_prompt_block1 }}{% endif %}</textarea>
+            </div>
+        </section>
+
+        {# ── narrative ・ 内的叙述 ── #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">narrative <small>・ 内的叙述</small></h3>
+            </div>
+            <div class="ch-field">
+                <span class="ch-label">Inner Narrative
+                    <span class="ch-hint">キャラクター自身が carve_narrative で書き込む叙述（読み取り専用）</span>
+                </span>
+                <textarea class="ch-textarea ch-textarea--mono" rows="6" readonly
+                    style="opacity:0.65;cursor:default"
+                    placeholder="（まだ何も書かれていない）">{% if character %}{{ character.inner_narrative }}{% endif %}</textarea>
+            </div>
+            {% if character %}
+            <div class="ch-field" style="margin-bottom:0">
+                <span class="ch-label">Working Memory
+                    <span class="ch-hint">歩み・課題・感情・関係はワーキングメモリのスレッドで管理される</span>
+                </span>
+                <div><a href="/ui/working-memory/{{ character.id }}" class="ch-btn ch-btn--sm">スレッド一覧を開く →</a></div>
+            </div>
+            {% endif %}
+        </section>
+
+        {# ════════════ CHAPTER 2 — engine ════════════ #}
+        <div class="ch-chapter">
+            <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 2</span></div>
+            <h2 class="ch-chapter__title">engine <small>— 動かす仕組み</small></h2>
+        </div>
+
+        {# ── models ・ 利用モデル ── #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">models <small>・ 利用モデル</small></h3>
+            </div>
+
+            <div class="ch-field">
+                <span class="ch-label">利用モデル
+                    <span class="ch-hint">有効にしたモデルがモデルリストに表示される</span>
+                </span>
+
+                <div class="accordion" id="model-accordion">
+                    {% for preset in model_presets %}
+                    {% set cfg = (character.enabled_providers or {}).get(preset.id) if character else none %}
+                    {% if cfg is not none %}
+                    <div class="accordion-item" data-preset-id="{{ preset.id }}">
+                        <input type="hidden" name="preset_ids" value="{{ preset.id }}">
+                        <div class="accordion-header">
+                            <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
+                            <strong>{{ preset.name }}</strong>
+                            <span class="ch-tag ch-tag--accent">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
+                            <button type="button" class="btn-remove" onclick="removePreset(this, '{{ preset.id }}')">✕</button>
+                        </div>
+                        <div class="accordion-body">
+                            <div class="ch-field">
+                                <label class="ch-label">Additional Instructions
+                                    <span class="ch-hint">このモデル向けの追記指示（省略可）</span>
+                                </label>
+                                <textarea name="ai_{{ preset.id }}" class="ch-textarea ch-textarea--mono" rows="3">{{ cfg.get('additional_instructions', '') }}</textarea>
+                            </div>
+                            <div class="ch-field when-to-switch-field" style="margin-bottom:0">
+                                <label class="ch-label">このモデルに切り替えるタイミング
+                                    <span class="ch-hint">switch_angle ツールの判断基準（省略可）</span>
+                                </label>
+                                <textarea name="wts_{{ preset.id }}" class="ch-textarea ch-textarea--mono" rows="2">{{ cfg.get('when_to_switch', '') }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+
+                <div class="add-model-row">
+                    <select id="preset-select" class="ch-select">
+                        <option value="">-- モデルを選択 --</option>
+                        {% for preset in model_presets %}
+                        <option value="{{ preset.id }}" data-name="{{ preset.name }}"
+                            data-provider-label="{{ provider_labels.get(preset.provider, preset.provider) }}"
+                            {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}disabled{% endif %}>
+                            {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <button type="button" class="ch-btn" onclick="addPreset()">+ 追加</button>
+                </div>
+
+                {% if not model_presets %}
+                <p class="ch-hint" style="margin-top:8px">
+                    利用できるモデルがない。
+                    <a href="/ui/model-presets" style="color:var(--ch-a)">models</a> で登録する。
+                </p>
+                {% endif %}
+            </div>
+
+            {# switch_angle（プリセット2件以上で JS が表示） #}
+            <div class="ch-field" id="switch-angle-group" style="display:none">
+                <label class="ch-switch-row" style="border:none;padding:0">
+                    <span class="ch-switch-row__text">
+                        <span class="ch-switch-row__label">switch_angle を使用する</span>
+                        <span class="ch-switch-row__note">ONでアングル切り替えが有効になる</span>
+                    </span>
+                    <span class="ch-toggle">
+                        <input type="checkbox" id="switch_angle_enabled" name="switch_angle_enabled" value="1"
+                            {% if character and character.switch_angle_enabled %}checked{% endif %}>
+                        <span class="ch-toggle__track"></span>
+                    </span>
+                </label>
+            </div>
+
+            {# Ghost Model #}
+            <div class="ch-field">
+                <label class="ch-label" for="ghost_model">Ghost Model
+                    <span class="ch-hint">ダイジェスト・忘却処理に使うモデル</span>
+                </label>
+                <select id="ghost_model" name="ghost_model" class="ch-select">
                     <option value="">(未設定)</option>
                     {% for preset in model_presets %}
                     <option value="{{ preset.id }}"
-                        {% if character and character.self_reflection_preset_id == preset.id %}selected{% endif %}>
+                        {% if character and character.ghost_model == preset.id %}selected{% endif %}>
                         {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
                     </option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group">
-                <label for="self_reflection_n_turns">直近Nターン
-                    <span class="label-hint">自己参照に使う会話ターン数</span>
-                </label>
-                <input type="number" id="self_reflection_n_turns" name="self_reflection_n_turns"
-                    class="form-control" min="1" max="20"
-                    value="{{ character.self_reflection_n_turns if character else 5 }}">
+        </section>
+
+        {# ── tools ・ 外部連携 ── #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">tools <small>・ 外部連携</small></h3>
             </div>
-        </div>
+            <div class="ch-field" style="margin-bottom:0">
+                <span class="ch-label">外部ツール連携
+                    <span class="ch-hint">許可する外部ツール（Claude Code CLI プリセットのみ有効）</span>
+                </span>
+                {% set at = (character.allowed_tools or {}) if character else {} %}
+                <div class="ch-switchlist" style="margin-top:6px">
+                    <label class="ch-switch-row">
+                        <span class="ch-switch-row__text">
+                            <span class="ch-switch-row__label">Web Search</span>
+                            <span class="ch-switch-row__note">WebSearch + WebFetch</span>
+                        </span>
+                        <span class="ch-toggle">
+                            <input type="checkbox" name="tool_web_search" value="1" {% if at.get('web_search') %}checked{% endif %}>
+                            <span class="ch-toggle__track"></span>
+                        </span>
+                    </label>
+                    <label class="ch-switch-row">
+                        <span class="ch-switch-row__text">
+                            <span class="ch-switch-row__label">Google Calendar</span>
+                        </span>
+                        <span class="ch-toggle">
+                            <input type="checkbox" name="tool_google_calendar" value="1" {% if at.get('google_calendar') %}checked{% endif %}>
+                            <span class="ch-toggle__track"></span>
+                        </span>
+                    </label>
+                    <label class="ch-switch-row">
+                        <span class="ch-switch-row__text">
+                            <span class="ch-switch-row__label">Gmail</span>
+                        </span>
+                        <span class="ch-toggle">
+                            <input type="checkbox" name="tool_gmail" value="1" {% if at.get('gmail') %}checked{% endif %}>
+                            <span class="ch-toggle__track"></span>
+                        </span>
+                    </label>
+                    <label class="ch-switch-row">
+                        <span class="ch-switch-row__text">
+                            <span class="ch-switch-row__label">Google Drive</span>
+                        </span>
+                        <span class="ch-toggle">
+                            <input type="checkbox" name="tool_google_drive" value="1" {% if at.get('google_drive') %}checked{% endif %}>
+                            <span class="ch-toggle__track"></span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+        </section>
 
-        <script>
-        function toggleSelfReflectionOptions(mode) {
-            var opts = document.getElementById('self_reflection_options');
-            var presetGroup = document.getElementById('self_reflection_preset_group');
-            opts.style.display = (mode === 'disabled') ? 'none' : '';
-            presetGroup.style.display = (mode === 'local_trigger') ? '' : 'none';
-        }
-        </script>
+        {# ── reflection ・ 自己参照 ── #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">reflection <small>・ 自己参照</small></h3>
+            </div>
+            <div class="ch-field">
+                <label class="ch-label" for="self_reflection_mode">Self Reflection
+                    <span class="ch-hint">返答生成後に自己参照ループを実行するか</span>
+                </label>
+                <select id="self_reflection_mode" name="self_reflection_mode" class="ch-select"
+                    onchange="toggleSelfReflectionOptions(this.value)">
+                    <option value="disabled"
+                        {% if not character or character.self_reflection_mode == 'disabled' %}selected{% endif %}>Disabled</option>
+                    <option value="local_trigger"
+                        {% if character and character.self_reflection_mode == 'local_trigger' %}selected{% endif %}>Local Trigger（Ollamaで契機判断 → パブリックLLMで自己参照）</option>
+                    <option value="always"
+                        {% if character and character.self_reflection_mode == 'always' %}selected{% endif %}>Always（毎ターン パブリックLLMで自己参照）</option>
+                </select>
+            </div>
 
-        <div class="form-actions">
+            <div id="self_reflection_options"
+                style="{% if not character or character.self_reflection_mode == 'disabled' %}display:none{% endif %}">
+                <div class="ch-field" id="self_reflection_preset_group"
+                    style="{% if not character or character.self_reflection_mode != 'local_trigger' %}display:none{% endif %}">
+                    <label class="ch-label" for="self_reflection_preset_id">契機判断モデル
+                        <span class="ch-hint">Ollama プリセットを選択（Local Trigger 時）</span>
+                    </label>
+                    <select id="self_reflection_preset_id" name="self_reflection_preset_id" class="ch-select">
+                        <option value="">(未設定)</option>
+                        {% for preset in model_presets %}
+                        <option value="{{ preset.id }}"
+                            {% if character and character.self_reflection_preset_id == preset.id %}selected{% endif %}>
+                            {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="ch-field" style="margin-bottom:0">
+                    <label class="ch-label" for="self_reflection_n_turns">直近Nターン
+                        <span class="ch-hint">自己参照に使う会話ターン数</span>
+                    </label>
+                    <input type="number" id="self_reflection_n_turns" name="self_reflection_n_turns"
+                        class="ch-input ch-input--mono" min="1" max="20" style="max-width:120px"
+                        value="{{ character.self_reflection_n_turns if character else 5 }}">
+                </div>
+            </div>
+        </section>
+
+        {# ── 下部アクションバー ── #}
+        <div class="ch-actionbar">
             {% if not character %}
-            <button type="submit" class="btn btn-primary">Create Character</button>
-            {% endif %}
-            <a href="/ui/" class="btn btn-secondary">{% if character %}Back{% else %}Cancel{% endif %}</a>
-            {% if character %}
-            <a href="/ui/inscribed_memories/{{ character.id }}" class="btn btn-secondary">Memories</a>
+            <button type="submit" class="ch-btn ch-btn--primary">キャラクターを作成</button>
+            <a href="/ui/" class="ch-btn ch-btn--ghost">キャンセル</a>
+            {% else %}
+            <a href="/ui/" class="ch-btn ch-btn--ghost">← 戻る</a>
+            <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
+            <span class="ch-spacer"></span>
+            <span class="ch-meta">自動保存</span>
             {% endif %}
         </div>
     </form>
 
-    <!-- クロップモーダル -->
+    {# クロップモーダル #}
     <div id="crop-modal" class="crop-modal-overlay" style="display:none">
         <div class="crop-modal-card">
             <h3>アイコンをトリミング</h3>
@@ -295,26 +349,28 @@
             </div>
             <div class="crop-zoom-row">
                 <span class="crop-zoom-label">縮小</span>
-                <input type="range" id="crop-zoom-slider" min="0" max="3" step="0.01" value="0"
-                    class="crop-zoom-slider">
+                <input type="range" id="crop-zoom-slider" min="0" max="3" step="0.01" value="0" class="crop-zoom-slider">
                 <span class="crop-zoom-label">拡大</span>
             </div>
             <div class="crop-modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="cancelCrop()">キャンセル</button>
-                <button type="button" class="btn btn-primary" onclick="confirmCrop()">確定</button>
+                <button type="button" class="ch-btn ch-btn--ghost" onclick="cancelCrop()">キャンセル</button>
+                <button type="button" class="ch-btn ch-btn--primary" onclick="confirmCrop()">確定</button>
             </div>
         </div>
     </div>
-
-    {% if character %}
-    <div class="info-box">
-        <strong>Character ID:</strong> <code>{{ character.id }}</code><br>
-        <strong>OpenWebUI モデルID形式:</strong> <code>{{ character.id }}@{preset_id}</code>
-    </div>
-    {% endif %}
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
+    /** 自己参照ループのオプション表示を切り替える。 */
+    function toggleSelfReflectionOptions(mode) {
+        var opts = document.getElementById('self_reflection_options');
+        var presetGroup = document.getElementById('self_reflection_preset_group');
+        opts.style.display = (mode === 'disabled') ? 'none' : '';
+        presetGroup.style.display = (mode === 'local_trigger') ? '' : 'none';
+    }
+
     /** アコーディオンを開閉する。 */
     function toggleAccordion(btn) {
         const body = btn.closest('.accordion-item').querySelector('.accordion-body');
@@ -378,22 +434,22 @@
         <input type="hidden" name="preset_ids" value="${presetId}">
         <div class="accordion-header">
             <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
-            <strong style="font-size:0.82rem;color:var(--t1)">${name}</strong>
-            <span class="provider-badge">${providerLabel}</span>
+            <strong>${name}</strong>
+            <span class="ch-tag ch-tag--accent">${providerLabel}</span>
             <button type="button" class="btn-remove" onclick="removePreset(this, '${presetId}')">✕</button>
         </div>
         <div class="accordion-body">
-            <div class="form-group">
-                <label>Additional Instructions
-                    <span class="label-hint">このモデル向けの追記指示（省略可）</span>
+            <div class="ch-field">
+                <label class="ch-label">Additional Instructions
+                    <span class="ch-hint">このモデル向けの追記指示（省略可）</span>
                 </label>
-                <textarea name="ai_${presetId}" class="form-control textarea-medium"></textarea>
+                <textarea name="ai_${presetId}" class="ch-textarea ch-textarea--mono" rows="3"></textarea>
             </div>
-            <div class="form-group when-to-switch-field" style="margin-bottom:0">
-                <label>このモデルに切り替えるタイミング
-                    <span class="label-hint">switch_angle ツールの判断基準（省略可）</span>
+            <div class="ch-field when-to-switch-field" style="margin-bottom:0">
+                <label class="ch-label">このモデルに切り替えるタイミング
+                    <span class="ch-hint">switch_angle ツールの判断基準（省略可）</span>
                 </label>
-                <textarea name="wts_${presetId}" class="form-control textarea-small"></textarea>
+                <textarea name="wts_${presetId}" class="ch-textarea ch-textarea--mono" rows="2"></textarea>
             </div>
         </div>
     `;
@@ -483,7 +539,7 @@
             document.getElementById('image-file-input').files = dt.files;
 
             const container = document.getElementById('icon-preview-container');
-            container.innerHTML = `<img src="${canvas.toDataURL()}" class="icon-preview" alt="preview">`;
+            container.innerHTML = `<img src="${canvas.toDataURL()}" class="ch-pagehead__avatar" alt="preview">`;
 
             document.getElementById('remove-image-flag').value = '';
             document.getElementById('remove-image-btn').style.display = '';
@@ -504,7 +560,7 @@
         try { fileInput.files = new DataTransfer().files; } catch (_) {}
 
         const container = document.getElementById('icon-preview-container');
-        container.innerHTML = '<div class="icon-placeholder">?</div>';
+        container.innerHTML = '<div class="ch-pagehead__avatar ch-pagehead__avatar--ph">?</div>';
 
         document.getElementById('remove-image-flag').value = '1';
         document.getElementById('remove-image-btn').style.display = 'none';
@@ -512,6 +568,5 @@
         if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
 </script>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
 {% endblock %}

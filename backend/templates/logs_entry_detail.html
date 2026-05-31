@@ -1,7 +1,7 @@
 {% if e.attempts %}
 <!-- ─── 試行履歴（メイン行が1件でも同じ構造で表示）─── -->
 <div class="log-row log-row-attempts">
-    <span class="log-label">試行履歴</span>
+    <span class="ch-eyebrow">試行履歴</span>
     <div class="log-attempts-accordion" style="min-width:0;width:100%">
         {% for a in e.attempts %}
         <details class="log-attempt-detail" {% if loop.last %}open{% endif %}>
@@ -9,7 +9,7 @@
                 <span class="log-toggle-icon">&#9654;</span>
                 <span class="log-attempt-index">#{{ a.index }}</span>
                 <span class="log-attempt-dt">{{ a.dt_str }}</span>
-                {% if a.preset %}<span class="log-attempt-preset">{{ a.preset }}</span>{% endif %}
+                {% if a.preset %}<span class="ch-tag ch-tag--accent">{{ a.preset }}</span>{% endif %}
                 {% if a.has_error %}
                 <span class="log-attempt-preview log-warn-reason">(エラー)</span>
                 {% elif a.response %}
@@ -23,13 +23,13 @@
                 <!-- 思考（Reasoning） -->
                 {% if a.reasoning %}
                 <div class="log-row">
-                    <span class="log-label">思考</span>
+                    <span class="ch-eyebrow">思考</span>
                     <div style="min-width:0">
                         <details class="log-reasoning-block">
                             <summary class="log-reasoning-summary">
                                 <span class="log-toggle-icon">&#9654;</span>
                                 想起した記憶・スケッチ
-                                <button class="log-translate-btn"
+                                <button class="ch-btn ch-btn--xs"
                                         onclick="event.preventDefault();event.stopPropagation();translateReasoning(this, {{ a.reasoning | tojson }})">
                                     翻訳
                                 </button>
@@ -46,18 +46,18 @@
                 <!-- API 呼び出し（Request/Response JSON + ツールタグ）-->
                 {% if a.tool_calls %}
                 <div class="log-row">
-                    <span class="log-label">API</span>
+                    <span class="ch-eyebrow">API</span>
                     <div class="log-tool-list">
                         {% for tc in a.tool_calls %}
                         <div class="log-tool-block">
                             <div class="log-tool-header">
-                                <span class="log-tool-tag">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
+                                <span class="ch-tag ch-tag--accent">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
                                 {% if tc.request_file %}
-                                <button class="log-inline-btn"
+                                <button class="ch-btn ch-btn--xs"
                                         onclick="toggleInlineLog(this,'{{ a.dir_id }}','{{ tc.request_file }}')">▶ Request</button>
                                 {% endif %}
                                 {% if tc.response_file %}
-                                <button class="log-inline-btn"
+                                <button class="ch-btn ch-btn--xs"
                                         onclick="toggleInlineLog(this,'{{ a.dir_id }}','{{ tc.response_file }}')">▶ Response</button>
                                 {% endif %}
                             </div>
@@ -71,7 +71,7 @@
                             <div class="log-tag-list">
                                 {% for tag in tc.tags %}
                                 <div class="log-tag-item">
-                                    <span class="log-tag-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
+                                    <span class="ch-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
                                     {% if tag.tag_name == "INSCRIBE_MEMORY" %}
                                     <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
                                     {% elif tag.tag_name == "CARVE_NARRATIVE" %}
@@ -95,12 +95,12 @@
                 <!-- 警告ノート -->
                 {% if a.warnings %}
                 <div class="log-row">
-                    <span class="log-label">警告</span>
+                    <span class="ch-eyebrow">警告</span>
                     <div class="log-tool-list">
                         {% for w in a.warnings %}
                         <div class="log-tool-block">
                             <div class="log-tool-header">
-                                <span class="log-tool-tag" style="background:var(--warn,#b45309);color:#fff">{{ w.tag }}</span>
+                                <span class="ch-tag" style="background:var(--ch-warn);color:var(--ch-on-a)">{{ w.tag }}</span>
                                 <a href="/ui/logs/{{ a.dir_id }}/raw/{{ w.file }}"
                                    target="_blank" class="log-file-link">詳細 ↗</a>
                             </div>
@@ -116,9 +116,9 @@
                 <!-- ID / Files -->
                 {% if a.dir_id %}
                 <div class="log-row">
-                    <span class="log-label">ID / Files</span>
+                    <span class="ch-eyebrow">ID / Files</span>
                     <div>
-                        <span style="font-family:var(--mono);font-size:0.75rem;color:var(--t3);margin-right:0.8rem">{{ a.dir_id }}</span>
+                        <span style="font-family:var(--ch-fm);font-size:0.75rem;color:var(--ch-t3);margin-right:0.8rem">{{ a.dir_id }}</span>
                         {% for fname in a.files %}
                         <a href="/ui/logs/{{ a.dir_id }}/raw/{{ fname }}"
                            target="_blank" class="log-raw-link" title="{{ fname }}">{{ fname }}</a>
@@ -139,18 +139,18 @@
 <!-- API 呼び出し（chronicle / forget 等バッチ処理） -->
 {% if e.tool_calls %}
 <div class="log-row">
-    <span class="log-label">API</span>
+    <span class="ch-eyebrow">API</span>
     <div class="log-tool-list">
         {% for tc in e.tool_calls %}
         <div class="log-tool-block">
             <div class="log-tool-header">
-                <span class="log-tool-tag">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
+                <span class="ch-tag ch-tag--accent">{% if tc.feature %}{{ tc.feature }}({{ tc.preset }}){% else %}{{ tc.preset }}{% endif %}</span>
                 {% if tc.request_file %}
-                <button class="log-inline-btn"
+                <button class="ch-btn ch-btn--xs"
                         onclick="toggleInlineLog(this,'{{ e.dir_id }}','{{ tc.request_file }}')">▶ Request</button>
                 {% endif %}
                 {% if tc.response_file %}
-                <button class="log-inline-btn"
+                <button class="ch-btn ch-btn--xs"
                         onclick="toggleInlineLog(this,'{{ e.dir_id }}','{{ tc.response_file }}')">▶ Response</button>
                 {% endif %}
             </div>
@@ -164,7 +164,7 @@
             <div class="log-tag-list">
                 {% for tag in tc.tags %}
                 <div class="log-tag-item">
-                    <span class="log-tag-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
+                    <span class="ch-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
                     {% if tag.tag_name == "INSCRIBE_MEMORY" %}
                     <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
                     {% elif tag.tag_name == "CARVE_NARRATIVE" %}
@@ -188,12 +188,12 @@
 <!-- 警告ノート -->
 {% if e.warnings %}
 <div class="log-row">
-    <span class="log-label">警告</span>
+    <span class="ch-eyebrow">警告</span>
     <div class="log-tool-list">
         {% for w in e.warnings %}
         <div class="log-tool-block">
             <div class="log-tool-header">
-                <span class="log-tool-tag" style="background:var(--warn,#b45309);color:#fff">{{ w.tag }}</span>
+                <span class="ch-tag" style="background:var(--ch-warn);color:var(--ch-on-a)">{{ w.tag }}</span>
                 <a href="/ui/logs/{{ e.dir_id }}/raw/{{ w.file }}"
                    target="_blank" class="log-file-link">詳細 ↗</a>
             </div>
@@ -208,9 +208,9 @@
 
 <!-- ID / Files（バッチ処理用） -->
 <div class="log-row">
-    <span class="log-label">ID / Files</span>
+    <span class="ch-eyebrow">ID / Files</span>
     <div>
-        <span style="font-family:var(--mono);font-size:0.75rem;color:var(--t3);margin-right:0.8rem">{{ e.message_id }}</span>
+        <span style="font-family:var(--ch-fm);font-size:0.75rem;color:var(--ch-t3);margin-right:0.8rem">{{ e.message_id }}</span>
         {% for fname in e.files %}
         <a href="/ui/logs/{{ e.dir_id }}/raw/{{ fname }}"
            target="_blank" class="log-raw-link" title="{{ fname }}">{{ fname }}</a>

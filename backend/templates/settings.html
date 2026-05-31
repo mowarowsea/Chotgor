@@ -1,280 +1,299 @@
 {% extends "base.html" %}
-{% block title %}Settings &mdash; Chotgor{% endblock %}
+{% block title %}settings &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ settings{% endblock %}
 
 {#
   masked_api_key_input: APIキー入力フィールドの共通マクロ。
   既存値はマスク表示（●連打）し、フォーカス時にクリアして入力可能にする。
 #}
 {% macro masked_api_key_input(key, label, hint, placeholder, not_configured_msg="Not configured.") %}
-<div class="form-group">
-    <label for="{{ key }}">
+<div class="ch-field">
+    <label class="ch-label" for="{{ key }}">
         {{ label }}
-        <span class="label-hint">{{ hint }}</span>
+        <span class="ch-hint">{{ hint }}</span>
     </label>
     <input type="password" id="{{ key }}" name="{{ key }}"
-           class="form-control"
+           class="ch-input ch-input--mono"
            placeholder="{{ placeholder }}"
            value="{{ '●' * (settings.get(key) or '')|length }}"
            data-masked="{{ 'true' if settings.get(key) else 'false' }}"
            autocomplete="off"
            onfocus="if(this.dataset.masked==='true'){this.value='';this.dataset.masked='false';}">
     {% if not settings.get(key) %}
-    <p class="form-hint">{{ not_configured_msg }}</p>
+    <p class="ch-hint">{{ not_configured_msg }}</p>
     {% endif %}
 </div>
 {% endmacro %}
 
 {% block content %}
-<div class="page-header">
-    <h1>Settings</h1>
-</div>
-
-{% if request.query_params.get("saved") %}
-<div class="alert alert-success">Settings saved.</div>
-{% endif %}
-{% if request.query_params.get("reindex_done") %}
-<div class="alert alert-success">記憶の再インデックスが完了しました。</div>
-{% endif %}
-{% if request.query_params.get("reindex_error") %}
-<div class="alert alert-danger">再インデックスに失敗しました。APIキーとモデルIDを確認してください。記憶は SQLite に保全されています。</div>
-{% endif %}
-
-{# 一般設定: フィールド変更ごとに自動保存（embedding 以外）。 #}
-<div class="form-card">
-    <form method="post" action="/ui/settings/general" data-autosave>
-        <p class="autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
-
-        <!-- ユーザ名 -->
-        <div class="form-group">
-            <label for="user_name">ユーザ名
-                <span class="label-hint">チャット画面に表示される名前</span>
-            </label>
-            <input type="text" id="user_name" name="user_name"
-                   class="form-control"
-                   value="{{ settings.get('user_name', 'ユーザ') }}"
-                   placeholder="ユーザ">
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">config</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">settings</h1>
         </div>
+    </header>
 
-        <hr>
+    {# ── フラッシュ通知 ───────────────────────────────── #}
+    {% if request.query_params.get("saved") %}
+    <div class="ch-notice ch-notice--ok">設定を保存しました。</div>
+    {% endif %}
+    {% if request.query_params.get("reindex_done") %}
+    <div class="ch-notice ch-notice--ok">記憶の再インデックスが完了しました。</div>
+    {% endif %}
+    {% if request.query_params.get("reindex_error") %}
+    <div class="ch-notice ch-notice--danger">再インデックスに失敗しました。APIキーとモデルIDを確認してください。記憶は SQLite に保全されています。</div>
+    {% endif %}
 
-        <!-- API キー群 -->
-        {{ masked_api_key_input(
-               "anthropic_api_key",
-               "Anthropic API Key",
-               "provider: anthropic — Claude models",
-               "sk-ant-… (leave blank to keep current)"
-           ) }}
-
-        {{ masked_api_key_input(
-               "openai_api_key",
-               "OpenAI API Key",
-               "provider: openai — GPT models",
-               "sk-… (leave blank to keep current)"
-           ) }}
-
-        {{ masked_api_key_input(
-               "xai_api_key",
-               "xAI API Key",
-               "provider: xai — Grok models",
-               "xai-… (leave blank to keep current)"
-           ) }}
-
-        {{ masked_api_key_input(
-               "google_api_key",
-               "Google API Key",
-               "provider: google — Gemini models",
-               "AIza… (leave blank to keep current)"
-           ) }}
-
-        {{ masked_api_key_input(
-               "openrouter_api_key",
-               "OpenRouter API Key",
-               "provider: openrouter — モデルID は provider/model 形式",
-               "sk-or-… (leave blank to keep current)"
-           ) }}
-
-        {{ masked_api_key_input(
-               "tavily_api_key",
-               "Tavily API Key",
-               "Optional — web_search ツールを有効化",
-               "tvly-… (leave blank to keep current)",
-               "Not configured. Web search will be disabled."
-           ) }}
-
-        <hr>
-
-        <!-- Ollama 設定 -->
-        <div class="form-group">
-            <label for="ollama_base_url">Ollama Base URL
-                <span class="label-hint">Ollamaサーバーのベースアドレス</span>
-            </label>
-            <input type="text" id="ollama_base_url" name="ollama_base_url"
-                   value="{{ settings.get('ollama_base_url', 'http://localhost:11434') }}"
-                   class="form-control" style="max-width:360px"
-                   placeholder="http://localhost:11434">
+    {# ── 一般設定: フィールド変更ごとに自動保存（embedding 以外） ── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">一般</h2>
         </div>
+        <form method="post" action="/ui/settings/general" data-autosave>
+            <p class="ch-autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
 
-        <div class="form-group">
-            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
-                <input type="checkbox" id="ollama_no_think" name="ollama_no_think" value="true"
-                       {% if settings.get('ollama_no_think') in ('true', '1', 'yes', True) %}checked{% endif %}>
-                Qwen3 thinking モードを無効化（/no_think）
+            <!-- ユーザ名 -->
+            <div class="ch-field">
+                <label class="ch-label" for="user_name">ユーザ名
+                    <span class="ch-hint">チャット画面に表示される名前</span>
+                </label>
+                <input type="text" id="user_name" name="user_name"
+                       class="ch-input"
+                       value="{{ settings.get('user_name', 'ユーザ') }}"
+                       placeholder="ユーザ">
+            </div>
+
+            <hr class="ch-divider">
+
+            <!-- API キー群 -->
+            {{ masked_api_key_input(
+                   "anthropic_api_key",
+                   "Anthropic API Key",
+                   "provider: anthropic — Claude models",
+                   "sk-ant-… (leave blank to keep current)"
+               ) }}
+
+            {{ masked_api_key_input(
+                   "openai_api_key",
+                   "OpenAI API Key",
+                   "provider: openai — GPT models",
+                   "sk-… (leave blank to keep current)"
+               ) }}
+
+            {{ masked_api_key_input(
+                   "xai_api_key",
+                   "xAI API Key",
+                   "provider: xai — Grok models",
+                   "xai-… (leave blank to keep current)"
+               ) }}
+
+            {{ masked_api_key_input(
+                   "google_api_key",
+                   "Google API Key",
+                   "provider: google — Gemini models",
+                   "AIza… (leave blank to keep current)"
+               ) }}
+
+            {{ masked_api_key_input(
+                   "openrouter_api_key",
+                   "OpenRouter API Key",
+                   "provider: openrouter — モデルID は provider/model 形式",
+                   "sk-or-… (leave blank to keep current)"
+               ) }}
+
+            {{ masked_api_key_input(
+                   "tavily_api_key",
+                   "Tavily API Key",
+                   "Optional — web_search ツールを有効化",
+                   "tvly-… (leave blank to keep current)",
+                   "Not configured. Web search will be disabled."
+               ) }}
+
+            <hr class="ch-divider">
+
+            <!-- Ollama 設定 -->
+            <div class="ch-field">
+                <label class="ch-label" for="ollama_base_url">Ollama Base URL
+                    <span class="ch-hint">Ollamaサーバーのベースアドレス</span>
+                </label>
+                <input type="text" id="ollama_base_url" name="ollama_base_url"
+                       value="{{ settings.get('ollama_base_url', 'http://localhost:11434') }}"
+                       class="ch-input ch-input--mono" style="max-width:360px"
+                       placeholder="http://localhost:11434">
+            </div>
+
+            <label class="ch-switch-row">
+                <span class="ch-switch-row__text">
+                    <span class="ch-switch-row__label">Qwen3 thinking モードを無効化（/no_think）</span>
+                    <span class="ch-switch-row__note">qwen3 系モデルで文字化けが起きる場合に有効にする。<code>think: false</code> APIフラグが効かないモデルに対して、/no_think コントロールトークンを最後のuserメッセージ先頭に追加します。</span>
+                </span>
+                <span class="ch-toggle">
+                    <input type="checkbox" id="ollama_no_think" name="ollama_no_think" value="true"
+                           {% if settings.get('ollama_no_think') in ('true', '1', 'yes', True) %}checked{% endif %}>
+                    <span class="ch-toggle__track"></span>
+                </span>
             </label>
-            <p class="form-hint" style="margin-top:4px">
-                qwen3 系モデルで文字化けが起きる場合に有効にする。<br>
-                <code>think: false</code> APIフラグが効かないモデルに対して、/no_think コントロールトークンを最後のuserメッセージ先頭に追加します。
+
+            <hr class="ch-divider">
+
+            <!-- コンテキストウィンドウ圧縮 -->
+            <div class="ch-field">
+                <label class="ch-label" for="context_window_max_chronicled">コンテキストウィンドウ（chronicle済みメッセージ上限）
+                    <span class="ch-hint">chronicle済みメッセージの保持件数。未chronicle分は常に全件保持。0 = chronicle済みを完全除外</span>
+                </label>
+                <input type="number" id="context_window_max_chronicled" name="context_window_max_chronicled"
+                       value="{{ settings.get('context_window_max_chronicled', '10') }}"
+                       min="0" max="200" class="ch-input" style="width:120px">
+            </div>
+
+            <hr class="ch-divider">
+
+            <!-- Chronicle Time -->
+            <div class="ch-field">
+                <label class="ch-label" for="chronicle_time">Chronicle Time
+                    <span class="ch-hint">毎日この時刻に self_history / relationship_state を更新します</span>
+                </label>
+                <input type="time" id="chronicle_time" name="chronicle_time"
+                       value="{{ settings.get('chronicle_time', '03:00') }}"
+                       class="ch-input" style="width:auto">
+            </div>
+
+            <!-- 時間認識 -->
+            <label class="ch-switch-row">
+                <span class="ch-switch-row__text">
+                    <span class="ch-switch-row__label">日時と経過時間の連携を有効にする</span>
+                    <span class="ch-switch-row__note">現在時刻と前回の会話からの経過時間をキャラクターに伝えます。</span>
+                </span>
+                <span class="ch-toggle">
+                    <input type="checkbox" id="enable_time_awareness" name="enable_time_awareness" value="true"
+                           {% if settings.get('enable_time_awareness', True) %}checked{% endif %}>
+                    <span class="ch-toggle__track"></span>
+                </span>
+            </label>
+
+            <hr class="ch-divider">
+
+            <!-- 翻訳モデル -->
+            <div class="ch-field">
+                <label class="ch-label" for="translation_preset_id">翻訳モデル
+                    <span class="ch-hint">ThinkingBlock / Thoughts の翻訳に使用するモデル</span>
+                </label>
+                <select id="translation_preset_id" name="translation_preset_id" class="ch-select">
+                    <option value="" {% if not settings.get('translation_preset_id') %}selected{% endif %}>（未設定）</option>
+                    {% for preset in model_presets %}
+                    <option value="{{ preset.id }}"
+                            {% if settings.get('translation_preset_id') == preset.id %}selected{% endif %}>
+                        {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
+                    </option>
+                    {% endfor %}
+                </select>
+                <p class="ch-hint">選択したモデルがチャット画面・ログ画面の翻訳ボタンで使用されます。</p>
+            </div>
+
+            <hr class="ch-divider">
+
+            <!-- 司会モデル -->
+            <div class="ch-field">
+                <label class="ch-label" for="group_director_preset_id">司会モデル
+                    <span class="ch-hint">グループチャットで次の発言者を判断するモデル</span>
+                </label>
+                <select id="group_director_preset_id" name="group_director_preset_id" class="ch-select">
+                    <option value="" {% if not settings.get('group_director_preset_id') %}selected{% endif %}>（未設定）</option>
+                    {% for preset in model_presets %}
+                    <option value="{{ preset.id }}"
+                            {% if settings.get('group_director_preset_id') == preset.id %}selected{% endif %}>
+                        {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
+                    </option>
+                    {% endfor %}
+                </select>
+                <p class="ch-hint">司会はキャラクターではなくシステム上のユーティリティモデルです。未設定の場合グループチャットは自動進行しません。</p>
+            </div>
+        </form>
+    </section>
+
+    {# ── Embedding 設定: 再インデックスを伴うため明示ボタン保存 ── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">Embedding Model</h2>
+        </div>
+        <form method="post" action="/ui/settings/embedding">
+            <p class="ch-prose" style="margin-bottom:18px">
+                記憶のベクトル化に使うモデル。変更すると全キャラクターの記憶が再インデックスされるため、
+                この項目だけは下のボタンで明示的に保存します。
             </p>
+
+            <div class="ch-field">
+                <label class="ch-label" for="embedding_provider">Embedding Provider</label>
+                <select id="embedding_provider" name="embedding_provider" class="ch-select"
+                        onchange="updateEmbeddingUI(this.value)">
+                    <option value="default" {% if settings.get('embedding_provider', 'default') == 'default' %}selected{% endif %}>
+                        Default (LanceDB 組み込み / all-MiniLM-L6-v2)
+                    </option>
+                    <option value="google"
+                            {% if settings.get('embedding_provider') == 'google' %}selected{% endif %}
+                            {% if not has_google_key %}disabled title="Google APIキーが未設定です"{% endif %}>
+                        Google Gemini Embedding{% if not has_google_key %} (Google APIキー未設定){% endif %}
+                    </option>
+                    <option value="infinity" {% if settings.get('embedding_provider') == 'infinity' %}selected{% endif %}>
+                        infinity / ruri-v3 (ローカル)
+                    </option>
+                </select>
+            </div>
+
+            <div class="ch-field" id="infinity_url_group"
+                 style="{% if settings.get('embedding_provider') != 'infinity' %}display:none{% endif %}">
+                <label class="ch-label" for="infinity_base_url">infinity Base URL
+                    <span class="ch-hint">infinity サーバーのURL</span>
+                </label>
+                <input type="text" id="infinity_base_url" name="infinity_base_url"
+                       class="ch-input ch-input--mono"
+                       value="{{ settings.get('infinity_base_url', 'http://localhost:7997') }}"
+                       placeholder="http://localhost:7997"
+                       autocomplete="off">
+            </div>
+
+            <div class="ch-field" id="embedding_model_group"
+                 style="{% if settings.get('embedding_provider', 'default') == 'default' %}display:none{% endif %}">
+                <label class="ch-label" for="embedding_model">Embedding Model ID
+                    <span class="ch-hint" id="embedding_model_hint">モデルIDを入力するか一覧から選択</span>
+                </label>
+                <input type="text" id="embedding_model" name="embedding_model"
+                       class="ch-input ch-input--mono"
+                       value="{{ settings.get('embedding_model', '') }}"
+                       placeholder="cl-nagoya/ruri-v3-310m"
+                       autocomplete="off"
+                       list="embedding-models-list">
+                <datalist id="embedding-models-list"></datalist>
+            </div>
+
+            {% if settings.get('embedding_provider', 'default') != 'default' %}
+            <div class="ch-notice ch-notice--warn">
+                外部Embeddingモデルを使用中です。モデルを変更すると全キャラクターの記憶が再インデックスされます。
+            </div>
+            {% endif %}
+
+            <div style="margin-top:8px">
+                <button type="submit" class="ch-btn ch-btn--primary"
+                        onclick="return confirm('Embedding 設定を保存します。プロバイダー／モデルを変更した場合は全記憶の再インデックスが走ります。続けますか？')">
+                    保存して再インデックス
+                </button>
+            </div>
+        </form>
+    </section>
+
+    {# ── 記憶の修復 ───────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">記憶の修復</h2>
         </div>
-
-        <hr>
-
-        <!-- コンテキストウィンドウ圧縮 -->
-        <div class="form-group">
-            <label for="context_window_max_chronicled">コンテキストウィンドウ（chronicle済みメッセージ上限）
-                <span class="label-hint">chronicle済みメッセージの保持件数。未chronicle分は常に全件保持。0 = chronicle済みを完全除外</span>
-            </label>
-            <input type="number" id="context_window_max_chronicled" name="context_window_max_chronicled"
-                   value="{{ settings.get('context_window_max_chronicled', '10') }}"
-                   min="0" max="200" class="form-control" style="width:120px">
-        </div>
-
-        <hr>
-
-        <!-- Chronicle Time -->
-        <div class="form-group">
-            <label for="chronicle_time">Chronicle Time
-                <span class="label-hint">毎日この時刻に self_history / relationship_state を更新します</span>
-            </label>
-            <input type="time" id="chronicle_time" name="chronicle_time"
-                   value="{{ settings.get('chronicle_time', '03:00') }}"
-                   class="form-control" style="width:auto">
-        </div>
-
-        <!-- 時間認識 -->
-        <div class="form-group">
-            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
-                <input type="checkbox" id="enable_time_awareness" name="enable_time_awareness" value="true"
-                       {% if settings.get('enable_time_awareness', True) %}checked{% endif %}>
-                日時と経過時間の連携を有効にする
-            </label>
-            <p class="form-hint" style="margin-top:4px">現在時刻と前回の会話からの経過時間をキャラクターに伝えます。</p>
-        </div>
-
-        <hr>
-
-        <!-- 翻訳モデル -->
-        <div class="form-group">
-            <label for="translation_preset_id">翻訳モデル
-                <span class="label-hint">ThinkingBlock / Thoughts の翻訳に使用するモデル</span>
-            </label>
-            <select id="translation_preset_id" name="translation_preset_id" class="form-control">
-                <option value="" {% if not settings.get('translation_preset_id') %}selected{% endif %}>（未設定）</option>
-                {% for preset in model_presets %}
-                <option value="{{ preset.id }}"
-                        {% if settings.get('translation_preset_id') == preset.id %}selected{% endif %}>
-                    {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
-                </option>
-                {% endfor %}
-            </select>
-            <p class="form-hint">選択したモデルがチャット画面・ログ画面の翻訳ボタンで使用されます。</p>
-        </div>
-
-        <hr>
-
-        <!-- 司会モデル -->
-        <div class="form-group">
-            <label for="group_director_preset_id">司会モデル
-                <span class="label-hint">グループチャットで次の発言者を判断するモデル</span>
-            </label>
-            <select id="group_director_preset_id" name="group_director_preset_id" class="form-control">
-                <option value="" {% if not settings.get('group_director_preset_id') %}selected{% endif %}>（未設定）</option>
-                {% for preset in model_presets %}
-                <option value="{{ preset.id }}"
-                        {% if settings.get('group_director_preset_id') == preset.id %}selected{% endif %}>
-                    {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
-                </option>
-                {% endfor %}
-            </select>
-            <p class="form-hint">司会はキャラクターではなくシステム上のユーティリティモデルです。未設定の場合グループチャットは自動進行しません。</p>
-        </div>
-    </form>
-</div>
-
-{# Embedding 設定: 変更すると全記憶の再インデックスを伴うため、自動保存せず明示ボタンで保存する。 #}
-<div class="form-card" style="margin-top:1rem">
-    <form method="post" action="/ui/settings/embedding">
-        <h3 style="margin-bottom:0.5rem;font-size:1rem">Embedding Model</h3>
-        <p class="form-hint" style="margin-bottom:0.75rem">
-            記憶のベクトル化に使うモデル。変更すると全キャラクターの記憶が再インデックスされるため、
-            この項目だけは下のボタンで明示的に保存します。
-        </p>
-
-        <div class="form-group">
-            <label for="embedding_provider">Embedding Provider</label>
-            <select id="embedding_provider" name="embedding_provider" class="form-control"
-                    onchange="updateEmbeddingUI(this.value)">
-                <option value="default" {% if settings.get('embedding_provider', 'default') == 'default' %}selected{% endif %}>
-                    Default (LanceDB 組み込み / all-MiniLM-L6-v2)
-                </option>
-                <option value="google"
-                        {% if settings.get('embedding_provider') == 'google' %}selected{% endif %}
-                        {% if not has_google_key %}disabled title="Google APIキーが未設定です"{% endif %}>
-                    Google Gemini Embedding{% if not has_google_key %} (Google APIキー未設定){% endif %}
-                </option>
-                <option value="infinity" {% if settings.get('embedding_provider') == 'infinity' %}selected{% endif %}>
-                    infinity / ruri-v3 (ローカル)
-                </option>
-            </select>
-        </div>
-
-        <div class="form-group" id="infinity_url_group"
-             style="{% if settings.get('embedding_provider') != 'infinity' %}display:none{% endif %}">
-            <label for="infinity_base_url">infinity Base URL
-                <span class="label-hint">infinity サーバーのURL</span>
-            </label>
-            <input type="text" id="infinity_base_url" name="infinity_base_url"
-                   class="form-control"
-                   value="{{ settings.get('infinity_base_url', 'http://localhost:7997') }}"
-                   placeholder="http://localhost:7997"
-                   autocomplete="off">
-        </div>
-
-        <div class="form-group" id="embedding_model_group"
-             style="{% if settings.get('embedding_provider', 'default') == 'default' %}display:none{% endif %}">
-            <label for="embedding_model">Embedding Model ID
-                <span class="label-hint" id="embedding_model_hint">モデルIDを入力するか一覧から選択</span>
-            </label>
-            <input type="text" id="embedding_model" name="embedding_model"
-                   class="form-control"
-                   value="{{ settings.get('embedding_model', '') }}"
-                   placeholder="cl-nagoya/ruri-v3-310m"
-                   autocomplete="off"
-                   list="embedding-models-list">
-            <datalist id="embedding-models-list"></datalist>
-        </div>
-
-        {% if settings.get('embedding_provider', 'default') != 'default' %}
-        <div class="alert alert-warning">
-            外部Embeddingモデルを使用中です。モデルを変更すると全キャラクターの記憶が再インデックスされます。
-        </div>
-        {% endif %}
-
-        <div class="form-actions">
-            <button type="submit" class="btn btn-primary"
-                    onclick="return confirm('Embedding 設定を保存します。プロバイダー／モデルを変更した場合は全記憶の再インデックスが走ります。続けますか？')">
-                保存して再インデックス
-            </button>
-        </div>
-    </form>
-</div>
-
-<div class="form-card" style="margin-top:1rem">
-    <h3 style="margin-bottom:0.5rem;font-size:1rem">記憶の修復</h3>
-    <p class="form-hint">Embedding モデル変更後に記憶が想起されなくなった場合、現在の設定で全記憶を再インデックスします。SQLite に記憶データが残っていれば復元されます。</p>
-    <form method="post" action="/ui/settings/reindex"
-          onsubmit="return confirm('全キャラクターの記憶を再インデックスします。完了まで時間がかかる場合があります。続けますか？')">
-        <button type="submit" class="btn btn-secondary">記憶を再インデックス</button>
-    </form>
+        <p class="ch-prose" style="margin-bottom:14px">Embedding モデル変更後に記憶が想起されなくなった場合、現在の設定で全記憶を再インデックスします。SQLite に記憶データが残っていれば復元されます。</p>
+        <form method="post" action="/ui/settings/reindex"
+              onsubmit="return confirm('全キャラクターの記憶を再インデックスします。完了まで時間がかかる場合があります。続けますか？')">
+            <button type="submit" class="ch-btn">記憶を再インデックス</button>
+        </form>
+    </section>
 </div>
 
 <script>

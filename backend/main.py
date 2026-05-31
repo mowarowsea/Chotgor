@@ -179,9 +179,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 静的ファイルをマウントする
+class ImmutableStaticFiles(StaticFiles):
+    """静的ファイルに長期 immutable キャッシュを付与する StaticFiles。
+
+    chotgor.css / autosave.js は base.html から `?v={css_version}` 付きで参照される。
+    css_version はサーバ起動時刻のタイムスタンプ（main.py の lifespan で設定）なので、
+    内容を変更してサーバを再起動すれば URL のクエリが変わり、ブラウザは確実に再取得する。
+    そのためファイル本体には「1年・immutable」のキャッシュを安全に付与でき、
+    通常 StaticFiles が毎ナビゲーションで行う条件付きGET（304確認）の往復を無くせる。
+    これにより初回以降のページ表示で CSS 読込待ちのカクつきが解消される。
+    """
+
+    async def get_response(self, path, scope):
+        """ファイル応答に Cache-Control: immutable ヘッダを付与して返す。"""
+        response = await super().get_response(path, scope)
+        # 200/304 いずれの応答でも長期キャッシュを宣言する（URL のクエリでバスティング済み）
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+# 静的ファイルをマウントする（immutable キャッシュ付き）
 if os.path.exists(STATIC_DIR):
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", ImmutableStaticFiles(directory=STATIC_DIR), name="static")
 
 # ルーターをアプリへ登録する
 app.include_router(openai_router.router)

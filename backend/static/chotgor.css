@@ -1,0 +1,1522 @@
+/*
+ * Chotgor Design System
+ * ------------------------------------------------------------
+ * モノクローム濃紺基調 + ジェードグリーンアクセント。
+ * DM Sans（本文） / DM Mono（ラベル・見出し・メタ）。
+ * light / dark 両対応（html[data-theme] で切替、既定は dark）。
+ *
+ * すべて `ch-` プレフィックスで名前空間化しており、旧 style.css の
+ * クラス群とは衝突しない。ページ単位で段階的に移行する前提。
+ *
+ * 出典: design_sample/shared.jsx (makeCH) と各 variation-*.jsx。
+ * ============================================================ */
+
+/* ============================================================
+   目次（セクション順）
+   ------------------------------------------------------------
+   1.  DESIGN TOKENS         — :root 変数（dark / light / 寸法）
+   2.  RESET / BASE          — .ch-root, スクロールバー
+   3.  LAYOUT                — topbar / nav / shell
+   4.  ATOMS — typography    — brand / eyebrow / display / section-title / prose / meta
+   5.  ATOMS — buttons       — ch-btn(各modifier) / ch-iconbtn
+   6.  ATOMS — pills/badges  — ch-dot / ch-pill / ch-badge / ch-tag(memoryカテゴリ)
+   7.  FORM CONTROLS         — field/label/input/textarea/select/toggle/segment
+   8.  FILTER BAR            — ch-filterbar / ch-filters / ch-filter
+   9.  LIST                  — ch-list / ch-row（区切り線ベース行）
+   10. MEMORY LIST           — ch-memlist / ch-memitem / ch-imp（記憶一覧）
+   11. TABLE                 — ch-table / ch-formgrid（model presets）
+   11b NOTICE                — ch-notice（settings の保存/警告フラッシュ）
+   12. CARD / PANEL          — ch-panel / ch-divider / ch-code
+   13. HERO                  — ch-hero
+   14. EMPTY / FOOTNOTE      — ch-empty / ch-footnote
+   15. RESPONSIVE（共通）     — ※各 base 定義の後に置くこと（@media はspecificityを上げないため）
+   16. UTILITIES             — ch-row-gap / ch-spacer / ch-stack 等
+   17. PAGE HEAD ＋ 詳細部品  — ch-pagehead / ch-chapter / ch-section / ch-switch-row
+   18. LEGACY BRIDGES        — 旧 style.css のクラス名を保持し新テーマで上書き
+                               （accordion / icon upload / crop modal）。JSが参照するため改名不可。
+   19. INFO BOX / ACTION BAR — ch-info / ch-actionbar
+   20. LOGS                  — 旧 .log-* を chotgor 側で上書き（最後に置き、base の後で@mediaが効く）
+
+   【不変条件】レスポンシブ上書き（@media）は、対象セレクタの base 定義より必ず
+   "後ろ" に置く。前に置くと後勝ちで base に負け、モバイルで上書きが効かなくなる。
+   そのため RESPONSIVE は1箇所に集約せず、各コンポーネント群の末尾に分散している。
+   ============================================================ */
+
+/* ============================================================
+   0. WEBFONTS（セルフホスト）
+   ------------------------------------------------------------
+   DM Sans / DM Mono を /static/fonts に同梱し、外部CDN(fonts.gstatic.com)
+   依存と display:swap の字体差し替えリフロー（カクつき）を排除する。
+   - DM Sans は可変フォント：1ファイルで 300〜600 を賄う（font-weight 範囲指定）。
+   - DM Mono は固定：300/400/500 を個別ファイルで定義。
+   - サブセットは latin のみ（UIは ASCII＋日本語。日本語はシステムフォントへ
+     フォールバックするため、これらの欧文フォントの対象外）。
+   - base.html で latin 主要ウェイトを preload し、初回描画前に取得を完了させる。
+   ============================================================ */
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 300 600;
+  font-display: swap;
+  src: url(/static/fonts/dm-sans-latin.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(/static/fonts/dm-mono-300-latin.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/static/fonts/dm-mono-400-latin.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(/static/fonts/dm-mono-500-latin.woff2) format('woff2');
+}
+
+/* ============================================================
+   1. DESIGN TOKENS
+   ============================================================ */
+
+/* 既定は dark。OS が light 設定のときだけ末尾の @media で上書きする（OS追従）。 */
+:root {
+  --ch-bg:        #131b26;  /* アプリ背景 */
+  --ch-bg-s:      #0e1620;  /* 沈んだ面（入力・コード・アバター地） */
+  --ch-t:         #c4d4e4;  /* 主要テキスト */
+  --ch-t2:        #7c91a6;  /* 副次テキスト（dark は makeCH より一段持ち上げて可読性確保） */
+  --ch-t3:        #4e6478;  /* 三次テキスト・メタ */
+  --ch-t4:        #2e4258;  /* 最弱・区切りラベル */
+
+  --ch-a:         oklch(64% 0.13 158);          /* アクセント（ジェード緑） */
+  --ch-a-strong:  oklch(70% 0.14 158);          /* アクセント強（見出し内など） */
+  --ch-a-soft:    oklch(64% 0.13 158 / 0.18);   /* アクセント淡背景 */
+  --ch-a-faint:   oklch(64% 0.13 158 / 0.08);   /* アクセント極淡背景 */
+  --ch-on-a:      #07120c;                       /* アクセント上の文字 */
+
+  --ch-sep:       rgba(196, 212, 228, 0.07);    /* 区切り線（弱） */
+  --ch-sep2:      rgba(196, 212, 228, 0.13);    /* 区切り線（中）・枠線 */
+
+  --ch-code-bg:     rgba(0, 0, 0, 0.25);
+  --ch-code-border: rgba(196, 212, 228, 0.10);
+
+  /* メモリカテゴリ（dark） */
+  --ch-mem-identity:    oklch(72% 0.15 290);
+  --ch-mem-identity-bg: oklch(72% 0.15 290 / 0.14);
+  --ch-mem-user:        oklch(70% 0.14 226);
+  --ch-mem-user-bg:     oklch(70% 0.14 226 / 0.14);
+  --ch-mem-semantic:    oklch(70% 0.13 165);
+  --ch-mem-semantic-bg: oklch(70% 0.13 165 / 0.14);
+  --ch-mem-contextual:    oklch(74% 0.14 65);
+  --ch-mem-contextual-bg: oklch(74% 0.14 65 / 0.14);
+
+  /* ステータス */
+  --ch-st-active:    var(--ch-a);
+  --ch-st-estranged: oklch(64% 0.14 18);
+  --ch-st-dormant:   oklch(64% 0.10 65);
+
+  --ch-danger:    oklch(62% 0.17 18);
+  --ch-danger-bg: oklch(62% 0.17 18 / 0.12);
+  --ch-warn:      oklch(72% 0.14 65);
+
+  --ch-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-color-scheme: light) {
+:root {
+  --ch-bg:        #f4f6f9;
+  --ch-bg-s:      #ebeef4;
+  --ch-t:         #18243a;
+  --ch-t2:        #5a6e85;
+  --ch-t3:        #93a3b4;
+  --ch-t4:        #b0beca;
+
+  --ch-a:         oklch(54% 0.13 158);
+  --ch-a-strong:  oklch(48% 0.14 158);
+  --ch-a-soft:    oklch(54% 0.13 158 / 0.13);
+  --ch-a-faint:   oklch(54% 0.13 158 / 0.06);
+  --ch-on-a:      #ffffff;
+
+  --ch-sep:       rgba(24, 36, 58, 0.08);
+  --ch-sep2:      rgba(24, 36, 58, 0.14);
+
+  --ch-code-bg:     rgba(24, 36, 58, 0.05);
+  --ch-code-border: rgba(24, 36, 58, 0.09);
+
+  --ch-mem-identity:    oklch(50% 0.15 290);
+  --ch-mem-identity-bg: oklch(50% 0.15 290 / 0.10);
+  --ch-mem-user:        oklch(50% 0.14 226);
+  --ch-mem-user-bg:     oklch(50% 0.14 226 / 0.10);
+  --ch-mem-semantic:    oklch(50% 0.13 165);
+  --ch-mem-semantic-bg: oklch(50% 0.13 165 / 0.10);
+  --ch-mem-contextual:    oklch(52% 0.14 65);
+  --ch-mem-contextual-bg: oklch(52% 0.14 65 / 0.10);
+
+  --ch-st-active:    var(--ch-a);
+  --ch-st-estranged: oklch(56% 0.16 18);
+  --ch-st-dormant:   oklch(56% 0.12 65);
+
+  --ch-danger:    oklch(54% 0.18 18);
+  --ch-danger-bg: oklch(54% 0.18 18 / 0.10);
+  --ch-warn:      oklch(56% 0.14 65);
+
+  --ch-shadow: 0 8px 30px rgba(24, 36, 58, 0.10);
+}
+}
+
+/* タイポグラフィ・寸法は共通（テーマ非依存） */
+:root {
+  --ch-f:  'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ch-fm: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --ch-radius-sm:   4px;
+  --ch-radius:      6px;
+  --ch-radius-md:   8px;
+  --ch-radius-lg:   12px;
+  --ch-radius-full: 999px;
+
+  --ch-shell-max: 880px;   /* 標準コンテンツ幅 */
+  --ch-shell-wide: 1100px; /* 広めコンテンツ幅（ログ等） */
+  --ch-pad-x: 36px;
+  --ch-topbar-h: 46px;
+}
+
+/* ============================================================
+   RESET / BASE
+   ============================================================ */
+.ch-root,
+.ch-root * { box-sizing: border-box; }
+
+.ch-root {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--ch-f);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ch-t);
+  background: var(--ch-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background .25s ease, color .25s ease;
+}
+
+.ch-root a { color: inherit; text-decoration: none; }
+.ch-root img { max-width: 100%; }
+.ch-root button { font-family: inherit; }
+/* 素の <code>/<strong>（ヒント文・散文中。専用クラスが無い場合の既定） */
+.ch-root code { font-family: var(--ch-fm); font-size: 0.9em; color: var(--ch-a); }
+.ch-root strong { font-weight: 600; color: var(--ch-t); }
+
+/* スクロールバー */
+.ch-root,
+.ch-scroll { scrollbar-width: thin; scrollbar-color: var(--ch-sep2) transparent; }
+.ch-root ::-webkit-scrollbar,
+.ch-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.ch-root ::-webkit-scrollbar-thumb,
+.ch-scroll::-webkit-scrollbar-thumb { background: var(--ch-sep2); border-radius: var(--ch-radius-full); }
+.ch-root ::-webkit-scrollbar-thumb:hover,
+.ch-scroll::-webkit-scrollbar-thumb:hover { background: var(--ch-t4); }
+.ch-root ::-webkit-scrollbar-track,
+.ch-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   LAYOUT — topbar / shell
+   ============================================================ */
+.ch-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: var(--ch-topbar-h);
+  padding: 0 var(--ch-pad-x);
+  background: color-mix(in srgb, var(--ch-bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--ch-sep);
+}
+
+.ch-topbar__left,
+.ch-topbar__right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+
+/* 主要ナビ（topbar 内） */
+.ch-nav { display: flex; align-items: center; gap: 4px; }
+.ch-nav__link {
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ch-t3);
+  padding: 5px 10px;
+  border-radius: var(--ch-radius);
+  transition: color .15s, background .15s;
+}
+.ch-nav__link:hover { color: var(--ch-t); background: var(--ch-sep); }
+.ch-nav__link.is-active { color: var(--ch-a-strong); background: var(--ch-a-faint); }
+
+/* スクロールするコンテンツ本体 */
+.ch-shell {
+  max-width: var(--ch-shell-max);
+  margin: 0 auto;
+  padding: 44px var(--ch-pad-x) 96px;
+}
+.ch-shell--wide { max-width: var(--ch-shell-wide); }
+
+/* ============================================================
+   ATOMS — typography
+   ============================================================ */
+.ch-brand {
+  font-family: var(--ch-f);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ch-t);
+}
+
+/* 小さな上ラベル（DM Mono） */
+.ch-eyebrow {
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ch-t3);
+}
+.ch-eyebrow--accent { color: var(--ch-a); }
+
+/* 大見出し（DM Mono light、小文字運用） */
+.ch-display {
+  margin: 0;
+  font-family: var(--ch-fm);
+  font-size: clamp(30px, 6vw, 42px);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--ch-t);
+}
+
+/* セクション見出し（| identity ・ 自我 のような形） */
+.ch-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  font-family: var(--ch-fm);
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--ch-t);
+}
+.ch-section-title::before {
+  content: "";
+  align-self: stretch;
+  width: 2px;
+  background: var(--ch-a);
+  border-radius: 2px;
+}
+.ch-section-title small { font-size: 12px; color: var(--ch-t3); font-weight: 400; }
+
+/* 散文（イタリックの説明文） */
+.ch-prose {
+  margin: 0;
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.75;
+  color: var(--ch-t2);
+}
+
+.ch-meta {
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+  letter-spacing: 0.02em;
+}
+.ch-meta strong { color: var(--ch-t); font-weight: 500; }
+
+.ch-mono { font-family: var(--ch-fm); }
+
+/* ============================================================
+   ATOMS — buttons
+   ============================================================ */
+.ch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--ch-f);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 6px 14px;
+  border-radius: var(--ch-radius);
+  border: 1px solid var(--ch-sep2);
+  background: transparent;
+  color: var(--ch-t2);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.ch-btn:hover { color: var(--ch-t); border-color: var(--ch-t4); background: var(--ch-sep); }
+.ch-btn:disabled { cursor: wait; opacity: 0.5; }
+
+.ch-btn--primary {
+  background: var(--ch-a);
+  color: var(--ch-on-a);
+  border-color: transparent;
+}
+.ch-btn--primary:hover { background: var(--ch-a-strong); color: var(--ch-on-a); }
+
+.ch-btn--ghost { border-color: transparent; }
+.ch-btn--ghost:hover { background: var(--ch-sep); }
+
+.ch-btn--danger { color: var(--ch-danger); border-color: transparent; }
+.ch-btn--danger:hover { color: var(--ch-danger); background: var(--ch-danger-bg); border-color: transparent; }
+
+.ch-btn--sm { font-size: 11px; padding: 4px 10px; }
+.ch-btn--xs { font-size: 10px; padding: 2px 8px; }
+
+/* アイコンボタン（テーマトグルなど） */
+.ch-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ch-radius);
+  border: 1px solid var(--ch-sep2);
+  background: transparent;
+  color: var(--ch-t2);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.ch-iconbtn:hover { color: var(--ch-t); background: var(--ch-sep); }
+
+/* ============================================================
+   ATOMS — pills / badges / dot
+   ============================================================ */
+.ch-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--ch-radius-full);
+  background: var(--ch-a);
+  flex-shrink: 0;
+}
+
+/* ステータスピル（ドット + ラベル） */
+.ch-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--ch-fm);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 2px 9px;
+  border-radius: var(--ch-radius-full);
+  border: 1px solid currentColor;
+  color: var(--ch-t3);
+  flex-shrink: 0;
+}
+.ch-pill .ch-dot { background: currentColor; }
+.ch-pill--active    { color: var(--ch-st-active); }
+.ch-pill--estranged { color: var(--ch-st-estranged); }
+.ch-pill--dormant   { color: var(--ch-st-dormant); }
+
+/* 中立バッジ（id 断片など） */
+.ch-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--ch-fm);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--ch-t3);
+  padding: 2px 7px;
+  border-radius: var(--ch-radius-sm);
+  background: var(--ch-sep);
+}
+
+/* メモリカテゴリバッジ */
+.ch-tag {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--ch-fm);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: var(--ch-radius-full);
+}
+.ch-tag--identity   { color: var(--ch-mem-identity);   background: var(--ch-mem-identity-bg); }
+.ch-tag--user_info  { color: var(--ch-mem-user);       background: var(--ch-mem-user-bg); }
+.ch-tag--semantic_knowledge { color: var(--ch-mem-semantic); background: var(--ch-mem-semantic-bg); }
+.ch-tag--contextual { color: var(--ch-mem-contextual); background: var(--ch-mem-contextual-bg); }
+/* 汎用タグ色（プロバイダー名・ツール名・INFO 等のアクセント / WARN 等の警告） */
+.ch-tag--accent { color: var(--ch-a);      background: var(--ch-a-soft); }
+.ch-tag--danger { color: var(--ch-danger); background: var(--ch-danger-bg); }
+
+/* ============================================================
+   FORM CONTROLS
+   ============================================================ */
+.ch-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+/* ラベル（フォーム見出し・ログ詳細行ラベル等、全ページ共通の唯一のラベル） */
+.ch-label {
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ch-t2);
+}
+.ch-hint { font-size: 11px; color: var(--ch-t3); font-style: italic; }
+
+.ch-input,
+.ch-textarea,
+.ch-select {
+  width: 100%;
+  font-family: var(--ch-f);
+  font-size: 13px;
+  color: var(--ch-t);
+  background: var(--ch-bg-s);
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius);
+  padding: 8px 11px;
+  outline: none;
+  transition: border-color .15s, background .15s;
+}
+.ch-input:focus,
+.ch-textarea:focus,
+.ch-select:focus { border-color: var(--ch-a); }
+.ch-input::placeholder,
+.ch-textarea::placeholder { color: var(--ch-t4); }
+
+.ch-textarea { resize: vertical; min-height: 96px; line-height: 1.65; }
+.ch-input--mono,
+.ch-textarea--mono { font-family: var(--ch-fm); font-size: 12.5px; }
+
+.ch-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3l4 4 4-4' stroke='%237c91a6' stroke-width='1.2' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  padding-right: 28px;
+}
+
+/* トグルスイッチ */
+.ch-toggle { position: relative; display: inline-block; width: 32px; height: 18px; flex-shrink: 0; }
+.ch-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ch-toggle__track {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--ch-radius-full);
+  background: var(--ch-sep2);
+  transition: background .2s;
+}
+.ch-toggle__track::before {
+  content: "";
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  border-radius: var(--ch-radius-full);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left .2s;
+}
+.ch-toggle input:checked + .ch-toggle__track { background: var(--ch-a); }
+.ch-toggle input:checked + .ch-toggle__track::before { left: 16px; }
+
+/* セグメント（タブ風トグル: user/dev など） */
+.ch-segment {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--ch-bg-s);
+  border-radius: var(--ch-radius);
+}
+.ch-segment__item {
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: var(--ch-radius-sm);
+  color: var(--ch-t3);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.ch-segment__item:hover { color: var(--ch-t2); }
+.ch-segment__item.is-active {
+  color: var(--ch-t);
+  background: var(--ch-bg);
+  border-color: var(--ch-sep2);
+}
+
+/* ============================================================
+   FILTER BAR — タブ + 並び順 + アクション
+   ============================================================ */
+.ch-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--ch-sep);
+}
+.ch-filters { display: flex; flex-wrap: wrap; gap: 22px; font-family: var(--ch-fm); font-size: 11.5px; letter-spacing: 0.03em; }
+.ch-filter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--ch-t3);
+  padding-bottom: 4px;
+  border-bottom: 1px solid transparent;
+  cursor: pointer;
+  transition: color .15s;
+}
+.ch-filter:hover { color: var(--ch-t2); }
+.ch-filter.is-active { color: var(--ch-t); border-bottom-color: var(--ch-a); }
+.ch-filter__count { font-size: 10px; color: var(--ch-t3); }
+
+/* ============================================================
+   LIST — 区切り線ベースの行リスト（characters 等）
+   ============================================================ */
+.ch-list { display: flex; flex-direction: column; }
+.ch-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 24px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--ch-sep);
+  cursor: pointer;
+  transition: background .15s;
+}
+.ch-row:hover { background: var(--ch-sep); }
+.ch-row:last-child { border-bottom: none; }
+
+.ch-row__avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--ch-radius-full);
+  object-fit: cover;
+  border: 1px solid var(--ch-sep2);
+  background: var(--ch-bg-s);
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+.ch-row__avatar--ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ch-fm);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--ch-a);
+  background: var(--ch-a-soft);
+}
+
+.ch-row__body { min-width: 0; }
+.ch-row__head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
+.ch-row__name {
+  margin: 0;
+  font-family: var(--ch-f);
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  color: var(--ch-t);
+}
+.ch-row__id {
+  font-family: var(--ch-fm);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--ch-t3);
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ch-row__excerpt {
+  margin: 0;
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.7;
+  color: var(--ch-t2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 行右側メタ列 */
+.ch-row__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 140px;
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+  text-align: right;
+}
+.ch-row__meta strong { color: var(--ch-t); font-weight: 500; }
+.ch-row__meta .accent { color: var(--ch-a); }
+
+/* 行内のアクション（hover で出す） */
+.ch-row__actions { display: flex; gap: 6px; align-items: center; }
+
+/* ============================================================
+   MEMORY LIST — 記憶一覧（区切り線ベース）
+   ============================================================ */
+.ch-memlist { display: flex; flex-direction: column; }
+.ch-memitem {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--ch-sep);
+}
+.ch-memitem:last-child { border-bottom: none; }
+.ch-memitem--deleted { opacity: 0.5; }
+
+/* 上段: カテゴリ/削除バッジ + 日付 */
+.ch-memitem__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.ch-memitem__date {
+  margin-left: auto;
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+}
+
+/* 本文 */
+.ch-memitem__content {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--ch-t);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ch-memitem--deleted .ch-memitem__content { text-decoration: line-through; }
+
+/* 下段: 重要度メトリクス + アクション */
+.ch-memitem__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.ch-memitem__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+}
+.ch-imp { display: inline-flex; align-items: baseline; gap: 3px; }
+.ch-imp b { color: var(--ch-t); font-weight: 500; font-variant-numeric: tabular-nums; }
+.ch-imp--on b { color: var(--ch-a); }
+.ch-memitem__preset { display: inline-flex; align-items: center; gap: 3px; color: var(--ch-a); }
+.ch-memitem__actions { margin-left: auto; }
+
+/* クリックで詳細へ飛ぶ記憶/スレッド行（working memory 等） */
+.ch-memitem--link { cursor: pointer; transition: background .15s; }
+.ch-memitem--link:hover { background: var(--ch-sep); }
+.ch-memitem__title { margin: 0 0 8px; font-size: 15px; font-weight: 500; color: var(--ch-t); }
+.ch-memitem__sub { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--ch-t2); opacity: 0.75; }
+/* 自由テキストのバッジ（atmosphere など）は折り返しを許可 */
+.ch-badge--wrap { white-space: normal; }
+
+/* 削除済みバッジ（中立グレー） */
+.ch-tag--deleted { color: var(--ch-t3); background: var(--ch-sep); }
+
+/* フィルタバー内のインライントグル + 絞り込み select */
+.ch-inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ch-t2);
+  cursor: pointer;
+}
+.ch-select--inline { width: auto; min-width: 160px; }
+
+/* ============================================================
+   TABLE — 密な編集テーブル（model presets 等）
+   ============================================================ */
+.ch-table-wrap { overflow-x: auto; }
+.ch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ch-table thead th {
+  text-align: left;
+  font-family: var(--ch-fm);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ch-t3);
+  font-weight: 400;
+  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--ch-sep2);
+  white-space: nowrap;
+}
+.ch-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--ch-sep);
+  color: var(--ch-t);
+  vertical-align: middle;
+}
+.ch-table tbody tr:last-child td { border-bottom: none; }
+.ch-table tbody tr:hover { background: var(--ch-sep); }
+
+/* model presets の表示/編集セル（JS が display 切替する要素） */
+.preset-display { font-family: var(--ch-fm); font-size: 12px; color: var(--ch-t2); }
+.preset-edit-field { max-width: 100%; }
+.preset-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* end 揃えの自動列フォームグリッド（presets 追加フォーム等） */
+.ch-formgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+.ch-formgrid .ch-field { margin-bottom: 0; }
+.ch-formgrid__action { display: flex; align-items: end; }
+
+/* ============================================================
+   NOTICE — 保存完了・警告などのフラッシュ通知（settings 等）
+   ============================================================ */
+.ch-notice {
+  padding: 12px 14px;
+  border: 1px solid var(--ch-sep2);
+  border-radius: var(--ch-radius-md);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 18px;
+}
+.ch-notice code {
+  font-family: var(--ch-fm);
+  color: var(--ch-a);
+  background: var(--ch-code-bg);
+  border-radius: var(--ch-radius-sm);
+  padding: 1px 5px;
+}
+.ch-notice--ok     { color: var(--ch-a);      background: var(--ch-a-faint);     border-color: var(--ch-a-soft); }
+.ch-notice--danger { color: var(--ch-danger); background: var(--ch-danger-bg);   border-color: var(--ch-danger); }
+.ch-notice--warn   { color: var(--ch-warn);   background: oklch(72% 0.14 65 / 0.08); border-color: oklch(72% 0.14 65 / 0.20); }
+
+/* ============================================================
+   CARD / PANEL — 汎用の囲い
+   ============================================================ */
+.ch-panel {
+  background: var(--ch-bg-s);
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-lg);
+  padding: 20px;
+}
+.ch-panel--flush { padding: 0; overflow: hidden; }
+
+.ch-divider { border: none; border-top: 1px solid var(--ch-sep); margin: 0; }
+
+/* インラインコード */
+.ch-code {
+  font-family: var(--ch-fm);
+  font-size: 0.85em;
+  background: var(--ch-code-bg);
+  border: 1px solid var(--ch-code-border);
+  border-radius: var(--ch-radius-sm);
+  padding: 1px 5px;
+}
+
+/* ============================================================
+   HERO — ページ先頭の見出しブロック
+   ============================================================ */
+.ch-hero { margin-bottom: 36px; }
+.ch-hero__eyebrow { display: block; margin-bottom: 10px; }
+.ch-hero__title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.ch-hero__count {
+  font-family: var(--ch-f);
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--ch-a);
+  letter-spacing: 0.01em;
+}
+.ch-hero__lede { max-width: 520px; }
+
+/* ============================================================
+   EMPTY / FOOTNOTE
+   ============================================================ */
+.ch-empty {
+  text-align: center;
+  padding: 64px 20px;
+  color: var(--ch-t3);
+}
+.ch-empty p { margin: 0 0 18px; font-style: italic; }
+
+.ch-footnote {
+  margin-top: 48px;
+  text-align: center;
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.8;
+  color: var(--ch-t3);
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 720px) {
+  :root { --ch-pad-x: 18px; }
+
+  .ch-shell { padding: 24px var(--ch-pad-x) 64px; }
+
+  /* topbar のセカンダリ情報を畳む */
+  .ch-topbar__right .ch-hide-sm,
+  .ch-topbar__left .ch-hide-sm { display: none; }
+  .ch-nav { gap: 0; }
+  .ch-nav__link { padding: 5px 7px; }
+
+  /* 行を 2 カラム化（アバター + 本文）、メタは本文下に回す */
+  .ch-row {
+    grid-template-columns: auto 1fr;
+    column-gap: 16px;
+    row-gap: 12px;
+    padding: 20px 0;
+  }
+  .ch-row__avatar { width: 52px; height: 52px; grid-row: 1 / span 2; }
+  .ch-row__avatar--ph { font-size: 20px; }
+  .ch-row__name { font-size: 18px; }
+  .ch-row__meta {
+    grid-column: 2 / 3;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 4px 14px;
+    min-width: 0;
+    text-align: left;
+  }
+}
+
+/* ============================================================
+   UTILITIES
+   ============================================================ */
+.ch-row-gap { display: flex; align-items: center; gap: 8px; }
+.ch-spacer { flex: 1; }
+.ch-mt-0 { margin-top: 0; }
+.ch-stack { display: flex; flex-direction: column; gap: 16px; }
+.ch-wrap { display: flex; flex-wrap: wrap; }
+
+/* ============================================================
+   PAGE HEAD — 詳細ページ上部（アバター + 名前 + メタ + アクション）
+   ============================================================ */
+.ch-pagehead {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 8px;
+}
+.ch-pagehead__avatar {
+  width: 84px;
+  height: 84px;
+  border-radius: var(--ch-radius-full);
+  object-fit: cover;
+  border: 1px solid var(--ch-sep2);
+  background: var(--ch-bg-s);
+  flex-shrink: 0;
+}
+.ch-pagehead__avatar--ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ch-fm);
+  font-size: 30px;
+  font-weight: 500;
+  color: var(--ch-a);
+  background: var(--ch-a-soft);
+}
+.ch-pagehead__body { flex: 1; min-width: 0; padding-top: 4px; }
+.ch-pagehead__title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.ch-pagehead__name {
+  margin: 0;
+  font-family: var(--ch-f);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  color: var(--ch-t);
+}
+.ch-pagehead__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+}
+.ch-pagehead__meta strong { color: var(--ch-t2); font-weight: 500; }
+.ch-pagehead__actions { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+
+/* ============================================================
+   CHAPTER — 章区切り（CHAPTER N + 大見出し + 説明）
+   ============================================================ */
+.ch-chapter { margin: 56px 0 32px; }
+.ch-chapter__mark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  color: var(--ch-t4);
+}
+.ch-chapter__mark::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--ch-sep);
+}
+.ch-chapter__mark .ch-eyebrow { letter-spacing: 0.18em; text-transform: uppercase; }
+.ch-chapter__title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 8px;
+  font-family: var(--ch-fm);
+  font-size: clamp(26px, 5vw, 34px);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--ch-t);
+}
+.ch-chapter__title small { font-family: var(--ch-f); font-size: 14px; font-weight: 400; color: var(--ch-t3); letter-spacing: 0; }
+
+/* ============================================================
+   SECTION — | 見出し付きフォームセクション
+   ============================================================ */
+.ch-section { margin-bottom: 40px; }
+.ch-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.ch-section__desc { margin: 4px 0 0; font-size: 12px; font-style: italic; color: var(--ch-t3); }
+
+/* ============================================================
+   CHECK LIST — チェックボックス群
+   ============================================================ */
+.ch-checklist { display: flex; flex-direction: column; gap: 10px; }
+.ch-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--ch-t);
+  cursor: pointer;
+}
+.ch-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--ch-a);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ch-check__note { color: var(--ch-t3); font-size: 11px; }
+
+/* トグル行（ラベル左・スイッチ右、区切り線つき） */
+.ch-switchlist { display: flex; flex-direction: column; }
+.ch-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--ch-sep);
+  cursor: pointer;
+}
+.ch-switch-row:last-child { border-bottom: none; }
+.ch-switch-row__text { min-width: 0; }
+.ch-switch-row__label { font-size: 13px; color: var(--ch-t); }
+.ch-switch-row__note { display: block; margin-top: 2px; font-size: 11px; color: var(--ch-t3); }
+
+/* ████████████████████████████████████████████████████████████
+   LEGACY BRIDGES（18）— 旧 style.css のクラス名を温存し新テーマで上書き
+   ------------------------------------------------------------
+   下記 accordion / icon upload / crop modal / (末尾の) logs は、JS が
+   クラス名・ID を参照するため改名できない。chotgor.css は style.css の
+   "後" に読み込まれるので、同名・同 specificity でも後勝ちで新テーマが効く。
+   旧テーマがハードコード色（#202020 系 surface）を当てている箇所は、必ず
+   background 等を明示リセットして --ch-* トークンへ寄せること（地色ブリード対策）。
+   ████████████████████████████████████████████████████████████ */
+
+/* ============================================================
+   ACCORDION — モデルプリセット（JS が参照する旧クラス名を保持）
+   ============================================================ */
+.accordion { display: flex; flex-direction: column; gap: 8px; }
+.accordion-item {
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-md);
+  background: var(--ch-bg-s);
+  overflow: hidden;
+}
+.accordion-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  /* 旧 surface-2(#292929) のハードコード地色をテーマ追従の沈み色に置換 */
+  background: var(--ch-bg-s);
+}
+.accordion-header strong { font-family: var(--ch-f); font-size: 13px !important; font-weight: 500; color: var(--ch-t) !important; }
+.accordion-toggle {
+  background: transparent;
+  border: none;
+  color: var(--ch-t3);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  width: 16px;
+}
+.btn-remove {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--ch-t3);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: var(--ch-radius-sm);
+  transition: color .15s, background .15s;
+}
+.btn-remove:hover { color: var(--ch-danger); background: var(--ch-danger-bg); }
+.accordion-body { padding: 4px 12px 12px; border-top: 1px solid var(--ch-sep); }
+.accordion-body .form-group { margin-top: 12px; }
+.add-model-row { display: flex; gap: 8px; margin-top: 10px; }
+.add-model-row .form-control { flex: 1; }
+
+/* ============================================================
+   ICON UPLOAD（旧クラス名を保持）
+   ============================================================ */
+.image-upload-row { display: flex; align-items: center; gap: 16px; }
+.icon-preview {
+  width: 84px;
+  height: 84px;
+  border-radius: var(--ch-radius-full);
+  object-fit: cover;
+  border: 1px solid var(--ch-sep2);
+}
+.icon-placeholder {
+  width: 84px;
+  height: 84px;
+  border-radius: var(--ch-radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ch-fm);
+  font-size: 28px;
+  color: var(--ch-t3);
+  background: var(--ch-bg-s);
+  border: 1px dashed var(--ch-sep2);
+}
+
+/* ============================================================
+   CROP MODAL（旧クラス名を保持）
+   ============================================================ */
+.crop-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  padding: 20px;
+}
+.crop-modal-card {
+  background: var(--ch-bg);
+  border: 1px solid var(--ch-sep2);
+  border-radius: var(--ch-radius-lg);
+  box-shadow: var(--ch-shadow);
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+}
+.crop-modal-card h3 { margin: 0 0 16px; font-family: var(--ch-fm); font-size: 15px; font-weight: 400; color: var(--ch-t); }
+.crop-container { width: 100%; height: 320px; background: var(--ch-bg-s); border-radius: var(--ch-radius-md); overflow: hidden; }
+.crop-container img { display: block; max-width: 100%; }
+.crop-zoom-row { display: flex; align-items: center; gap: 10px; margin: 16px 0; }
+.crop-zoom-label { font-family: var(--ch-fm); font-size: 11px; color: var(--ch-t3); }
+.crop-zoom-slider { flex: 1; accent-color: var(--ch-a); }
+.crop-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ============================================================
+   INFO BOX
+   ============================================================ */
+.ch-info {
+  margin-top: 32px;
+  padding: 14px 16px;
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-md);
+  background: var(--ch-bg-s);
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  line-height: 1.9;
+  color: var(--ch-t3);
+}
+.ch-info strong { color: var(--ch-t2); font-weight: 500; }
+.ch-info code {
+  font-family: var(--ch-fm);
+  color: var(--ch-a);
+  background: var(--ch-code-bg);
+  border-radius: var(--ch-radius-sm);
+  padding: 1px 5px;
+}
+
+/* ============================================================
+   STICKY ACTION BAR — フォーム下部の保存/破棄
+   ============================================================ */
+.ch-actionbar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 40px;
+  padding: 14px var(--ch-pad-x);
+  margin-left: calc(var(--ch-pad-x) * -1);
+  margin-right: calc(var(--ch-pad-x) * -1);
+  background: color-mix(in srgb, var(--ch-bg) 90%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--ch-sep);
+}
+.ch-autosave-note {
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  font-style: italic;
+  color: var(--ch-t3);
+  margin: 0 0 24px;
+}
+
+/* 自動保存トースト（autosave.js が body 直下に生成。クラス名 .autosave-status は固定） */
+.autosave-status {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  padding: 7px 14px;
+  border-radius: var(--ch-radius-md);
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  border: 1px solid var(--ch-sep2);
+  background: var(--ch-bg-s);
+  color: var(--ch-t);
+  box-shadow: var(--ch-shadow);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity .2s ease, transform .2s ease;
+  pointer-events: none;
+}
+.autosave-status.visible { opacity: 1; transform: translateY(0); }
+.autosave-status[data-kind="saved"] { color: var(--ch-a); border-color: var(--ch-a-soft); }
+.autosave-status[data-kind="error"],
+.autosave-status[data-kind="invalid"] { color: var(--ch-danger); border-color: var(--ch-danger); }
+
+@media (max-width: 720px) {
+  .ch-pagehead { flex-wrap: wrap; gap: 14px; }
+  .ch-pagehead__actions { width: 100%; }
+}
+
+/* ============================================================
+   20. LOGS — リクエストストリーム（LEGACY BRIDGE）
+   ------------------------------------------------------------
+   旧 style.css の .log-* クラス名/ID は JS（AJAXタブ・遅延ロード・
+   JSON整形・思考翻訳・ツール展開）が参照するため温存し、ここで
+   chotgor.css 側から新テーマの見た目を上書きする（style.css の後に
+   読み込まれるため後勝ちで効く）。最後尾に置くことで、内包する @media が
+   各 base の後ろに来てモバイル上書きが効く（目次の【不変条件】参照）。
+
+   小見出し（出現順）:
+     タブ → 一覧/行 → 展開部(row/label) → バッジ → ページネーション →
+     ツールブロック → ツールタグ → インラインJSON → 思考(Reasoning) →
+     試行履歴アコーディオン → アラート/空状態 → @media
+   ============================================================ */
+
+/* タイプ別タブ（chat / scenario / batch） */
+.log-type-tabs {
+  display: flex;
+  gap: 22px;
+  margin-bottom: 22px;
+  padding-bottom: 0;
+  border-bottom: 1px solid var(--ch-sep);
+}
+.log-type-tab {
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: var(--ch-t3);
+  text-decoration: none;
+  /* 旧 style.css のピル状の地色・角丸・枠をリセットしてフラットな下線タブに揃える */
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  margin-bottom: 0;
+  padding: 0 0 10px;
+  transition: color .15s, border-color .15s;
+}
+.log-type-tab:hover { color: var(--ch-t2); background: transparent; }
+.log-type-tab.active {
+  color: var(--ch-t);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--ch-a);
+}
+
+/* 一覧 */
+.log-list { display: flex; flex-direction: column; gap: 0; }
+
+/* カード地色・枠・角丸（旧テーマ）をリセットし、区切り線だけのフラットな行に */
+.log-entry {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--ch-sep);
+  border-radius: 0;
+}
+.log-entry[open] { background: var(--ch-a-faint); }
+
+.log-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 11px 12px;
+  cursor: pointer;
+  font-family: var(--ch-fm);
+  font-size: 12px;
+  color: var(--ch-t2);
+  list-style: none;
+}
+/* summary のデフォルト三角マーカーを全種まとめて抑止（list-style:none は各 summary 側で指定済み） */
+.log-summary::-webkit-details-marker,
+.log-reasoning-summary::-webkit-details-marker,
+.log-attempt-summary::-webkit-details-marker { display: none; }
+.log-summary:hover { background: var(--ch-sep); }
+.log-entry[open] > .log-summary { background: transparent; border-bottom: 1px solid var(--ch-sep); }
+
+.log-toggle-icon {
+  display: inline-block;
+  width: 10px;
+  font-size: 9px;
+  color: var(--ch-t3);
+  transition: transform .15s;
+}
+details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
+
+.log-dt { color: var(--ch-t3); font-variant-numeric: tabular-nums; }
+.log-model { color: var(--ch-t); }
+/* 旧 .text-muted の代替（logs 内のみ。style.css 撤去後もログのプリセット名等を弱色に） */
+#log-main-content .text-muted { color: var(--ch-t3); }
+.log-preview {
+  flex: 1;
+  min-width: 0;
+  color: var(--ch-t2);
+  font-family: var(--ch-f);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 展開部 — 左にアクセント罫 */
+.log-detail {
+  padding: 8px 16px 18px 30px;
+  border-left: 2px solid var(--ch-a);
+  margin: 0 0 0 16px;
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  column-gap: 14px;
+  padding: 6px 0;
+  align-items: start;
+}
+.log-row-attempts { grid-template-columns: 1fr; }
+.log-body-error { color: var(--ch-danger); }
+/* 本文プレビューは囲わずメイン背景に溶かす（旧 surface-2 の地色・枠をリセット） */
+.log-body-preview {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ch-t);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* WARN 理由 / 注意系 */
+.log-warn-reason { color: var(--ch-warn); }
+
+/* ページネーション */
+.log-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ch-sep);
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  color: var(--ch-t3);
+}
+
+/* ツールブロック（API Request/Response） */
+.log-tool-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.log-tool-block {
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-md);
+  background: var(--ch-bg-s);
+  padding: 10px 12px;
+}
+.log-tool-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.log-file-link, .log-raw-link {
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.log-file-link:hover, .log-raw-link:hover { color: var(--ch-a); border-bottom-color: var(--ch-a); }
+.log-raw-link { margin-right: 10px; }
+
+/* ツールタグ一覧（inscribe/carve 等のマーカー） */
+.log-tag-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.log-tag-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.log-tag-meta { font-family: var(--ch-fm); font-size: 10.5px; color: var(--ch-t3); }
+.log-tag-preview {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ch-t2);
+  white-space: pre-wrap;
+}
+
+/* インライン JSON 展開プレ */
+.log-inline-body { margin-top: 8px; }
+.log-inline-pre {
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ch-t2);
+  background: var(--ch-code-bg);
+  border: 1px solid var(--ch-code-border);
+  border-radius: var(--ch-radius-sm);
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.log-inline-pre .jk { color: var(--ch-mem-user); }
+.log-inline-pre mark.jv { background: var(--ch-a-soft); color: var(--ch-a); border-radius: 3px; padding: 0 2px; }
+
+/* 思考（Reasoning）ブロック */
+/* 旧 surface-2 の地色をテーマ追従の沈み色に置換（ツールブロックと統一） */
+.log-reasoning-block {
+  margin: 0;
+  background: var(--ch-bg-s);
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-md);
+  padding: 8px 12px;
+}
+.log-reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+  cursor: pointer;
+  list-style: none;
+}
+.log-reasoning-content { margin-top: 8px; }
+.log-translation-result { margin-top: 8px; font-family: var(--ch-fm); font-size: 12px; color: var(--ch-t2); }
+
+/* 試行履歴アコーディオン */
+.log-attempts-accordion { display: flex; flex-direction: column; gap: 8px; }
+.log-attempt-detail {
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-md);
+  overflow: hidden;
+}
+.log-attempt-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-family: var(--ch-fm);
+  font-size: 11.5px;
+  color: var(--ch-t2);
+  background: var(--ch-bg-s);
+  list-style: none;
+}
+.log-attempt-body { padding: 10px 12px 12px; border-top: 1px solid var(--ch-sep); }
+.log-attempt-index { color: var(--ch-t3); }
+.log-attempt-dt { color: var(--ch-t3); font-variant-numeric: tabular-nums; }
+.log-attempt-preview {
+  flex: 1;
+  min-width: 0;
+  color: var(--ch-t2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* デバッグ未有効アラート（fragment 先頭）— 未移行ページに波及しないよう logs 内に限定 */
+#log-main-content .alert {
+  padding: 12px 14px;
+  border: 1px solid var(--ch-sep2);
+  border-radius: var(--ch-radius-md);
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin-bottom: 20px;
+}
+#log-main-content .alert-warning {
+  color: var(--ch-warn);
+  background: oklch(72% 0.14 65 / 0.08);
+  border-color: oklch(72% 0.14 65 / 0.20);
+}
+#log-main-content .alert code {
+  font-family: var(--ch-fm);
+  color: var(--ch-a);
+  background: var(--ch-code-bg);
+  border-radius: var(--ch-radius-sm);
+  padding: 1px 5px;
+}
+
+/* 空状態（fragment）— 同上 logs 内に限定 */
+#log-main-content .empty-state { text-align: center; padding: 56px 20px; color: var(--ch-t3); }
+#log-main-content .empty-state p { margin: 0; font-style: italic; }
+
+@media (max-width: 720px) {
+  .log-row { grid-template-columns: 1fr; row-gap: 4px; }
+  .log-detail { padding-left: 16px; margin-left: 8px; }
+}

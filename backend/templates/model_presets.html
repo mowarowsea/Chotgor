@@ -1,67 +1,82 @@
 {% extends "base.html" %}
-{% block title %}Models &mdash; Chotgor{% endblock %}
+{% block title %}models &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ models{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>Models</h1>
-</div>
-
-<!-- 新規追加フォーム -->
-<div class="form-card">
-    <form method="post" action="/ui/model-presets/new">
-        <div class="preset-form-row">
-            <div class="form-group" style="flex:2;margin-bottom:0">
-                <label for="new-name">表示名</label>
-                <input type="text" id="new-name" name="name" class="form-control"
-                       placeholder="例: Google-Gemini3Flash" required>
-                <div id="new-name-error" class="form-error" style="display:none"></div>
-            </div>
-            <div class="form-group" style="flex:1.5;margin-bottom:0">
-                <label for="new-provider">プロバイダー</label>
-                <select id="new-provider" name="provider" class="form-control" required>
-                    <option value="">-- 選択 --</option>
-                    {% for p in provider_order %}
-                    <option value="{{ p }}">{{ provider_labels.get(p, p) }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;margin-bottom:0">
-                <label for="new-model-id">モデルID
-                    <span class="label-hint">空欄 = デフォルト</span>
-                </label>
-                <input type="text" id="new-model-id" name="model_id" class="form-control"
-                       placeholder="例: gemini-2.0-flash"
-                       autocomplete="off">
-                <datalist id="provider-models-list"></datalist>
-            </div>
-            <div class="form-group" style="flex:1.2;margin-bottom:0">
-                <label for="new-thinking-level">思考レベル</label>
-                <select id="new-thinking-level" name="thinking_level" class="form-control">
-                    <option value="default">Default</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:1;margin-bottom:0">
-                <label for="new-timeout-seconds">タイムアウト秒
-                    <span class="label-hint">既定300=5分</span>
-                </label>
-                <input type="number" id="new-timeout-seconds" name="timeout_seconds" class="form-control"
-                       min="1" step="1" value="300">
-            </div>
-            <div style="padding-top:22px;flex-shrink:0">
-                <button type="button" class="btn btn-primary" onclick="submitNew()">追加</button>
-            </div>
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">engine</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">models</h1>
+            <span class="ch-hero__count">· {{ presets|length }} 件</span>
         </div>
-    </form>
-</div>
+    </header>
 
-<!-- 登録済みモデル一覧 -->
-<div class="form-card" style="margin-top:1rem">
+    {# ── 新規追加フォーム ─────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">追加</h2>
+        </div>
+        <div class="ch-panel">
+            <form method="post" action="/ui/model-presets/new">
+                <div class="ch-formgrid">
+                    <div class="ch-field">
+                        <label class="ch-label" for="new-name">表示名</label>
+                        <input type="text" id="new-name" name="name" class="ch-input"
+                               placeholder="例: Google-Gemini3Flash" required>
+                        <div id="new-name-error" class="ch-hint" style="display:none;color:var(--ch-danger)"></div>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label" for="new-provider">プロバイダー</label>
+                        <select id="new-provider" name="provider" class="ch-select" required>
+                            <option value="">-- 選択 --</option>
+                            {% for p in provider_order %}
+                            <option value="{{ p }}">{{ provider_labels.get(p, p) }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label" for="new-model-id">モデルID
+                            <span class="ch-hint">空欄 = デフォルト</span>
+                        </label>
+                        <input type="text" id="new-model-id" name="model_id" class="ch-input ch-input--mono"
+                               placeholder="例: gemini-2.0-flash"
+                               autocomplete="off">
+                        <datalist id="provider-models-list"></datalist>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label" for="new-thinking-level">思考レベル</label>
+                        <select id="new-thinking-level" name="thinking_level" class="ch-select">
+                            <option value="default">Default</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label" for="new-timeout-seconds">タイムアウト秒
+                            <span class="ch-hint">既定300=5分</span>
+                        </label>
+                        <input type="number" id="new-timeout-seconds" name="timeout_seconds" class="ch-input"
+                               min="1" step="1" value="300">
+                    </div>
+                    <div class="ch-formgrid__action">
+                        <button type="button" class="ch-btn ch-btn--primary" onclick="submitNew()">追加</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    {# ── 登録済みモデル一覧 ───────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">登録済み</h2>
+        </div>
     {% if presets %}
-    <div class="preset-table-wrap">
-    <table class="preset-table">
+    <div class="ch-table-wrap">
+    <table class="ch-table">
         <thead>
             <tr>
                 <th>表示名</th>
@@ -77,15 +92,15 @@
             <tr id="row-{{ preset.id }}">
                 <td>
                     <span class="preset-display" id="name-display-{{ preset.id }}">{{ preset.name }}</span>
-                    <input type="text" class="form-control preset-edit-field" id="name-edit-{{ preset.id }}"
+                    <input type="text" class="ch-input preset-edit-field" id="name-edit-{{ preset.id }}"
                            value="{{ preset.name }}" style="display:none">
-                    <div id="name-edit-error-{{ preset.id }}" class="form-error" style="display:none"></div>
+                    <div id="name-edit-error-{{ preset.id }}" class="ch-hint" style="display:none;color:var(--ch-danger)"></div>
                 </td>
                 <td>
                     <span class="preset-display" id="provider-display-{{ preset.id }}">
                         {{ provider_labels.get(preset.provider, preset.provider) }}
                     </span>
-                    <select class="form-control preset-edit-field" id="provider-edit-{{ preset.id }}"
+                    <select class="ch-select preset-edit-field" id="provider-edit-{{ preset.id }}"
                             style="display:none">
                         {% for p in provider_order %}
                         <option value="{{ p }}" {% if p == preset.provider %}selected{% endif %}>
@@ -96,9 +111,9 @@
                 </td>
                 <td>
                     <span class="preset-display" id="modelid-display-{{ preset.id }}">
-                        {% if preset.model_id %}{{ preset.model_id }}{% else %}<span class="text-muted">(デフォルト)</span>{% endif %}
+                        {% if preset.model_id %}{{ preset.model_id }}{% else %}<span class="ch-meta">(デフォルト)</span>{% endif %}
                     </span>
-                    <input type="text" class="form-control preset-edit-field" id="modelid-edit-{{ preset.id }}"
+                    <input type="text" class="ch-input ch-input--mono preset-edit-field" id="modelid-edit-{{ preset.id }}"
                            value="{{ preset.model_id }}" placeholder="(デフォルト)" style="display:none"
                            autocomplete="off">
                 </td>
@@ -106,7 +121,7 @@
                     <span class="preset-display" id="thinking-display-{{ preset.id }}">
                         {{ preset.thinking_level or 'default' }}
                     </span>
-                    <select class="form-control preset-edit-field" id="thinking-edit-{{ preset.id }}" style="display:none">
+                    <select class="ch-select preset-edit-field" id="thinking-edit-{{ preset.id }}" style="display:none">
                         {% for lvl in ['default', 'low', 'medium', 'high'] %}
                         <option value="{{ lvl }}" {% if (preset.thinking_level or 'default') == lvl %}selected{% endif %}>{{ lvl }}</option>
                         {% endfor %}
@@ -116,13 +131,13 @@
                     <span class="preset-display" id="timeout-display-{{ preset.id }}">
                         {{ preset.timeout_seconds or 300 }}
                     </span>
-                    <input type="number" class="form-control preset-edit-field" id="timeout-edit-{{ preset.id }}"
+                    <input type="number" class="ch-input preset-edit-field" id="timeout-edit-{{ preset.id }}"
                            value="{{ preset.timeout_seconds or 300 }}" min="1" step="1" style="display:none">
                 </td>
                 <td>
                     <!-- td の display は変えず、内側の div に flex を当てる -->
                     <div class="preset-actions">
-                        <button type="button" class="btn btn-secondary btn-sm"
+                        <button type="button" class="ch-btn ch-btn--sm"
                                 onclick="startEdit('{{ preset.id }}')" id="edit-btn-{{ preset.id }}">
                             編集
                         </button>
@@ -133,15 +148,15 @@
                             <input type="hidden" name="model_id" id="edit-modelid-{{ preset.id }}">
                             <input type="hidden" name="thinking_level" id="edit-thinking-{{ preset.id }}">
                             <input type="hidden" name="timeout_seconds" id="edit-timeout-{{ preset.id }}">
-                            <button type="button" class="btn btn-primary btn-sm"
+                            <button type="button" class="ch-btn ch-btn--primary ch-btn--sm"
                                     onclick="submitEdit('{{ preset.id }}')">保存</button>
-                            <button type="button" class="btn btn-secondary btn-sm"
+                            <button type="button" class="ch-btn ch-btn--sm"
                                     onclick="cancelEdit('{{ preset.id }}')">キャンセル</button>
                         </form>
                         <form method="post" action="/ui/model-presets/{{ preset.id }}/delete"
                               style="display:contents"
                               onsubmit="return confirm('{{ preset.name }} を削除しますか？')">
-                            <button type="submit" class="btn btn-danger btn-sm">削除</button>
+                            <button type="submit" class="ch-btn ch-btn--danger ch-btn--sm">削除</button>
                         </form>
                     </div>
                 </td>
@@ -151,8 +166,11 @@
     </table>
     </div>
     {% else %}
-    <p class="form-hint">登録されているモデルがありません。上のフォームから追加してください。</p>
+    <div class="ch-empty">
+        <p>登録されているモデルがありません。上のフォームから追加してください。</p>
+    </div>
     {% endif %}
+    </section>
 </div>
 
 <script>

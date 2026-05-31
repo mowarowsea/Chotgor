@@ -1,193 +1,213 @@
 {% extends "base.html" %}
 {% block title %}{% if scenario %}{{ scenario.title }}{% else %}New Scenario{% endif %} &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ scenarios / {% if scenario %}{{ scenario.title }}{% else %}new{% endif %}{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>{% if scenario %}{{ scenario.title }}{% else %}New Scenario{% endif %}</h1>
-    <a href="/ui/scenarios" class="btn btn-secondary">Back</a>
-</div>
-
-<div class="form-card">
-    <form method="post" action="{{ action }}" {% if scenario %}data-autosave{% endif %}>
-
-        {% if scenario %}
-        <p class="autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
-        {% endif %}
-
-        <!-- タイトル -->
-        <div class="form-group">
-            <label for="title">Scenario Title</label>
-            <input type="text" id="title" name="title" class="form-control"
-                value="{% if scenario %}{{ scenario.title }}{% endif %}"
-                placeholder="e.g. 古城に潜む影" required>
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">scenario</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">{% if scenario %}{{ scenario.title }}{% else %}new scenario{% endif %}</h1>
         </div>
+    </header>
 
-        <!-- ユーザ alias -->
-        <div class="form-group">
-            <label for="user_alias">Player Alias
-                <span class="label-hint">@タグで使われるプレイヤーの呼称</span>
-            </label>
-            <input type="text" id="user_alias" name="user_alias" class="form-control"
-                value="{% if scenario %}{{ scenario.user_alias }}{% else %}プレイヤー{% endif %}"
-                placeholder="e.g. ヴァン, 旅人, プレイヤー" required>
-        </div>
+    <div class="ch-filterbar">
+        <a href="/ui/scenarios" class="ch-btn ch-btn--ghost ch-btn--sm">← scenarios</a>
+    </div>
 
-        <!-- シナリオ概要 -->
-        <div class="form-group">
-            <label for="scenario">Scenario / World
-                <span class="label-hint">世界観・場所・空気感・Narratorの語り口・テンポなど、必要な前提を自由記述。GM の system prompt に注入されます</span>
-            </label>
-            <textarea id="scenario" name="scenario" class="form-control textarea-tall"
-                placeholder="e.g. 魔導書を探す旅。雨の中、古城の門前に到着した。Narrator は詩的に語る。テンポは ゆっくり。">{% if scenario %}{{ scenario.scenario or '' }}{% endif %}</textarea>
-        </div>
+    {# ── 本体フォーム ───────────────────────────────── #}
+    <section class="ch-section">
+        <form method="post" action="{{ action }}" {% if scenario %}data-autosave{% endif %}>
+            {% if scenario %}
+            <p class="ch-autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
+            {% endif %}
 
-        <!-- 導入部 -->
-        <div class="form-group">
-            <label for="intro">Intro / Prologue
-                <span class="label-hint">セッション開始時に固定で挿入される導入部。`@キャラ: 本文` 記法で各話者の発話を記述（`@Narrator:` / `@{{ scenario.user_alias if scenario else 'プレイヤー' }}:` も使用可）</span>
-            </label>
-            <textarea id="intro" name="intro" class="form-control textarea-tall"
-                placeholder="@Narrator: 雨の中、古城の門前に到着した。
+            <!-- タイトル -->
+            <div class="ch-field">
+                <label class="ch-label" for="title">Scenario Title</label>
+                <input type="text" id="title" name="title" class="ch-input"
+                    value="{% if scenario %}{{ scenario.title }}{% endif %}"
+                    placeholder="e.g. 古城に潜む影" required>
+            </div>
+
+            <!-- ユーザ alias -->
+            <div class="ch-field">
+                <label class="ch-label" for="user_alias">Player Alias
+                    <span class="ch-hint">@タグで使われるプレイヤーの呼称</span>
+                </label>
+                <input type="text" id="user_alias" name="user_alias" class="ch-input"
+                    value="{% if scenario %}{{ scenario.user_alias }}{% else %}プレイヤー{% endif %}"
+                    placeholder="e.g. ヴァン, 旅人, プレイヤー" required>
+            </div>
+
+            <!-- シナリオ概要 -->
+            <div class="ch-field">
+                <label class="ch-label" for="scenario">Scenario / World
+                    <span class="ch-hint">世界観・場所・空気感・Narratorの語り口・テンポなど、必要な前提を自由記述。GM の system prompt に注入されます</span>
+                </label>
+                <textarea id="scenario" name="scenario" class="ch-textarea" style="min-height:200px"
+                    placeholder="e.g. 魔導書を探す旅。雨の中、古城の門前に到着した。Narrator は詩的に語る。テンポは ゆっくり。">{% if scenario %}{{ scenario.scenario or '' }}{% endif %}</textarea>
+            </div>
+
+            <!-- 導入部 -->
+            <div class="ch-field">
+                <label class="ch-label" for="intro">Intro / Prologue
+                    <span class="ch-hint">セッション開始時に固定で挿入される導入部。`@キャラ: 本文` 記法で各話者の発話を記述（`@Narrator:` / `@{{ scenario.user_alias if scenario else 'プレイヤー' }}:` も使用可）</span>
+                </label>
+                <textarea id="intro" name="intro" class="ch-textarea" style="min-height:200px"
+                    placeholder="@Narrator: 雨の中、古城の門前に到着した。
 @レイカ: ……あんた、誰?
 @プレイヤー: ……">{% if scenario %}{{ scenario.intro or '' }}{% endif %}</textarea>
-        </div>
-
-        <!-- 履歴上限 -->
-        <div class="form-row">
-            <div class="form-group">
-                <label for="history_max_turns">History Max Turns
-                    <span class="label-hint">送信履歴のターン上限（空欄: 設定既定）</span>
-                </label>
-                <input type="number" id="history_max_turns" name="history_max_turns" class="form-control"
-                    value="{% if scenario and scenario.history_max_turns %}{{ scenario.history_max_turns }}{% endif %}"
-                    min="0" placeholder="100">
             </div>
-            <div class="form-group">
-                <label for="history_max_chars">History Max Chars
-                    <span class="label-hint">送信履歴の文字数上限（空欄: 設定既定）</span>
-                </label>
-                <input type="number" id="history_max_chars" name="history_max_chars" class="form-control"
-                    value="{% if scenario and scenario.history_max_chars %}{{ scenario.history_max_chars }}{% endif %}"
-                    min="0" placeholder="80000">
-            </div>
-        </div>
 
-        <!-- カスタムシステムプロンプト -->
-        <div class="form-group">
-            <label for="custom_system_prompt">Custom System Prompt
-                <span class="label-hint">
-                設定するとGMへの自動生成プロンプト（役割定義・出力規則等）を完全に置き換えます。直近の履歴とプレイヤー発話は末尾に自動追加されます。
-                <br/>
-                <strong>使用可能なテンプレートタグ:</strong>
-                <code>{user_alias}</code> (プレイヤー呼称),
-                <code>{narrator_name}</code> (ナレーター名),
-                <code>{scenario}</code> (シナリオテキスト),
-                <code>{npcs_summary}</code> (NPC一覧),
-                <code>{auto_synopsis}</code> (自動あらすじ),
-                <code>{synopsis_manual}</code> (プレイヤー補足),
-                <code>{npc_details}</code> (NPC詳細),
-                <code>{history_block}</code> (直近の流れ)
-                <br/>
-                空欄に戻すと通常の自動生成ロジックが復活します。
-                </span>
-            </label>
-            <textarea id="custom_system_prompt" name="custom_system_prompt" class="form-control textarea-tall"
-                placeholder="e.g. あなたは……">{% if scenario %}{{ scenario.custom_system_prompt or '' }}{% endif %}</textarea>
-        </div>
-
-        <!-- デフォルトに戻すボタン（既存シナリオのみ） -->
-        {% if scenario %}
-        <div class="form-group">
-            <button type="button" class="btn btn-secondary" onclick="resetCustomSystemPrompt()">Reset to Default</button>
-        </div>
-        {% endif %}
-
-        {% if not scenario %}
-        <button type="submit" class="btn btn-primary">Create</button>
-        {% endif %}
-    </form>
-</div>
-
-{% if scenario %}
-<!-- NPC 編集 -->
-<div class="form-card" style="margin-top:1.5rem">
-    <h2>NPCs</h2>
-    <p class="label-hint">
-        このシナリオに登場する NPC を定義します。`@名前:` の発話タグとして使われます。
-        description には人物像・口調・話し方を自由テキストで全部記述してください。
-    </p>
-
-    {% if npcs %}
-    {% for n in npcs %}
-    <div class="form-card" style="margin-bottom:0.75rem;padding:0.75rem">
-        <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/edit"
-              enctype="multipart/form-data" data-autosave>
-            <div class="image-upload-row" style="margin-bottom:0.5rem">
-                <div>
-                    {% if n.image_data %}
-                    <img src="{{ n.image_data }}" class="icon-preview" alt="{{ n.name }}">
-                    {% else %}
-                    <div class="icon-placeholder">{{ n.name[0] if n.name else '?' }}</div>
-                    {% endif %}
-                </div>
-                <div style="display:flex;flex-direction:column;gap:5px">
-                    <input type="file" name="image" accept="image/*">
-                    <label style="font-size:0.8em;color:var(--t3)">
-                        <input type="checkbox" name="remove_image"> 画像を削除
+            <!-- 履歴上限 -->
+            <div class="ch-formgrid">
+                <div class="ch-field">
+                    <label class="ch-label" for="history_max_turns">History Max Turns
+                        <span class="ch-hint">送信履歴のターン上限（空欄: 設定既定）</span>
                     </label>
+                    <input type="number" id="history_max_turns" name="history_max_turns" class="ch-input"
+                        value="{% if scenario and scenario.history_max_turns %}{{ scenario.history_max_turns }}{% endif %}"
+                        min="0" placeholder="100">
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label" for="history_max_chars">History Max Chars
+                        <span class="ch-hint">送信履歴の文字数上限（空欄: 設定既定）</span>
+                    </label>
+                    <input type="number" id="history_max_chars" name="history_max_chars" class="ch-input"
+                        value="{% if scenario and scenario.history_max_chars %}{{ scenario.history_max_chars }}{% endif %}"
+                        min="0" placeholder="80000">
                 </div>
             </div>
-            <div class="form-group">
-                <label>Name</label>
-                <input type="text" name="name" class="form-control" value="{{ n.name }}" required>
-            </div>
-            <div class="form-group">
-                <label>Description
-                    <span class="label-hint">人物像・口調・話し方を自由記述</span>
-                </label>
-                <textarea name="description" class="form-control textarea-medium"
-                          placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
-            </div>
-            <div style="display:flex;gap:0.5rem">
-                <button type="submit" formmethod="post"
-                        formaction="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/delete"
-                        formnovalidate
-                        class="btn btn-danger"
-                        onclick="return confirm('Delete {{ n.name }}?')">Delete</button>
-            </div>
-        </form>
-    </div>
-    {% endfor %}
-    {% else %}
-    <p class="label-hint">まだ NPC が登録されていません。</p>
-    {% endif %}
 
-    <h3 style="margin-top:1rem">Add NPC</h3>
-    <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/new" enctype="multipart/form-data">
-        <div class="image-upload-row" style="margin-bottom:0.5rem">
-            <div>
-                <div class="icon-placeholder">?</div>
+            <!-- カスタムシステムプロンプト -->
+            <div class="ch-field">
+                <label class="ch-label" for="custom_system_prompt">Custom System Prompt
+                    <span class="ch-hint">
+                    設定するとGMへの自動生成プロンプト（役割定義・出力規則等）を完全に置き換えます。直近の履歴とプレイヤー発話は末尾に自動追加されます。
+                    <br/>
+                    <strong>使用可能なテンプレートタグ:</strong>
+                    <code>{user_alias}</code> (プレイヤー呼称),
+                    <code>{narrator_name}</code> (ナレーター名),
+                    <code>{scenario}</code> (シナリオテキスト),
+                    <code>{npcs_summary}</code> (NPC一覧),
+                    <code>{auto_synopsis}</code> (自動あらすじ),
+                    <code>{synopsis_manual}</code> (プレイヤー補足),
+                    <code>{npc_details}</code> (NPC詳細),
+                    <code>{history_block}</code> (直近の流れ)
+                    <br/>
+                    空欄に戻すと通常の自動生成ロジックが復活します。
+                    </span>
+                </label>
+                <textarea id="custom_system_prompt" name="custom_system_prompt" class="ch-textarea" style="min-height:200px"
+                    placeholder="e.g. あなたは……">{% if scenario %}{{ scenario.custom_system_prompt or '' }}{% endif %}</textarea>
             </div>
-            <div>
-                <label style="font-size:0.85em;color:var(--t3)">Avatar Image (任意)</label>
-                <input type="file" name="image" accept="image/*">
+
+            <!-- デフォルトに戻すボタン（既存シナリオのみ） -->
+            {% if scenario %}
+            <div class="ch-field">
+                <button type="button" class="ch-btn" onclick="resetCustomSystemPrompt()">Reset to Default</button>
             </div>
+            {% endif %}
+
+            {% if not scenario %}
+            <button type="submit" class="ch-btn ch-btn--primary">Create</button>
+            {% endif %}
+        </form>
+    </section>
+
+    {% if scenario %}
+    {# ── NPC 編集 ───────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">NPCs</h2>
         </div>
-        <div class="form-group">
-            <label>Name</label>
-            <input type="text" name="name" class="form-control" required placeholder="レイカ">
+        <p class="ch-prose" style="margin-bottom:18px">
+            このシナリオに登場する NPC を定義します。`@名前:` の発話タグとして使われます。
+            description には人物像・口調・話し方を自由テキストで全部記述してください。
+        </p>
+
+        {% if npcs %}
+        {% for n in npcs %}
+        <div class="ch-panel" style="margin-bottom:12px">
+            <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/edit"
+                  enctype="multipart/form-data" data-autosave>
+                <div class="image-upload-row" style="margin-bottom:14px">
+                    <div>
+                        {% if n.image_data %}
+                        <img src="{{ n.image_data }}" class="icon-preview" alt="{{ n.name }}">
+                        {% else %}
+                        <div class="icon-placeholder">{{ n.name[0] if n.name else '?' }}</div>
+                        {% endif %}
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                        <input type="file" name="image" accept="image/*">
+                        <label class="ch-inline-toggle">
+                            <span class="ch-toggle">
+                                <input type="checkbox" name="remove_image">
+                                <span class="ch-toggle__track"></span>
+                            </span>
+                            <span>画像を削除</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label">Name</label>
+                    <input type="text" name="name" class="ch-input" value="{{ n.name }}" required>
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label">Description
+                        <span class="ch-hint">人物像・口調・話し方を自由記述</span>
+                    </label>
+                    <textarea name="description" class="ch-textarea" style="min-height:140px"
+                              placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
+                </div>
+                <div style="display:flex;gap:8px">
+                    <button type="submit" formmethod="post"
+                            formaction="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/delete"
+                            formnovalidate
+                            class="ch-btn ch-btn--danger"
+                            onclick="return confirm('Delete {{ n.name }}?')">Delete</button>
+                </div>
+            </form>
         </div>
-        <div class="form-group">
-            <label>Description
-                <span class="label-hint">人物像・口調・話し方を自由記述</span>
-            </label>
-            <textarea name="description" class="form-control textarea-medium"
-                      placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。"></textarea>
+        {% endfor %}
+        {% else %}
+        <p class="ch-hint">まだ NPC が登録されていません。</p>
+        {% endif %}
+
+        <div class="ch-section__head" style="margin-top:24px">
+            <h3 class="ch-section-title">Add NPC</h3>
         </div>
-        <button type="submit" class="btn btn-primary">+ Add NPC</button>
-    </form>
+        <div class="ch-panel">
+            <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/new" enctype="multipart/form-data">
+                <div class="image-upload-row" style="margin-bottom:14px">
+                    <div>
+                        <div class="icon-placeholder">?</div>
+                    </div>
+                    <div>
+                        <label class="ch-label">Avatar Image (任意)</label>
+                        <input type="file" name="image" accept="image/*">
+                    </div>
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label">Name</label>
+                    <input type="text" name="name" class="ch-input" required placeholder="レイカ">
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label">Description
+                        <span class="ch-hint">人物像・口調・話し方を自由記述</span>
+                    </label>
+                    <textarea name="description" class="ch-textarea" style="min-height:140px"
+                              placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。"></textarea>
+                </div>
+                <button type="submit" class="ch-btn ch-btn--primary">+ Add NPC</button>
+            </form>
+        </div>
+    </section>
+    {% endif %}
 </div>
-{% endif %}
 
 <script>
 function resetCustomSystemPrompt() {

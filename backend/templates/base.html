@@ -4,38 +4,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Chotgor{% endblock %}</title>
-    <!-- Inter フォント（可変フォント） -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap">
-    <!-- css_version はサーバ起動時に注入されるキャッシュバスティング用タイムスタンプ -->
-    <link rel="stylesheet" href="/static/style.css?v={{ css_version }}">
+    <!-- テーマは OS 設定（prefers-color-scheme）に追従。既定 dark、OS が light なら light。 -->
+    <!-- フォント: DM Sans（本文） / DM Mono（ラベル・見出し・メタ）。
+         セルフホスト（@font-face は chotgor.css）。本文/ラベルの主要ウェイトを preload し、
+         初回描画前に取得を完了させて字体差し替えのリフロー（カクつき）を防ぐ。
+         crossorigin は同一オリジンでもフォント取得が匿名CORSのため必須（無いと preload が再利用されない）。 -->
+    <link rel="preload" as="font" type="font/woff2" href="/static/fonts/dm-sans-latin.woff2" crossorigin>
+    <link rel="preload" as="font" type="font/woff2" href="/static/fonts/dm-mono-400-latin.woff2" crossorigin>
+    <!-- デザインシステム（全ページ移行済み。旧 style.css は廃止） -->
+    <link rel="stylesheet" href="/static/chotgor.css?v={{ css_version }}">
     {% block head %}{% endblock %}
 </head>
-<body>
-    <nav class="navbar">
-        <div class="nav-brand">
-            <a href="/ui/">Chotgor</a>
+<body class="ch-root">
+    {# 現在のパスでナビをハイライトするためのヘルパ #}
+    {% set path = request.url.path %}
+    <header class="ch-topbar">
+        <div class="ch-topbar__left">
+            <a href="/ui/" class="ch-brand">Chotgor</a>
+            <span class="ch-eyebrow ch-hide-sm">{% block breadcrumb %}{% endblock %}</span>
         </div>
-        <div class="nav-links">
-            <a href="/ui/" class="nav-link">Dashboard</a>
-            <a href="/ui/scenarios" class="nav-link">Scenarios</a>
-            <a href="/ui/model-presets" class="nav-link">Models</a>
-            <a href="/ui/settings" class="nav-link">Settings</a>
-            <a href="/ui/logs" class="nav-link">Logs</a>
-            <a href="/docs" class="nav-link" target="_blank">API</a>
-        </div>
-    </nav>
+        <nav class="ch-topbar__right">
+            <div class="ch-nav">
+                <a href="/ui/" class="ch-nav__link {% if path == '/ui/' %}is-active{% endif %}">characters</a>
+                <a href="/ui/scenarios" class="ch-nav__link {% if path.startswith('/ui/scenarios') %}is-active{% endif %}">scenarios</a>
+                <a href="/ui/model-presets" class="ch-nav__link {% if path.startswith('/ui/model-presets') %}is-active{% endif %}">models</a>
+                <a href="/ui/settings" class="ch-nav__link {% if path.startswith('/ui/settings') %}is-active{% endif %}">settings</a>
+                <a href="/ui/logs" class="ch-nav__link {% if path.startswith('/ui/logs') %}is-active{% endif %}">logs</a>
+                <a href="/docs" class="ch-nav__link ch-hide-sm" target="_blank">api</a>
+            </div>
+        </nav>
+    </header>
 
-    <main class="container">
+    <main>
         {% block content %}{% endblock %}
     </main>
 
-    <footer class="footer">
-        Chotgor
-    </footer>
-
     <!-- data-autosave フォームの自動保存。css_version でキャッシュバスティング。 -->
     <script src="/static/autosave.js?v={{ css_version }}"></script>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

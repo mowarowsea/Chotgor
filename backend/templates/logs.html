@@ -1,11 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Logs &mdash; Chotgor{% endblock %}
+{% block title %}logs &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ logs{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>Logs</h1>
-    <span class="text-muted" id="log-count" style="font-size:0.82rem">{{ total }} requests</span>
-</div>
+<div class="ch-shell ch-shell--wide">
+<header class="ch-hero">
+    <span class="ch-eyebrow ch-hero__eyebrow">stream</span>
+    <div class="ch-hero__title">
+        <h1 class="ch-display">logs</h1>
+        <span class="ch-hero__count" id="log-count">· {{ total }} requests</span>
+    </div>
+</header>
 
 <!-- タイプ別タブ -->
 <div class="log-type-tabs">
@@ -26,6 +31,7 @@
 <div id="log-main-content">
 {% include "logs_fragment.html" %}
 </div>
+</div>{# /.ch-shell #}
 
 <script>
 /**
@@ -204,7 +210,7 @@ async function translateReasoning(btn, text) {
         }
         const data = await res.json();
         resultDiv.innerHTML = '<hr style="border-color:rgba(255,255,255,0.1);margin:0.5rem 0">'
-            + '<span style="font-size:0.7rem;color:var(--t4)">翻訳</span>'
+            + '<span style="font-size:0.7rem;color:var(--ch-t4)">翻訳</span>'
             + '<pre style="white-space:pre-wrap;font-size:0.78rem;margin-top:0.4rem">'
             + data.translation.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
             + '</pre>';
@@ -256,7 +262,7 @@ async function translateReasoning(btn, text) {
             const wrapper = content && content.firstElementChild;
             const total = wrapper && wrapper.dataset.total;
             const countEl = document.getElementById('log-count');
-            if (countEl && total != null) countEl.textContent = total + ' requests';
+            if (countEl && total != null) countEl.textContent = '· ' + total + ' requests';
 
             // タブのアクティブ状態を切り替える
             document.querySelectorAll('.log-type-tab').forEach(tab => {
@@ -317,7 +323,7 @@ document.getElementById('log-main-content').addEventListener('toggle', async e =
     lazyEl.dataset.loaded = '1';
     const messageId = entry.dataset.messageId;
     if (!messageId) return;
-    lazyEl.innerHTML = '<span style="color:var(--t3);font-size:0.75rem;padding:0.5rem 0;display:block">読み込み中...</span>';
+    lazyEl.innerHTML = '<span style="color:var(--ch-t3);font-size:0.75rem;padding:0.5rem 0;display:block">読み込み中...</span>';
     try {
         const res = await fetch(`/ui/logs/${messageId}/detail`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

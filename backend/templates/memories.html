@@ -1,67 +1,81 @@
 {% extends "base.html" %}
-{% block title %}Memories: {{ character.name }} &mdash; Chotgor{% endblock %}
+{% block title %}memories: {{ character.name }} &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ {{ character.name }} / memories{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>{{ character.name }} — Memories</h1>
-    <a href="/ui/characters/{{ character.id }}" class="btn btn-secondary">Edit Character</a>
-</div>
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">memories</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">{{ character.name }}</h1>
+            <span class="ch-hero__count">· 全 {{ memories|length }} 件</span>
+        </div>
+    </header>
 
-<div class="filter-bar">
-    <form method="get" action="/ui/inscribed_memories/{{ character.id }}" class="filter-form">
-        <select name="category" class="form-control select-inline" onchange="this.form.submit()">
-            <option value="">All Categories</option>
-            {% for cat in categories %}
-            <option value="{{ cat }}" {% if selected_category == cat %}selected{% endif %}>{{ cat }}</option>
-            {% endfor %}
-        </select>
-        <label class="checkbox-label">
-            <input type="checkbox" name="deleted_only" value="true"
-                   {% if deleted_only %}checked{% endif %}
-                   onchange="this.form.submit()">
-            Deleted only
-        </label>
-    </form>
-    <span class="memory-count">{{ memories|length }}</span>
-</div>
-
-{% if memories %}
-<div class="memory-list">
-    {% for mem in memories %}
-    <div class="memory-card {% if mem.deleted_at %}memory-deleted{% endif %}">
-        <div class="memory-header">
-            <span class="badge badge-{{ mem.category }}">{{ mem.category }}</span>
-            {% if mem.deleted_at %}
-            <span class="badge badge-deleted">deleted</span>
-            {% endif %}
-            <span class="memory-date">{{ mem.created_at[:10] if mem.created_at else "—" }}</span>
-        </div>
-        <div class="memory-content">{{ mem.content }}</div>
-        <div class="memory-meta">
-            <span title="Contextual">C {{ "%.1f"|format(mem.contextual_importance) }}</span>
-            <span title="Semantic">S {{ "%.1f"|format(mem.semantic_importance) }}</span>
-            <span title="Identity">I {{ "%.1f"|format(mem.identity_importance) }}</span>
-            <span title="User">U {{ "%.1f"|format(mem.user_importance) }}</span>
-            <span>access {{ mem.access_count }}</span>
-            {% if mem.source_preset_id %}
-            <span class="memory-preset" title="{{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}">
-                &#x1F4CC; {{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}
-            </span>
-            {% endif %}
-        </div>
-        <div class="memory-actions">
-            {% if not mem.deleted_at %}
-            <form method="post" action="/ui/inscribed_memories/{{ character.id }}/{{ mem.id }}/delete" class="inline-form">
-                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-            </form>
-            {% endif %}
-        </div>
+    {# ── フィルタバー ─────────────────────────────────── #}
+    <div class="ch-filterbar">
+        <form method="get" action="/ui/inscribed_memories/{{ character.id }}" class="ch-row-gap" style="flex-wrap: wrap; gap: 16px 22px;">
+            <select name="category" class="ch-select ch-select--inline" onchange="this.form.submit()">
+                <option value="">すべてのカテゴリ</option>
+                {% for cat in categories %}
+                <option value="{{ cat }}" {% if selected_category == cat %}selected{% endif %}>{{ cat }}</option>
+                {% endfor %}
+            </select>
+            <label class="ch-inline-toggle">
+                <span class="ch-toggle">
+                    <input type="checkbox" name="deleted_only" value="true"
+                           {% if deleted_only %}checked{% endif %}
+                           onchange="this.form.submit()">
+                    <span class="ch-toggle__track"></span>
+                </span>
+                <span>削除済みのみ</span>
+            </label>
+        </form>
+        <a href="/ui/characters/{{ character.id }}" class="ch-btn ch-btn--ghost ch-btn--sm">← 編集へ</a>
     </div>
-    {% endfor %}
+
+    {% if memories %}
+    {# ── 記憶一覧 ───────────────────────────────────── #}
+    <div class="ch-memlist">
+        {% for mem in memories %}
+        <article class="ch-memitem {% if mem.deleted_at %}ch-memitem--deleted{% endif %}">
+            <div class="ch-memitem__top">
+                <span class="ch-tag ch-tag--{{ mem.category }}">{{ mem.category }}</span>
+                {% if mem.deleted_at %}
+                <span class="ch-tag ch-tag--deleted">deleted</span>
+                {% endif %}
+                <span class="ch-memitem__date">{{ mem.created_at[:10] if mem.created_at else "—" }}</span>
+            </div>
+
+            <p class="ch-memitem__content">{{ mem.content }}</p>
+
+            <div class="ch-memitem__foot">
+                <div class="ch-memitem__metrics">
+                    <span class="ch-imp {% if mem.contextual_importance >= 0.5 %}ch-imp--on{% endif %}" title="Contextual">C <b>{{ "%.1f"|format(mem.contextual_importance) }}</b></span>
+                    <span class="ch-imp {% if mem.semantic_importance >= 0.5 %}ch-imp--on{% endif %}" title="Semantic knowledge">S <b>{{ "%.1f"|format(mem.semantic_importance) }}</b></span>
+                    <span class="ch-imp {% if mem.identity_importance >= 0.5 %}ch-imp--on{% endif %}" title="Identity">I <b>{{ "%.1f"|format(mem.identity_importance) }}</b></span>
+                    <span class="ch-imp {% if mem.user_importance >= 0.5 %}ch-imp--on{% endif %}" title="User info">U <b>{{ "%.1f"|format(mem.user_importance) }}</b></span>
+                    <span>access {{ mem.access_count }}</span>
+                    {% if mem.source_preset_id %}
+                    <span class="ch-memitem__preset" title="{{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}">
+                        &#x1F4CC; {{ preset_name_map.get(mem.source_preset_id, mem.source_preset_id) }}
+                    </span>
+                    {% endif %}
+                </div>
+                {% if not mem.deleted_at %}
+                <form method="post" action="/ui/inscribed_memories/{{ character.id }}/{{ mem.id }}/delete" class="ch-memitem__actions">
+                    <button type="submit" class="ch-btn ch-btn--danger ch-btn--sm">Delete</button>
+                </form>
+                {% endif %}
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="ch-empty">
+        <p>まだ記憶はない。</p>
+    </div>
+    {% endif %}
 </div>
-{% else %}
-<div class="empty-state">
-    <p>No memories yet.</p>
-</div>
-{% endif %}
 {% endblock %}

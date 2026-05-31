@@ -11,7 +11,7 @@
     <details class="log-entry" data-message-id="{{ e.message_id }}">
         <summary class="log-summary">
             <span class="log-toggle-icon">&#9654;</span>
-            <span class="badge {% if e.has_error %}badge-deleted{% else %}badge-info{% endif %}"
+            <span class="ch-tag {% if e.has_error %}ch-tag--danger{% else %}ch-tag--accent{% endif %}"
                   {% if e.has_error and e.warn_reason %}title="{{ e.warn_reason }}"{% endif %}>{% if e.has_error %}WARN{% else %}INFO{% endif %}</span>
             <span class="log-dt">{{ e.dt_str }}</span>
             {% if e.model_id %}
@@ -25,7 +25,7 @@
             {% endif %}
             {% endif %}
             {% if e.attempt_count > 1 %}
-            <span class="log-attempt-badge" title="{{ e.attempt_count }}回生成">×{{ e.attempt_count }}</span>
+            <span class="ch-badge" title="{{ e.attempt_count }}回生成">×{{ e.attempt_count }}</span>
             {% endif %}
             {% if e.has_error and e.warn_reason %}
             {# WARN のときは一覧でも理由が分かるよう、応答プレビューより理由を優先表示する #}
@@ -41,21 +41,21 @@
             <!-- WARN 理由 -->
             {% if e.has_error %}
             <div class="log-row">
-                <span class="log-label">WARN 理由</span>
+                <span class="ch-eyebrow">WARN 理由</span>
                 <span class="log-warn-reason">{{ e.warn_reason or "応答にエラーまたは欠落があります" }}</span>
             </div>
             {% endif %}
 
             <!-- 発信元 -->
             <div class="log-row">
-                <span class="log-label">発信元</span>
+                <span class="ch-eyebrow">発信元</span>
                 <span>{{ e.source }}</span>
             </div>
 
             <!-- リクエスト内容 -->
             {% if e.user_message %}
             <div class="log-row">
-                <span class="log-label">リクエスト</span>
+                <span class="ch-eyebrow">リクエスト</span>
                 <div class="log-body-preview">{{ e.user_message[:800] }}{% if e.user_message|length > 800 %}…{% endif %}</div>
             </div>
             {% endif %}
@@ -71,11 +71,11 @@
 {% if total_pages > 1 %}
 <div class="log-pagination">
     {% if page > 1 %}
-    <a href="?type={{ current_type }}&page={{ page - 1 }}" class="btn btn-secondary btn-sm">← Prev</a>
+    <a href="?type={{ current_type }}&page={{ page - 1 }}" class="ch-btn ch-btn--sm">← Prev</a>
     {% endif %}
     <span>{{ page }} / {{ total_pages }}</span>
     {% if page < total_pages %}
-    <a href="?type={{ current_type }}&page={{ page + 1 }}" class="btn btn-secondary btn-sm">Next →</a>
+    <a href="?type={{ current_type }}&page={{ page + 1 }}" class="ch-btn ch-btn--sm">Next →</a>
     {% endif %}
 </div>
 {% endif %}

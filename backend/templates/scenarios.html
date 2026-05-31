@@ -1,51 +1,77 @@
 {% extends "base.html" %}
-{% block title %}Scenarios &mdash; Chotgor{% endblock %}
+{% block title %}scenarios &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ scenarios{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>Scenarios</h1>
-    <a href="/ui/scenarios/new" class="btn btn-primary">+ New</a>
-</div>
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">index</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">scenarios</h1>
+            <span class="ch-hero__count">· 全 {{ scenarios|length }} 件</span>
+        </div>
+        <p class="ch-prose ch-hero__lede">
+            シナリオは何度でも遊べるテンプレート。フロントエンドの Chotgor チャット UI から、
+            ここで登録したシナリオを選んでプレイセッションを開始できます。
+        </p>
+    </header>
 
-<p style="color:var(--t3);margin-bottom:1rem">
-    シナリオは何度でも遊べるテンプレートです。フロントエンドの Chotgor チャット UI から、
-    ここで登録したシナリオを選んでプレイセッションを開始できます。
-</p>
+    <div class="ch-filterbar">
+        <span class="ch-meta">{{ scenarios|length }} 件</span>
+        <a href="/ui/scenarios/new" class="ch-btn ch-btn--primary">+ 新規</a>
+    </div>
 
-{% if scenarios %}
-<div class="card-grid">
-    {% for s in scenarios %}
-    <div class="card">
-        <a href="/ui/scenarios/{{ s.id }}/edit" class="card-link">
-            <div class="card-header">
-                <div class="card-avatar-placeholder">{{ s.title[0] if s.title else '?' }}</div>
-                <div style="min-width:0">
-                    <h2 class="card-title">{{ s.title }}</h2>
-                    <span class="badge" style="margin-top:0.2rem">{{ s.id[:8] }}</span>
+    {% if scenarios %}
+    {# ── シナリオ一覧 ───────────────────────────────── #}
+    <div class="ch-list" id="ch-scenario-list">
+        {% for s in scenarios %}
+        <div class="ch-row" data-href="/ui/scenarios/{{ s.id }}/edit">
+            <div class="ch-row__avatar ch-row__avatar--ph">{{ s.title[0] if s.title else '?' }}</div>
+
+            <div class="ch-row__body">
+                <div class="ch-row__head">
+                    <h2 class="ch-row__name">{{ s.title }}</h2>
                 </div>
-            </div>
-            <div class="card-body">
                 {% if s.scenario %}
-                <p class="card-preview">{{ s.scenario[:110] }}{% if s.scenario|length > 110 %}…{% endif %}</p>
+                <p class="ch-row__excerpt">{{ s.scenario[:140] }}{% if s.scenario|length > 140 %}…{% endif %}</p>
                 {% else %}
-                <p class="card-preview" style="color:var(--t4)">No description.</p>
+                <p class="ch-row__excerpt">まだ世界が描かれていない。場所と空気を書き、登場人物を迎える。</p>
                 {% endif %}
             </div>
-        </a>
-        <div class="card-footer">
-            <a href="/ui/scenarios/{{ s.id }}/edit" class="btn btn-secondary btn-sm">Edit</a>
-            <form method="post" action="/ui/scenarios/{{ s.id }}/delete" class="inline-form"
-                  onsubmit="return confirm('Delete {{ s.title }}? 紐づくプレイセッションも全て削除されます。')" style="margin-left:auto">
-                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-            </form>
+
+            <div class="ch-row__meta">
+                <div class="ch-row__actions">
+                    <a href="/ui/scenarios/{{ s.id }}/edit" class="ch-btn ch-btn--sm" data-stop>編集</a>
+                    <form method="post" action="/ui/scenarios/{{ s.id }}/delete" data-stop
+                          onsubmit="return confirm('Delete {{ s.title }}? 紐づくプレイセッションも全て削除されます。')">
+                        <button type="submit" class="ch-btn ch-btn--danger ch-btn--sm">削除</button>
+                    </form>
+                </div>
+            </div>
         </div>
+        {% endfor %}
     </div>
-    {% endfor %}
+    {% else %}
+    <div class="ch-empty">
+        <p>まだシナリオがない。</p>
+        <a href="/ui/scenarios/new" class="ch-btn ch-btn--primary">最初のシナリオを作る</a>
+    </div>
+    {% endif %}
 </div>
-{% else %}
-<div class="empty-state">
-    <p>No scenarios yet.</p>
-    <a href="/ui/scenarios/new" class="btn btn-primary">Create your first scenario</a>
-</div>
-{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    // 行クリックで編集画面へ。内部リンク/フォーム（data-stop）はそのまま。
+    document.querySelectorAll('#ch-scenario-list .ch-row').forEach(function (row) {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('[data-stop]')) return;
+        var href = row.getAttribute('data-href');
+        if (href) window.location.href = href;
+      });
+    });
+  })();
+</script>
 {% endblock %}

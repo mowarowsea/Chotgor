@@ -1,59 +1,59 @@
 {% extends "base.html" %}
-{% block title %}Thread: {{ thread.summary }} &mdash; Chotgor{% endblock %}
-
-{% block head %}
-<style>
-    .badge-atmosphere {
-        background: rgba(255, 255, 255, .07);
-        color: #cfd3da;
-        white-space: normal;
-        font-weight: 400;
-    }
-</style>
-{% endblock %}
+{% block title %}thread: {{ thread.summary }} &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ {{ character.name }} / working memory / thread{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>{{ thread.summary or "（無題）" }}</h1>
-    <a href="/ui/working-memory/{{ character.id }}" class="btn btn-secondary">Back</a>
-</div>
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">thread</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">{{ thread.summary or "（無題）" }}</h1>
+        </div>
+    </header>
 
-<div class="memory-card">
-    <div class="memory-header">
-        <span class="badge badge-{{ thread.type }}">{{ thread.type }}</span>
+    <div class="ch-filterbar">
+        <a href="/ui/working-memory/{{ character.id }}" class="ch-btn ch-btn--ghost ch-btn--sm">← working memory</a>
+    </div>
+
+    {# ── スレッド メタ ─────────────────────────────── #}
+    <div class="ch-memitem__top" style="margin-bottom:10px">
+        <span class="ch-badge">{{ thread.type }}</span>
         {% if thread.atmosphere_tag %}
-        <span class="badge badge-atmosphere">{{ thread.atmosphere_tag }}</span>
+        <span class="ch-badge ch-badge--wrap">{{ thread.atmosphere_tag }}</span>
         {% endif %}
         {% if not thread.is_open %}
-        <span class="badge badge-deleted">Archived</span>
+        <span class="ch-tag ch-tag--deleted">archived</span>
         {% endif %}
         {% if thread.relation_target %}
-        <span class="badge badge-user">{{ thread.relation_target }}</span>
+        <span class="ch-badge">{{ thread.relation_target }}</span>
         {% endif %}
     </div>
-    <div class="memory-meta">
-        <span>重要度 {{ "%.2f"|format(thread.importance) }}</span>
+    <div class="ch-memitem__metrics" style="margin-bottom:36px">
+        <span class="ch-imp" title="Importance">重要度 <b>{{ "%.2f"|format(thread.importance) }}</b></span>
         <span>作成 {{ thread.created_at[:16] if thread.created_at else "—" }}</span>
         <span>更新 {{ thread.updated_at[:16] if thread.updated_at else "—" }}</span>
-        <span class="memory-preset">{{ thread.id }}</span>
     </div>
-</div>
 
-<h2 style="margin-top:1.5rem">Posts ({{ thread.posts|length }})</h2>
-{% if thread.posts %}
-<div class="memory-list">
-    {% for p in thread.posts %}
-    <div class="memory-card">
-        <div class="memory-header">
-            <span class="memory-date">{{ p.created_at[:16] if p.created_at else "—" }}</span>
-        </div>
-        <div class="memory-content">{{ p.content }}</div>
+    {# ── ポスト一覧 ───────────────────────────────── #}
+    <div class="ch-section__head">
+        <h2 class="ch-section-title">Posts <small>{{ thread.posts|length }}</small></h2>
     </div>
-    {% endfor %}
+    {% if thread.posts %}
+    <div class="ch-memlist">
+        {% for p in thread.posts %}
+        <article class="ch-memitem">
+            <div class="ch-memitem__top">
+                <span class="ch-memitem__date">{{ p.created_at[:16] if p.created_at else "—" }}</span>
+            </div>
+            <p class="ch-memitem__content">{{ p.content }}</p>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="ch-empty">
+        <p>ポストがない。</p>
+    </div>
+    {% endif %}
 </div>
-{% else %}
-<div class="empty-state">
-    <p>ポストがありません。</p>
-</div>
-{% endif %}
 {% endblock %}

@@ -1,90 +1,91 @@
 {% extends "base.html" %}
-{% block title %}Working Memory: {{ character.name }} &mdash; Chotgor{% endblock %}
-
-{% block head %}
-<style>
-    /* スレッドカードを丸ごとクリック可能なリンクにする */
-    .wm-card-link {
-        display: block;
-        text-decoration: none;
-        color: inherit;
-        transition: transform .08s ease, box-shadow .12s ease, border-color .12s ease;
-    }
-    .wm-card-link:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
-        border-color: rgba(255, 255, 255, .22);
-    }
-    .wm-card-link .memory-card { margin: 0; }
-    .wm-thread-title { font-weight: 600; font-size: 1.02rem; }
-    .wm-thread-title::after { content: " ›"; opacity: .45; }
-    /* atmosphere バッジ：自由テキストのため折り返しを許可する */
-    .badge-atmosphere {
-        background: rgba(255, 255, 255, .07);
-        color: #cfd3da;
-        white-space: normal;
-        font-weight: 400;
-    }
-</style>
-{% endblock %}
+{% block title %}working memory: {{ character.name }} &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ {{ character.name }} / working memory{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>{{ character.name }} — Working Memory</h1>
-    <a href="/ui/characters/{{ character.id }}" class="btn btn-secondary">Edit Character</a>
-</div>
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">working memory</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">{{ character.name }}</h1>
+            <span class="ch-hero__count">· {{ threads|length }} スレッド</span>
+        </div>
+    </header>
 
-<div class="filter-bar">
-    <form method="get" action="/ui/working-memory/{{ character.id }}" class="filter-form">
-        <select name="type" class="form-control select-inline" onchange="this.form.submit()">
-            <option value="">All Types</option>
-            {% for t in types %}
-            <option value="{{ t }}" {% if selected_type == t %}selected{% endif %}>{{ t }}</option>
-            {% endfor %}
-        </select>
-        <label class="checkbox-label">
-            <input type="checkbox" name="archived" value="true"
-                   {% if archived %}checked{% endif %}
-                   onchange="this.form.submit()">
-            Archived only
-        </label>
-    </form>
-    <span class="memory-count">{{ threads|length }}</span>
-</div>
+    {# ── フィルタバー ─────────────────────────────────── #}
+    <div class="ch-filterbar">
+        <form method="get" action="/ui/working-memory/{{ character.id }}" class="ch-row-gap" style="flex-wrap:wrap;gap:16px 22px">
+            <select name="type" class="ch-select ch-select--inline" onchange="this.form.submit()">
+                <option value="">すべてのタイプ</option>
+                {% for t in types %}
+                <option value="{{ t }}" {% if selected_type == t %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+            <label class="ch-inline-toggle">
+                <span class="ch-toggle">
+                    <input type="checkbox" name="archived" value="true"
+                           {% if archived %}checked{% endif %}
+                           onchange="this.form.submit()">
+                    <span class="ch-toggle__track"></span>
+                </span>
+                <span>アーカイブのみ</span>
+            </label>
+        </form>
+        <a href="/ui/characters/{{ character.id }}" class="ch-btn ch-btn--ghost ch-btn--sm">← 編集へ</a>
+    </div>
 
-{% if threads %}
-<div class="memory-list">
-    {% for t in threads %}
-    <a class="wm-card-link" href="/ui/working-memory/{{ character.id }}/{{ t.id }}">
-        <div class="memory-card {% if not t.is_open %}memory-deleted{% endif %}">
-            <div class="memory-header">
-                <span class="badge badge-{{ t.type }}">{{ t.type }}</span>
+    {% if threads %}
+    {# ── スレッド一覧 ───────────────────────────────── #}
+    <div class="ch-memlist" id="ch-wm-list">
+        {% for t in threads %}
+        <article class="ch-memitem ch-memitem--link {% if not t.is_open %}ch-memitem--deleted{% endif %}"
+                 data-href="/ui/working-memory/{{ character.id }}/{{ t.id }}">
+            <div class="ch-memitem__top">
+                <span class="ch-badge">{{ t.type }}</span>
                 {% if t.atmosphere_tag %}
-                <span class="badge badge-atmosphere">{{ t.atmosphere_tag }}</span>
+                <span class="ch-badge ch-badge--wrap">{{ t.atmosphere_tag }}</span>
                 {% endif %}
                 {% if not t.is_open %}
-                <span class="badge badge-deleted">Archived</span>
+                <span class="ch-tag ch-tag--deleted">archived</span>
                 {% endif %}
                 {% if t.relation_target %}
-                <span class="badge badge-user">{{ t.relation_target }}</span>
+                <span class="ch-badge">{{ t.relation_target }}</span>
                 {% endif %}
-                <span class="memory-date">{{ t.updated_at[:10] if t.updated_at else "—" }}</span>
+                <span class="ch-memitem__date">{{ t.updated_at[:10] if t.updated_at else "—" }} ›</span>
             </div>
-            <div class="memory-content wm-thread-title">{{ t.summary or "（無題）" }}</div>
+
+            <p class="ch-memitem__title">{{ t.summary or "（無題）" }}</p>
             {% if t.latest_post %}
-            <div class="memory-content" style="opacity:0.6;font-size:0.9em">&rarr; {{ t.latest_post }}</div>
+            <p class="ch-memitem__sub">→ {{ t.latest_post }}</p>
             {% endif %}
-            <div class="memory-meta">
-                <span title="Importance">重要度 {{ "%.2f"|format(t.importance) }}</span>
-                <span class="memory-preset">{{ t.id }}</span>
+
+            <div class="ch-memitem__foot">
+                <div class="ch-memitem__metrics">
+                    <span class="ch-imp" title="Importance">重要度 <b>{{ "%.2f"|format(t.importance) }}</b></span>
+                </div>
             </div>
-        </div>
-    </a>
-    {% endfor %}
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="ch-empty">
+        <p>スレッドがない。</p>
+    </div>
+    {% endif %}
 </div>
-{% else %}
-<div class="empty-state">
-    <p>スレッドがありません。</p>
-</div>
-{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    // スレッド行クリックで詳細へ。
+    document.querySelectorAll('#ch-wm-list .ch-memitem--link').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var href = row.getAttribute('data-href');
+        if (href) window.location.href = href;
+      });
+    });
+  })();
+</script>
 {% endblock %}
