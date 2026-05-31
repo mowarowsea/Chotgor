@@ -325,3 +325,30 @@ class TestSynopsisBlocks:
         )
         assert "これまでのあらすじ" not in out
         assert "プレイヤーからの補足メモ" not in out
+
+
+# ─── ANTICIPATE_RESPONSE（GM の予想）の出力規則・注入 ───────────────────────────
+
+
+def test_gm_prompt_output_rule_has_anticipate_tag():
+    """GM の出力規則に [ANTICIPATE_RESPONSE:...] を書く指示が含まれること。"""
+    out = build_gm_system_prompt(FakeSession(), npcs=[], history_text="")
+    assert "[ANTICIPATE_RESPONSE:" in out
+
+
+def test_gm_prompt_previous_anticipation_injected():
+    """previous_anticipation を渡すと「前回のあなた（語り手）の予想」ブロックが本文込みで挿入されること。"""
+    out = build_gm_system_prompt(
+        FakeSession(),
+        npcs=[],
+        history_text="",
+        previous_anticipation="このあと勇者は剣を抜くと予想",
+    )
+    assert "# 前回のあなた（語り手）の予想" in out
+    assert "このあと勇者は剣を抜くと予想" in out
+
+
+def test_gm_prompt_previous_anticipation_absent_when_empty():
+    """previous_anticipation が空（デフォルト）のときは予想ブロックが挿入されないこと。"""
+    out = build_gm_system_prompt(FakeSession(), npcs=[], history_text="")
+    assert "前回のあなた（語り手）の予想" not in out

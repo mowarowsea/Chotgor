@@ -71,6 +71,7 @@ def build_gm_system_prompt(
     auto_advance: bool = False,
     synopsis_auto: str = "",
     synopsis_manual: str = "",
+    previous_anticipation: str = "",
 ) -> str:
     """GM 用の system prompt を組み立てる。
 
@@ -143,6 +144,7 @@ def build_gm_system_prompt(
         history_text=history_text,
         synopsis_auto=synopsis_auto,
         synopsis_manual=synopsis_manual,
+        previous_anticipation=previous_anticipation,
     )
     # 空のセクション見出しを削除（内容がないセクションのタイトルは表示しない）
     prompt_cleaned = _remove_empty_sections(prompt_with_tags_replaced)
@@ -217,6 +219,7 @@ def _replace_template_tags(
     history_text: str = "",
     synopsis_auto: str = "",
     synopsis_manual: str = "",
+    previous_anticipation: str = "",
 ) -> str:
     """プロンプトテンプレート内のタグを実際の値に置き換える。
 
@@ -246,6 +249,18 @@ def _replace_template_tags(
     else:
         synopsis_manual_formatted = ""
 
+    # 前回ターンで GM（語り手）が書いた予想（ANTICIPATE_RESPONSE）の整形
+    previous_anticipation_text = (previous_anticipation or "").strip()
+    if previous_anticipation_text:
+        previous_anticipation_formatted = (
+            "# 前回のあなた（語り手）の予想\n"
+            "前回あなたは、このあとの展開をこう予想していました。"
+            "予想と実際の展開のズレも意識して進行してください。\n\n"
+            f"{previous_anticipation_text}"
+        )
+    else:
+        previous_anticipation_formatted = ""
+
     replacements = {
         "{user_alias}": user_alias,
         "{narrator_name}": narrator_name,
@@ -253,6 +268,7 @@ def _replace_template_tags(
         "{npcs_summary}": _format_npcs_summary(npcs),
         "{auto_synopsis}": (synopsis_auto or "").strip(),
         "{synopsis_manual}": synopsis_manual_formatted,
+        "{previous_anticipation}": previous_anticipation_formatted,
         "{npc_details}": _format_npc_details(npcs),
         "{history_block}": (history_text or "").strip(),
     }
@@ -284,6 +300,8 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 
 {synopsis_manual}
 
+{previous_anticipation}
+
 # 既知の話者
 @{user_alias}   ← この物語の主役（プレイヤー）。あなたは絶対に代弁しない。
 @{narrator_name}       ← 情景・状況描写。会話禁止。1〜3文目安。
@@ -295,6 +313,9 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 - 必要に応じて新しいNPCを `@新しい名前:` で登場させてよい（モブ・通行人・乱入者など）
 - 行動・仕草・表情・情景を発言に挿む場合は `*肩をすくめて*` のように `*` で囲む
 - markdown / JSON / 解説文 禁止（`*` の行動描写は markdown ではなく専用記法）
+- ターンの一番最後に、語り手（あなた）としての「このあとの展開の予想」を1行だけ `[ANTICIPATE_RESPONSE:予想内容]` の形式で書く
+  - この行はプレイヤーには見えない。いま登場しているNPC（@{narrator_name} 含む）それぞれの思惑・予想を併記してよい
+  - 次のターンであなた自身に「前回の予想」として示される
 
 ■ プレイヤーの領分を侵さない（最重要）
 - @{user_alias} はプレイヤーが操る人物。その発言・行動・思考・感情・感覚・設定をあなたが書くことは絶対に禁止

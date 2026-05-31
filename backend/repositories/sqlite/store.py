@@ -96,6 +96,9 @@ class ChatMessage(Base):
     chronicled_at = Column(DateTime, nullable=True)
     # デバッグログフォルダ名（8桁hex）。CHOTGOR_DEBUG=1 時のみ記録される。
     log_message_id = Column(String, nullable=True)
+    # ANTICIPATE_RESPONSE: キャラクターが本文末尾に書いた「次の展開への予想（期待）」。
+    # 次ターンのシステムプロンプトに「前回のあなたの予想」として注入される。
+    anticipation = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -390,6 +393,9 @@ class ScenarioTurn(Base):
     content = Column(Text, nullable=False)
     raw_response = Column(Text, nullable=True)                     # GM の単一呼出で得たターン全体の生出力（デバッグ用）
     log_request_id = Column(String, nullable=True)                 # debug_log_entries.request_id との紐付け（再生成で引き継ぐ）
+    # ANTICIPATE_RESPONSE: GM がターン末尾に書いた「次の展開への予想（期待）」。
+    # ターンに1つ。次ターンの GM システムプロンプトに「前回の予想」として注入される。
+    anticipation = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -427,6 +433,8 @@ class SQLiteStore(
         self._migrate_add_scenario_turn_log_request_id()
         self._migrate_add_scenario_custom_system_prompt()
         self._migrate_drop_afterglow_columns()
+        self._migrate_add_chat_message_anticipation()
+        self._migrate_add_scenario_turn_anticipation()
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。
@@ -595,6 +603,42 @@ class SQLiteStore(
             if "log_request_id" not in cols:
                 conn.exec_driver_sql(
                     "ALTER TABLE scenario_turns ADD COLUMN log_request_id TEXT"
+                )
+
+    def _migrate_add_chat_message_anticipation(self) -> None:
+        """`chat_messages` に `anticipation` 列を追加する。
+
+        キャラクターが本文末尾に書いた予想（期待）タグの抽出結果を保存する列。
+        既存 DB には列がないため ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(chat_messages)"
+                ).fetchall()
+            }
+            if "anticipation" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE chat_messages ADD COLUMN anticipation TEXT"
+                )
+
+    def _migrate_add_scenario_turn_anticipation(self) -> None:
+        """`scenario_turns` に `anticipation` 列を追加する。
+
+        GM がターン末尾に書いた予想（期待）タグの抽出結果を保存する列。
+        既存 DB には列がないため ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenario_turns)"
+                ).fetchall()
+            }
+            if "anticipation" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_turns ADD COLUMN anticipation TEXT"
                 )
 
     def _migrate_drop_afterglow_columns(self) -> None:

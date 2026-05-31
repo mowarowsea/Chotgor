@@ -736,3 +736,33 @@ def test_stripper_inline_code_split_across_chunks():
     assert "[INSCRIBE_MEMORY:real|tag]" not in result
     assert "前" in result
     assert "後" in result
+
+
+# ─── ANTICIPATE_RESPONSE（予想タグ）の除去・抽出 ─────────────────────────────
+
+
+def test_stripper_strips_anticipate_response_marker():
+    """[ANTICIPATE_RESPONSE:...] マーカーがストリーム表示から除去されること。"""
+    result = _feed_all(["本文です。[ANTICIPATE_RESPONSE:次は笑う]"])
+
+    assert "本文です。" in result
+    assert "[ANTICIPATE_RESPONSE:" not in result
+    assert "次は笑う" not in result
+
+
+def test_stripper_anticipate_response_split_across_chunks():
+    """[ANTICIPATE_RESPONSE:...] が複数チャンクに分割されても除去されること。"""
+    result = _feed_all(["本文", "[ANTIC", "IPATE_RESP", "ONSE:次は", "笑う]"])
+
+    assert "本文" in result
+    assert "ANTICIPATE_RESPONSE" not in result
+    assert "次は笑う" not in result
+
+
+def test_parse_tags_extracts_anticipate_response():
+    """parse_tags が [ANTICIPATE_RESPONSE:...] を抽出し、clean からタグを除去すること。"""
+    clean, matches = parse_tags("やあ[ANTICIPATE_RESPONSE:予想テキスト]", ["ANTICIPATE_RESPONSE"])
+
+    assert len(matches["ANTICIPATE_RESPONSE"]) == 1
+    assert matches["ANTICIPATE_RESPONSE"][0].body == "予想テキスト"
+    assert "[ANTICIPATE_RESPONSE:" not in clean

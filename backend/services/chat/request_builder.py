@@ -34,6 +34,7 @@ from backend.character_actions.carver import (
     build_carve_narrative_tools_hint,
 )
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
+from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_GUIDE
 
 
 # タグ方式プロバイダー（Ollama/OpenRouter等）共通の禁止条項。
@@ -43,7 +44,7 @@ _TAG_MODE_GLOBAL_RULES = """\
 ### ⚠️ タグ操作の共通ルール（必読）
 - **タグだけで応答を終わらせないこと。** 必ずユーザに向けた返答テキストを先に書き、必要なタグはその後ろに添えてください。タグ単独の応答は「無応答」と同じ扱いになります。
 - 該当する記録事項がなければタグは書かなくて構いません。ただしユーザへの返答テキストは必ず1行以上書いてください。
-- 以下のタグの行はすべてユーザには見えません: `[POWER_RECALL:...]` / `[CARVE_NARRATIVE:...]` / `[INSCRIBE_MEMORY:...]` / `[SWITCH_ANGLE:...]`\
+- 以下のタグの行はすべてユーザには見えません: `[POWER_RECALL:...]` / `[CARVE_NARRATIVE:...]` / `[INSCRIBE_MEMORY:...]` / `[SWITCH_ANGLE:...]` / `[ANTICIPATE_RESPONSE:...]`\
 """
 
 # Chotgor ガイドの末尾に付く「覚えるかどうかはあなたが決める」共通ブロック
@@ -96,6 +97,8 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 {block_wm_fixed}
 
 {block_wm_recalled}
+
+{block_previous_anticipation}
 
 {block_inner_narrative}
 
@@ -274,6 +277,25 @@ def _build_inner_narrative_block(inner_narrative: str) -> str:
     return f"## あなた自身の物語（inner_narrative）\n\n{text}"
 
 
+def _build_previous_anticipation_block(previous_anticipation: str) -> str:
+    """前ターンでキャラクター自身が書いた予想（期待）ブロックを返す。
+
+    前回の応答末尾の [ANTICIPATE_RESPONSE:...] から抽出した予想文字列を、
+    「前回のあなたの予想」としてキャラクター本人に提示する。予想と実際の展開の
+    ズレを意識させることで、応答の連続性・深みを引き出す狙い。空なら空文字列を返す。
+
+    Args:
+        previous_anticipation: 前ターンで抽出した予想文字列（空なら非表示）。
+
+    Returns:
+        システムプロンプトに挿入するブロック。空なら空文字列。
+    """
+    text = (previous_anticipation or "").strip()
+    if not text:
+        return ""
+    return f"## 前回のあなたの予想（期待）\n\n前回あなたは、このあとの展開をこう予想していました：\n\n> {text}"
+
+
 def _build_switch_angle_block(
     available_presets: list[dict],
     use_tools: bool,
@@ -357,6 +379,11 @@ def _build_chotgor_block(
             parts.append(_build_switch_angle_block(available_presets, use_tools=False))
         parts.append(INSCRIBE_MEMORY_TAG_GUIDE)
 
+    # 予想（ANTICIPATE_RESPONSE）は全プロバイダー一律タグ。use_tools / タグ方式の
+    # どちらの分岐でも、本文末尾に書かせるタグとして同じガイドを付与する
+    # （ツール化せず本文に書かせること自体が回答の質への狙いのため）。
+    parts.append(ANTICIPATE_RESPONSE_TAG_GUIDE)
+
     parts.append(_CHOTGOR_MEMORY_PHILOSOPHY)
 
     return "\n\n".join(parts)
@@ -382,6 +409,7 @@ def build_system_prompt(
     use_tools: bool = False,
     available_presets: list[dict] | None = None,
     current_preset_name: str = "",
+    previous_anticipation: str = "",
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。
 
@@ -423,6 +451,7 @@ def build_system_prompt(
         "{block_wm_all}": _build_wm_all_block(wm_all_threads),
         "{block_wm_fixed}": _build_wm_fixed_block(wm_fixed_threads),
         "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),
+        "{block_previous_anticipation}": _build_previous_anticipation_block(previous_anticipation),
         "{block_inner_narrative}": _build_inner_narrative_block(inner_narrative),
         "{block_chotgor_guide}": _build_chotgor_block(
             use_tools=use_tools,

@@ -48,6 +48,32 @@ def build_available_presets(character, current_preset, sqlite) -> list[dict]:
     return result
 
 
+def latest_anticipation(history: list, character_name: str | None = None) -> str:
+    """会話履歴から直近のキャラクター予想（ANTICIPATE_RESPONSE）を取り出す。
+
+    最新側から走査し、role=="character"（character_name 指定時はその一致も条件）の
+    メッセージで非空の anticipation を持つ最初のものを返す。無ければ空文字列。
+    1on1 は character_name=None で直近の予想を、グループチャットは character_name
+    指定で各キャラ自身の前回予想だけを引くために使う。
+
+    Args:
+        history: ChatMessage ORM のリスト（時系列昇順を想定）。
+        character_name: 特定キャラの予想に絞る場合に指定（グループチャット用）。
+
+    Returns:
+        直近の予想文字列。無ければ空文字列。
+    """
+    for m in reversed(history):
+        if getattr(m, "role", None) != "character":
+            continue
+        if character_name is not None and getattr(m, "character_name", None) != character_name:
+            continue
+        anticipation = getattr(m, "anticipation", None)
+        if anticipation:
+            return anticipation
+    return ""
+
+
 def build_character_request(
     char,
     preset,

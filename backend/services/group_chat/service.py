@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator
 
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.chat.models import Message
-from backend.services.chat.request_factory import build_available_presets, build_character_request
+from backend.services.chat.request_factory import build_available_presets, build_character_request, latest_anticipation
 from backend.services.chat.service import ChatService
 from backend.services.memory.format import format_recalled_memories, format_recalled_threads
 from backend.lib.log_context import current_log_feature, current_log_target, new_message_id
@@ -106,9 +106,12 @@ async def _stream_character_response(
 
     # 1on1と同様のファクトリで ChatRequest を構築する（時刻認識・self_reflection等も含む）
     available_presets = build_available_presets(char, preset, sqlite)
+    # このキャラクター自身の前回応答に含まれていた予想（ANTICIPATE_RESPONSE）だけを引いて注入する
+    previous_anticipation = latest_anticipation(history, character_name=char_name)
     request = build_character_request(
         char, preset, messages, session_id, settings, sqlite,
         available_presets=available_presets,
+        previous_anticipation=previous_anticipation,
     )
 
     # execute_stream を通じてストリーミング実行しながらチャンクをリアルタイムでyieldする
@@ -117,6 +120,7 @@ async def _stream_character_response(
     recall_error_text = ""
     wm_text = ""
     thinking_parts: list[str] = []
+    anticipation_text = ""
 
     async for chunk_type, content in chat_service.execute_stream(request):
         if chunk_type == "inscribed_memories":
@@ -138,6 +142,9 @@ async def _stream_character_response(
             full_text += content
             if content:
                 yield ("character_chunk", {"character": char_name, "content": content})
+        elif chunk_type == "anticipation":
+            # このキャラクターの予想（期待）。UIには流さず、DB保存して次の自ターンに注入する。
+            anticipation_text = content
         elif chunk_type == "angle_switched":
             # キャラクターがプリセットを切り替えた: 呼び出し元で group_config を更新させる
             yield ("character_angle_switched", {
@@ -161,6 +168,7 @@ async def _stream_character_response(
         character_name=char_name,
         reasoning=reasoning_text,
         preset_name=preset.name,
+        anticipation=anticipation_text or None,
     )
     yield ("character_done", {"character": char_name, "message": msg})
 

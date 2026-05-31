@@ -56,3 +56,6 @@ class ChatRequest:
     # ストリーム完了後の get_character() 再クエリを省略するためのキャッシュ。
     farewell_config: dict | None = None
     farewell_relationship_status: str = "active"
+    # ANTICIPATE_RESPONSE: 前ターンでキャラクター自身が本文末尾に書いた「次の展開への予想（期待）」。
+    # 次ターンのシステムプロンプトに「前回のあなたの予想」として注入される。
+    previous_anticipation: str = ""

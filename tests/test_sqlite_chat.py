@@ -115,6 +115,27 @@ class TestChatMessageCRUD:
         assert len(messages) == 1
         assert messages[0].id == mid
 
+    def test_create_message_with_anticipation(self, sqlite_store):
+        """anticipation（キャラクターの予想）を指定して作成すると保存・取得できること。"""
+        sid = self._make_session(sqlite_store)
+        mid = str(uuid.uuid4())
+        sqlite_store.create_chat_message(
+            message_id=mid, session_id=sid, role="character",
+            content="やあ", anticipation="次は質問が来ると思う",
+        )
+        messages = sqlite_store.list_chat_messages(sid)
+        assert messages[0].anticipation == "次は質問が来ると思う"
+
+    def test_create_message_anticipation_defaults_none(self, sqlite_store):
+        """anticipation を指定しない場合は None として保存されること。"""
+        sid = self._make_session(sqlite_store)
+        mid = str(uuid.uuid4())
+        sqlite_store.create_chat_message(
+            message_id=mid, session_id=sid, role="user", content="こんにちは",
+        )
+        messages = sqlite_store.list_chat_messages(sid)
+        assert messages[0].anticipation is None
+
     def test_list_messages_empty_for_new_session(self, sqlite_store):
         """新しいセッションはメッセージが空であること。"""
         sid = self._make_session(sqlite_store)

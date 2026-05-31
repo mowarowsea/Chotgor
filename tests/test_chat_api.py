@@ -64,6 +64,7 @@ def _fake_message(mid=None, session_id="sid", role="user", content="hello"):
     m.preset_name = None
     m.is_system_message = None
     m.log_message_id = None
+    m.anticipation = None
     m.created_at = datetime(2026, 3, 10, 12, 0, 0)
     return m
 

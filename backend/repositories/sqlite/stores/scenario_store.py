@@ -389,6 +389,7 @@ class ScenarioChatStoreMixin:
         speaker_id: str | None = None,
         raw_response: str | None = None,
         log_request_id: str | None = None,
+        anticipation: str | None = None,
     ):
         """発話ターンを作成する。
 
@@ -416,6 +417,7 @@ class ScenarioChatStoreMixin:
                 content=content,
                 raw_response=raw_response,
                 log_request_id=log_request_id,
+                anticipation=anticipation or None,
             )
             session.add(obj)
             session.commit()

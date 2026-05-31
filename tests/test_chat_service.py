@@ -567,3 +567,43 @@ async def test_execute_stream_no_recall_error_on_success():
         events = await _collect_stream_events(service, request)
 
     assert not any(t == "recall_error" for t, _ in events)
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_yields_anticipation_event():
+    """応答に [ANTICIPATE_RESPONSE:...] が含まれるとき、本文からタグが除去され、
+    予想が ("anticipation", ...) イベントとして yield されること（tool-use 方式）。
+
+    予想タグは全プロバイダー一律のため tool-use 方式の応答テキストにも本文末尾に
+    出現する。execute_stream はそれを抽出し、本文（text）からは除去したうえで
+    anticipation を別イベントとして流すことを検証する。
+    """
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(
+        return_value=("こんにちは！[ANTICIPATE_RESPONSE:次は質問が来ると思う]", "")
+    )
+
+    with (
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        events = await _collect_stream_events(service, request)
+
+    # 本文からタグが除去されて流れること
+    assert ("text", "こんにちは！") in events
+    # 予想が anticipation イベントとして流れること
+    assert ("anticipation", "次は質問が来ると思う") in events

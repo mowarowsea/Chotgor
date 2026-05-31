@@ -130,3 +130,35 @@ def test_build_system_prompt_tools_mode_uses_tool_hint():
     """use_tools=True のとき carve_narrative ツール案内（ツール形式）が含まれること。"""
     prompt = build_system_prompt("You are a cat.", use_tools=True)
     assert "carve_narrative" in prompt
+
+
+def test_build_system_prompt_anticipate_guide_present_both_modes():
+    """ANTICIPATE_RESPONSE の出力ガイドが tool-use / タグ方式の両方で常に含まれること。
+
+    予想タグは全プロバイダー一律でテキストタグとして書かせる方針のため、
+    use_tools の真偽にかかわらずガイドが入っていなければならない。
+    """
+    prompt_tags = build_system_prompt("You are a cat.", use_tools=False)
+    prompt_tools = build_system_prompt("You are a cat.", use_tools=True)
+    assert "ANTICIPATE_RESPONSE" in prompt_tags
+    assert "ANTICIPATE_RESPONSE" in prompt_tools
+
+
+def test_build_system_prompt_previous_anticipation_injected():
+    """previous_anticipation を渡すと「前回のあなたの予想」ブロックが本文込みで挿入されること。"""
+    prompt = build_system_prompt(
+        "You are a cat.",
+        previous_anticipation="次は相手が笑うと予想していた",
+    )
+    assert "## 前回のあなたの予想（期待）" in prompt
+    assert "次は相手が笑うと予想していた" in prompt
+
+
+def test_build_system_prompt_previous_anticipation_absent_when_empty():
+    """previous_anticipation が空（デフォルト）のときは予想注入ブロックが挿入されないこと。
+
+    ガイド文中にも「前回のあなたの予想」という語が出るため、注入ブロック固有の
+    見出し（## 前回のあなたの予想（期待））で判定する。
+    """
+    prompt = build_system_prompt("You are a cat.")
+    assert "## 前回のあなたの予想（期待）" not in prompt

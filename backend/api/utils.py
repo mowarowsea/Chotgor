@@ -95,6 +95,8 @@ def message_to_dict(m) -> dict:
         result["is_system_message"] = True
     if getattr(m, "log_message_id", None):
         result["log_message_id"] = m.log_message_id
+    if getattr(m, "anticipation", None):
+        result["anticipation"] = m.anticipation
     return result
 
 

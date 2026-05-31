@@ -32,6 +32,7 @@ from backend.lib.debug_logger import logger
 from backend.lib.log_context import current_log_feature
 from backend.character_actions.carver import Carver
 from backend.character_actions.inscriber import Inscriber
+from backend.character_actions.anticipator import extract_anticipation
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.repositories.lance.store import EmbeddingError
@@ -377,6 +378,7 @@ class ChatService:
             use_tools=provider_impl.SUPPORTS_TOOLS,
             available_presets=request.available_presets or None,
             current_preset_name=request.current_preset_name,
+            previous_anticipation=request.previous_anticipation,
         )
 
         return _Context(
@@ -445,6 +447,10 @@ class ChatService:
             switched = self._build_switched_request(request, *switch_info, first_response_text=clean_text)
             if switched is not None:
                 return await self.execute(switched)
+
+        # 予想（ANTICIPATE_RESPONSE）タグは本文から除去する（この非ストリーミング経路では
+        # 保存先が無いため抽出値は捨てるが、ユーザー向けテキストにタグを残さない）。
+        clean_text, _ = extract_anticipation(clean_text)
 
         logger.log_front_output(clean_text)
         self._log_debug("CHAT", request, ctx.messages, clean_text)
@@ -594,6 +600,11 @@ class ChatService:
                 })
                 return
 
+        # 予想（ANTICIPATE_RESPONSE）タグを抽出する。全プロバイダー一律タグのため、
+        # tool-use 方式・タグ方式どちらの clean_text からも、この共通地点で1回だけ取り出す。
+        # （switch_angle / power_recall の再帰時は再帰先で抽出済みのため、ここには到達しない）
+        clean_text, anticipation = extract_anticipation(clean_text)
+
         # FrontOutput は reflector タスク起動より前にログする。
         # asyncio.create_task はコンテキストをコピーするため、
         # FrontOutput のカウンターインクリメントが反映された状態で reflector を起動する。
@@ -647,3 +658,8 @@ class ChatService:
 
         if clean_text and not text_already_streamed:
             yield ("text", clean_text)
+
+        # 予想（期待）は本文の後にyieldする。API層がこれを anticipation カラムへ保存し、
+        # 次ターンのシステムプロンプトに「前回のあなたの予想」として注入する。
+        if anticipation:
+            yield ("anticipation", anticipation)

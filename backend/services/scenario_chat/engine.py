@@ -134,6 +134,7 @@ class EnsembleEngine:
         auto_advance: bool = False,
         synopsis_auto: str = "",
         synopsis_manual: str = "",
+        previous_anticipation: str = "",
     ) -> AsyncIterator[Any]:
         """1 ターンの発話列をストリーミング生成する。
 
@@ -173,6 +174,7 @@ class EnsembleEngine:
             auto_advance=auto_advance,
             synopsis_auto=synopsis_auto,
             synopsis_manual=synopsis_manual,
+            previous_anticipation=previous_anticipation,
         )
 
         # 3. プロバイダ生成

@@ -25,7 +25,7 @@ from backend.lib.log_context import (
 )
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
-from backend.services.chat.request_factory import build_character_request, build_available_presets
+from backend.services.chat.request_factory import build_character_request, build_available_presets, latest_anticipation
 from backend.services.chat.content import apply_context_window
 from backend.services.memory.format import format_recalled_threads
 
@@ -135,10 +135,13 @@ async def _build_chat_request(
     messages.append(Message(role="user", content=user_content))
 
     available_presets = build_available_presets(character, preset, state.sqlite)
+    # 直前のキャラクター応答に含まれていた予想（ANTICIPATE_RESPONSE）を次ターンに注入する
+    previous_anticipation = latest_anticipation(history_messages)
 
     return build_character_request(
         character, preset, messages, session.id, settings, state.sqlite,
         available_presets=available_presets,
+        previous_anticipation=previous_anticipation,
     )
 
 
@@ -410,6 +413,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         nonlocal effective_model_id
         full_text = ""
         accumulated_reasoning = ""
+        anticipation_text = ""
         try:
             async for chunk_type, content in state.chat_service.execute_stream(chat_request):
                 if chunk_type == "inscribed_memories":
@@ -441,6 +445,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                     if content:
                         data = json.dumps({"type": "chunk", "content": content}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
+                elif chunk_type == "anticipation":
+                    # キャラクターの予想（期待）。UIには本文として流さず、DB保存して次ターンに注入する。
+                    anticipation_text = content
                 elif chunk_type == "angle_switched":
                     effective_model_id = content["model_id"]
                     # Frontend が selectedModel を更新できるよう SSE で通知する。
@@ -469,6 +476,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             character_name=used_char_name,
             preset_name=used_preset_name,
             log_message_id=log_msg_id,
+            anticipation=anticipation_text or None,
         )
         asyncio.create_task(asyncio.to_thread(
             index_message_sync, char_msg, _chat_char_ids, state.vector_store, _chat_user_name

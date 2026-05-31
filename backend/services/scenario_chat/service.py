@@ -27,6 +27,7 @@ from backend.services.scenario_chat.engine import (
     TurnRecord,
 )
 from backend.services.scenario_chat.parser import UtteranceDelta
+from backend.character_actions.anticipator import extract_anticipation
 from backend.services.scenario_chat.synopsis import update_auto_synopsis
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,7 @@ def scenario_turn_to_dict(turn: Any) -> dict:
         "content": turn.content,
         "raw_response": turn.raw_response,
         "log_request_id": getattr(turn, "log_request_id", None),
+        "anticipation": getattr(turn, "anticipation", None),
         "created_at": turn.created_at.isoformat() if turn.created_at else None,
     }
 
@@ -300,6 +302,22 @@ def compute_synopsis_progress(
         return None
 
 
+def _latest_scenario_anticipation(history: list) -> str:
+    """シナリオ履歴から直近の非空 anticipation（GM の前回予想）を返す。無ければ空文字列。
+
+    Args:
+        history: ScenarioTurn ORM の時系列昇順リスト。
+
+    Returns:
+        直近ターンに保存された予想文字列。無ければ空文字列。
+    """
+    for turn in reversed(history):
+        anticipation = getattr(turn, "anticipation", None)
+        if anticipation:
+            return anticipation
+    return ""
+
+
 async def run_scenario_turn(
     session_id: str,
     user_message: str,
@@ -337,6 +355,8 @@ async def run_scenario_turn(
     # 1. 履歴を先に取得する（ユーザーターン保存前に取得することで、
     #    engine に渡す history_text にユーザーメッセージが二重で含まれるのを防ぐ）
     history = sqlite.list_scenario_turns(session_id)
+    # 前回ターンで GM が書いた予想（ANTICIPATE_RESPONSE）を次ターンの GM プロンプトに注入する
+    previous_anticipation = _latest_scenario_anticipation(history)
 
     # 2. プレイヤー発話を保存（auto_advance 時はスキップして痕跡を残さない）
     if not auto_advance:
@@ -379,6 +399,7 @@ async def run_scenario_turn(
             auto_advance=auto_advance,
             synopsis_auto=current_synopsis.get("auto", ""),
             synopsis_manual=current_synopsis.get("manual", ""),
+            previous_anticipation=previous_anticipation,
         ):
             if isinstance(item, UtteranceDelta):
                 if item.is_speaker_change:
@@ -404,16 +425,23 @@ async def run_scenario_turn(
         return
 
     # 4. TurnRecord を保存（raw_response はターン内で共通の値を入れる）
-    for rec in turn_records_pending:
+    #    GM がターン末尾に書いた予想（ANTICIPATE_RESPONSE）は raw_response 全体から1つ抽出し、
+    #    ターンの最後の発話行に保存する（次ターンの GM プロンプトに「前回の予想」として注入される）。
+    #    各発話本文にも末尾タグが紛れることがあるため、保存前に除去しておく。
+    _, turn_anticipation = extract_anticipation(raw_response)
+    last_index = len(turn_records_pending) - 1
+    for i, rec in enumerate(turn_records_pending):
+        rec_content, _ = extract_anticipation(rec.content)
         saved = _save_turn(
             sqlite=sqlite,
             session_id=session_id,
             speaker_type=rec.speaker_type,
             speaker_name=rec.speaker_name,
-            content=rec.content,
+            content=rec_content,
             speaker_id=rec.speaker_id,
             raw_response=raw_response,
             attach_log_request_id=True,
+            anticipation=turn_anticipation if i == last_index else None,
         )
         saved_turn_ids.append(saved.id)
         yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
@@ -559,11 +587,13 @@ def _save_turn(
     speaker_id: str | None = None,
     raw_response: str | None = None,
     attach_log_request_id: bool = False,
+    anticipation: str | None = None,
 ):
     """ターンを次の turn_index で保存して返す共通ヘルパ。
 
     attach_log_request_id=True のとき、現在の current_message_id を log_request_id として保存する。
     GM ターン保存時のみ True にする（ユーザーターン・intro はログとの紐付け不要）。
+    anticipation は GM がターン末尾に書いた予想（期待）。ターンに1つなので、最後の発話行にのみ渡す。
     """
     turn_id = str(uuid.uuid4())
     next_index = sqlite.get_next_scenario_turn_index(session_id)
@@ -578,4 +608,5 @@ def _save_turn(
         speaker_id=speaker_id,
         raw_response=raw_response,
         log_request_id=log_req_id,
+        anticipation=anticipation,
     )

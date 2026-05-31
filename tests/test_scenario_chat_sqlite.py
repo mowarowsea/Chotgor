@@ -496,6 +496,30 @@ class TestScenarioTurnCRUD:
         assert turn.speaker_id is None
         assert turn.turn_index == 0
 
+    def test_create_turn_with_anticipation(self, sqlite_store):
+        """anticipation（GM の予想）を指定してターンを作成すると保存・取得できること。"""
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        sqlite_store.create_scenario_turn(
+            turn_id=str(uuid.uuid4()),
+            session_id=session.id,
+            turn_index=0,
+            speaker_type="npc",
+            speaker_name="レイカ",
+            content="……来たんだ",
+            anticipation="このあとプレイヤーは戸惑うと予想",
+        )
+        turns = sqlite_store.list_scenario_turns(session.id)
+        assert turns[0].anticipation == "このあとプレイヤーは戸惑うと予想"
+
+    def test_create_turn_anticipation_defaults_none(self, sqlite_store):
+        """anticipation を指定しない場合は None として保存されること。"""
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        _make_turn(sqlite_store, session.id, content="やあ")
+        turns = sqlite_store.list_scenario_turns(session.id)
+        assert turns[0].anticipation is None
+
     def test_create_narrator_turn(self, sqlite_store):
         scenario = _make_scenario(sqlite_store)
         session = _make_session(sqlite_store, scenario.id)
