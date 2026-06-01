@@ -20,6 +20,7 @@ task/topic のみ heat = importance × 時間減衰 × relevance でスコアリ
 """
 
 import logging
+import threading
 import uuid
 from datetime import datetime
 from backend.repositories.lance.store import LanceStore
@@ -72,10 +73,12 @@ class WorkingMemoryManager:
             text = (text + "\n" + latest.content).strip()
         return text
 
-    def _reindex_thread(self, thread_id: str) -> None:
-        """スレッドの LanceStore embedding を最新状態で upsert する。
+    def _reindex_thread_sync(self, thread_id: str) -> None:
+        """スレッドの LanceStore embedding を最新状態で upsert する（同期実体）。
 
-        summary 更新・ポスト追加・importance/is_open 変更のいずれでも呼ぶ。
+        embedding 生成（infinity への HTTP 呼び出し）を含むため遅い。
+        ツール応答のクリティカルパスから外すため、通常は ``_reindex_thread()`` 経由で
+        バックグラウンドスレッドから呼ぶこと。直接呼ぶのはテスト等の同期完了を要する場合のみ。
         """
         thread = self.sqlite.get_working_memory_thread(thread_id)
         if not thread:
@@ -93,6 +96,31 @@ class WorkingMemoryManager:
                 "is_open": thread.is_open,
             },
         )
+
+    def _reindex_thread(self, thread_id: str) -> None:
+        """スレッドの LanceStore embedding 更新をバックグラウンドで実行する（fire-and-forget）。
+
+        SQLite が source of truth なので、index 更新は遅延・失敗してもキャラの応答品質に
+        即時影響しない（次回更新時に最新化される）。embedding サーバ（infinity）の
+        詰まりが MCP の 30 秒タイムアウトに乗らないよう、必ず別スレッドへ逃がす。
+
+        例外はスレッド内で握り潰して warning ログに残す。daemon=True なのでプロセス終了時に
+        強制終了され、index は次の更新で最新化される（ベストエフォート）。
+        """
+        def _run() -> None:
+            try:
+                self._reindex_thread_sync(thread_id)
+            except Exception as e:
+                logger.warning(
+                    "WM reindex 失敗 thread_id=%s err=%s: %s",
+                    thread_id, type(e).__name__, e,
+                )
+
+        threading.Thread(
+            target=_run,
+            name=f"wm-reindex-{thread_id[:8]}",
+            daemon=True,
+        ).start()
 
     def _thread_to_dict(self, thread, include_posts: bool = False,
                          include_latest_post: bool = False) -> dict:
