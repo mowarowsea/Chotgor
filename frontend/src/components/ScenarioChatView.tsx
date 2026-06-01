@@ -378,11 +378,19 @@ interface GMBubbleRowProps {
   is_known: boolean | null;
   content: string;
   avatarSrc: string | null;
-  /** ターン末尾の GM バブルなら true。再生成 + Copy ボタンを表示する。 */
+  /**
+   * 自分が属する GM グループ（= 同一 raw_response の連続 GM バブル列）の最後尾なら true。
+   * グループ末尾だけが MessageActionBar（コピー + ログ + 必要なら再生成）を持つ。
+   */
+  isGroupTail: boolean;
+  /**
+   * 「最新グループの末尾」なら true。再生成 + 破棄ボタンを有効にする条件。
+   * `isGroupTail` の真部分集合（最新グループ末尾は当然グループ末尾でもある）。
+   */
   isLastGM: boolean;
   /**
-   * Copy ボタンがコピーするテキスト。末尾 GM バブルにのみ意味があり、
-   * 「ターン全体（複数バブル）の本文連結」を渡すこと。
+   * Copy ボタンがコピーするテキスト。グループ末尾バブルでのみ参照される。
+   * 自グループ全バブルを `@名前: 本文` 形式で連結した文字列を渡すこと。
    */
   copyText?: string;
   /** 1ターンまるごと再生成（最終 user 以降を全削除して再ストリーム）。 */
@@ -391,8 +399,10 @@ interface GMBubbleRowProps {
   onDiscard?: () => void;
   /** アバタークリック時のコールバック。既知 NPC のみ渡される（押下可能になる）。 */
   onAvatarClick?: () => void;
-  /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。末尾 GM バブルにのみ意味がある。 */
+  /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。最新グループ末尾でのみ意味がある。 */
   elapsedMs?: number;
+  /** デバッグログフォルダ名（8桁 hex）。指定時のみ ▼ログ 折りたたみを表示する。 */
+  logMessageId?: string;
 }
 
 /**
@@ -412,24 +422,28 @@ function GMBubbleRowImpl({
   is_known,
   content,
   avatarSrc,
+  isGroupTail,
   isLastGM,
   copyText,
   onRegenerate,
   onDiscard,
   onAvatarClick,
   elapsedMs,
+  logMessageId,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
-  // 操作バー（コピー / 破棄 / 再生成）。ターン末尾の GM バブルにのみ表示する。
-  // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
-  const actions = isLastGM ? (
+  // 操作バー（コピー / 破棄 / 再生成 / ログ）。1on1 / グループと共通の MessageActionBar を使う（DRY）。
+  // モデル応答は複数バブルで構成され得るため、グループ末尾のバブルにだけ操作バーを出して
+  // 1 応答 = 1 操作バーを保つ。再生成・破棄は最新グループ末尾でのみ有効。
+  const actions = isGroupTail ? (
     <MessageActionBar
       copyText={copyText ?? content}
-      onRegenerate={onRegenerate}
+      onRegenerate={isLastGM ? onRegenerate : undefined}
       regenerateTitle="このターンを再生成"
-      onDiscard={onDiscard}
+      onDiscard={isLastGM ? onDiscard : undefined}
       discardTitle="この応答を破棄してユーザ入力に戻す"
       elapsedMs={elapsedMs}
+      logMessageId={logMessageId}
     />
   ) : null;
 
@@ -515,9 +529,11 @@ const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
     prev.is_known === next.is_known &&
     prev.content === next.content &&
     prev.avatarSrc === next.avatarSrc &&
+    prev.isGroupTail === next.isGroupTail &&
     prev.isLastGM === next.isLastGM &&
     prev.copyText === next.copyText &&
-    prev.elapsedMs === next.elapsedMs
+    prev.elapsedMs === next.elapsedMs &&
+    prev.logMessageId === next.logMessageId
   );
 });
 
@@ -608,43 +624,57 @@ export default function ScenarioChatView({
   }, [turns, synopsisLastTurnIndex]);
 
   /**
-   * 末尾 GM ターンのバブル一覧とそのまとめテキストを計算する。
+   * GM ターンを「同一モデル応答」単位にグルーピングし、各グループ末尾のバブルに
+   * 関する情報（ID と全バブル連結テキスト）を返す。
    *
-   * - lastGMTurnId: 末尾 GM 列の「最後のバブル」ID。再生成アイコン + Copy
-   *   アイコンを表示する位置。
-   * - lastGMTurnCopyText: その末尾 GM 列に属する全バブルの本文を `@名前: 本文`
-   *   形式で連結したテキスト。Copy ボタンはターン全体（複数バブル分）をコピーする。
+   * - gmGroupTailById: グループ末尾の turn id → そのグループ全バブルを連結した
+   *   コピー用テキスト。MessageActionBar（コピー/ログ/再生成）はグループ末尾のみに出す。
+   * - lastGMTurnId: 「最新グループ」の末尾バブル id。再生成 / 破棄の対象となるのは
+   *   このバブルだけ（過去グループはコピー + ログのみ）。末尾が user / turns が空なら null。
    *
-   * 末尾 GM 列は raw_response で連続性を判定する: GM の 1 回の LLM 呼出で
-   * 生成された一連の GM バブルが「同一ターン」を構成する。
+   * グルーピングは raw_response の連続性で判定する: GM の 1 回の LLM 呼出で
+   * 生成された一連の GM バブルが「同一ターン」を構成する。user ターンは境界。
    */
-  const { lastGMTurnId, lastGMTurnCopyText } = useMemo(() => {
+  const { gmGroupTailById, lastGMTurnId } = useMemo(() => {
+    const tailById = new Map<string, string>();
     if (turns.length === 0) {
-      return { lastGMTurnId: null as string | null, lastGMTurnCopyText: "" };
+      return { gmGroupTailById: tailById, lastGMTurnId: null as string | null };
     }
-    let end = turns.length - 1;
-    if (turns[end].speaker_type === "user") {
-      return { lastGMTurnId: null as string | null, lastGMTurnCopyText: "" };
-    }
-    let start = end;
-    const tailRaw = turns[end].raw_response;
-    while (start > 0) {
-      const prev = turns[start - 1];
-      if (prev.speaker_type === "user") break;
-      if (prev.raw_response !== tailRaw) break;
-      start--;
-    }
-    const parts: string[] = [];
-    for (let i = start; i <= end; i++) {
-      const t = turns[i];
-      const name =
-        t.speaker_type === "narrator" ? "Narrator" : t.speaker_name;
-      parts.push(`@${name}: ${trimEnd(t.content)}`);
-    }
-    return {
-      lastGMTurnId: turns[end].id,
-      lastGMTurnCopyText: parts.join("\n\n"),
+    // 連続する同 raw_response の GM ターンを 1 グループとして畳む。末尾に達するか
+    // 次が user / raw_response 不一致になったらフラッシュする。
+    const flushGroup = (start: number, end: number) => {
+      const parts: string[] = [];
+      for (let i = start; i <= end; i++) {
+        const t = turns[i];
+        const name =
+          t.speaker_type === "narrator" ? "Narrator" : t.speaker_name;
+        parts.push(`@${name}: ${trimEnd(t.content)}`);
+      }
+      tailById.set(turns[end].id, parts.join("\n\n"));
     };
+    let groupStart = -1;
+    let groupRaw: string | null | undefined = undefined;
+    for (let i = 0; i < turns.length; i++) {
+      const t = turns[i];
+      if (t.speaker_type === "user") {
+        if (groupStart >= 0) flushGroup(groupStart, i - 1);
+        groupStart = -1;
+        groupRaw = undefined;
+        continue;
+      }
+      // GM ターン: 既存グループと raw_response が一致しなければ新グループ
+      if (groupStart < 0 || t.raw_response !== groupRaw) {
+        if (groupStart >= 0) flushGroup(groupStart, i - 1);
+        groupStart = i;
+        groupRaw = t.raw_response;
+      }
+    }
+    if (groupStart >= 0) flushGroup(groupStart, turns.length - 1);
+
+    // 最新グループ末尾は turns の末尾が GM である場合のみ存在
+    const lastTurn = turns[turns.length - 1];
+    const lastGMId = lastTurn.speaker_type === "user" ? null : lastTurn.id;
+    return { gmGroupTailById: tailById, lastGMTurnId: lastGMId };
   }, [turns]);
 
   const resolveAvatar = (
@@ -721,6 +751,12 @@ export default function ScenarioChatView({
               t.speaker_type === "npc" || t.speaker_type === "character"
                 ? npcByName[t.speaker_name] ?? null
                 : null;
+            const groupCopyText = gmGroupTailById.get(t.id);
+            const isGroupTail = groupCopyText !== undefined;
+            const isLastGM =
+              t.id === lastGMTurnId &&
+              session.status === "active" &&
+              !sending;
             bubble = (
               <GMBubbleRow
                 speaker_type={t.speaker_type}
@@ -728,12 +764,9 @@ export default function ScenarioChatView({
                 is_known={resolveIsKnown(t.speaker_type, t.speaker_name)}
                 content={t.content}
                 avatarSrc={resolveAvatar(t.speaker_type, t.speaker_name)}
-                isLastGM={
-                  t.id === lastGMTurnId &&
-                  session.status === "active" &&
-                  !sending
-                }
-                copyText={lastGMTurnCopyText}
+                isGroupTail={isGroupTail}
+                isLastGM={isLastGM}
+                copyText={groupCopyText}
                 onRegenerate={onRegenerate}
                 onDiscard={onDiscard}
                 onAvatarClick={
@@ -742,6 +775,7 @@ export default function ScenarioChatView({
                 elapsedMs={
                   t.id === lastGMTurnId ? elapsedMap?.[t.id] : undefined
                 }
+                logMessageId={t.log_request_id ?? undefined}
               />
             );
           }
@@ -765,6 +799,7 @@ export default function ScenarioChatView({
               is_known={b.is_known}
               content={b.content}
               avatarSrc={resolveAvatar(b.speaker_type, b.speaker_name)}
+              isGroupTail={false}
               isLastGM={false}
               onAvatarClick={
                 npcForAvatar ? () => setNpcDialogTarget(npcForAvatar) : undefined

@@ -543,13 +543,14 @@ export function CharacterAvatar({
 
 /** タグ種別 cls → Tailwindクラスのマッピング。 */
 const TAG_COLORS: Record<string, string> = {
-  "tag-memory":    "bg-violet-950/60 text-violet-300",
-  "tag-narrative": "bg-blue-950/60 text-blue-300",
-  "tag-drift":     "bg-amber-950/60 text-amber-300",
-  "tag-switch":    "bg-teal-950/60 text-teal-300",
-  "tag-recall":    "bg-rose-950/60 text-rose-300",
-  "tag-end":       "bg-ch-s3 text-ch-t2",
-  "tag-unknown":   "bg-ch-s3 text-ch-t3",
+  "tag-memory":     "bg-violet-950/60 text-violet-300",
+  "tag-narrative":  "bg-blue-950/60 text-blue-300",
+  "tag-drift":      "bg-amber-950/60 text-amber-300",
+  "tag-switch":     "bg-teal-950/60 text-teal-300",
+  "tag-recall":     "bg-rose-950/60 text-rose-300",
+  "tag-anticipate": "bg-fuchsia-950/60 text-fuchsia-300",
+  "tag-end":        "bg-ch-s3 text-ch-t2",
+  "tag-unknown":    "bg-ch-s3 text-ch-t3",
 };
 
 /**
@@ -876,9 +877,30 @@ export function MessageActionBar({
     setLogExpanded((e) => !e);
   };
 
+  /** ▼ログ展開時に表示するツール呼び出し一覧。
+   *
+   * メイン行（chat/scenario 等）の tool_calls は `entry.attempts[].tool_calls` に格納される
+   * （再生成複数試行のため）。バブル本体は「最新試行のレスポンス」のみを表示しているので、
+   * ログも `attempts` 末尾 = 最新試行ぶんだけ表示する（過去試行の重複表示を避ける）。
+   * 非メイン行のみのエントリ（chronicle/forget 等）は `attempts` が空なので top-level を使う。
+   */
+  const latestAttempt =
+    entry && entry.attempts && entry.attempts.length > 0
+      ? entry.attempts[entry.attempts.length - 1]
+      : null;
+
+  const toolCalls = latestAttempt
+    ? latestAttempt.tool_calls
+    : (entry?.tool_calls ?? []);
+
+  /** ▼ログ展開時に表示する警告一覧。tool_calls と同様に最新試行のみ。 */
+  const warnings = latestAttempt
+    ? latestAttempt.warnings
+    : (entry?.warnings ?? []);
+
   /** ユニークなタグ cls を収集してバッジ用リストを返す。 */
   const allTagCls = entry
-    ? [...new Set(entry.tool_calls.flatMap((tc) => tc.tags.map((t) => t.meta.cls)))]
+    ? [...new Set(toolCalls.flatMap((tc) => tc.tags.map((t) => t.meta.cls)))]
     : [];
 
   return (
@@ -907,7 +929,7 @@ export function MessageActionBar({
             )}
             {!loading && allTagCls.map((cls, i) => (
               <span key={i} className={`px-1 py-0.5 rounded text-[9px] ${TAG_COLORS[cls] ?? TAG_COLORS["tag-unknown"]}`}>
-                {entry?.tool_calls.flatMap((tc) => tc.tags).find((t) => t.meta.cls === cls)?.meta.label ?? cls}
+                {toolCalls.flatMap((tc) => tc.tags).find((t) => t.meta.cls === cls)?.meta.label ?? cls}
               </span>
             ))}
           </button>
@@ -935,10 +957,10 @@ export function MessageActionBar({
           )}
           {entry && (
             <>
-              {/* tool_calls */}
-              {entry.tool_calls.length > 0 && (
+              {/* tool_calls（attempts 統合済み） */}
+              {toolCalls.length > 0 && (
                 <div className="space-y-1">
-                  {entry.tool_calls.map((tc, i) => (
+                  {toolCalls.map((tc, i) => (
                     <ToolCallRow
                       key={i}
                       tc={tc}
@@ -949,10 +971,10 @@ export function MessageActionBar({
                 </div>
               )}
 
-              {/* warnings */}
-              {entry.warnings.length > 0 && (
+              {/* warnings（attempts 統合済み） */}
+              {warnings.length > 0 && (
                 <div className="space-y-0.5">
-                  {entry.warnings.map((w, i) => (
+                  {warnings.map((w, i) => (
                     <div key={i} className="text-amber-400 text-[10px] flex gap-1.5 items-start">
                       <span className="shrink-0">⚠</span>
                       <span className="break-all">{w.tag}: {w.message}</span>
@@ -962,7 +984,7 @@ export function MessageActionBar({
               )}
 
               {/* tool_callsもwarningsもない場合 */}
-              {entry.tool_calls.length === 0 && entry.warnings.length === 0 && (
+              {toolCalls.length === 0 && warnings.length === 0 && (
                 <div className="text-ch-t4 text-[11px] px-1">ツール呼び出しなし</div>
               )}
             </>
