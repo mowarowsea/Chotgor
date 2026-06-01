@@ -705,6 +705,7 @@ async def save_embedding_settings(
 
     current_google_key = store.get_setting("google_api_key", "")
     current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
+    current_ollama_url = store.get_setting("ollama_base_url", "http://localhost:11434")
     try:
         state = request.app.state
         new_vector_store, new_memory_manager, new_chat_service = await reindex_with_new_embeddings(
@@ -715,6 +716,7 @@ async def save_embedding_settings(
             new_model=embedding_model,
             new_api_key=current_google_key,
             new_base_url=current_infinity_url,
+            new_ollama_base_url=current_ollama_url,
         )
         # 再インデックス後に app.state を新しいインスタンスで更新する
         state.vector_store = new_vector_store
@@ -740,6 +742,7 @@ async def reindex_memories(request: Request):
     current_model = store.get_setting("embedding_model", "")
     current_api_key = store.get_setting("google_api_key", "")
     current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
+    current_ollama_url = store.get_setting("ollama_base_url", "http://localhost:11434")
     try:
         state = request.app.state
         new_vector_store, new_memory_manager, new_chat_service = await reindex_with_new_embeddings(
@@ -750,6 +753,7 @@ async def reindex_memories(request: Request):
             new_model=current_model,
             new_api_key=current_api_key,
             new_base_url=current_infinity_url,
+            new_ollama_base_url=current_ollama_url,
         )
         state.vector_store = new_vector_store
         state.memory_manager = new_memory_manager

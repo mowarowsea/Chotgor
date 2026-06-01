@@ -239,6 +239,9 @@
                     <option value="infinity" {% if settings.get('embedding_provider') == 'infinity' %}selected{% endif %}>
                         infinity / ruri-v3 (ローカル)
                     </option>
+                    <option value="ollama" {% if settings.get('embedding_provider') == 'ollama' %}selected{% endif %}>
+                        Ollama (LLM 用 base_url を流用)
+                    </option>
                 </select>
             </div>
 

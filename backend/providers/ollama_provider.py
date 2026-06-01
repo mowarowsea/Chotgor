@@ -104,6 +104,16 @@ class OllamaProvider(BaseLLMProvider):
         except Exception:
             return []
 
+    @classmethod
+    async def list_embedding_models(cls, settings: dict) -> list[dict]:
+        """ローカル Ollama サーバから embedding 候補モデル一覧を取得して返す。
+
+        Ollama 側には「embedding 専用」フラグが無いので、``/api/tags`` で取れる
+        全モデルをそのまま列挙する（``list_models`` と同じ実装に委譲）。
+        ユーザが UI 上で bge-m3 等の embedding モデルを選ぶ前提。
+        """
+        return await cls.list_models(settings)
+
     def _build_messages(self, messages: list[dict]) -> list[dict]:
         """messagesリストをOllama chat形式（user/assistantのみ）に変換する内部ヘルパー。
 

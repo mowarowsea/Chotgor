@@ -111,6 +111,50 @@ class InfinityEmbeddingFunction:
         return self._embed(prefixed)
 
 
+class OllamaEmbeddingFunction:
+    """Ollama サーバの ``POST /api/embed`` を使う embedding fn 実装。
+
+    Ollama の embed API は文書／クエリの区別を持たない（prefix も不要）。
+    bge-m3 等のモデルを ``ollama pull`` 済み前提で、Chotgor 側からは LLM と同じ
+    ``ollama_base_url`` を流用する。
+    """
+
+    def __init__(self, model: str = "bge-m3", base_url: str = "http://localhost:11434"):
+        """初期化。
+
+        Args:
+            model: Ollama 上で提供する embedding モデル名（例: ``bge-m3``）。
+            base_url: Ollama サーバの BaseURL（例: ``http://localhost:11434``）。
+        """
+        self._model = model
+        self._base_url = base_url.rstrip("/")
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        """テキストリストを ``/api/embed`` でベクトル化する（バッチ可）。
+
+        Ollama の ``/api/embed`` は ``input`` に list/str 両方を受け付ける。
+        list を渡すと ``embeddings`` も同順で list 返却される。
+
+        Args:
+            texts: 文書テキストのリスト。
+
+        Returns:
+            各テキストに対応する embedding ベクトルのリスト。
+        """
+        import json
+        import urllib.request
+
+        payload = json.dumps({"model": self._model, "input": list(texts)}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self._base_url}/api/embed",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        return list(result["embeddings"])
+
+
 class GeminiEmbeddingFunction:
     """Google Gemini Embedding を使用する embedding fn 実装。
 
@@ -147,17 +191,20 @@ def get_embedding_function(
     model: str,
     api_key: str,
     base_url: str = "http://localhost:7997",
+    ollama_base_url: str = "http://localhost:11434",
 ) -> EmbeddingFunction | None:
     """プロバイダー名から EmbeddingFunction を解決する。
 
     LanceStore は ``"default"`` を非サポート（None を返すと初期化エラーになる）。
-    実用上は ``"infinity"`` か ``"google"`` を指定する。
+    実用上は ``"infinity"`` / ``"google"`` / ``"ollama"`` のいずれかを指定する。
 
     Args:
-        provider: ``"google"`` / ``"infinity"`` / その他は None。
+        provider: ``"google"`` / ``"infinity"`` / ``"ollama"`` / その他は None。
         model: embedding モデル ID。空の場合はプロバイダーのデフォルトを使用。
-        api_key: プロバイダーの API キー（infinity の場合は未使用）。
+        api_key: プロバイダーの API キー（infinity/ollama の場合は未使用）。
         base_url: infinity サーバーの BaseURL（infinity の場合のみ使用）。
+        ollama_base_url: Ollama サーバーの BaseURL（ollama の場合のみ使用）。
+            LLM 用と同じ Ollama インスタンスを流用する想定。
 
     Returns:
         EmbeddingFunction の実装。未対応プロバイダーの場合は None。
@@ -171,5 +218,10 @@ def get_embedding_function(
         return InfinityEmbeddingFunction(
             model=model or "cl-nagoya/ruri-v3-310m",
             base_url=base_url,
+        )
+    if provider == "ollama":
+        return OllamaEmbeddingFunction(
+            model=model or "bge-m3",
+            base_url=ollama_base_url,
         )
     return None

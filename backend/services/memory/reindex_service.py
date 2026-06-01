@@ -25,7 +25,8 @@ async def reindex_with_new_embeddings(
     new_provider: str,
     new_model: str,
     new_api_key: str,
-    new_base_url: str = "http://localhost:11434",
+    new_base_url: str = "http://localhost:7997",
+    new_ollama_base_url: str = "http://localhost:11434",
 ) -> tuple[LanceStore, InscribedMemoryManager, ChatService]:
     """embedding モデル変更時に全キャラクターの保存記憶・履歴・定義を再インデックスする。
 
@@ -38,20 +39,23 @@ async def reindex_with_new_embeddings(
         sqlite: SQLite ストアインスタンス。
         vector_store: 現在の LanceStore インスタンス（embedding fn が差し替えられて再利用される）。
         working_memory_manager: WorkingMemoryManager インスタンス（ChatService 再生成に使用）。
-        new_provider: 新しい embedding プロバイダー（``"infinity"`` / ``"google"``）。
+        new_provider: 新しい embedding プロバイダー（``"infinity"`` / ``"google"`` / ``"ollama"``）。
         new_model: 新しい embedding モデル ID（空の場合はプロバイダーのデフォルト）。
         new_api_key: 新しい API キー。
         new_base_url: infinity サーバーの BaseURL（infinity の場合のみ使用）。
+        new_ollama_base_url: Ollama サーバーの BaseURL（ollama の場合のみ使用、LLM 用と流用）。
 
     Returns:
         ``(vector_store, new_memory_manager, new_chat_service)`` のタプル。
         vector_store は引数で受け取ったものを embedding fn 差し替えで再利用したもの。
     """
-    new_embedding_fn = get_embedding_function(new_provider, new_model, new_api_key, new_base_url)
+    new_embedding_fn = get_embedding_function(
+        new_provider, new_model, new_api_key, new_base_url, new_ollama_base_url,
+    )
     if new_embedding_fn is None:
         raise ValueError(
             f"未対応の embedding provider: {new_provider!r}。"
-            "infinity または google を指定すること。"
+            "infinity / google / ollama のいずれかを指定すること。"
         )
 
     def _do_reindex() -> dict:
