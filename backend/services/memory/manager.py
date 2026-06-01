@@ -144,6 +144,10 @@ class InscribedMemoryManager:
         if force_insert:
             # forget 蒸留バッチ用パス: 類似検索をスキップして必ず新規 ID で挿入する。
             existing_id = None
+            logger.info(
+                "write_inscribed_memory: force_insert=True により類似検索スキップ char=%s category=%s",
+                character_id, category,
+            )
         else:
             # カテゴリ別の更新判定閾値
             # identity は自己定義に関わる記憶のため、ほぼ同文（距離 < 0.05）のみ上書きする
@@ -158,6 +162,10 @@ class InscribedMemoryManager:
             )
 
         if existing_id:
+            logger.info(
+                "write_inscribed_memory: 類似既存記憶あり → in-place 上書き char=%s category=%s existing_id=%s",
+                character_id, category, existing_id,
+            )
             # 既存 ID を再利用して in-place 更新する。SQLite 側を先に確定させる。
             updated = self.sqlite.update_inscribed_memory_for_overwrite(
                 memory_id=existing_id,
@@ -183,6 +191,10 @@ class InscribedMemoryManager:
         if not existing_id:
             # 新規作成: まず SQLite にコミットしてから LanceStore へ書き込む
             memory_id = str(uuid.uuid4())
+            logger.info(
+                "write_inscribed_memory: 新規 UUID 作成 char=%s category=%s memory_id=%s force_insert=%s",
+                character_id, category, memory_id, force_insert,
+            )
             self.sqlite.create_inscribed_memory(
                 memory_id=memory_id,
                 character_id=character_id,

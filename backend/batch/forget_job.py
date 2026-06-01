@@ -80,7 +80,11 @@ async def run_forget_process(
     # tool-use対応プロバイダーは蒸留方式（MCPループ）で処理する。
     # 蒸留結果は新規記憶として保存され、続く全件削除で候補と一緒に消えないよう、
     # batch_context.force_insert_memory=True で類似既存への上書きをスキップする。
-    logger.debug("蒸留ループ呼び出し char=%s candidates=%d", char_label, len(candidates))
+    forget_batch_context = {"force_insert_memory": True}
+    logger.info(
+        "forget 蒸留ループ開始 char=%s candidates=%d batch_context=%s",
+        char_label, len(candidates), forget_batch_context,
+    )
     distilled = await ask_character_with_tools(
         character_id=character_id,
         preset_id=ghost_model,
@@ -90,7 +94,11 @@ async def run_forget_process(
         memory_manager=memory_manager,
         feature_label="forget",
         working_memory_manager=wm,
-        batch_context={"force_insert_memory": True},
+        batch_context=forget_batch_context,
+    )
+    logger.info(
+        "forget 蒸留ループ完了 char=%s distilled=%s（True=tool-useループ完走、False=非対応/エラー fallback）",
+        char_label, distilled,
     )
 
     if distilled:

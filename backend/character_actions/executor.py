@@ -217,6 +217,11 @@ class ToolExecutor:
         上書きをスキップして必ず新規 UUID で挿入する（forget 蒸留バッチ専用パス）。
         """
         force_insert = bool(self.batch_context.get("force_insert_memory", False))
+        # force_insert の経路追跡用ログ。バッチ起因のフラグが ToolExecutor まで伝搬しているかをここで可視化する。
+        self.logger.info(
+            "inscribe_memory 呼び出し char=%s category=%s impact=%.2f batch_context=%s force_insert=%s",
+            self.character_id, category, impact, dict(self.batch_context), force_insert,
+        )
         try:
             self._inscriber.inscribe_memory(content, category, impact, force_insert=force_insert)
             self.logger.info(
