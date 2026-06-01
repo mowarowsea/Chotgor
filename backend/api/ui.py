@@ -1,6 +1,7 @@
 """設定 UI ルーター（Jinja2 テンプレート使用）。"""
 
 import base64
+import logging
 import uuid
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -11,6 +12,8 @@ from backend.providers.registry import (
     PROVIDER_LABELS,
     PROVIDER_ORDER,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -681,49 +684,47 @@ async def save_embedding_settings(
     embedding_model: str = Form(""),
     infinity_base_url: str = Form("http://localhost:7997"),
 ):
-    """embedding 設定を保存し、変更時は全記憶を再インデックスする。
+    """embedding 設定を保存し、明示的に全記憶を再インデックスする。
 
     再インデックスは重い処理かつ後戻りしにくいため、自動保存ではなく
     明示的なボタン操作（通常のフォーム送信）でのみ実行する。
+    ボタン名が「保存して再インデックス」のため、保存値の差分有無に関わらず
+    ボタンが押された時点で常に再インデックスを実行する（UI 文言との一貫性）。
     """
     store = request.app.state.sqlite
-
-    # embedding設定の変更を検出（保存前に現在値を取得）
-    old_embedding_provider = store.get_setting("embedding_provider", "default")
-    old_embedding_model = store.get_setting("embedding_model", "")
 
     store.set_setting("embedding_provider", embedding_provider)
     store.set_setting("embedding_model", embedding_model)
     if infinity_base_url.strip():
         store.set_setting("infinity_base_url", infinity_base_url.strip())
 
-    # embeddingモデルが変更された場合は全記憶を再インデックスする
-    embedding_changed = (
-        embedding_provider != old_embedding_provider
-        or embedding_model != old_embedding_model
-    )
-    if embedding_changed:
-        current_google_key = store.get_setting("google_api_key", "")
-        current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
-        try:
-            state = request.app.state
-            new_vector_store, new_memory_manager, new_chat_service = await reindex_with_new_embeddings(
-                sqlite=state.sqlite,
-                vector_store=state.vector_store,
-                working_memory_manager=state.working_memory_manager,
-                new_provider=embedding_provider,
-                new_model=embedding_model,
-                new_api_key=current_google_key,
-                new_base_url=current_infinity_url,
-            )
-            # 再インデックス後に app.state を新しいインスタンスで更新する
-            state.vector_store = new_vector_store
-            state.memory_manager = new_memory_manager
-            state.chat_service = new_chat_service
-        except Exception:
-            return RedirectResponse(url="/ui/settings?saved=1&reindex_error=1", status_code=303)
+    # 「保存して再インデックス」ボタン押下＝常に再インデックス。
+    # default プロバイダーは EmbeddingFunction を提供できないため skip する。
+    if embedding_provider == "default":
+        return RedirectResponse(url="/ui/settings?saved=1", status_code=303)
 
-    return RedirectResponse(url="/ui/settings?saved=1", status_code=303)
+    current_google_key = store.get_setting("google_api_key", "")
+    current_infinity_url = store.get_setting("infinity_base_url", "http://localhost:7997")
+    try:
+        state = request.app.state
+        new_vector_store, new_memory_manager, new_chat_service = await reindex_with_new_embeddings(
+            sqlite=state.sqlite,
+            vector_store=state.vector_store,
+            working_memory_manager=state.working_memory_manager,
+            new_provider=embedding_provider,
+            new_model=embedding_model,
+            new_api_key=current_google_key,
+            new_base_url=current_infinity_url,
+        )
+        # 再インデックス後に app.state を新しいインスタンスで更新する
+        state.vector_store = new_vector_store
+        state.memory_manager = new_memory_manager
+        state.chat_service = new_chat_service
+    except Exception:
+        logger.exception("embedding 設定変更時の再インデックスに失敗")
+        return RedirectResponse(url="/ui/settings?saved=1&reindex_error=1", status_code=303)
+
+    return RedirectResponse(url="/ui/settings?saved=1&reindex_done=1", status_code=303)
 
 
 @router.post("/settings/reindex")
