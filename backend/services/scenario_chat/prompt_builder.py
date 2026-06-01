@@ -230,6 +230,7 @@ def _replace_template_tags(
         {npcs_summary}     - 既知NPC のリスト（簡潔版）
         {auto_synopsis}    - 自動要約あらすじ
         {synopsis_manual}  - プレイヤー補足メモ（条件付き）
+        {previous_anticipation} - GMが考える次の展開の期待
         {npc_details}      - NPC詳細
         {history_block}    - 直近の履歴テキスト
     """
@@ -240,24 +241,14 @@ def _replace_template_tags(
 
     # プレイヤー補足メモのブロック化
     if synopsis_manual_text:
-        manual_body = (
-            "以下はプレイヤーが手で書き留めた補足メモです。"
-            "「これまでのあらすじ」と矛盾する場合はこちらを正とすること。\n\n"
-            f"{synopsis_manual_text}"
-        )
-        synopsis_manual_formatted = f"# プレイヤーからの補足メモ\n{manual_body}"
+        synopsis_manual_formatted = f"{synopsis_manual_text}"
     else:
         synopsis_manual_formatted = ""
 
-    # 前回ターンで GM（語り手）が書いた予想（ANTICIPATE_RESPONSE）の整形
+    # 前回ターンで GM（語り手）が書いた期待（ANTICIPATE_RESPONSE）の整形
     previous_anticipation_text = (previous_anticipation or "").strip()
     if previous_anticipation_text:
-        previous_anticipation_formatted = (
-            "# 前回のあなた（語り手）の予想\n"
-            "前回あなたは、このあとの展開をこう予想していました。"
-            "予想と実際の展開のズレも意識して進行してください。\n\n"
-            f"{previous_anticipation_text}"
-        )
+        previous_anticipation_formatted = f"{previous_anticipation_text}"
     else:
         previous_anticipation_formatted = ""
 
@@ -298,7 +289,14 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 # これまでのあらすじ
 {auto_synopsis}
 
+# プレイヤーからの補足メモ
+以下はプレイヤーが手で書き留めた補足メモです。
+「これまでのあらすじ」と矛盾する場合はこちらを正とすること。
+
 {synopsis_manual}
+
+# 前回のあなた（語り手）の期待
+前回あなたは、このあとの展開をこう期待していました。期待と実際の展開のズレも意識して進行してください。
 
 {previous_anticipation}
 

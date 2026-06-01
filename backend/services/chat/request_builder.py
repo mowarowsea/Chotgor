@@ -278,14 +278,14 @@ def _build_inner_narrative_block(inner_narrative: str) -> str:
 
 
 def _build_previous_anticipation_block(previous_anticipation: str) -> str:
-    """前ターンでキャラクター自身が書いた予想（期待）ブロックを返す。
+    """前ターンでキャラクター自身が書いた期待（予想）ブロックを返す。
 
-    前回の応答末尾の [ANTICIPATE_RESPONSE:...] から抽出した予想文字列を、
-    「前回のあなたの予想」としてキャラクター本人に提示する。予想と実際の展開の
+    前回の応答末尾の [ANTICIPATE_RESPONSE:...] から抽出した期待文字列を、
+    「前回のあなたの期待」としてキャラクター本人に提示する。期待と実際の展開の
     ズレを意識させることで、応答の連続性・深みを引き出す狙い。空なら空文字列を返す。
 
     Args:
-        previous_anticipation: 前ターンで抽出した予想文字列（空なら非表示）。
+        previous_anticipation: 前ターンで抽出した期待文字列（空なら非表示）。
 
     Returns:
         システムプロンプトに挿入するブロック。空なら空文字列。
@@ -293,7 +293,7 @@ def _build_previous_anticipation_block(previous_anticipation: str) -> str:
     text = (previous_anticipation or "").strip()
     if not text:
         return ""
-    return f"## 前回のあなたの予想（期待）\n\n前回あなたは、このあとの展開をこう予想していました：\n\n> {text}"
+    return f"## 前回のあなたの期待（予想）\n\n前回あなたは、このあとの展開をこう期待していました：\n\n> {text}"
 
 
 def _build_switch_angle_block(
