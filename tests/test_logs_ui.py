@@ -243,6 +243,22 @@ class TestParseTagBody:
         assert result["meta"]["cls"] == "tag-unknown"
         assert result["meta"]["label"] == "UNKNOWN_TAG"
 
+    def test_anticipate_response_body_is_expectation(self):
+        """ANTICIPATE_RESPONSE: body 全体が fields["予想"] に入り、preview もそれになること。
+
+        キャラクター本人が返答末尾に書いた「次の展開への予想・期待」テキストを
+        ▼ログパネルで表示するためのタグ。tool-use 化していない全プロバイダー一律タグ方式。
+        """
+        result = _parse_tag_body(
+            "ANTICIPATE_RESPONSE",
+            "ユーザはきっと喜ぶに違いない",
+        )
+        assert result["tag_name"] == "ANTICIPATE_RESPONSE"
+        assert result["fields"]["予想"] == "ユーザはきっと喜ぶに違いない"
+        assert result["preview"] == "ユーザはきっと喜ぶに違いない"
+        assert result["meta"]["label"] == "予想"
+        assert result["meta"]["cls"] == "tag-anticipate"
+
 
 # ─── _extract_tags_from_file ─────────────────────────────────────────────────
 
@@ -351,6 +367,24 @@ class TestExtractTagsFromFile:
         # ツール呼び出しが優先されるため、タグ方式の「タグ記憶」は含まれない
         assert len(tags) == 1
         assert tags[0]["fields"]["内容"] == "ツール記憶"
+
+    def test_anticipate_response_tag_extracted(self, tmp_path):
+        """[ANTICIPATE_RESPONSE:...] タグが抽出されること。
+
+        anticipator.py は意図的にこのタグを TOOL_TO_TAG へ登録しないが、
+        ▼ログ パネルで結果を表示するため _KNOWN_TAG_NAMES に独立して追加されている。
+        その抽出経路の動作確認。
+        """
+        f = tmp_path / "response.log"
+        f.write_text(
+            "応答本文[ANTICIPATE_RESPONSE:次は深い話をしたい]終わり",
+            encoding="utf-8",
+        )
+        tags = _extract_tags_from_file(f)
+        assert len(tags) == 1
+        assert tags[0]["tag_name"] == "ANTICIPATE_RESPONSE"
+        assert tags[0]["fields"]["予想"] == "次は深い話をしたい"
+        assert tags[0]["meta"]["cls"] == "tag-anticipate"
 
     def test_tag_fallback_when_file_has_only_plain_text_tags(self, tmp_path):
         """tag-fallback設計: JSON/stream-json のツール呼び出しがなければタグパースにフォールバックすること。

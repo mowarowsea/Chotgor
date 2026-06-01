@@ -1,8 +1,20 @@
 """CharacterAction（ツール）のタグ変換ロジック。
 
-各 CharacterAction のツール名・タグ名・引数フォーマットを集約し、
-tool-use 形式の関数呼び出し結果をログ表示用のタグ本体文字列に変換する。
+各 CharacterAction のツール名・タグ名・引数フォーマット、および
+ログ表示用のラベル/色クラスを集約する。
+
+- TOOL_TO_TAG:  MCP/関数呼び出しのツール名 → タグ名のマッピング
+- TAG_META:     タグ名 → ログ表示用メタ情報（label / cls）
+- tool_call_to_structured_tag():
+    tool-use 形式の (name, args) を表示用構造化辞書
+    {tag_name, meta, fields, preview} に変換する。
+
 このモジュールはフォーマット定義のみを持ち、DBアクセスや実行ロジックを含まない。
+
+【ANTICIPATE_RESPONSE について】
+[ANTICIPATE_RESPONSE:...] は tool-use 化していない全プロバイダー一律タグ方式である
+（`anticipator.py` を参照）。そのため TOOL_TO_TAG には登録しないが、ログ表示メタは
+他のタグと一元管理したいので TAG_META には含める。
 """
 
 # ツール名（APIの function_call.name）→ タグ名のマッピング
@@ -15,55 +27,102 @@ TOOL_TO_TAG: dict[str, str] = {
     "power_recall":    "POWER_RECALL",
 }
 
+# タグ名 → 表示メタ（チャットバブルの▼ログパネルや Logs 画面のバッジで使用）
+TAG_META: dict[str, dict[str, str]] = {
+    "INSCRIBE_MEMORY":     {"label": "記憶",            "cls": "tag-memory"},
+    "CARVE_NARRATIVE":     {"label": "ナラティブ",      "cls": "tag-narrative"},
+    "DRIFT":               {"label": "ドリフト",        "cls": "tag-drift"},
+    "DRIFT_RESET":         {"label": "ドリフトリセット", "cls": "tag-drift"},
+    "SWITCH_ANGLE":        {"label": "アングル切替",    "cls": "tag-switch"},
+    "POWER_RECALL":        {"label": "強想起",          "cls": "tag-recall"},
+    "END_SESSION":         {"label": "セッション終了",  "cls": "tag-end"},
+    "ANTICIPATE_RESPONSE": {"label": "予想",            "cls": "tag-anticipate"},
+}
 
-def tool_call_to_tag_body(tool_name: str, args: dict) -> tuple[str, str]:
-    """ツール呼び出しを (tag_name, tag_body) に変換する。
 
-    tag_body はタグ方式のパイプ区切りフォーマット（例: "contextual|1.5|内容テキスト"）。
-    logs_ui._parse_tag_body に渡すことで統一的に表示できる。
-    未登録のツール名は大文字化してタグ名とし、引数を key=value 形式で結合する。
+def _bare_tool_name(tool_name: str) -> str:
+    """MCP ネームスペースプレフィックス（"mcp__<server>__"）を除去する。
 
-    Claude CLI が出力する stream-json ではツール名に MCP ネームスペースプレフィックスが付く
-    （例: "mcp__chotgor__inscribe_memory"）ため、`__` で区切った末尾部分を使う。
+    Claude CLI が出力する stream-json では、ツール名に
+    "mcp__<server_name>__<tool_name>" 形式のプレフィックスが付く。
+    `__` で区切った末尾部分を返すことで素のツール名に正規化する。
+    """
+    return tool_name.rsplit("__", 1)[-1] if "__" in tool_name else tool_name
+
+
+def _make_tag(tag_name: str, fields: dict[str, str], preview: str) -> dict:
+    """タグ表示用辞書 {tag_name, meta, fields, preview} を組み立てる共通ヘルパ。
+
+    `meta` は TAG_META からの参照に失敗した場合は tag-unknown にフォールバックする。
+    """
+    meta = TAG_META.get(tag_name, {"label": tag_name, "cls": "tag-unknown"})
+    return {
+        "tag_name": tag_name,
+        "meta": meta,
+        "fields": fields,
+        "preview": preview,
+    }
+
+
+def tool_call_to_structured_tag(tool_name: str, args: dict) -> dict:
+    """tool-use 形式の (name, args) を表示用構造化辞書に変換する。
+
+    戻り値は ``{tag_name, meta, fields, preview}`` の辞書で、
+    `logs_ui._parse_tag_body` がタグ方式（テキスト解析）で返すのと同じ形式。
+    タグ方式と tool-use 方式の両方を同じ表示部品（フロントの ToolCallRow）で
+    扱えるようにするための共通フォーマット。
 
     Args:
-        tool_name: ツール名（APIの function_call.name フィールド）。
+        tool_name: ツール名（function_call.name フィールド）。
                    MCP プレフィックス付き ("mcp__<server>__<name>") にも対応する。
-        args: ツール引数辞書（APIレスポンスの args / input フィールド）。
+        args: ツール引数辞書（function_call.args / input フィールド）。
 
     Returns:
-        (tag_name, body) のタプル。
+        ``{tag_name, meta, fields, preview}`` の辞書。
     """
-    # "mcp__chotgor__inscribe_memory" → "inscribe_memory"（プレフィックスを除去）
-    bare_name = tool_name.rsplit("__", 1)[-1] if "__" in tool_name else tool_name
-    tag_name = TOOL_TO_TAG.get(bare_name, bare_name.upper())
+    bare = _bare_tool_name(tool_name)
+    tag_name = TOOL_TO_TAG.get(bare, bare.upper())
 
     if tag_name == "INSCRIBE_MEMORY":
-        # [INSCRIBE_MEMORY:category|impact|content]
-        body = f"{args.get('category', '')}|{args.get('impact', '')}|{args.get('content', '')}"
+        fields = {
+            "カテゴリ": str(args.get("category", "")),
+            "重要度":   str(args.get("impact", "")),
+            "内容":     str(args.get("content", "")),
+        }
+        return _make_tag(tag_name, fields, fields["内容"])
 
-    elif tag_name == "CARVE_NARRATIVE":
-        # [CARVE_NARRATIVE:mode|content]
-        body = f"{args.get('mode', 'append')}|{args.get('content', '')}"
+    if tag_name == "CARVE_NARRATIVE":
+        fields = {
+            "モード": str(args.get("mode", "append")),
+            "内容":   str(args.get("content", "")),
+        }
+        return _make_tag(tag_name, fields, fields["内容"])
 
-    elif tag_name == "DRIFT":
-        # [DRIFT:content]
-        body = str(args.get("content", ""))
+    if tag_name == "DRIFT":
+        fields = {"内容": str(args.get("content", ""))}
+        return _make_tag(tag_name, fields, fields["内容"])
 
-    elif tag_name == "DRIFT_RESET":
-        # [DRIFT_RESET] — 引数なし
-        body = ""
+    if tag_name == "DRIFT_RESET":
+        # 引数なしツール。固定マーカーで表示する。
+        return _make_tag(tag_name, {"内容": "(リセット)"}, "(リセット)")
 
-    elif tag_name == "SWITCH_ANGLE":
-        # [SWITCH_ANGLE:preset_name|self_instruction]
-        body = f"{args.get('preset_name', '')}|{args.get('self_instruction', '')}"
+    if tag_name == "SWITCH_ANGLE":
+        fields = {
+            "プリセット":   str(args.get("preset_name", "")),
+            "コンテキスト": str(args.get("self_instruction", "")),
+        }
+        # preview は文脈の方（コンテキスト）を優先、なければプリセット名にフォールバック。
+        preview = fields["コンテキスト"] or fields["プリセット"]
+        return _make_tag(tag_name, fields, preview)
 
-    elif tag_name == "POWER_RECALL":
-        # [POWER_RECALL:query|top_k]
-        body = f"{args.get('query', '')}|{args.get('top_k', 5)}"
+    if tag_name == "POWER_RECALL":
+        fields = {
+            "クエリ": str(args.get("query", "")),
+            "top_k":  str(args.get("top_k", 5)),
+        }
+        return _make_tag(tag_name, fields, fields["クエリ"])
 
-    else:
-        # 未知のツール: キー=値形式でフォールバック
-        body = "|".join(f"{k}={v}" for k, v in args.items())
-
-    return (tag_name, body)
+    # 未知ツール: 引数の key/value をそのまま fields に並べる
+    fields = {k: str(v) for k, v in args.items()}
+    preview = " / ".join(f"{k}={v}" for k, v in fields.items())
+    return _make_tag(tag_name, fields, preview)

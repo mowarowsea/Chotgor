@@ -780,7 +780,27 @@ export interface LogWarning {
   file: string;
 }
 
-/** デバッグログの1リクエスト分のエントリ。 */
+/** 1試行（メイン行 chat/scenario 等）の詳細データ。再生成すると同 request_id に複数 attempt が並ぶ。 */
+export interface LogAttempt {
+  index: number;
+  preset: string;
+  response: string;
+  reasoning: string;
+  dt_str: string;
+  has_error: boolean;
+  warn_reason: string;
+  tool_calls: LogToolCall[];
+  warnings: LogWarning[];
+  files: string[];
+  dir_id: string;
+}
+
+/** デバッグログの1リクエスト分のエントリ。
+ *
+ * `attempts` にメイン行（chat/scenario 等）の試行詳細が入る。
+ * top-level の `tool_calls` / `warnings` は非メイン行（chronicle/forget 等、
+ * メイン行が無いエントリ）の旧来互換フィールド。
+ */
 export interface LogEntry {
   /** debug フォルダ名（8桁 hex）。 */
   message_id: string;
@@ -797,6 +817,8 @@ export interface LogEntry {
   warnings: LogWarning[];
   files: string[];
   has_error: boolean;
+  /** メイン行の試行詳細リスト。再生成で複数試行ある場合は length > 1。 */
+  attempts?: LogAttempt[];
 }
 
 /**

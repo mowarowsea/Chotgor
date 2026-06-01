@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
 from backend.character_actions import tool_tags
+from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_NAME
 from backend.lib.tag_parser import parse_tags
 
 router = APIRouter(prefix="/ui/logs", tags=["logs-ui"])
@@ -35,24 +36,16 @@ _FILE_PATTERN = re.compile(r"^\d+_(.+?)_(Request|Response)_(.+)\.log$")
 # 警告ファイルパターン: "03_Warning_context_window.log"
 _FILE_PATTERN_WARNING = re.compile(r"^\d+_Warning_(.+)\.log$")
 
-# タグとして認識する名前一覧（tool_tags.TOOL_TO_TAG.values() と同一セットを維持する）
-_KNOWN_TAG_NAMES = list(tool_tags.TOOL_TO_TAG.values())
+# タグとして認識する名前一覧。
+# - tool_tags.TOOL_TO_TAG.values(): MCP/関数呼び出しから抽出されるタグ
+# - ANTICIPATE_RESPONSE: tool-use 化していない全プロバイダー一律のテキストタグ
+#   （anticipator.py の設計意図に従う）
+_KNOWN_TAG_NAMES = list(tool_tags.TOOL_TO_TAG.values()) + [ANTICIPATE_RESPONSE_TAG_NAME]
 
 # debug_logger._unescape_text() が JSON 文字列値内の \\n を実際の改行に展開するため、
 # バックスラッシュ直後の改行（\<LF>）が不正 JSON エスケープになる場合がある。
 # このパターンで前処理し json.loads(strict=False) に渡す。
 _BACKSLASH_NEWLINE_RE = re.compile(r"\\\n")
-
-# タグ名→表示ラベル・バッジ色クラスのマッピング
-_TAG_META: dict[str, dict] = {
-    "INSCRIBE_MEMORY":  {"label": "記憶",      "cls": "tag-memory"},
-    "CARVE_NARRATIVE":  {"label": "ナラティブ", "cls": "tag-narrative"},
-    "DRIFT":            {"label": "ドリフト",   "cls": "tag-drift"},
-    "DRIFT_RESET":      {"label": "ドリフトリセット", "cls": "tag-drift"},
-    "SWITCH_ANGLE":     {"label": "アングル切替", "cls": "tag-switch"},
-    "POWER_RECALL":     {"label": "強想起",     "cls": "tag-recall"},
-    "END_SESSION":      {"label": "セッション終了", "cls": "tag-end"},
-}
 
 # UIテンプレートインスタンス（main.py から注入される）
 templates: Jinja2Templates | None = None
@@ -132,9 +125,11 @@ def _build_char_index() -> dict[str, str]:
 
 
 def _parse_tag_body(tag_name: str, body: str) -> dict:
-    """タグ本体文字列を構造化辞書に変換する。
+    """タグ本体文字列（タグ方式プロバイダーのテキストタグ）を構造化辞書に変換する。
 
     タグ種別ごとに `|` 区切りのフィールドを解釈し、表示用のサブフィールドを返す。
+    tool-use 形式の表示には `tool_tags.tool_call_to_structured_tag()` を使う
+    （こちらは引数 dict を直接受けるため文字列分割を経由しない）。
 
     Args:
         tag_name: タグ名 (例: "INSCRIBE_MEMORY")。
@@ -143,7 +138,7 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
     Returns:
         表示用フィールド辞書。tag_name / meta / fields / preview を含む。
     """
-    meta = _TAG_META.get(tag_name, {"label": tag_name, "cls": "tag-unknown"})
+    meta = tool_tags.TAG_META.get(tag_name, {"label": tag_name, "cls": "tag-unknown"})
     fields: dict[str, str] = {}
 
     if tag_name == "INSCRIBE_MEMORY":
@@ -165,6 +160,10 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
         fields["プリセット"] = parts[0] if len(parts) > 0 else ""
         fields["コンテキスト"] = parts[1] if len(parts) > 1 else ""
 
+    elif tag_name == "ANTICIPATE_RESPONSE":
+        # body 全体がキャラクター本人の予想・期待テキスト
+        fields["予想"] = body
+
     elif tag_name in ("DRIFT", "POWER_RECALL", "END_SESSION"):
         # body がそのまま内容
         fields["内容"] = body
@@ -173,8 +172,13 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
         # 固定マーカー、body は空
         fields["内容"] = "(リセット)"
 
-    # preview: "内容" → SWITCH_ANGLE は "コンテキスト" → 最終フォールバックは body
-    preview = fields.get("内容") or fields.get("コンテキスト") or body
+    # preview: "内容" / "予想" → SWITCH_ANGLE は "コンテキスト" → 最終フォールバックは body
+    preview = (
+        fields.get("内容")
+        or fields.get("予想")
+        or fields.get("コンテキスト")
+        or body
+    )
 
     return {
         "tag_name": tag_name,
@@ -296,8 +300,9 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
     for name, args in function_calls:
         if not name:
             continue
-        tag_name, body = tool_tags.tool_call_to_tag_body(name, args)
-        results.append(_parse_tag_body(tag_name, body))
+        # 構造化辞書を直接組み立てる（文字列 body を経由しない）。
+        # タグ方式（テキストタグ）のフォールバック経路は引き続き _parse_tag_body を使う。
+        results.append(tool_tags.tool_call_to_structured_tag(name, args))
     return results
 
 
@@ -1017,12 +1022,14 @@ async def get_log_entry(log_message_id: str):
     if not re.fullmatch(r"[0-9a-f]{8}", log_message_id):
         raise HTTPException(status_code=400, detail="不正なlog_message_idです")
 
-    # DB から取得を試みる
+    # DB から取得を試みる。
+    # 単一エントリ詳細取得 API なので skip_files=False（一覧高速表示の logs_ui とは違い、
+    # tool_calls の tags まで含めた完全な情報をフロントに返す必要がある）。
     sqlite = _sqlite_store()
     if sqlite is not None:
         rows = sqlite.get_debug_log_entries_by_request_id(log_message_id)
         if rows:
-            entry = _build_entry_from_db_rows(rows)
+            entry = _build_entry_from_db_rows(rows, skip_files=False)
             entry_json = {k: v for k, v in entry.items() if k != "dt"}
             return {"entry": entry_json, "debug_enabled": True}
 
