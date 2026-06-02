@@ -514,7 +514,7 @@ class TestSynopsisIntoSystemPrompt:
 
     @pytest.mark.asyncio
     async def test_empty_synopsis_omits_block(self):
-        """synopsis を渡さない場合は両方ともブロックが省略されること（後方互換）。"""
+        """synopsis を渡さない場合は見出しの内容部分が空になること。"""
         chunks = [("text", "@Narrator: 通常ターン。\n")]
         engine, provider = _make_engine(chunks)
         await _collect(
@@ -528,5 +528,7 @@ class TestSynopsisIntoSystemPrompt:
             )
         )
         sp = provider.received_system_prompt or ""
+        # 見出しは常にテンプレートに含まれるが、内容部分は空になる
         assert "# これまでのあらすじ" not in sp
-        assert "# プレイヤーからの補足メモ" not in sp
+        # プレイヤー補足メモの見出しと説明文は常に出力される（説明文が空でないため削除されない）
+        assert "# プレイヤーからの補足メモ" in sp

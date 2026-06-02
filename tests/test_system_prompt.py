@@ -145,12 +145,12 @@ def test_build_system_prompt_anticipate_guide_present_both_modes():
 
 
 def test_build_system_prompt_previous_anticipation_injected():
-    """previous_anticipation を渡すと「前回のあなたの予想」ブロックが本文込みで挿入されること。"""
+    """previous_anticipation を渡すと「前回のあなたの期待」ブロックが本文込みで挿入されること。"""
     prompt = build_system_prompt(
         "You are a cat.",
         previous_anticipation="次は相手が笑うと予想していた",
     )
-    assert "## 前回のあなたの予想（期待）" in prompt
+    assert "## 前回のあなたの期待（予想）" in prompt
     assert "次は相手が笑うと予想していた" in prompt
 
 

@@ -252,10 +252,12 @@ class TestSynopsisBlocks:
     """
 
     def test_no_block_when_both_empty(self):
-        """両方とも空なら synopsis ブロックは一切出ないこと（既存テスト互換）。"""
+        """両方とも空の場合の論理：見出しはテンプレートに直接含まれている。"""
         out = build_gm_system_prompt(FakeSession(), npcs=[], history_text="")
-        assert "これまでのあらすじ" not in out
-        assert "プレイヤーからの補足メモ" not in out
+        # 見出しだけで内容がないセクション「# これまでのあらすじ」は削除される
+        assert "# これまでのあらすじ" not in out
+        # プレイヤー補足メモの見出しと説明文はテンプレートに常にあるため常に出現
+        assert "# プレイヤーからの補足メモ" in out
 
     def test_auto_only_renders_main_block(self):
         """synopsis_auto があれば「これまでのあらすじ」ブロックが出ること。"""
@@ -267,8 +269,8 @@ class TestSynopsisBlocks:
         )
         assert "# これまでのあらすじ" in out
         assert "勇者は森でレイカと出会った。" in out
-        # manual 側のブロックは出ない
-        assert "プレイヤーからの補足メモ" not in out
+        # プレイヤー補足メモの見出しと説明文はテンプレートに常にあるため常に出現
+        assert "# プレイヤーからの補足メモ" in out
 
     def test_manual_only_renders_with_priority_note(self):
         """synopsis_manual があれば補足メモブロックが priority 文言と共に出ること。"""
@@ -315,7 +317,7 @@ class TestSynopsisBlocks:
         assert pos_synopsis < pos_known
 
     def test_whitespace_only_synopsis_is_ignored(self):
-        """空白のみの synopsis は省略されること（既存 _block と同じ挙動）。"""
+        """空白のみの synopsis は見出しが削除されること。"""
         out = build_gm_system_prompt(
             FakeSession(),
             npcs=[],
@@ -323,8 +325,10 @@ class TestSynopsisBlocks:
             synopsis_auto="   \n  \n",
             synopsis_manual="\t",
         )
-        assert "これまでのあらすじ" not in out
-        assert "プレイヤーからの補足メモ" not in out
+        # 見出しだけで内容がないセクションは削除される
+        assert "# これまでのあらすじ" not in out
+        # プレイヤー補足メモの見出しと説明文はテンプレートに常にあるため常に出現
+        assert "# プレイヤーからの補足メモ" in out
 
 
 # ─── ANTICIPATE_RESPONSE（GM の予想）の出力規則・注入 ───────────────────────────
@@ -337,14 +341,14 @@ def test_gm_prompt_output_rule_has_anticipate_tag():
 
 
 def test_gm_prompt_previous_anticipation_injected():
-    """previous_anticipation を渡すと「前回のあなた（語り手）の予想」ブロックが本文込みで挿入されること。"""
+    """previous_anticipation を渡すと「前回のあなた（語り手）の期待」ブロックが本文込みで挿入されること。"""
     out = build_gm_system_prompt(
         FakeSession(),
         npcs=[],
         history_text="",
         previous_anticipation="このあと勇者は剣を抜くと予想",
     )
-    assert "# 前回のあなた（語り手）の予想" in out
+    assert "# 前回のあなた（語り手）の期待" in out
     assert "このあと勇者は剣を抜くと予想" in out
 
 
