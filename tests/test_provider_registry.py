@@ -203,9 +203,15 @@ class TestParseStreamJson:
         )
         assert _parse_stream_json(raw) == "Hello"
 
-    def test_falls_back_to_result_when_no_assistant_block(self):
+    def test_ignores_result_block_without_assistant(self):
+        """type=result はフォールバックに使わず、assistant ブロックが無ければ空文字を返す。
+
+        Claude CLI の stream-json における type=result はアシスタント発話の重複・要約であり、
+        これをフォールバック採用すると応答の二重化などの不具合を生む。そのため result は
+        解析対象から除外する（コミット f908ecb で type=result フォールバックを削除済み）。
+        """
         raw = '{"type":"result","result":"Fallback"}'
-        assert _parse_stream_json(raw) == "Fallback"
+        assert _parse_stream_json(raw) == ""
 
     def test_ignores_malformed_lines(self):
         raw = "not json\n" '{"type":"assistant","message":{"content":[{"type":"text","text":"OK"}]}}'

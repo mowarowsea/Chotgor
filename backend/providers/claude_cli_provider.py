@@ -96,10 +96,6 @@ def _parse_stream_json(raw: str) -> str:
             for block in event.get("message", {}).get("content", []):
                 if block.get("type") == "text":
                     collected += block["text"]
-        elif etype == "result":
-            result_text = event.get("result", "")
-            if result_text and not collected:
-                collected = result_text
     return collected
 
 
