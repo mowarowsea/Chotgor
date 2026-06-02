@@ -256,7 +256,7 @@ async def update_character(request: Request, character_id: str):
 
 @router.post("/characters/{character_id}/delete")
 async def delete_character(request: Request, character_id: str):
-    """キャラクターと全保存記憶を削除する。LanceDB・SQLite の順に削除する。"""
+    """キャラクターと、紐づく全データをカスケード削除する（SQLite → LanceDB の順）。"""
     request.app.state.memory_manager.delete_character_with_inscribed_memories(character_id)
     return RedirectResponse(url="/ui/", status_code=303)
 

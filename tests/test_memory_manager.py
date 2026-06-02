@@ -556,7 +556,8 @@ def test_delete_character_sqlite_first_then_vector_store(manager, mock_vector_st
 
     original_sqlite = manager.sqlite
     mock_sqlite = MagicMock(wraps=original_sqlite)
-    mock_sqlite.delete_character = MagicMock(
+    # カスケード削除（SQLite 側）をモックし、存在しないキャラとして False を返させる
+    mock_sqlite.delete_character_cascade = MagicMock(
         side_effect=lambda cid: (call_order.append("sqlite"), False)[1]
     )
     manager.sqlite = mock_sqlite

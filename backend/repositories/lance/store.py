@@ -623,6 +623,14 @@ class LanceStore:
             })
         return turns
 
+    def delete_all_chat_turns(self, character_id: str) -> None:
+        """指定キャラクターの全チャット履歴ターンを削除する（キャラクター削除時に使用）。"""
+        if _TABLE_CHAT_TURNS not in self._list_table_names():
+            return
+        with self._write_lock:
+            tbl = self._db.open_table(_TABLE_CHAT_TURNS)
+            tbl.delete(f"character_id = {_quote_id(character_id)}")
+
     # ─── キャラクター定義 ────────────────────────────────────────────
 
     def upsert_character_definition(
@@ -726,6 +734,14 @@ class LanceStore:
                     "LanceStore.mark_definition_estranged 更新失敗 char=%s error=%s",
                     character_id, e,
                 )
+
+    def delete_definition(self, character_id: str) -> None:
+        """指定キャラクターの定義ベクトルを削除する（キャラクター削除時に使用）。"""
+        if _TABLE_DEFINITIONS not in self._list_table_names():
+            return
+        with self._write_lock:
+            tbl = self._db.open_table(_TABLE_DEFINITIONS)
+            tbl.delete(f"character_id = {_quote_id(character_id)}")
 
     # ─── ワーキングメモリスレッド ────────────────────────────────────
 

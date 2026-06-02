@@ -467,10 +467,17 @@ class InscribedMemoryManager:
         return self.sqlite.restore_inscribed_memory(memory_id)
 
     def delete_character_with_inscribed_memories(self, character_id: str) -> bool:
-        """キャラクターと全記憶を削除する。
+        """キャラクターと、紐づく全データをカスケード削除する。
 
-        SQLite のキャラクターレコードを先に削除してから、LanceStore のレコードを削除する。
-        SQLite = source of truth のため、SQLite の削除を先に確定させる。
+        SQLite = source of truth のため、SQLite の削除を先に確定させてから
+        LanceStore（ベクトル）の該当キャラ行を削除する。
+
+        削除対象（SQLite は delete_character_cascade が担当）:
+        - SQLite: characters / inscribed_memories / working_memory_threads(+posts) /
+          session_drifts / 1on1 chat_sessions(+messages/images)
+        - LanceDB: inscribed_memories / working_memory_threads / chat_turns / definitions
+
+        保持: debug_log_entries（監査記録）。
 
         api/characters.py と api/ui.py の2箇所から共通利用するためにここで一元管理する。
 
@@ -480,10 +487,13 @@ class InscribedMemoryManager:
         Returns:
             SQLite の削除成否。False の場合はキャラクターが存在しない。
         """
-        result = self.sqlite.delete_character(character_id)
+        result = self.sqlite.delete_character_cascade(character_id)
         if result:
-            # SQLite の削除が確定してから LanceStore の該当キャラ行を削除する
+            # SQLite の削除が確定してから LanceStore の各テーブルの該当キャラ行を削除する
             self.vector_store.delete_all_inscribed_memories(character_id)
+            self.vector_store.delete_all_working_memory_threads(character_id)
+            self.vector_store.delete_all_chat_turns(character_id)
+            self.vector_store.delete_definition(character_id)
         return result
 
     def list_inscribed_memories(

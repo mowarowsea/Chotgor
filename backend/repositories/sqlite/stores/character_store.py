@@ -97,12 +97,111 @@ class CharacterStoreMixin:
             return char
 
     def delete_character(self, character_id: str) -> bool:
-        """キャラクターを削除する。"""
+        """キャラクターを削除する（characters 行のみ。紐づくデータは削除しない）。
+
+        SQLite には FK の ON DELETE CASCADE も ORM の relationship(cascade) も無いため、
+        この単体メソッドは characters 行しか消さない。キャラクターに紐づく全データを
+        まとめて消す場合は delete_character_cascade を使うこと。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Character
             char = session.get(Character, character_id)
             if not char:
                 return False
+            session.delete(char)
+            session.commit()
+            return True
+
+    def delete_character_cascade(self, character_id: str) -> bool:
+        """キャラクターと、SQLite 上で紐づく全レコードを1トランザクションで削除する。
+
+        SQLite は FK カスケードが効かないため、関連テーブルを明示的に削除する。
+        削除対象:
+        - inscribed_memories（character_id）
+        - working_memory_threads ＋ 配下の working_memory_posts（character_id / thread_id）
+        - session_drifts（character_id）
+        - 1on1 chat_sessions（model_id が "キャラ名@..."）＋ 配下の
+          chat_messages / chat_images / session_drifts（session_id）
+        - characters 本体
+
+        保持するもの:
+        - debug_log_entries（監査記録として残す）
+
+        LanceDB 側のベクトル（inscribed_memories / chat_turns / definitions /
+        working_memory_threads）は呼び出し側（MemoryManager）が別途削除する。
+
+        Args:
+            character_id: 削除対象のキャラクターID。
+
+        Returns:
+            削除成否。False の場合はキャラクターが存在しない。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import (
+                Character,
+                InscribedMemory,
+                WorkingMemoryThread,
+                WorkingMemoryPost,
+                SessionDrift,
+                ChatSession,
+                ChatMessage,
+                ChatImage,
+            )
+
+            char = session.get(Character, character_id)
+            if not char:
+                return False
+            character_name = char.name
+
+            # --- ワーキングメモリ（スレッド＋ポスト） ---
+            thread_ids = [
+                row[0]
+                for row in session.query(WorkingMemoryThread.id)
+                .filter(WorkingMemoryThread.character_id == character_id)
+                .all()
+            ]
+            if thread_ids:
+                session.query(WorkingMemoryPost).filter(
+                    WorkingMemoryPost.thread_id.in_(thread_ids)
+                ).delete(synchronize_session=False)
+                session.query(WorkingMemoryThread).filter(
+                    WorkingMemoryThread.character_id == character_id
+                ).delete(synchronize_session=False)
+
+            # --- 保存記憶（SQLite 側。ハード削除） ---
+            session.query(InscribedMemory).filter(
+                InscribedMemory.character_id == character_id
+            ).delete(synchronize_session=False)
+
+            # --- 1on1 チャット（セッション＋メッセージ＋画像＋ドリフト） ---
+            # model_id は "{character_name}@{preset_name}" 形式。グループチャット
+            # （model_id="group"）は対象外。
+            session_ids = [
+                row[0]
+                for row in session.query(ChatSession.id)
+                .filter(ChatSession.model_id.like(f"{character_name}@%"))
+                .all()
+            ]
+            if session_ids:
+                session.query(ChatMessage).filter(
+                    ChatMessage.session_id.in_(session_ids)
+                ).delete(synchronize_session=False)
+                session.query(ChatImage).filter(
+                    ChatImage.session_id.in_(session_ids)
+                ).delete(synchronize_session=False)
+                session.query(SessionDrift).filter(
+                    SessionDrift.session_id.in_(session_ids)
+                ).delete(synchronize_session=False)
+                session.query(ChatSession).filter(
+                    ChatSession.id.in_(session_ids)
+                ).delete(synchronize_session=False)
+
+            # --- 感情ドリフト（character_id 由来。グループ等の取りこぼし分も含め一括） ---
+            session.query(SessionDrift).filter(
+                SessionDrift.character_id == character_id
+            ).delete(synchronize_session=False)
+
+            # --- キャラクター本体 ---
             session.delete(char)
             session.commit()
             return True
