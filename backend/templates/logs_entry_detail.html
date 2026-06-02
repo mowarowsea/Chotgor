@@ -13,7 +13,8 @@
                 {% if a.has_error %}
                 <span class="log-attempt-preview log-warn-reason">(エラー)</span>
                 {% elif a.response %}
-                <span class="log-attempt-preview">{{ a.response[:120] }}{% if a.response|length > 120 %}…{% endif %}</span>
+                {# 全文を出力し、閉じている間は CSS（white-space:nowrap+ellipsis）で1行省略、開くと折り返して全文表示する #}
+                <span class="log-attempt-preview">{{ a.response }}</span>
                 {% else %}
                 <span class="log-attempt-preview text-muted">(応答なし)</span>
                 {% endif %}
@@ -113,6 +114,27 @@
                 </div>
                 {% endif %}
 
+                <!-- お知らせ（コンテキスト圧縮など情報レベルの通知。WARN ではない） -->
+                {% if a.notices %}
+                <div class="log-row">
+                    <span class="ch-eyebrow">お知らせ</span>
+                    <div class="log-tool-list">
+                        {% for n in a.notices %}
+                        <div class="log-tool-block">
+                            <div class="log-tool-header">
+                                <span class="ch-tag ch-tag--accent">{{ n.tag }}</span>
+                                <a href="/ui/logs/{{ a.dir_id }}/raw/{{ n.file }}"
+                                   target="_blank" class="log-file-link">詳細 ↗</a>
+                            </div>
+                            {% if n.message %}
+                            <div class="log-tag-preview">{{ n.message }}</div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
                 <!-- ID / Files -->
                 {% if a.dir_id %}
                 <div class="log-row">
@@ -199,6 +221,27 @@
             </div>
             {% if w.message %}
             <div class="log-tag-preview">{{ w.message }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- お知らせ（コンテキスト圧縮など情報レベルの通知。WARN ではない） -->
+{% if e.notices %}
+<div class="log-row">
+    <span class="ch-eyebrow">お知らせ</span>
+    <div class="log-tool-list">
+        {% for n in e.notices %}
+        <div class="log-tool-block">
+            <div class="log-tool-header">
+                <span class="ch-tag ch-tag--accent">{{ n.tag }}</span>
+                <a href="/ui/logs/{{ e.dir_id }}/raw/{{ n.file }}"
+                   target="_blank" class="log-file-link">詳細 ↗</a>
+            </div>
+            {% if n.message %}
+            <div class="log-tag-preview">{{ n.message }}</div>
             {% endif %}
         </div>
         {% endfor %}

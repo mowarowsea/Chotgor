@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}working memory: {{ character.name }} &mdash; Chotgor{% endblock %}
-{% block breadcrumb %}/ {{ character.name }} / working memory{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/" class="ch-crumb">characters</a> / <a href="/ui/characters/{{ character.id }}" class="ch-crumb">{{ character.name }}</a> / working memory{% endblock %}
 
 {% block content %}
 <div class="ch-shell">

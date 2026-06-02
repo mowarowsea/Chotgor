@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if character %}{{ character.name }}{% else %}new character{% endif %} &mdash; Chotgor{% endblock %}
-{% block breadcrumb %}/ characters / {% if character %}{{ character.name }}{% else %}new{% endif %}{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/" class="ch-crumb">characters</a> / {% if character %}{{ character.name }}{% else %}new{% endif %}{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
@@ -336,6 +336,12 @@
             <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
             <span class="ch-spacer"></span>
             <span class="ch-meta">自動保存</span>
+            {# キャラクターと全記憶を削除する。autosave フォームを流用するため formaction で削除エンドポイントへ送る #}
+            <button type="submit" formmethod="post"
+                    formaction="/ui/characters/{{ character.id }}/delete"
+                    formnovalidate
+                    class="ch-btn ch-btn--danger ch-btn--sm"
+                    onclick="return confirm('「{{ character.name }}」と、その全ての記憶を削除します。\nこの操作は元に戻せません。本当に削除しますか？')">削除</button>
             {% endif %}
         </div>
     </form>

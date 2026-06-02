@@ -289,6 +289,13 @@
 }
 .ch-eyebrow--accent { color: var(--ch-a); }
 
+/* パンくずリスト内のリンクセグメント（topbar の ch-eyebrow 内で使用） */
+.ch-crumb {
+  color: var(--ch-t3);
+  transition: color .15s;
+}
+.ch-crumb:hover { color: var(--ch-t); }
+
 /* 大見出し（DM Mono light、小文字運用） */
 .ch-display {
   margin: 0;
@@ -458,6 +465,8 @@
 /* 汎用タグ色（プロバイダー名・ツール名・INFO 等のアクセント / WARN 等の警告） */
 .ch-tag--accent { color: var(--ch-a);      background: var(--ch-a-soft); }
 .ch-tag--danger { color: var(--ch-danger); background: var(--ch-danger-bg); }
+/* 控えめな情報タグ（お知らせ・補足など。WARN ではない弱色） */
+.ch-tag--sub    { color: var(--ch-t3);     background: var(--ch-sep); }
 
 /* ============================================================
    FORM CONTROLS
@@ -1488,6 +1497,14 @@ details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 試行アコーディオンを開いたときはヘッダのプレビューを折り返して全文表示する。
+   閉じている間は1行省略（上の既定）のまま。 */
+.log-attempt-detail[open] > .log-attempt-summary .log-attempt-preview {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* デバッグ未有効アラート（fragment 先頭）— 未移行ページに波及しないよう logs 内に限定 */

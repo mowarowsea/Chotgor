@@ -35,6 +35,8 @@ _LOG_CHAR_RE = re.compile(r"\[([0-9a-f]{8})\].*?\bchar=(\S+)")
 _FILE_PATTERN = re.compile(r"^\d+_(.+?)_(Request|Response)_(.+)\.log$")
 # 警告ファイルパターン: "03_Warning_context_window.log"
 _FILE_PATTERN_WARNING = re.compile(r"^\d+_Warning_(.+)\.log$")
+# お知らせファイルパターン: "03_Notice_context_window.log"（has_error にはしない情報レベル通知）
+_FILE_PATTERN_NOTICE = re.compile(r"^\d+_Notice_(.+)\.log$")
 
 # タグとして認識する名前一覧。
 # - tool_tags.TOOL_TO_TAG.values(): MCP/関数呼び出しから抽出されるタグ
@@ -491,6 +493,20 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
                 msg = ""
             warnings.append({"tag": tag, "message": msg, "file": f.name})
 
+    # --- お知らせ（Notice）ファイルを収集 ---
+    # log_notice() が書き出した {NN}_Notice_{tag}.log を読み込む。
+    # WARN とは別枠の情報レベル通知で、has_error には影響しない。
+    notices: list[dict] = []
+    for f in files:
+        m = _FILE_PATTERN_NOTICE.match(f.name)
+        if m:
+            tag = m.group(1)
+            try:
+                msg = f.read_text(encoding="utf-8").strip()
+            except Exception:
+                msg = ""
+            notices.append({"tag": tag, "message": msg, "file": f.name})
+
     # --- 警告（WARN）判定 ---
     # いずれかの tool_call で Response が存在しない、または Response がエラー文字列の場合は
     # 警告扱いとし、その理由を warn_reason に人間可読な文言で残す（Logs 画面で表示）。
@@ -530,6 +546,7 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
         "reasoning_text": reasoning_text,
         "tool_calls": tool_calls,
         "warnings": warnings,
+        "notices": notices,
         "files": file_names,
         "has_error": has_error,
         "warn_reason": warn_reason,
@@ -580,6 +597,7 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
     dir_id = Path(raw_dir).name if raw_dir else ""
     tool_calls: list[dict] = []
     warnings: list[dict] = []
+    notices: list[dict] = []
     file_names: list[str] = []
     has_error = bool(r.get("has_error"))
     warn_reason = r.get("warn_reason") or ""
@@ -592,6 +610,7 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
             warnings_parsed = parsed.get("warnings", [])
             if warnings_parsed:
                 warnings = warnings_parsed
+            notices = parsed.get("notices", [])
             if not has_error:
                 has_error = parsed.get("has_error", False)
             if not warn_reason:
@@ -608,6 +627,7 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
         "warn_reason": warn_reason,
         "tool_calls": tool_calls,
         "warnings": warnings,
+        "notices": notices,
         "files": file_names,
         "dir_id": dir_id,
     }
@@ -647,8 +667,25 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
             seen.add(r["source_type"])
             source_types.append(r["source_type"])
 
-    has_error = any(r["has_error"] for r in rows)
-    warn_reason = next((r["warn_reason"] for r in rows if r["warn_reason"]), "")
+    # コンテキスト圧縮は WARN ではなくお知らせ扱いに変更したため、
+    # 旧仕様で has_error=True / warn_reason=[context_window] と記録された
+    # 既存エントリも表示時に WARN から降格させる（過去ログにも新挙動を反映）。
+    def _is_demoted(reason: str) -> bool:
+        return (reason or "").startswith("[context_window]")
+
+    has_error = any(
+        r["has_error"] and not _is_demoted(r.get("warn_reason") or "") for r in rows
+    )
+    warn_reason = next(
+        (r["warn_reason"] for r in rows if r["warn_reason"] and not _is_demoted(r["warn_reason"])),
+        "",
+    )
+    # 降格された context_window のお知らせを一覧サマリーでも見えるよう notices に拾う
+    demoted_notices = [
+        {"tag": "context_window", "message": r["warn_reason"], "file": ""}
+        for r in rows
+        if r.get("warn_reason") and _is_demoted(r["warn_reason"])
+    ]
     target = main_row.get("target") or latest_main.get("target") or ""
     preset = latest_main.get("preset") or main_row.get("preset") or ""
     model_id = f"{target}@{preset}" if target and preset else target or preset
@@ -666,6 +703,7 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
     # 非メイン行（chronicle/forget 等）向けの top-level tool_calls（旧来互換）
     top_tool_calls: list[dict] = []
     top_warnings: list[dict] = []
+    top_notices: list[dict] = []
     top_file_names: list[str] = []
     if not main_rows and not skip_files:
         # メイン行が無いエントリは従来通り最初の行の raw_dir を使う
@@ -677,6 +715,7 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
                 parsed = _parse_entry(dir_id, raw_path, char_index)
                 top_tool_calls = parsed.get("tool_calls", [])
                 top_warnings = parsed.get("warnings", [])
+                top_notices = parsed.get("notices", [])
                 if not has_error:
                     has_error = parsed.get("has_error", False)
                 if not warn_reason:
@@ -706,6 +745,8 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
         # 非メイン行エントリ向け（attempts が空の場合のみ HTML で使う）
         "tool_calls": top_tool_calls,
         "warnings": top_warnings,
+        # 降格お知らせ（DB由来・一覧でも有効）＋ ファイル由来お知らせ
+        "notices": demoted_notices + top_notices,
         "files": top_file_names,
         "dir_id": top_dir_id,
         "has_error": has_error,

@@ -310,6 +310,26 @@ class ChotgorLogger:
         self._write_log(f"Warning_{tag}", message)
         self._update_main_entry(has_error=True, warn_reason=f"[{tag}] {message}"[:500])
 
+    def log_notice(self, tag: str, message: str) -> None:
+        """お知らせ（情報レベルの通知）を標準 logging とデバッグファイルの両方に出力する。
+
+        log_warning との違いは、エラー扱い（has_error）にしない点。
+        コンテキスト圧縮のような「正常動作だが記録として見えてほしい」イベントに使う。
+
+        コンソール: 常時 logging.info() で出力。
+        ファイル: CHOTGOR_DEBUG=1 時のみ {NN}_Notice_{tag}.log に書き出す（ログ一覧UIの詳細で閲覧可能）。
+        DB: warn_reason のみセットし has_error は立てない。Logs 一覧は warn_reason が
+            `[context_window]` 等で始まる行を「お知らせ」へ降格表示するため、has_error を
+            立てなくても一覧にお知らせバッジを出せる（WARN とは区別される）。
+
+        Args:
+            tag: ログタグ（例: "context_window"）
+            message: お知らせメッセージ
+        """
+        _logging.getLogger("backend.core.debug_logger").info("[%s] %s", tag, message)
+        self._write_log(f"Notice_{tag}", message)
+        self._update_main_entry(warn_reason=f"[{tag}] {message}"[:500])
+
 
 # モジュールレベルのシングルトン
 logger = ChotgorLogger()

@@ -127,7 +127,8 @@ async def _build_chat_request(
     max_chronicled = int(settings.get("context_window_max_chronicled", 10))
     windowed = apply_context_window(history_messages, max_chronicled=max_chronicled)
     if len(windowed) < len(history_messages):
-        logger.log_warning(
+        # コンテキスト圧縮は正常動作なので WARN ではなくお知らせ（Notice）として記録する
+        logger.log_notice(
             "context_window",
             f"全{len(history_messages)}件 → {len(windowed)}件に圧縮 (chronicle済み上限: {max_chronicled})",
         )

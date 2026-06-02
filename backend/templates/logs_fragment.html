@@ -27,6 +27,10 @@
             {% if e.attempt_count > 1 %}
             <span class="ch-badge" title="{{ e.attempt_count }}回生成">×{{ e.attempt_count }}</span>
             {% endif %}
+            {% if e.notices %}
+            {# コンテキスト圧縮などのお知らせ。WARN ではないことを示す控えめなタグ #}
+            <span class="ch-tag ch-tag--sub" title="{% for n in e.notices %}{{ n.message }}{% if not loop.last %} / {% endif %}{% endfor %}">圧縮</span>
+            {% endif %}
             {% if e.has_error and e.warn_reason %}
             {# WARN のときは一覧でも理由が分かるよう、応答プレビューより理由を優先表示する #}
             <span class="log-preview log-warn-reason">{{ e.warn_reason }}</span>

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if scenario %}{{ scenario.title }}{% else %}New Scenario{% endif %} &mdash; Chotgor{% endblock %}
-{% block breadcrumb %}/ scenarios / {% if scenario %}{{ scenario.title }}{% else %}new{% endif %}{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/scenarios" class="ch-crumb">scenarios</a> / {% if scenario %}{{ scenario.title }}{% else %}new{% endif %}{% endblock %}
 
 {% block content %}
 <div class="ch-shell">
