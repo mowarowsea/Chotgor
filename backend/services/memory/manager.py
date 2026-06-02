@@ -310,7 +310,7 @@ class InscribedMemoryManager:
         character_id: str,
         query: str,
         identity_top_k: int = 5,
-        other_top_k: int = 10,
+        other_top_k: int = 5,
     ) -> tuple[list[dict], list[dict]]:
         """identity カテゴリとそれ以外を別枠で想起して返す。
 
