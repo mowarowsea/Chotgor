@@ -144,6 +144,56 @@ class TestCallTool:
         assert res.status_code == 200
         assert fake_class.call_args.kwargs["session_id"] is None
 
+    def test_batch_context_propagated_to_executor(self, client_local, monkeypatch):
+        """forget 蒸留が渡す batch_context が ToolExecutor まで届くこと。
+
+        Claude CLI 経由の MCP 呼び出しでは Python 側 ToolExecutor インスタンスが共有されないため、
+        HTTP ペイロード上の ``batch_context`` を新規 ToolExecutor 生成時のキーワードへ転写する
+        必要がある。これが落ちると ``force_insert_memory`` が効かず、forget 蒸留物が
+        類似既存記憶に in-place 上書きされて削除フェーズで道連れに消える。
+        """
+        fake_executor = MagicMock()
+        fake_executor.execute.return_value = "記憶に刻んだ。"
+        fake_class = MagicMock(return_value=fake_executor)
+        monkeypatch.setattr(mcp_tools_module, "ToolExecutor", fake_class)
+
+        res = client_local.post(
+            "/api/mcp/tools/call",
+            json={
+                "character_id": "char-x",
+                "session_id": "sess-y",
+                "name": "inscribe_memory",
+                "arguments": {"content": "蒸留結果", "category": "identity"},
+                "batch_context": {"force_insert_memory": True},
+            },
+        )
+
+        assert res.status_code == 200
+        assert fake_class.call_args.kwargs["batch_context"] == {"force_insert_memory": True}
+
+    def test_batch_context_defaults_to_none(self, client_local, monkeypatch):
+        """通常チャット（batch_context 未指定）では None が ToolExecutor に渡ること。
+
+        Bytes-on-wire を最小化するため省略を許す。受け側は None を空 dict と同等に
+        扱うことで、1on1 チャット時に余計な force_insert などが起きないことを保証する。
+        """
+        fake_executor = MagicMock()
+        fake_executor.execute.return_value = "ok"
+        fake_class = MagicMock(return_value=fake_executor)
+        monkeypatch.setattr(mcp_tools_module, "ToolExecutor", fake_class)
+
+        res = client_local.post(
+            "/api/mcp/tools/call",
+            json={
+                "character_id": "char-x",
+                "name": "inscribe_memory",
+                "arguments": {"content": "雑談", "category": "contextual"},
+            },
+        )
+
+        assert res.status_code == 200
+        assert fake_class.call_args.kwargs["batch_context"] is None
+
     def test_executor_exception_returns_is_error_true(self, client_local, monkeypatch):
         """ToolExecutor.execute() が例外を投げても 200 で is_error=True が返ること。
 

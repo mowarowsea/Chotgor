@@ -64,12 +64,20 @@ def _ensure_local(request: Request) -> None:
 
 
 class ToolCallRequest(BaseModel):
-    """``POST /api/mcp/tools/call`` のリクエストボディ。"""
+    """``POST /api/mcp/tools/call`` のリクエストボディ。
+
+    ``batch_context`` は forget 蒸留などの内部バッチが ``inscribe_memory`` の挙動
+    （例: ``force_insert_memory=True``）を切り替えるためのフラグ群。Claude CLI 経由の
+    MCP 呼び出しでは Python 側 ``ToolExecutor`` インスタンスが共有されないため、
+    HTTP ペイロード上で明示的に伝搬しないと in-process プロバイダーとの間に
+    挙動差分が出てしまう（forget 蒸留物が in-place 上書きされて道連れ消失する等）。
+    """
 
     character_id: str
     session_id: str | None = None
     name: str
     arguments: dict
+    batch_context: dict | None = None
 
 
 class ToolCallResponse(BaseModel):
@@ -155,6 +163,7 @@ async def call_tool(request: Request, payload: ToolCallRequest) -> ToolCallRespo
         session_id=payload.session_id,
         memory_manager=state.memory_manager,
         working_memory_manager=state.working_memory_manager,
+        batch_context=payload.batch_context,
     )
     try:
         result_text = executor.execute(payload.name, payload.arguments)

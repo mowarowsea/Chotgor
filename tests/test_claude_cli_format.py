@@ -93,6 +93,65 @@ class TestFormatConversation:
         assert result == expected
 
 
+class TestMakeEnvBatchContext:
+    """``ClaudeCliProvider._make_env(batch_context=...)`` のテスト。
+
+    Claude CLI は subprocess として起動し、その中で MCP サーバ（別プロセス）が
+    backend へ HTTP で問い合わせる構造のため、バッチ処理が指定する
+    ``batch_context``（例: ``force_insert_memory=True``）は env 経由でしか伝搬できない。
+    in-process プロバイダー（Ollama 等）では Python 側 ``ToolExecutor`` インスタンスが
+    そのまま共有されるが、Claude CLI 経由では別プロセスへ復元する必要があるため、
+    env→HTTP の経路を維持することが forget 蒸留バッチの正常動作（蒸留物の道連れ消失防止）に
+    直結する。本テスト群はその伝搬経路の最小契約を守る。
+    """
+
+    def _make_provider(self):
+        """テスト用のプロバイダー。character_id / session_id は固定値を持たせる。"""
+        from backend.providers.claude_cli_provider import ClaudeCliProvider
+
+        return ClaudeCliProvider(
+            model="",
+            character_name="はる",
+            thinking_level="default",
+            character_id="char-abc",
+            session_id="sess-xyz",
+        )
+
+    def test_no_batch_context_omits_env_var(self):
+        """``batch_context`` 未指定/None なら CHOTGOR_BATCH_CONTEXT は env に乗らないこと。
+
+        通常 1on1 チャット時に余計な env が乗ってしまうと、MCP サーバ側が
+        force_insert などのフラグを意図せず受け取ってしまう。OFF が確実に OFF であることを守る。
+        """
+        provider = self._make_provider()
+        env = provider._make_env()
+        assert "CHOTGOR_BATCH_CONTEXT" not in env
+        # 既存のキャラ／セッション env はそのまま入る
+        assert env["CHOTGOR_CHARACTER_ID"] == "char-abc"
+        assert env["CHOTGOR_SESSION_ID"] == "sess-xyz"
+
+    def test_empty_dict_batch_context_omits_env_var(self):
+        """空 dict は「指定なし」と同義に扱われ、env に乗らないこと。
+
+        ``ask_character_with_tools`` が ``batch_context=None`` 既定で呼ばれた際、
+        途中経路で `{}` に正規化されても挙動が同じであることを保証する。
+        """
+        provider = self._make_provider()
+        env = provider._make_env(batch_context={})
+        assert "CHOTGOR_BATCH_CONTEXT" not in env
+
+    def test_batch_context_serialized_as_json(self):
+        """forget 蒸留の ``{"force_insert_memory": True}`` が JSON 文字列で env に乗ること。
+
+        MCP サーバ側はこれを JSON parse して /api/mcp/tools/call の payload に
+        そのまま転送するので、ここで JSON 表現が正しいことが伝搬経路全体の前提になる。
+        """
+        provider = self._make_provider()
+        env = provider._make_env(batch_context={"force_insert_memory": True})
+        raw = env["CHOTGOR_BATCH_CONTEXT"]
+        assert json.loads(raw) == {"force_insert_memory": True}
+
+
 class TestExtractSwitchAngleFromStreamJson:
     """Claude CLI の stream-json 出力から switch_angle ツール呼び出しを抽出する関数のテスト。
 

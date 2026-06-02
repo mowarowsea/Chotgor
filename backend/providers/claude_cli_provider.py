@@ -250,16 +250,24 @@ class ClaudeCliProvider(BaseLLMProvider):
             allowed_tools=allowed_tools,
         )
 
-    def _make_env(self) -> dict:
+    def _make_env(self, batch_context: dict | None = None) -> dict:
         """Claude CLI サブプロセス用の環境変数 dict を返す。
 
         _clean_env() をベースに、MCP サーバーが必要とするキャラクターコンテキストを追加する。
+
+        Args:
+            batch_context: バッチ処理が ToolExecutor の挙動を切り替えるためのフラグ群。
+                指定された場合は ``CHOTGOR_BATCH_CONTEXT`` 環境変数として JSON 文字列で渡し、
+                MCP サーバー（別プロセス）が backend への HTTP リクエストに乗せて伝搬する。
+                None / 空 dict なら設定しない（通常チャットと同じ挙動）。
         """
         env = _clean_env()
         if self.character_id:
             env["CHOTGOR_CHARACTER_ID"] = self.character_id
         if self.session_id:
             env["CHOTGOR_SESSION_ID"] = self.session_id
+        if batch_context:
+            env["CHOTGOR_BATCH_CONTEXT"] = json.dumps(batch_context, ensure_ascii=False)
         return env
 
     async def generate_with_tools(
@@ -275,12 +283,17 @@ class ClaudeCliProvider(BaseLLMProvider):
         ただし switch_angle のみ例外で、ChatService が tool_executor.switch_request を
         読んで再ディスパッチを判定するため、raw stream-json から抽出して反映させる。
 
+        ``tool_executor.batch_context``（例: ``{"force_insert_memory": True}``）は
+        env 経由で MCP サーバーへ渡し、HTTP ペイロードに乗せて backend 側 ToolExecutor へ
+        再構築する。in-process プロバイダー（Ollama 等）との挙動差を埋めるための経路。
+
         Returns:
             (text, thinking): thinking は思考ブロックが存在する場合その内容、なければ空文字列。
         """
         from backend.providers.base import LLMApiError
 
-        raw = await self._run_generate_raw(system_prompt, messages)
+        batch_context = getattr(tool_executor, "batch_context", None) if tool_executor else None
+        raw = await self._run_generate_raw(system_prompt, messages, batch_context=batch_context)
         # _run_generate_raw はエラーを例外ではなく "[Error: ...]" 文字列で返す設計。
         # バッチ処理（ask_character_with_tools 等）が正しくフォールバックできるよう
         # ここで LLMApiError に変換して送出する。
@@ -300,10 +313,19 @@ class ClaudeCliProvider(BaseLLMProvider):
             )
         return text, thinking
 
-    async def _run_generate_raw(self, system_prompt: str, messages: list[dict]) -> str:
+    async def _run_generate_raw(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        batch_context: dict | None = None,
+    ) -> str:
         """Claude CLI を呼び出して raw stdout 文字列を返す内部メソッド。
 
         エラー時はエラーメッセージ文字列を返す（例外は送出しない）。
+
+        Args:
+            batch_context: ToolExecutor の挙動切り替えフラグ。指定すると CHOTGOR_BATCH_CONTEXT
+                環境変数として MCP サーバーへ渡る（generate_with_tools 経由のみ使用）。
         """
         has_images = any(
             isinstance(item, dict) and item.get("type") == "image_url"
@@ -338,7 +360,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         })
 
         try:
-            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(), allowed_tools=self.allowed_tools)
+            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(batch_context=batch_context), allowed_tools=self.allowed_tools)
 
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
