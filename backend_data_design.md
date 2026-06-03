@@ -38,7 +38,7 @@
 * `id` (String) : 【PK】 UUID
 * `name` (String) : キャラクター名
 * `system_prompt_block1` (Text) : システムプロンプト（基本設定）
-* `inner_narrative` (Text) : 内的叙述（キャラクター自身の自己物語テキスト）
+* `inner_narrative` (Text) : 内的叙述（キャラクター自身の自己物語テキスト）。三段階の蒸留パイプラインの最終段であり、Forgetバッチによる昇華・凝縮の書き込み先
 * `cleanup_config` (JSON) : 履歴クリーンアップ用の設定。単純な **KeyValue** 形式（例: `{"days": 30}`）
 * `enabled_providers` (JSON) : 有効化されているLLMプロバイダー設定。以下の**構造を持つ**。
   ```json
@@ -82,7 +82,7 @@
 ---
 
 ## 3. InscribedMemory（保存記憶レコード）
-キャラクターが自ら「保存する」と判断して残した長期記憶レコードです。短期記憶（ワーキングメモリ）と対になります。
+キャラクターが自ら「保存する」と判断して残した長期記憶レコードです。三段階の蒸留パイプライン（WorkingMemory → InscribedMemory → InnerNarrative）の第2段に位置し、Chronicleバッチによる昇格先・Forgetバッチによる昇華・削除の対象となります。
 
 **【全カラム】**
 * `id` (String) : 【PK】 UUID

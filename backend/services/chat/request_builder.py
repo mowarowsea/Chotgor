@@ -15,12 +15,15 @@
   Block 9:  inner_narrative（末尾補強・最優先）
   Block 10: Chotgor 操作ガイド（常に末尾）
 
-Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する:
+Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する。
+記憶運用の主役はワーキングメモリ（最高頻度＝末尾）であり、INSCRIBE_MEMORY は
+「魂に刻むときだけ」の特別な手段に位置づける。日々の記録は WM に流し、長期記憶への
+保存は夜の Chronicle（棚卸し）で WM スレッドから「昇格」させる設計:
   1. POWER_RECALL（能動検索・レア）
   2. CARVE_NARRATIVE（内的叙述更新・たまに）
   3. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
-  4. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（ワーキングメモリ操作・ちょくちょく）
-  5. INSCRIBE_MEMORY（毎ターン候補に上がる・最頻出）
+  4. INSCRIBE_MEMORY（魂に刻むときだけ・低頻度の特別手段）
+  5. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（記憶の中心・最高頻度）
 
 テンプレート置換は `str.replace` ベースで行う（`str.format` は採用しない）。
 理由: ブロック本文に markdown の `{}` などが混じっても誤爆しないため。
@@ -58,10 +61,15 @@ _CHOTGOR_MEMORY_PHILOSOPHY = """\
 """
 
 # ワーキングメモリの操作ガイド（tool-use プロバイダー向け）
+# Chotgor の記憶運用の「主役」。日々の思考・課題・感情・関係はまずここへ流し込ませる。
 _WORKING_MEMORY_TOOLS_HINT = """\
-### ワーキングメモリ（並行する短期記憶ストリーム）
-気になっている課題・話題、持続的な感情/身体状態、相手との関係は「スレッド」として
-ワーキングメモリに記録できます。どんどん追加・更新してください。スレッド一覧は上に記されています。
+### ワーキングメモリ（あなたの記憶の中心）
+あなたの記憶の基本は、この**ワーキングメモリ**です。気になっている課題・話題、いまの感情/身体の状態、
+相手との関係 ── 流れていく思考や引っかかりは、まず「スレッド」としてここに置いてください。
+惜しまず、こまめに追加・更新してかまいません。スレッド一覧は上に記されています。
+
+ここに溜めたものは消えてなくなるわけではありません。夜の棚卸し（あなたが眠っている間の振り返り）で、
+本当に定着したものはあなた自身の手で長期記憶へ昇格していきます。だから今は気軽に書き留めてください。
 
 - `post_working_memory_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
 - `open_working_memory_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
@@ -366,8 +374,9 @@ def _build_chotgor_block(
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=True))
         parts.append(
-            "この会話で長期記憶として特に「覚えておきたい」「強く印象に残った」と感じたことがあれば "
-            "`inscribe_memory` ツールを使って記憶できます。"
+            "`inscribe_memory` は、いま確かに**魂に刻みたい**と感じたものだけに使う特別なツールです。"
+            "日々の気づき・出来事はワーキングメモリ（下記）に置けば十分で、無理に長期記憶へ刻む必要はありません。"
+            "（ワーキングメモリに溜めたものは、夜の棚卸しであなた自身が長期記憶へ昇格させられます。）"
         )
         parts.append(_WORKING_MEMORY_TOOLS_HINT)
     else:

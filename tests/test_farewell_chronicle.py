@@ -89,14 +89,16 @@ def farewell_config_dict():
 
 def _make_chronicle_response(
     new_thread_summary: str | None = None,
-    carve_text: str | None = None,
     farewell_config: dict | None = None,
 ) -> str:
-    """chronicle LLM の JSON レスポンス（棚卸し＋蒸留スキーマ）を生成するヘルパー。
+    """chronicle LLM の JSON レスポンス（棚卸し＋昇格スキーマ）を生成するヘルパー。
+
+    三段階の蒸留パイプライン（WorkingMemory → InscribedMemory → InnerNarrative）上、
+    Chronicle は inner_narrative への昇華（carve）を担わない（Forget へ移譲済み）ため、
+    レスポンスに carve フィールドは含めない。
 
     Args:
         new_thread_summary: 新規スレッドの summary（None なら new_threads は空）。
-        carve_text: inner_narrative 蒸留テキスト（None なら carve は null）。
         farewell_config: farewell_config の更新値（None なら null）。
 
     Returns:
@@ -111,7 +113,6 @@ def _make_chronicle_response(
         ),
         "merges": [],
         "inscribe": [],
-        "carve": {"mode": "append", "text": carve_text} if carve_text is not None else None,
         "farewell_config": farewell_config,
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -288,15 +289,26 @@ class TestRunChronicleFarewellConfig:
         assert fc is not None
         assert fc["thresholds"]["anger"] == 0.5
 
-    def test_farewell_config_and_carve_both_applied(
+    def test_chronicle_does_not_carve_inner_narrative(
         self, sqlite_store, char_id_with_ghost, farewell_config_dict, ghost_preset_id,
         working_memory_manager,
     ):
-        """farewell_config の更新と inner_narrative 蒸留（carve）が同時に反映されること。"""
-        response = _make_chronicle_response(
-            carve_text="新しい自己像テキスト",
-            farewell_config=farewell_config_dict,
-        )
+        """Chronicle は inner_narrative を更新しないこと（carve は Forget へ移譲済み）。
+
+        三段階の蒸留パイプライン上、inner_narrative への昇華（carve）は Forget バッチの役割。
+        本テストでは、Chronicle のレスポンスにレガシーな carve フィールドが万一紛れ込んでも、
+        それが完全に無視されることを保証する:
+          - inner_narrative は一切変更されない（carve テキストが書き込まれない）
+          - 反映件数 counts に "carved" キーが現れない
+        一方で、farewell_config の更新など Chronicle 本来の処理は通常どおり行われることも
+        併せて確認し、carve 撤去が他機能を巻き込んでいないことを担保する。
+        """
+        # Chronicle が carve を出力しなくなったことを検証するため、敢えて carve フィールドを
+        # 含む生 JSON を返させ、それが無視されることを確認する。
+        payload = json.loads(_make_chronicle_response(farewell_config=farewell_config_dict))
+        payload["carve"] = {"mode": "append", "text": "Chronicleでは無視されるべき自己像テキスト"}
+        response = json.dumps(payload, ensure_ascii=False)
+
         with patch("backend.batch.chronicle_job.ask_character", new=AsyncMock(return_value=response)):
             result = asyncio.run(
                 run_chronicle(
@@ -309,10 +321,13 @@ class TestRunChronicleFarewellConfig:
             )
 
         assert result["status"] == "success"
-        assert result["counts"]["carved"] == 1
+        # carve は実行されないため、件数辞書に carved キーは存在しない
+        assert "carved" not in result["counts"]
 
         char = sqlite_store.get_character(char_id_with_ghost)
-        assert "新しい自己像テキスト" in char.inner_narrative
+        # inner_narrative は変更されていないこと（carve テキストが書き込まれていない）
+        assert "Chronicleでは無視されるべき自己像テキスト" not in (char.inner_narrative or "")
+        # farewell_config 等の Chronicle 本来の処理は反映されること
         assert char.farewell_config is not None
 
     def test_check_estrangement_called_after_update(

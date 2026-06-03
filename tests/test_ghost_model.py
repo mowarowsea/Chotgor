@@ -200,21 +200,31 @@ async def test_run_chronicle_no_update_when_llm_returns_empty(sqlite_store, work
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_chronicle_applies_new_thread_and_carve(
+async def test_run_chronicle_applies_new_thread_and_ignores_carve(
     sqlite_store, working_memory_manager
 ):
-    """LLM が new_threads と carve を返した場合、スレッド作成と inner_narrative 追記が反映されることを確認する。"""
+    """Chronicle が new_threads は反映し、carve は無視することを確認する。
+
+    三段階の蒸留パイプライン（WorkingMemory → InscribedMemory → InnerNarrative）上、
+    Chronicle は第1段（WM 整理）と第2段（長期記憶への昇格）のみを担い、第3段の
+    inner_narrative への昇華（carve）は Forget バッチへ移譲された。本テストでは、LLM 応答に
+    レガシーな carve フィールドが紛れ込んでも以下が保たれることを保証する:
+      - new_threads（WM 整理）は通常どおり反映される
+      - carve は完全に無視され、inner_narrative は変更されない
+      - 反映件数 counts に "carved" キーは現れない
+    """
     preset_id = str(uuid.uuid4())
     char_id = str(uuid.uuid4())
     sqlite_store.create_model_preset(preset_id, "TestPreset", "google", "gemini-2.0-flash")
     sqlite_store.create_character(char_id, "TestChar", ghost_model=preset_id)
 
+    # 敢えて carve フィールドを含む応答を返させ、それが無視されることを確認する
     update_response = (
         '{"thread_updates": [], "new_threads": ['
         '{"type": "topic", "summary": "気になっている問い", "atmosphere": "モヤモヤ",'
         ' "importance": 0.6, "post": "今日の会話で浮かんだ", "relation_target": null}],'
         ' "merges": [], "inscribe": [],'
-        ' "carve": {"mode": "append", "text": "問いを抱えることを恐れない"},'
+        ' "carve": {"mode": "append", "text": "Chronicleでは無視されるべき自己像テキスト"},'
         ' "farewell_config": null}'
     )
     mock_provider = AsyncMock()
@@ -230,17 +240,18 @@ async def test_run_chronicle_applies_new_thread_and_carve(
 
     assert result["status"] == "success"
     assert result["counts"]["created"] == 1
-    assert result["counts"]["carved"] == 1
+    # carve は実行されないため、件数辞書に carved キーは存在しない
+    assert "carved" not in result["counts"]
 
-    # 新規スレッドが実際に作られていること
+    # 新規スレッドが実際に作られていること（WM 整理は通常どおり機能する）
     threads = working_memory_manager.list_threads_by_type(char_id)
     assert len(threads) == 1
     assert threads[0]["summary"] == "気になっている問い"
     assert threads[0]["type"] == "topic"
 
-    # inner_narrative に追記されていること
+    # inner_narrative は変更されていないこと（carve テキストが書き込まれていない）
     char = sqlite_store.get_character(char_id)
-    assert "問いを抱えることを恐れない" in char.inner_narrative
+    assert "Chronicleでは無視されるべき自己像テキスト" not in (char.inner_narrative or "")
 
 
 @pytest.mark.asyncio
