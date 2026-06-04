@@ -334,7 +334,7 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
     # ツール呼び出し（JSON / stream-json）を優先して試みる
     tool_call_tags = _extract_function_calls_from_json(text)
     if tool_call_tags:
-        return tool_call_tags
+        return _dedupe_tags(tool_call_tags)
 
     # ツール呼び出しが見つからなければタグ方式（Ollama等）としてフォールバック
     try:
@@ -351,7 +351,29 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
             flat.append((m.start, tag_name, m.body))
     flat.sort(key=lambda x: x[0])
 
-    return [_parse_tag_body(tn, body) for _, tn, body in flat]
+    return _dedupe_tags([_parse_tag_body(tn, body) for _, tn, body in flat])
+
+
+def _dedupe_tags(tags: list[dict]) -> list[dict]:
+    """構造化タグリストから完全一致する重複を除去する（出現順は保持）。
+
+    Claude CLI の stream-json は type=assistant の text ブロックと type=result の
+    result フィールドに同一テキストを含むため、生ログ全体をテキストとしてスキャンする
+    `parse_tags` 経路では同一の ANTICIPATE_RESPONSE 等が2回検出されてしまう。
+    本関数は同じ tag_name / fields の組み合わせを1件にまとめ、UI上の二重表示を防ぐ。
+
+    フィールド辞書ごと完全一致したものだけを潰すため、別引数で同じツールを2回
+    呼んだ場合のように内容が異なる重複は両方残る。
+    """
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for tag in tags:
+        key = json.dumps(tag, sort_keys=True, ensure_ascii=False)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(tag)
+    return deduped
 
 
 def _tc_label(tc: dict) -> str:

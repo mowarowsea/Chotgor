@@ -386,6 +386,60 @@ class TestExtractTagsFromFile:
         assert tags[0]["fields"]["予想"] == "次は深い話をしたい"
         assert tags[0]["meta"]["cls"] == "tag-anticipate"
 
+    def test_anticipate_response_tag_deduped_in_stream_json(self, tmp_path):
+        """Claude CLI の stream-json で同じ ANTICIPATE_RESPONSE が type=assistant と type=result
+        の両方に含まれるケースで、UI上は1件に集約されること。
+
+        Claude CLI の stream-json 出力仕様として、最終応答テキストは type=assistant の
+        text ブロックと type=result の result フィールドに同一内容で重複して現れる。
+        生ログ全体をスキャンする parse_tags 経路ではタグが2回検出されてしまうため、
+        _dedupe_tags で完全一致する重複を1件にまとめる。本テストはその挙動を確認する。
+        """
+        # tool_use ブロックを持たない（=tool-use 経路ではなくタグ方式フォールバックに落ちる）
+        # stream-json 形式を組み立てる。
+        assistant_event = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "本文だよ[ANTICIPATE_RESPONSE:深掘りされそう]"}
+                ]
+            },
+        }
+        result_event = {
+            "type": "result",
+            "result": "本文だよ[ANTICIPATE_RESPONSE:深掘りされそう]",
+        }
+        f = tmp_path / "response.log"
+        f.write_text(
+            json.dumps(assistant_event, ensure_ascii=False) + "\n"
+            + json.dumps(result_event, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        tags = _extract_tags_from_file(f)
+
+        # 重複が除去されて1件のみになる
+        assert len(tags) == 1
+        assert tags[0]["tag_name"] == "ANTICIPATE_RESPONSE"
+        assert tags[0]["fields"]["予想"] == "深掘りされそう"
+
+    def test_distinct_tags_with_same_name_are_kept(self, tmp_path):
+        """同じタグ名でも fields が異なる重複（別引数で2回呼ばれた等）は両方残ること。
+
+        _dedupe_tags は構造化辞書の完全一致のみで重複判定するため、
+        例えば異なる内容で2回 INSCRIBE_MEMORY された場合は両方表示される必要がある。
+        """
+        f = tmp_path / "response.log"
+        f.write_text(
+            "[INSCRIBE_MEMORY:contextual|0.8|記憶A]"
+            "[INSCRIBE_MEMORY:contextual|0.8|記憶B]",
+            encoding="utf-8",
+        )
+        tags = _extract_tags_from_file(f)
+
+        assert len(tags) == 2
+        assert {t["fields"]["内容"] for t in tags} == {"記憶A", "記憶B"}
+
     def test_tag_fallback_when_file_has_only_plain_text_tags(self, tmp_path):
         """tag-fallback設計: JSON/stream-json のツール呼び出しがなければタグパースにフォールバックすること。
 
