@@ -161,12 +161,16 @@ class Inscriber:
         self.character_id = character_id
         self.memory_manager = memory_manager
 
-    def inscribe_memory_from_text(self, text: str, source_preset_id: str = "") -> str:
+    def inscribe_memory_from_text(
+        self, text: str, source_preset_id: str = "", origin: str = "real",
+    ) -> str:
         """LLM応答から [INSCRIBE_MEMORY:...] マーカーを読み取り、記憶として刻み込む（タグ方式）。
 
         Args:
             text: LLMの生応答テキスト。
             source_preset_id: 記憶を作成したプリセットID（空文字列の場合はNULL保存）。
+            origin: 記憶のソース識別。"real"=日常、"interlude"=シナリオPCモードの幕間体験。
+                ChatRequest.default_origin から渡される。
 
         Returns:
             マーカーを除去したクリーンなテキスト。
@@ -175,7 +179,7 @@ class Inscriber:
         for category, impact_str, content in memories:
             impact = float(impact_str) if impact_str else 1.0
             try:
-                self.inscribe_memory(content, category, impact, source_preset_id=source_preset_id)
+                self.inscribe_memory(content, category, impact, source_preset_id=source_preset_id, origin=origin)
             except Exception:
                 logger.exception("記憶の書き込みに失敗: category=%s content=%.50s...", category, content)
         return clean
@@ -187,6 +191,7 @@ class Inscriber:
         impact: float = 1.0,
         source_preset_id: str = "",
         force_insert: bool = False,
+        origin: str = "real",
     ) -> None:
         """記憶を直接書き込む（ツール呼び出し方式）。
 
@@ -197,6 +202,8 @@ class Inscriber:
             source_preset_id: 記憶を作成したプリセットID（空文字列の場合はNULL保存）。
             force_insert: True の場合、類似既存記憶があっても上書きせず必ず新規 UUID で挿入する。
                 forget 蒸留バッチでのみ True を渡す。
+            origin: 記憶のソース識別。"real"=日常体験、"interlude"=シナリオPCモードの幕間体験。
+                ToolExecutor.default_origin から渡される。キャラクター自身は意識する必要はない。
         """
         # 未知カテゴリは contextual と同じ速度で減衰するよう contextual マトリクスをデフォルトにする
         base = _BASE_IMPORTANCE.get(category, _BASE_IMPORTANCE["contextual"])
@@ -208,9 +215,10 @@ class Inscriber:
             category=category,
             source_preset_id=preset_id_or_none,
             force_insert=force_insert,
+            origin=origin,
             **scores,
         )
         logger.info(
-            "記憶を刻み込み: char=%s category=%s impact=%.1f force_insert=%s content=%.50s",
-            self.character_id, category, impact, force_insert, content,
+            "記憶を刻み込み: char=%s category=%s impact=%.1f force_insert=%s origin=%s content=%.50s",
+            self.character_id, category, impact, force_insert, origin, content,
         )

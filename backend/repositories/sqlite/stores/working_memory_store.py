@@ -23,8 +23,13 @@ class WorkingMemoryStoreMixin:
         atmosphere_tag: str = "",
         importance: float = 0.5,
         relation_target: str | None = None,
+        origin: str = "real",
     ):
-        """ワーキングメモリスレッドを新規作成する。"""
+        """ワーキングメモリスレッドを新規作成する。
+
+        Args:
+            origin: 記憶のソース識別。"real"=日常、"interlude"=シナリオPCモードの幕間体験。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import WorkingMemoryThread
             now = datetime.now()
@@ -38,6 +43,7 @@ class WorkingMemoryStoreMixin:
                 is_open=1,
                 relation_target=relation_target,
                 last_touched_at=now,
+                origin=origin,
             )
             session.add(thread)
             session.commit()

@@ -81,6 +81,20 @@
                 </div>
             </div>
 
+            <!-- ダイスプール仕様（ensemble_pc 専用） -->
+            <div class="ch-field">
+                <label class="ch-label" for="dice_pool_spec">Dice Pool Spec
+                    <span class="ch-hint">
+                        engine_type=ensemble_pc のセッションで、毎ターン GM のシステムプロンプトに自動注入する乱数プール。
+                        JSON で「種別: 本数」を指定（例: <code>{"d6": 10}</code> / <code>{"d6": 10, "d100": 5}</code>）。
+                        空欄なら既定の <code>{"d6": 10}</code> を使用。ensemble エンジン（PC配役なし）のセッションでは使われません。
+                    </span>
+                </label>
+                <input type="text" id="dice_pool_spec" name="dice_pool_spec" class="ch-input"
+                    value="{% if scenario and scenario.dice_pool_spec %}{{ scenario.dice_pool_spec|tojson }}{% endif %}"
+                    placeholder='{"d6": 10}'>
+            </div>
+
             <!-- カスタムシステムプロンプト -->
             <div class="ch-field">
                 <label class="ch-label" for="custom_system_prompt">Custom System Prompt
@@ -96,7 +110,9 @@
                     <code>{synopsis_manual}</code> (プレイヤー補足),
                     <code>{previous_anticipation}</code> (GMが考える次の展開の期待),
                     <code>{npc_details}</code> (NPC詳細),
-                    <code>{history_block}</code> (直近の流れ)
+                    <code>{history_block}</code> (直近の流れ),
+                    <code>{pc_summary}</code> (PC配役一覧 / ensemble_pc 専用),
+                    <code>{dice_pool}</code> (このターンで使えるダイス / ensemble_pc 専用)
                     <br/>
                     空欄に戻すと通常の自動生成ロジックが復活します。
                     </span>

@@ -175,6 +175,9 @@ class InscribedMemory(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(DateTime, nullable=True)  # content/importance変更時のみ更新
     deleted_at = Column(DateTime, nullable=True)  # ソフト削除
+    # 記憶のソース識別。"real"=日常体験、"interlude"=シナリオPCモードで演じた幕間体験。
+    # 検索時のフィルタやキャラ本人の文脈把握に使う。
+    origin = Column(String, nullable=False, default="real")
 
 
 
@@ -209,6 +212,9 @@ class WorkingMemoryThread(Base):
     # heat の時間減衰の起点。Post 追加・スレッド更新時に明示的に更新する。
     # updated_at は onupdate で勝手に動くため、decay 起点としては流用せず別カラムで管理する。
     last_touched_at = Column(DateTime, nullable=True)
+    # スレッドのソース識別。"real"=日常、"interlude"=シナリオPCモードで生じた幕間スレッド。
+    # InscribedMemory.origin と対。検索フィルタとキャラ本人の文脈把握に使う。
+    origin = Column(String, nullable=False, default="real")
 
 
 class WorkingMemoryPost(Base):
@@ -274,6 +280,9 @@ class Scenario(Base):
     history_max_turns = Column(Integer, nullable=True)     # 送信履歴の最大ターン数。NULL=settings 既定
     history_max_chars = Column(Integer, nullable=True)     # 送信履歴の最大文字数。NULL=settings 既定
     custom_system_prompt = Column(Text, nullable=True)     # GMシステムプロンプトの完全カスタマイズ。NULLなら自動生成ロジック使用
+    # ダイスプール仕様（JSON: {"d6": 10, "d100": 5} 等）。NULL/未指定なら engine 側で {"d6": 10} を既定値として使う。
+    # ensemble_pc エンジン時のみ参照する。毎ターン engine 内で乱数生成して GM system prompt の {dice_pool} へ注入。
+    dice_pool_spec = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -343,6 +352,9 @@ class ScenarioSession(Base):
     synopsis_auto = Column(Text, nullable=False, default="")
     synopsis_manual = Column(Text, nullable=False, default="")
     synopsis_last_turn_index = Column(Integer, nullable=False, default=-1)
+    # PC配役（ensemble_pc エンジン時のみ参照）。JSON 配列 [{"character_id": "...", "role_name": "..."}]。
+    # ensemble エンジン時は NULL/空配列のまま使われない。
+    pc_assignments = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -435,6 +447,8 @@ class SQLiteStore(
         self._migrate_drop_afterglow_columns()
         self._migrate_add_chat_message_anticipation()
         self._migrate_add_scenario_turn_anticipation()
+        self._migrate_add_memory_origin()
+        self._migrate_add_scenario_pc_mode()
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。
@@ -640,6 +654,86 @@ class SQLiteStore(
                 conn.exec_driver_sql(
                     "ALTER TABLE scenario_turns ADD COLUMN anticipation TEXT"
                 )
+
+    def _migrate_add_memory_origin(self) -> None:
+        """`inscribed_memories` と `working_memory_threads` に `origin` 列を追加する。
+
+        Scenario PC モード（TRPG的にキャラがPCを演じるモード）で生じた記憶を
+        `origin='interlude'` で識別するための列。日常体験は `origin='real'`（既定）。
+        検索フィルタとキャラ本人の文脈把握に使う。
+        既存DBに列がなければ ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "inscribed_memories" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(inscribed_memories)"
+                    ).fetchall()
+                }
+                if "origin" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE inscribed_memories "
+                        "ADD COLUMN origin TEXT NOT NULL DEFAULT 'real'"
+                    )
+            if "working_memory_threads" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(working_memory_threads)"
+                    ).fetchall()
+                }
+                if "origin" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE working_memory_threads "
+                        "ADD COLUMN origin TEXT NOT NULL DEFAULT 'real'"
+                    )
+
+    def _migrate_add_scenario_pc_mode(self) -> None:
+        """Scenario PC モード関連カラムを追加する。
+
+        - `scenarios.dice_pool_spec` (JSON, NULL可): ダイスプール仕様。
+        - `scenario_sessions.pc_assignments` (JSON, NULL可): PC配役一覧。
+
+        いずれも `engine_type='ensemble_pc'` のセッション専用フィールド。
+        既存DBに列がなければ ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "scenarios" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(scenarios)"
+                    ).fetchall()
+                }
+                if "dice_pool_spec" not in cols:
+                    # SQLite の JSON 型は TEXT として保存される。
+                    conn.exec_driver_sql(
+                        "ALTER TABLE scenarios ADD COLUMN dice_pool_spec TEXT"
+                    )
+            if "scenario_sessions" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(scenario_sessions)"
+                    ).fetchall()
+                }
+                if "pc_assignments" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE scenario_sessions ADD COLUMN pc_assignments TEXT"
+                    )
 
     def _migrate_drop_afterglow_columns(self) -> None:
         """Afterglow（感情継続機構）廃止に伴い関連カラムを削除する。

@@ -3,15 +3,19 @@
 SceneEngine は「セッション状態 + NPC + 履歴 + プレイヤー発話」を受け取り、
 UtteranceDelta / TurnRecord の列を非同期 yield する抽象。
 
-P1 では EnsembleEngine のみを実装する。GM が単一 LLM 呼出で
-Narrator + 全 NPC を演じる方式。出力を parser.py で `@名前:` ブロックに分解し、
-ストリーミング差分をそのまま流す。
+実装済みエンジン:
+    - EnsembleEngine    : GM が単一 LLM 呼出で Narrator + 全 NPC を演じる（既存）
+    - EnsemblePcEngine  : 上記 + PC配役（Chotgor キャラを演じるプレイヤーキャラ）
+                          対応。GM 出力中で PC 配役名/本名を suppress し、PC ブロックは
+                          捨てる。PC のターン実行は service.run_scenario_turn 側で
+                          メンション解析後に行う（engine は GM 部分のみ担当）。
 
 将来:
     - PolyphonyEngine: キャラごとに個別 provider 呼出
     - HybridEngine: 一部 NPC を既存 Character に lift-out したセッション用
 """
 
+import random
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
@@ -26,6 +30,50 @@ from backend.services.scenario_chat.parser import (
     UtteranceDelta,
 )
 from backend.services.scenario_chat.prompt_builder import build_gm_system_prompt
+
+
+# ensemble_pc 用ダイスプール仕様の既定値。シナリオ側 dice_pool_spec が NULL または
+# 不正な場合にこの値が使われる（d6×10）。d6 1 種類だけあれば大抵の即興判定はできる。
+DEFAULT_DICE_POOL_SPEC: dict[str, int] = {"d6": 10}
+
+
+def generate_dice_pool(spec: dict | None, rng: random.Random | None = None) -> str:
+    """`{dice_pool}` テンプレタグに埋め込むダイス文字列を生成する。
+
+    形式:
+        ```
+        必要なときだけ左から順に使ってください
+        d6=5,6,6,1,4,2,5,3,2,6
+        d100=85,41,38,75,33
+        ```
+
+    Args:
+        spec: ダイス種別と本数の dict（例: ``{"d6": 10, "d100": 5}``）。
+            NULL / 空 dict の場合は DEFAULT_DICE_POOL_SPEC を使う。
+            キー "dN" 形式を想定。N が parse できない／本数が 0 以下のエントリは無視。
+        rng: テスト用に注入できる random.Random。None なら標準 random。
+
+    Returns:
+        プロンプト差し込み用テキスト。生成本数が 0 なら空文字列。
+    """
+    rng = rng or random
+    effective = spec if (spec and isinstance(spec, dict)) else DEFAULT_DICE_POOL_SPEC
+    lines: list[str] = []
+    for key, count in effective.items():
+        if not isinstance(key, str) or not key.startswith("d"):
+            continue
+        try:
+            sides = int(key[1:])
+            n = int(count)
+        except (ValueError, TypeError):
+            continue
+        if sides < 2 or n <= 0:
+            continue
+        rolls = [str(rng.randint(1, sides)) for _ in range(n)]
+        lines.append(f"{key}={','.join(rolls)}")
+    if not lines:
+        return ""
+    return "必要なときだけ左から順に使ってください\n" + "\n".join(lines)
 
 
 @dataclass
@@ -135,6 +183,9 @@ class EnsembleEngine:
         synopsis_auto: str = "",
         synopsis_manual: str = "",
         previous_anticipation: str = "",
+        pc_summary: str = "",
+        dice_pool: str = "",
+        suppress_names: set[str] | None = None,
     ) -> AsyncIterator[Any]:
         """1 ターンの発話列をストリーミング生成する。
 
@@ -151,6 +202,12 @@ class EnsembleEngine:
                           OOC 指示が末尾に注入される。
             synopsis_auto: セッションの自動あらすじ（メイン）。GM への system prompt に挿入される。
             synopsis_manual: セッションの手動補足メモ（補正指示）。同上。
+            pc_summary: ensemble_pc 専用。PC配役一覧テキスト。空なら GM プロンプトに
+                PC ブロックは出ない（ensemble 既存挙動と同等）。
+            dice_pool: ensemble_pc 専用。このターンの乱数プールテキスト。同上。
+            suppress_names: GM が代弁してはならない話者名集合。ensemble_pc 時は
+                user_alias + PC本名 + PC配役名 を渡す。None なら user_alias のみ
+                suppress（ensemble 既存挙動）。
 
         Yields:
             UtteranceDelta | TurnRecord | EngineResult
@@ -175,6 +232,8 @@ class EnsembleEngine:
             synopsis_auto=synopsis_auto,
             synopsis_manual=synopsis_manual,
             previous_anticipation=previous_anticipation,
+            pc_summary=pc_summary,
+            dice_pool=dice_pool,
         )
 
         # 3. プロバイダ生成
@@ -212,6 +271,7 @@ class EnsembleEngine:
         parser = ScenarioChatParser(
             known_npc_names=known_map,
             user_alias=scenario.user_alias,
+            suppress_names=suppress_names,
         )
 
         raw_chunks: list[str] = []

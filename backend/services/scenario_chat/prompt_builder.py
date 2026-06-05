@@ -72,6 +72,8 @@ def build_gm_system_prompt(
     synopsis_auto: str = "",
     synopsis_manual: str = "",
     previous_anticipation: str = "",
+    pc_summary: str = "",
+    dice_pool: str = "",
 ) -> str:
     """GM 用の system prompt を組み立てる。
 
@@ -145,7 +147,20 @@ def build_gm_system_prompt(
         synopsis_auto=synopsis_auto,
         synopsis_manual=synopsis_manual,
         previous_anticipation=previous_anticipation,
+        pc_summary=pc_summary,
+        dice_pool=dice_pool,
     )
+    # ensemble_pc 経路用フォールバック：custom_system_prompt が {pc_summary} / {dice_pool}
+    # タグを含まないテンプレ（既存シナリオを ensemble_pc にした場合など）でも、
+    # PC配役とダイスプールがプロンプト中に確実に登場するよう末尾に append する。
+    # 既にタグ置換で本文に取り込まれている場合は append しない（重複防止）。
+    appendix_parts: list[str] = []
+    if pc_summary and "{pc_summary}" not in template_to_use and pc_summary.strip() not in prompt_with_tags_replaced:
+        appendix_parts.append("# PC配役（プレイヤーキャラクター）\n" + pc_summary.strip())
+    if dice_pool and "{dice_pool}" not in template_to_use and dice_pool.strip() not in prompt_with_tags_replaced:
+        appendix_parts.append(dice_pool.strip())
+    if appendix_parts:
+        prompt_with_tags_replaced = prompt_with_tags_replaced.rstrip() + "\n\n" + "\n\n".join(appendix_parts)
     # 空のセクション見出しを削除（内容がないセクションのタイトルは表示しない）
     prompt_cleaned = _remove_empty_sections(prompt_with_tags_replaced)
 
@@ -220,6 +235,8 @@ def _replace_template_tags(
     synopsis_auto: str = "",
     synopsis_manual: str = "",
     previous_anticipation: str = "",
+    pc_summary: str = "",
+    dice_pool: str = "",
 ) -> str:
     """プロンプトテンプレート内のタグを実際の値に置き換える。
 
@@ -233,6 +250,8 @@ def _replace_template_tags(
         {previous_anticipation} - GMが考える次の展開の期待
         {npc_details}      - NPC詳細
         {history_block}    - 直近の履歴テキスト
+        {pc_summary}       - PC配役一覧（ensemble_pc 専用、ensemble では空）
+        {dice_pool}        - このターンで使えるダイス（ensemble_pc 専用、ensemble では空）
     """
     result = template
     user_alias = getattr(scenario, "user_alias", "ユーザ")
@@ -262,6 +281,8 @@ def _replace_template_tags(
         "{previous_anticipation}": previous_anticipation_formatted,
         "{npc_details}": _format_npc_details(npcs),
         "{history_block}": (history_text or "").strip(),
+        "{pc_summary}": (pc_summary or "").strip(),
+        "{dice_pool}": (dice_pool or "").strip(),
     }
 
     for tag, value in replacements.items():
@@ -305,6 +326,9 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 @{narrator_name}       ← 情景・状況描写。会話禁止。1〜3文目安。
 {npcs_summary}
 
+# PC配役（プレイヤーキャラクター）
+{pc_summary}
+
 # 出力規則
 ■ 書式
 - 各発言は必ず行頭 `@名前: 内容` の形式で書く
@@ -320,6 +344,9 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 - @{narrator_name} の地の文でも @{user_alias} を動かさない・心情を断定しない。@{user_alias} を主語にした行動の描写も書かない
 - プレイヤー発話内の `*…*` 部分のみ、@{user_alias} の行動描写として扱ってよい
 - @{user_alias} を過剰に持ち上げない。NPCが勝手に「隠された才能」「真の価値」「選ばれし者」といった過剰な設定を足さない
+- 上記の「@{user_alias} の領分を侵さない」ルールは、「PC配役」セクションに掲げた全PCにも同様に適用される。
+  各PCは別の人格（別の AI）が演じている。あなたは PC の発言・行動・心情・感覚を絶対に書かない。
+  PC への呼びかけは NPC の台詞や状況描写として行うこと（`@<PC名>:` で台詞ブロックを書こうとしないこと）。
 
 ■ 物語の語り手に徹し、ゲーム司会者にならない
 - 「このあとどうする?」「反応を待つ」のような問いをあなたの言葉で直接プレイヤーに投げない。
@@ -342,4 +369,7 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 {npc_details}
 
 # 直近の流れ
-{history_block}"""
+{history_block}
+
+# このターンで使えるダイス
+{dice_pool}"""

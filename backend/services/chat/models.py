@@ -59,3 +59,7 @@ class ChatRequest:
     # ANTICIPATE_RESPONSE: 前ターンでキャラクター自身が本文末尾に書いた「次の展開への予想（期待）」。
     # 次ターンのシステムプロンプトに「前回のあなたの予想」として注入される。
     previous_anticipation: str = ""
+    # inscribe_memory / post_working_memory_thread で保存される記憶/スレッドの origin。
+    # 1on1・GroupChat 通常経路では "real"、シナリオ PC モードからの呼び出しでは "interlude"。
+    # ToolExecutor.default_origin と Inscriber.inscribe_memory_from_text(origin=) に流れる。
+    default_origin: str = "real"

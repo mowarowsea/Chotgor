@@ -32,6 +32,7 @@ Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配
 import re
 
 from backend.character_actions.recaller import POWER_RECALL_TAG_GUIDE, POWER_RECALL_TOOLS_HINT
+from backend.character_actions.web_searcher import WEB_SEARCH_TOOLS_HINT
 from backend.character_actions.carver import (
     build_carve_narrative_tag_guide,
     build_carve_narrative_tools_hint,
@@ -370,6 +371,7 @@ def _build_chotgor_block(
 
     if use_tools:
         parts.append(POWER_RECALL_TOOLS_HINT)
+        parts.append(WEB_SEARCH_TOOLS_HINT)
         parts.append(build_carve_narrative_tools_hint(inner_narrative_len))
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=True))

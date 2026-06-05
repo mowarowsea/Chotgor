@@ -31,6 +31,11 @@ from backend.character_actions.threader import (
     OPEN_WORKING_MEMORY_THREAD_SCHEMA,
     OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
 )
+from backend.character_actions.web_searcher import (
+    WebSearcher,
+    WEB_SEARCH_SCHEMA,
+    WEB_SEARCH_TOOL_DESCRIPTION,
+)
 
 # Anthropic形式のツール定義リスト
 ANTHROPIC_TOOLS: list[dict] = [
@@ -63,6 +68,11 @@ ANTHROPIC_TOOLS: list[dict] = [
         "name": "power_recall",
         "description": POWER_RECALL_TOOL_DESCRIPTION,
         "input_schema": POWER_RECALL_SCHEMA,
+    },
+    {
+        "name": "web_search",
+        "description": WEB_SEARCH_TOOL_DESCRIPTION,
+        "input_schema": WEB_SEARCH_SCHEMA,
     },
 ]
 
@@ -130,6 +140,10 @@ class ToolExecutor:
             渡すと、inscribe_memory ツール実行時に類似上書きをスキップして必ず新規 ID で
             挿入する（forget 蒸留バッチ専用）。MCP ツール API は変更せず、バッチ側のみ
             この context で挙動を切り替えるための内部チャネル。
+        default_origin: inscribe_memory / post_working_memory_thread の保存時に
+            付与する origin ラベル。"real"=日常、"interlude"=シナリオPCモードの幕間体験。
+            シナリオ PC モードでキャラを動かす経路では "interlude" を渡す。
+            キャラクター本人はこの値を意識する必要はない（ツール引数として露出しない）。
         _inscriber: 記憶書き込みを担う Inscriber インスタンス。
         _threader: ワーキングメモリスレッド操作を担う Threader インスタンス。
         _carver: inner_narrative の彫り込みを担う Carver インスタンス。
@@ -146,6 +160,7 @@ class ToolExecutor:
         memory_manager: InscribedMemoryManager,
         working_memory_manager: WorkingMemoryManager | None,
         batch_context: dict | None = None,
+        default_origin: str = "real",
     ) -> None:
         """ToolExecutorを初期化する。
 
@@ -153,16 +168,21 @@ class ToolExecutor:
             batch_context: バッチ処理が指定するツール挙動の切り替えフラグ群。
                 通常チャットでは None（=空 dict 扱い）。forget 蒸留バッチからは
                 ``{"force_insert_memory": True}`` を渡す。
+            default_origin: inscribe_memory / post_working_memory_thread が保存する
+                記憶/スレッドに付与する origin。1on1・GroupChat 通常経路では "real"、
+                シナリオ PC モードからは "interlude" を渡す。
         """
         self.character_id = character_id
         self.session_id = session_id
         self.memory_manager = memory_manager
         self.working_memory_manager = working_memory_manager
         self.batch_context: dict = batch_context or {}
+        self.default_origin = default_origin
         self._inscriber = Inscriber(character_id, memory_manager)
         self._threader = Threader(character_id, working_memory_manager)
         self._carver = Carver(character_id, memory_manager.sqlite)
         self._switcher = Switcher()
+        self._web_searcher = WebSearcher(memory_manager.sqlite)
 
     @property
     def switch_request(self) -> tuple[str, str] | None:
@@ -207,6 +227,12 @@ class ToolExecutor:
                 query=str(tool_input.get("query", "")),
                 top_k=int(tool_input.get("top_k", 5)),
             )
+        if tool_name == "web_search":
+            return self._web_search(
+                query=str(tool_input.get("query", "")),
+                max_results=int(tool_input.get("max_results", 5)),
+                topic=str(tool_input.get("topic", "general")),
+            )
         self.logger.warning("未知のツール name=%s", tool_name)
         return f"[Unknown tool: {tool_name}]"
 
@@ -219,14 +245,18 @@ class ToolExecutor:
         force_insert = bool(self.batch_context.get("force_insert_memory", False))
         # force_insert の経路追跡用ログ。バッチ起因のフラグが ToolExecutor まで伝搬しているかをここで可視化する。
         self.logger.info(
-            "inscribe_memory 呼び出し char=%s category=%s impact=%.2f batch_context=%s force_insert=%s",
-            self.character_id, category, impact, dict(self.batch_context), force_insert,
+            "inscribe_memory 呼び出し char=%s category=%s impact=%.2f batch_context=%s force_insert=%s origin=%s",
+            self.character_id, category, impact, dict(self.batch_context), force_insert, self.default_origin,
         )
         try:
-            self._inscriber.inscribe_memory(content, category, impact, force_insert=force_insert)
+            self._inscriber.inscribe_memory(
+                content, category, impact,
+                force_insert=force_insert,
+                origin=self.default_origin,
+            )
             self.logger.info(
-                "完了 char=%s category=%s force_insert=%s content=%.50s",
-                self.character_id, category, force_insert, content,
+                "完了 char=%s category=%s force_insert=%s origin=%s content=%.50s",
+                self.character_id, category, force_insert, self.default_origin, content,
             )
             return "記憶に刻んだ。"
         except Exception as e:
@@ -253,6 +283,7 @@ class ToolExecutor:
             importance=importance,
             content=str(tool_input.get("content", "")),
             relation_target=str(tool_input.get("relation_target", "")),
+            origin=self.default_origin,
         )
 
     def _carve_narrative(self, mode: str, content: str) -> str:
@@ -323,3 +354,15 @@ class ToolExecutor:
                     lines.append(f"  {i}. {turn['content']}")
 
         return "\n".join(lines)
+
+    def _web_search(self, query: str, max_results: int, topic: str) -> str:
+        """web_search ツールの実装。Tavily API でインターネット検索を行い結果を返す。
+
+        WebSearcher 自体が API キー欠如・例外を握って整形済み文字列を返す設計なので、
+        ここではそのまま委譲するだけ。
+        """
+        return self._web_searcher.search(
+            query=query,
+            max_results=max_results,
+            topic=topic,
+        )

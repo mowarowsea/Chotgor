@@ -74,6 +74,7 @@ class ScenarioChatParser:
         known_npc_names: dict[str, str] | None = None,
         user_alias: str = "ユーザ",
         narrator_name: str = "Narrator",
+        suppress_names: set[str] | None = None,
     ) -> None:
         """パーサを初期化する。
 
@@ -81,10 +82,16 @@ class ScenarioChatParser:
             known_npc_names: {NPC名: NPC.id} の辞書。known と未知の判定に使う。
             user_alias: ユーザの @タグ名。これに一致する話者ブロックは捨てる。
             narrator_name: Narrator のタグ名。デフォルト "Narrator"。
+            suppress_names: GMが代弁してはならない話者名の集合。シナリオPCモードで
+                PC配役名（本名・配役名どちらも）を渡し、GMが PC を代弁しようとした
+                ブロックを破棄する。None の場合は user_alias 単独の破棄のみ（従来挙動）。
+                user_alias は明示的に渡されなくても常に破棄対象に含まれる。
         """
         self._known: dict[str, str] = dict(known_npc_names or {})
         self._user_alias = user_alias
         self._narrator_name = narrator_name
+        # user_alias は常に破棄対象。suppress_names で追加分を受ける。
+        self._suppress_names: set[str] = set(suppress_names or set()) | {user_alias}
 
         # 内部バッファ。直前の改行以降のテキストを蓄える。
         self._buffer: str = ""
@@ -266,10 +273,13 @@ class ScenarioChatParser:
             # `@:` のような不正系。Narrator フォールバック。
             name = self._narrator_name
 
-        if name == self._user_alias:
-            # GM がユーザを代弁しようとしている。捨てる。
+        if name in self._suppress_names:
+            # GM がユーザ／PC を代弁しようとしている。捨てる。
             self._suppress = True
-            self.warnings.append(f"user_alias 代弁ブロックを破棄: '@{name}:'")
+            if name == self._user_alias:
+                self.warnings.append(f"user_alias 代弁ブロックを破棄: '@{name}:'")
+            else:
+                self.warnings.append(f"PC 代弁ブロックを破棄: '@{name}:'")
             # 話者状態自体は前のまま保持（次の真の話者切替を待つ）。
             self._emitted_for_current_speaker = False
             return

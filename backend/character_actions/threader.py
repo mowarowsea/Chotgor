@@ -127,10 +127,15 @@ class Threader:
         importance: float | None = None,
         content: str = "",
         relation_target: str = "",
+        origin: str = "real",
     ) -> str:
         """スレッドを作成・更新する（ポスト追加・要約更新を兼ねる）。
 
         thread_id が空なら新規作成、指定があれば既存スレッドの更新。
+
+        Args:
+            origin: 新規作成時のスレッドソース識別。"real"=日常、"interlude"=シナリオPCモード幕間。
+                既存スレッド更新時は無視される（スレッドの origin は作成時に決まり変わらない）。
 
         Returns:
             実行結果メッセージ。新規作成時は作成されたスレッドIDを含む。
@@ -153,6 +158,7 @@ class Threader:
                     importance=importance if importance is not None else 0.5,
                     relation_target=relation_target or None,
                     content=content or None,
+                    origin=origin,
                 )
                 return f"スレッドを作成した（id={thread['id']}）。"
 

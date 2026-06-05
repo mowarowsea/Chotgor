@@ -419,7 +419,7 @@ class TestChatServiceExecuteWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
         monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
-        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
@@ -468,7 +468,7 @@ class TestChatServiceExecuteWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
         monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
-        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
@@ -492,7 +492,7 @@ class TestChatServiceExecuteWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
         monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
-        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
@@ -548,7 +548,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
         monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
-        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
@@ -609,7 +609,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
         monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
-        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)
@@ -691,7 +691,7 @@ class TestChatServiceExecuteStreamWithSwitch:
         monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
         monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
         mock_inscriber = MagicMock()
-        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
         mock_carver = MagicMock()
         mock_carver.carve_narrative_from_text.side_effect = lambda text: text
         monkeypatch.setattr("backend.services.chat.service.Inscriber", lambda *_: mock_inscriber)

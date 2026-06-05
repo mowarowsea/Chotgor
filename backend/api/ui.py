@@ -456,6 +456,37 @@ def _coalesce_optional_int(form, key: str):
         return None
 
 
+def _parse_dice_pool_spec(value: str | None) -> dict | None:
+    """dice_pool_spec フォーム入力（JSON テキスト）を辞書に正規化する。
+
+    例:
+        '{"d6": 10, "d100": 5}' → {"d6": 10, "d100": 5}
+        '' / None / 不正 JSON / 非 dict → None
+        値が int でない・0 以下・キーが `d` で始まらないエントリは無視する。
+    """
+    if not value or not value.strip():
+        return None
+    import json as _json
+    try:
+        parsed = _json.loads(value)
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    result: dict[str, int] = {}
+    for k, v in parsed.items():
+        if not isinstance(k, str) or not k.startswith("d"):
+            continue
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n <= 0:
+            continue
+        result[k] = n
+    return result or None
+
+
 @router.get("/scenarios", response_class=HTMLResponse)
 async def scenarios_list(request: Request):
     """シナリオテンプレート一覧ページ。"""
@@ -503,6 +534,7 @@ async def create_scenario(request: Request):
         history_max_turns=_coalesce_optional_int(form, "history_max_turns"),
         history_max_chars=_coalesce_optional_int(form, "history_max_chars"),
         custom_system_prompt=(form.get("custom_system_prompt") or "") or None,
+        dice_pool_spec=_parse_dice_pool_spec(form.get("dice_pool_spec")),
     )
     return RedirectResponse(url=f"/ui/scenarios/{sid}/edit", status_code=303)
 
@@ -537,6 +569,7 @@ async def update_scenario(request: Request, scenario_id: str):
         "history_max_turns": _coalesce_optional_int(form, "history_max_turns"),
         "history_max_chars": _coalesce_optional_int(form, "history_max_chars"),
         "custom_system_prompt": (form.get("custom_system_prompt") or "") or None,
+        "dice_pool_spec": _parse_dice_pool_spec(form.get("dice_pool_spec")),
     }
     # タイトルは必須項目。空欄なら更新しない（自動保存の空入力対策）。
     title = (form.get("title") or "").strip()

@@ -162,7 +162,7 @@ def _fake_provider_with_text(text: str):
 def _mock_inscriber_passthrough():
     """テキストをそのまま返す Inscriber モックを生成するヘルパー。"""
     mock = MagicMock()
-    mock.inscribe_memory_from_text.side_effect = lambda text, *_: text
+    mock.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
     return mock
 
 
@@ -315,7 +315,7 @@ async def test_execute_stream_text_is_cleaned_by_inscribe_memory_from_text():
     provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed
 
-    def _fake_inscribe(text, *_):
+    def _fake_inscribe(text, *_, **__):
         """[INSCRIBE_MEMORY:...] を除去する簡易実装。"""
         import re
         return re.sub(r"\[INSCRIBE_MEMORY:[^\]]*\]", "", text)

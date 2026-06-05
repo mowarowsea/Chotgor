@@ -57,6 +57,7 @@ def scenario_to_dict(scenario: Any) -> dict:
         "history_max_turns": scenario.history_max_turns,
         "history_max_chars": scenario.history_max_chars,
         "custom_system_prompt": scenario.custom_system_prompt,
+        "dice_pool_spec": getattr(scenario, "dice_pool_spec", None),
         "created_at": scenario.created_at.isoformat() if scenario.created_at else None,
         "updated_at": scenario.updated_at.isoformat() if scenario.updated_at else None,
     }
@@ -85,6 +86,7 @@ def scenario_session_to_dict(session: Any) -> dict:
         "synopsis_auto": getattr(session, "synopsis_auto", "") or "",
         "synopsis_manual": getattr(session, "synopsis_manual", "") or "",
         "synopsis_last_turn_index": int(getattr(session, "synopsis_last_turn_index", -1) or -1),
+        "pc_assignments": getattr(session, "pc_assignments", None) or [],
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
     }
@@ -325,11 +327,18 @@ async def run_scenario_turn(
     settings: dict,
     engine: SceneEngine | None = None,
     auto_advance: bool = False,
+    chat_service=None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザ発話を受け取り、シナリオ 1 ターン分の SSE イベントを順次 yield する。
 
     プレイセッション（scenario_sessions）から元シナリオ（scenarios）を lookup し、
     そのシナリオの NPC・user_alias・GM プリセット等で 1 ターンを進行させる。
+
+    `engine_type=="ensemble_pc"` の場合は GM ターン直後に GM 出力中の `@<PC名>`
+    メンションを解析し、指名された PC（Chotgor キャラ）を逐次呼び出す。PC ターンは
+    ChatService.execute_stream に委譲する（記憶想起・WM・inscribe が走る）。
+    PC ターン実行のため `chat_service` を必ず渡すこと（None だと PC ターンは
+    スキップされて GM 出力だけで進む）。
 
     auto_advance=True の場合:
         - user_message は無視される（呼び出し側は空文字を渡してよい）
@@ -351,6 +360,31 @@ async def run_scenario_turn(
         return
 
     npcs = sqlite.list_scenario_npcs(scenario.id)
+    engine_type = getattr(session, "engine_type", "ensemble") or "ensemble"
+    is_pc_mode = engine_type == "ensemble_pc"
+
+    # ensemble_pc 専用: PC配役の正規化、pc_summary / dice_pool / suppress_names を準備
+    pcs: list = []
+    pc_summary_text = ""
+    dice_pool_text = ""
+    suppress_names: set[str] | None = None
+    if is_pc_mode:
+        from backend.services.scenario_chat.mention import (
+            format_pc_summary,
+            normalize_pc_assignments,
+            resolve_pc_mentions_in_order,
+            pick_at_all_target,
+        )
+        from backend.services.scenario_chat.engine import generate_dice_pool
+        pcs = normalize_pc_assignments(
+            getattr(session, "pc_assignments", None), sqlite,
+        )
+        pc_summary_text = format_pc_summary(pcs, scenario.user_alias)
+        dice_pool_text = generate_dice_pool(getattr(scenario, "dice_pool_spec", None))
+        suppress_names = {scenario.user_alias}
+        for pc in pcs:
+            suppress_names.add(pc.character_name)
+            suppress_names.add(pc.role_name)
 
     # 1. 履歴を先に取得する（ユーザーターン保存前に取得することで、
     #    engine に渡す history_text にユーザーメッセージが二重で含まれるのを防ぐ）
@@ -381,7 +415,7 @@ async def run_scenario_turn(
         "last_turn_index": -1,
     }
 
-    # 3. エンジン実行
+    # 3. エンジン実行（GM ターン）
     if engine is None:
         engine = _build_default_engine(sqlite)
 
@@ -400,6 +434,9 @@ async def run_scenario_turn(
             synopsis_auto=current_synopsis.get("auto", ""),
             synopsis_manual=current_synopsis.get("manual", ""),
             previous_anticipation=previous_anticipation,
+            pc_summary=pc_summary_text,
+            dice_pool=dice_pool_text,
+            suppress_names=suppress_names,
         ):
             if isinstance(item, UtteranceDelta):
                 if item.is_speaker_change:
@@ -446,6 +483,22 @@ async def run_scenario_turn(
         saved_turn_ids.append(saved.id)
         yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
 
+    # 4.5. PC モード: GM 出力中のメンションを解析して PC ターンを逐次実行する。
+    #      上限・連続抑止により無限ループを防止。
+    if is_pc_mode and pcs and chat_service is not None:
+        async for ev in _run_pc_followups(
+            session_id=session_id,
+            scenario=scenario,
+            session=session,
+            pcs=pcs,
+            gm_raw_response=raw_response,
+            sqlite=sqlite,
+            settings=settings,
+            chat_service=chat_service,
+            saved_turn_ids=saved_turn_ids,
+        ):
+            yield ev
+
     # セッションの updated_at を最新化（タイトルは触らない）
     sqlite.update_scenario_session(session_id, status=session.status)
 
@@ -457,6 +510,174 @@ async def run_scenario_turn(
     progress = compute_synopsis_progress(sqlite, settings, scenario, session_id)
     if progress is not None:
         yield ("synopsis_progress", progress)
+
+
+# PC モードでの 1ユーザターンあたり PC 発話の上限（無限ループ・トークン爆発防止）。
+# GM 出力に大量のメンションが含まれても、ここで打ち切る。
+_MAX_PC_TURNS_PER_USER_TURN = 6
+
+
+async def _run_pc_followups(
+    session_id: str,
+    scenario,
+    session,
+    pcs: list,
+    gm_raw_response: str,
+    sqlite,
+    settings: dict,
+    chat_service,
+    saved_turn_ids: list[str],
+) -> AsyncGenerator[tuple[str, Any], None]:
+    """GM ターン後に PC（Chotgor キャラ）を順次呼び出して SSE イベントを yield する。
+
+    GM の生出力（raw_response）から `@<PC名>` メンションを抽出し、出現順に
+    PC を 1 人ずつ呼ぶ。`@ALL` トークンは直前 PC を除外したランダム選択で
+    1 名に解決する。
+
+    上限・抑止ルール:
+        - 1 ユーザターンあたり最大 _MAX_PC_TURNS_PER_USER_TURN 名まで呼ぶ
+        - 同一 PC が直前ターンに続いて再指名された場合はスキップ
+          （`@ALL` ランダムも同様）
+        - PC 発話の中の `@GM` / `@<他PC>` は次ターンの GM プロンプトに残るのみで、
+          このループでは追加呼び出しのトリガにしない（GM 再呼出と無限連鎖を避ける）
+
+    Args:
+        gm_raw_response: GM 1 ターンの生出力全文。メンション抽出元。
+        saved_turn_ids: GM ターンで保存された turn_id のリスト。PC ターン保存後の
+            ID も追記する（呼び出し元で turn_complete に乗せるため、参照渡し的に使用）。
+    """
+    from backend.services.scenario_chat.mention import (
+        extract_mentions,
+        resolve_pc,
+        pick_at_all_target,
+    )
+    from backend.services.scenario_chat.pc_runner import stream_pc_response
+
+    pc_by_id = {pc.character_id: pc for pc in pcs}
+    mention_names = extract_mentions(gm_raw_response)
+
+    # PC 呼び出しキューを組み立てる。@ALL は遅延解決（直前話者を引いてから決める）。
+    queue: list = []  # PcAssignment or "ALL" sentinel
+    seen_explicit: set[str] = set()
+    for name in mention_names:
+        if name.upper() == "ALL":
+            queue.append("ALL")
+            continue
+        pc = resolve_pc(name, pcs)
+        if pc is None:
+            continue
+        if pc.character_id in seen_explicit:
+            continue
+        seen_explicit.add(pc.character_id)
+        queue.append(pc)
+    if not queue:
+        return
+
+    last_pc_speaker_id: str | None = None
+    fired_count = 0
+
+    for entry in queue:
+        if fired_count >= _MAX_PC_TURNS_PER_USER_TURN:
+            logger.info(
+                "PC ターン上限到達 session=%s fired=%d cap=%d",
+                session_id, fired_count, _MAX_PC_TURNS_PER_USER_TURN,
+            )
+            break
+
+        if entry == "ALL":
+            target = pick_at_all_target(pcs, last_pc_speaker_id=last_pc_speaker_id)
+            if target is None:
+                continue
+        else:
+            target = entry
+            # 同一 PC が直前ターンに続いて再指名された場合はスキップ（同一 PC 連発抑止）
+            if last_pc_speaker_id == target.character_id:
+                logger.info(
+                    "同一PC連続抑止 session=%s pc_id=%s role=%s",
+                    session_id, target.character_id, target.role_name,
+                )
+                continue
+
+        # PC のプリセット決定: pc_assignments に preset_id がなければキャラの
+        # enabled_providers 先頭から取る。GroupChat と同じく「会話ごとのプリセット」
+        # は session.pc_assignments に持つのが本筋だが、当面はキャラデフォルトに任せる。
+        preset_id = _resolve_pc_preset_id(target.character_id, sqlite)
+        if not preset_id:
+            logger.warning(
+                "PC 用プリセット未解決 session=%s pc_id=%s",
+                session_id, target.character_id,
+            )
+            continue
+
+        # 最新履歴を取り直す（直前 PC 発話を含めた状態で次 PC へ渡す）
+        latest_history = sqlite.list_scenario_turns(session_id)
+
+        yield ("pc_start", {
+            "character": target.role_name,
+            "character_id": target.character_id,
+        })
+        try:
+            full_text = ""
+            anticipation_text: str | None = None
+            async for ev_type, payload in stream_pc_response(
+                pc=target,
+                scenario_title=scenario.title,
+                user_alias=scenario.user_alias,
+                history=latest_history,
+                preset_id=preset_id,
+                sqlite=sqlite,
+                settings=settings,
+                chat_service=chat_service,
+            ):
+                if ev_type == "pc_done":
+                    full_text = payload["full_text"]
+                    anticipation_text = payload.get("anticipation")
+                yield (ev_type, payload)
+        except Exception as e:
+            logger.exception("PC ターン実行エラー session=%s pc=%s", session_id, target.role_name)
+            yield ("pc_error", {
+                "character": target.role_name,
+                "character_id": target.character_id,
+                "message": str(e),
+            })
+            break
+
+        # PC 発話を scenario_turns に保存（speaker_type="pc"）
+        if full_text.strip():
+            saved = _save_turn(
+                sqlite=sqlite,
+                session_id=session_id,
+                speaker_type="pc",
+                speaker_name=target.role_name,
+                content=full_text,
+                speaker_id=target.character_id,
+                attach_log_request_id=True,
+                anticipation=anticipation_text,
+            )
+            saved_turn_ids.append(saved.id)
+            yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
+
+        last_pc_speaker_id = target.character_id
+        fired_count += 1
+
+
+def _resolve_pc_preset_id(character_id: str, sqlite) -> str:
+    """PC キャラに使う LLMModelPreset の ID を返す。
+
+    現状はキャラの enabled_providers の任意の1エントリ（dict のキー）を使う。
+    将来 pc_assignments に preset_id を持たせる拡張余地あり。
+
+    Returns:
+        プリセット ID。解決不能なら空文字列。
+    """
+    char = sqlite.get_character(character_id)
+    if not char:
+        return ""
+    enabled = getattr(char, "enabled_providers", None) or {}
+    for preset_id in enabled.keys():
+        if sqlite.get_model_preset(preset_id):
+            return preset_id
+    return ""
 
 
 def parse_intro_to_turns(

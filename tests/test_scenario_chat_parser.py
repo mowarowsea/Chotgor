@@ -126,6 +126,66 @@ class TestBasicParsing:
         assert _ordered_speakers(deltas) == ["Narrator", "レイカ", "トウコ"]
 
 
+# ─── suppress_names 拡張（PC モード対応） ────────────────────────────────────
+
+
+class TestSuppressNamesExtension:
+    """`suppress_names` 集合引数によって、user_alias 以外の任意話者を破棄できることを検証する。
+
+    シナリオ PC モードでは GM が PC（別 LLM が演じるプレイヤーキャラ）を代弁しないよう、
+    PC の本名・配役名も suppress 対象集合に含める。これにより GM 出力中の
+    `@<PC本名>:` `@<PC配役名>:` ブロックが本文として通らず破棄される。
+    user_alias は明示的に suppress_names に入れなくても従来通り破棄対象になる。
+    """
+
+    def test_pc_配役名ブロックが破棄される(self):
+        """suppress_names に「アリス」（配役名）を含めると、@アリス: ブロックは出力されない。"""
+        parser = ScenarioChatParser(
+            known_npc_names={"レイカ": "id-r"},
+            user_alias="マスター",
+            suppress_names={"アリス", "はる"},  # 配役名 + 本名
+        )
+        text = (
+            "@レイカ: そこにいるのは……?\n"
+            "@アリス: ……どうも\n"  # PC ブロック — 破棄されるべき
+            "@レイカ: 名前は?\n"
+        )
+        deltas = parser.feed(text)
+        deltas += parser.flush()
+        # アリスの delta は出ない
+        assert not any(d.speaker_name == "アリス" for d in deltas)
+        # レイカは 2 回現れる（is_speaker_change=True が 2 つ）
+        reika_changes = [d for d in deltas if d.speaker_name == "レイカ" and d.is_speaker_change]
+        assert len(reika_changes) == 2
+        # 警告ログに PC 代弁破棄の記録が残る
+        assert any("アリス" in w for w in parser.warnings)
+
+    def test_user_alias_は_suppress_names未指定でも破棄される(self):
+        """suppress_names を渡さなくても user_alias は従来どおり破棄される（後方互換）。"""
+        parser = ScenarioChatParser(user_alias="マスター")
+        text = "@マスター: 代弁されない\n@Narrator: 雨が降っている\n"
+        deltas = parser.feed(text)
+        deltas += parser.flush()
+        assert not any(d.speaker_name == "マスター" for d in deltas)
+        assert any(d.speaker_type == "narrator" for d in deltas)
+
+    def test_suppress_names_に追加してもuser_aliasは破棄され続ける(self):
+        """suppress_names に他の名前を入れても user_alias は明示せずに破棄対象に残ること。"""
+        parser = ScenarioChatParser(
+            user_alias="マスター",
+            suppress_names={"アリス"},
+        )
+        text = "@マスター: foo\n@アリス: bar\n@Narrator: baz\n"
+        deltas = parser.feed(text)
+        deltas += parser.flush()
+        names = {d.speaker_name for d in deltas if d.is_speaker_change}
+        # マスター（user_alias）・アリス（suppress） どちらも消える
+        assert "マスター" not in names
+        assert "アリス" not in names
+        # Narrator は残る
+        assert "Narrator" in names
+
+
 # ─── ユーザ代弁の破棄 ─────────────────────────────────────────────────────────
 
 

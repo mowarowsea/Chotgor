@@ -66,6 +66,7 @@ class ScenarioCreate(BaseModel):
     GM プリセットはテンプレートではなくセッション単位（SessionStart.gm_preset_id）で
     指定するため、本リクエストには含めない。
     custom_system_prompt を設定するとGMシステムプロンプトをカスタマイズできる。
+    dice_pool_spec は ensemble_pc エンジンのセッション専用フィールド。
     """
 
     title: str = Field(min_length=1)
@@ -75,6 +76,7 @@ class ScenarioCreate(BaseModel):
     history_max_turns: int | None = None
     history_max_chars: int | None = None
     custom_system_prompt: str | None = None
+    dice_pool_spec: dict | None = None
 
 
 class ScenarioUpdate(BaseModel):
@@ -87,6 +89,7 @@ class ScenarioUpdate(BaseModel):
     history_max_turns: int | None = None
     history_max_chars: int | None = None
     custom_system_prompt: str | None = None
+    dice_pool_spec: dict | None = None
 
 
 class NpcCreate(BaseModel):
@@ -116,12 +119,17 @@ class SessionStart(BaseModel):
     同一シナリオから複数セッションを起動した際にそれぞれ別モデルを選べる設計で、
     `synopsis_preset_id` はあらすじ蒸留専用（レートリミット節約のため別モデル指定可能）。
     UI 上は両方明示指定させる（同じプリセットでもよい）。
+
+    engine_type は "ensemble"（既存・GMのみ）または "ensemble_pc"（GM + PC配役）。
+    "ensemble_pc" の場合は pc_assignments を必ず 1 件以上指定する。
     """
 
     scenario_id: str = Field(min_length=1)
     gm_preset_id: str = Field(min_length=1)
     synopsis_preset_id: str = Field(min_length=1)
     title: str | None = None  # 省略時はシナリオ title を使う
+    engine_type: str = "ensemble"
+    pc_assignments: list[dict] | None = None  # ensemble_pc 時のみ参照（[{"character_id", "role_name"}]）
 
 
 class SessionUpdate(BaseModel):
@@ -207,6 +215,8 @@ async def create_scenario(request: Request, body: ScenarioCreate):
         intro=body.intro,
         history_max_turns=body.history_max_turns,
         history_max_chars=body.history_max_chars,
+        custom_system_prompt=body.custom_system_prompt,
+        dice_pool_spec=body.dice_pool_spec,
     )
     return scenario_to_dict(sqlite.get_scenario(sid))
 
@@ -318,6 +328,8 @@ async def start_session(request: Request, body: SessionStart):
     """シナリオテンプレートから新しいプレイセッションを起動する。
 
     起動時に GM プリセットを必須で受け取り、セッションへ紐付ける（チャット中も変更可）。
+    engine_type="ensemble_pc" の場合は pc_assignments を 1 件以上必須とし、
+    PC本名・PC配役名・NPC名・user_alias・narrator 名の三方衝突を検知する。
     """
     sqlite = request.app.state.sqlite
     scenario = sqlite.get_scenario(body.scenario_id)
@@ -335,6 +347,68 @@ async def start_session(request: Request, body: SessionStart):
             status_code=400,
             detail=f"指定された synopsis_preset_id が見つかりません: {body.synopsis_preset_id}",
         )
+
+    engine_type = (body.engine_type or "ensemble").strip()
+    if engine_type not in {"ensemble", "ensemble_pc"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知の engine_type: {engine_type}（ensemble | ensemble_pc）",
+        )
+
+    pc_assignments_validated: list[dict] | None = None
+    if engine_type == "ensemble_pc":
+        from backend.services.scenario_chat.mention import (
+            detect_name_conflicts,
+            normalize_pc_assignments,
+        )
+        raw_pcs = body.pc_assignments or []
+        if not raw_pcs:
+            raise HTTPException(
+                status_code=400,
+                detail="engine_type=ensemble_pc には pc_assignments を 1 件以上指定してください",
+            )
+        # キャラクター実在チェック + role_name 必須
+        normalized = []
+        for entry in raw_pcs:
+            if not isinstance(entry, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="pc_assignments の各要素は dict（character_id, role_name）が必要です",
+                )
+            cid = str(entry.get("character_id", "")).strip()
+            role = str(entry.get("role_name", "")).strip()
+            if not cid or not role:
+                raise HTTPException(
+                    status_code=400,
+                    detail="pc_assignments の各要素には character_id と role_name が必要です",
+                )
+            char = sqlite.get_character(cid)
+            if char is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"PC配役のキャラクターが見つかりません: character_id={cid}",
+                )
+            normalized.append({"character_id": cid, "role_name": role})
+        pc_assignments_validated = normalized
+
+        # 三方衝突検知（NPC名 × PC本名 × PC配役名 × user_alias × narrator）
+        npcs = sqlite.list_scenario_npcs(body.scenario_id)
+        pcs_norm = normalize_pc_assignments(pc_assignments_validated, sqlite)
+        conflicts = detect_name_conflicts(
+            pcs_norm,
+            npc_names={n.name for n in npcs if getattr(n, "name", None)},
+            user_alias=scenario.user_alias,
+        )
+        if conflicts:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "PC配役名・本名・NPC名・user_alias・Narrator の中に重複があります: "
+                    + ", ".join(conflicts)
+                    + "（重複を解消してから再度起動してください）"
+                ),
+            )
+
     sid = str(uuid.uuid4())
     title = body.title or scenario.title
     sqlite.create_scenario_session(
@@ -343,6 +417,8 @@ async def start_session(request: Request, body: SessionStart):
         title=title,
         gm_preset_id=body.gm_preset_id,
         synopsis_preset_id=body.synopsis_preset_id,
+        engine_type=engine_type,
+        pc_assignments=pc_assignments_validated,
     )
     # シナリオ設定の導入部（intro）があれば固定ターンとして先頭挿入する
     seed_intro_turns(sqlite, sid, scenario)
@@ -602,12 +678,17 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
     async def sse_generator():
         # GM の発話内容を収集して最後に log_front_output() に渡す
         _gm_parts: list[str] = []
+        # chat_service は app.state に必ず存在する想定だが、テスト用 fixture では未注入のことが
+        # あるため getattr で防御する。None でも ensemble モードは動作する（ensemble_pc 時のみ
+        # PC ターンがスキップされる）。
+        _chat_service = getattr(state, "chat_service", None)
         async for event_type, payload in run_scenario_turn(
             session_id=session_id,
             user_message=body.content,
             sqlite=sqlite,
             settings=settings,
             auto_advance=body.auto_advance,
+            chat_service=_chat_service,
         ):
             data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
             yield f"data: {data}\n\n"

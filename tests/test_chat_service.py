@@ -77,7 +77,7 @@ async def test_chat_service_execute_returns_text():
     fake_provider.generate = AsyncMock(return_value="Hi there!")
 
     mock_inscriber = MagicMock()
-    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
     mock_carver = MagicMock()
     mock_carver.carve_narrative_from_text.side_effect = lambda text: text
 
@@ -430,7 +430,7 @@ async def test_execute_without_tools_does_not_use_tool_executor():
     fake_provider.generate = AsyncMock(return_value="Hi!")
 
     mock_inscriber = MagicMock()
-    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_: text
+    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
     mock_carver = MagicMock()
     mock_carver.carve_narrative_from_text.side_effect = lambda text: text
 

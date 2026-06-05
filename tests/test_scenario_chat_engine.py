@@ -21,9 +21,11 @@ from dataclasses import dataclass, field
 import pytest
 
 from backend.services.scenario_chat.engine import (
+    DEFAULT_DICE_POOL_SPEC,
     EngineResult,
     EnsembleEngine,
     TurnRecord,
+    generate_dice_pool,
 )
 from backend.services.scenario_chat.parser import UtteranceDelta
 
@@ -532,3 +534,65 @@ class TestSynopsisIntoSystemPrompt:
         assert "# これまでのあらすじ" not in sp
         # プレイヤー補足メモの見出しと説明文は常に出力される（説明文が空でないため削除されない）
         assert "# プレイヤーからの補足メモ" in sp
+
+
+# ─── ダイスプール生成（ensemble_pc 用） ────────────────────────────────────
+
+
+class TestGenerateDicePool:
+    """`generate_dice_pool` の挙動。
+
+    シナリオ PC モードで、GM の system prompt 末尾に「このターン使えるダイス」として
+    乱数列を注入する。本関数は LLM 非依存・純粋関数で、`random.Random` を
+    注入することで決定的に検証できる。
+    """
+
+    def test_既定で_d6_10個_が生成される(self):
+        """spec が None なら DEFAULT_DICE_POOL_SPEC（d6×10）が使われる。"""
+        import random
+        text = generate_dice_pool(None, rng=random.Random(0))
+        assert "d6=" in text
+        assert text.count(",") == 9  # 10 個 → カンマ 9 個
+        assert "必要なときだけ左から順に使ってください" in text
+
+    def test_仕様通りに複数種別を生成する(self):
+        """`{"d6": 3, "d20": 2}` を渡すと 2 行のダイス出力が並ぶ。"""
+        import random
+        text = generate_dice_pool({"d6": 3, "d20": 2}, rng=random.Random(42))
+        assert "d6=" in text
+        assert "d20=" in text
+        # それぞれの行は本数通りの値の数
+        d6_line = [ln for ln in text.splitlines() if ln.startswith("d6=")][0]
+        assert d6_line.count(",") == 2  # 3 個
+        d20_line = [ln for ln in text.splitlines() if ln.startswith("d20=")][0]
+        assert d20_line.count(",") == 1  # 2 個
+
+    def test_範囲内の値しか出ない(self):
+        """d6 なら 1〜6 の整数のみ。境界を超えないこと。"""
+        import random
+        text = generate_dice_pool({"d6": 100}, rng=random.Random(123))
+        line = [ln for ln in text.splitlines() if ln.startswith("d6=")][0]
+        values = [int(v) for v in line[3:].split(",")]
+        assert all(1 <= v <= 6 for v in values)
+        assert len(values) == 100
+
+    def test_不正エントリは黙って無視される(self):
+        """`{"x": 5, "d6": 0, "d-1": 3, "d6": 2}` のような変な指定は破棄。"""
+        import random
+        text = generate_dice_pool(
+            {"x": 5, "d0": 3, "d6": 2, "d-1": 3},
+            rng=random.Random(7),
+        )
+        # 残るのは d6=2 のみ
+        assert "d6=" in text
+        assert "x=" not in text
+        assert "d0=" not in text
+
+    def test_有効エントリゼロなら空文字列(self):
+        """全エントリが不正なら空文字列を返す（プロンプト側で見出しが消える）。"""
+        text = generate_dice_pool({"x": 5})
+        assert text == ""
+
+    def test_DEFAULT_DICE_POOL_SPEC_は_d6_10(self):
+        """既定値が変更されてないこと（仕様凍結のスナップショット）。"""
+        assert DEFAULT_DICE_POOL_SPEC == {"d6": 10}

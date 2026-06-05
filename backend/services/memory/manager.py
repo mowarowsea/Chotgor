@@ -120,6 +120,7 @@ class InscribedMemoryManager:
         user_importance: float = 0.5,
         source_preset_id: str | None = None,
         force_insert: bool = False,
+        origin: str = "real",
     ) -> str:
         """記憶を SQLite と LanceStore に書き込む。類似記憶があれば in-place 更新、なければ新規作成。
 
@@ -205,6 +206,7 @@ class InscribedMemoryManager:
                 identity_importance=identity_importance,
                 user_importance=user_importance,
                 source_preset_id=source_preset_id,
+                origin=origin,
             )
 
         # SQLite コミット完了後に LanceStore へ書き込む。

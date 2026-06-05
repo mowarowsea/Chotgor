@@ -20,8 +20,13 @@ class InscribedMemoryStoreMixin:
         identity_importance: float = 0.5,
         user_importance: float = 0.5,
         source_preset_id: str | None = None,
+        origin: str = "real",
     ):
-        """保存記憶レコードを新規作成する。"""
+        """保存記憶レコードを新規作成する。
+
+        Args:
+            origin: 記憶のソース識別。"real"=日常体験、"interlude"=シナリオPCモードの幕間体験。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import InscribedMemory
             mem = InscribedMemory(
@@ -34,6 +39,7 @@ class InscribedMemoryStoreMixin:
                 identity_importance=identity_importance,
                 user_importance=user_importance,
                 source_preset_id=source_preset_id,
+                origin=origin,
             )
             session.add(mem)
             session.commit()

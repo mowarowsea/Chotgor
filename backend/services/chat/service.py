@@ -417,6 +417,7 @@ class ChatService:
                 session_id=request.session_id,
                 memory_manager=self.memory_manager,
                 working_memory_manager=self.working_memory_manager,
+                default_origin=request.default_origin,
             )
             try:
                 # thinking は非ストリーミングパスでは捨てる（execute はテキスト返却のみ）
@@ -437,7 +438,9 @@ class ChatService:
                 return f"[Error: {type(e).__name__}: {e}]"
 
             inscriber = Inscriber(request.character_id, self.memory_manager)
-            clean_text = inscriber.inscribe_memory_from_text(response_text, request.current_preset_id)
+            clean_text = inscriber.inscribe_memory_from_text(
+                response_text, request.current_preset_id, origin=request.default_origin,
+            )
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
 
         clean_text, switch_info = self._extract_switch_info(
@@ -500,6 +503,7 @@ class ChatService:
                 session_id=request.session_id,
                 memory_manager=self.memory_manager,
                 working_memory_manager=self.working_memory_manager,
+                default_origin=request.default_origin,
             )
             try:
                 clean_text, thinking_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
@@ -578,7 +582,9 @@ class ChatService:
             # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み）
             # テキスト表示は済んでいるため、clean_text は副作用処理とログ用途にのみ使う。
             inscriber = Inscriber(request.character_id, self.memory_manager)
-            clean_text = inscriber.inscribe_memory_from_text(full_text, request.current_preset_id)
+            clean_text = inscriber.inscribe_memory_from_text(
+                full_text, request.current_preset_id, origin=request.default_origin,
+            )
             clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
 
         clean_text, switch_info = self._extract_switch_info(

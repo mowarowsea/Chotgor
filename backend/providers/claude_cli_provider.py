@@ -246,7 +246,11 @@ class ClaudeCliProvider(BaseLLMProvider):
             allowed_tools=allowed_tools,
         )
 
-    def _make_env(self, batch_context: dict | None = None) -> dict:
+    def _make_env(
+        self,
+        batch_context: dict | None = None,
+        default_origin: str = "real",
+    ) -> dict:
         """Claude CLI サブプロセス用の環境変数 dict を返す。
 
         _clean_env() をベースに、MCP サーバーが必要とするキャラクターコンテキストを追加する。
@@ -256,6 +260,10 @@ class ClaudeCliProvider(BaseLLMProvider):
                 指定された場合は ``CHOTGOR_BATCH_CONTEXT`` 環境変数として JSON 文字列で渡し、
                 MCP サーバー（別プロセス）が backend への HTTP リクエストに乗せて伝搬する。
                 None / 空 dict なら設定しない（通常チャットと同じ挙動）。
+            default_origin: inscribe_memory / post_working_memory_thread の保存時に
+                付与する origin（"real" / "interlude"）。"real" 以外なら
+                ``CHOTGOR_DEFAULT_ORIGIN`` env として MCP サーバーへ渡す。
+                in-process プロバイダーと挙動差を出さないための経路。
         """
         env = _clean_env()
         if self.character_id:
@@ -264,6 +272,8 @@ class ClaudeCliProvider(BaseLLMProvider):
             env["CHOTGOR_SESSION_ID"] = self.session_id
         if batch_context:
             env["CHOTGOR_BATCH_CONTEXT"] = json.dumps(batch_context, ensure_ascii=False)
+        if default_origin and default_origin != "real":
+            env["CHOTGOR_DEFAULT_ORIGIN"] = default_origin
         return env
 
     async def generate_with_tools(
@@ -289,7 +299,12 @@ class ClaudeCliProvider(BaseLLMProvider):
         from backend.providers.base import LLMApiError
 
         batch_context = getattr(tool_executor, "batch_context", None) if tool_executor else None
-        raw = await self._run_generate_raw(system_prompt, messages, batch_context=batch_context)
+        default_origin = getattr(tool_executor, "default_origin", "real") if tool_executor else "real"
+        raw = await self._run_generate_raw(
+            system_prompt, messages,
+            batch_context=batch_context,
+            default_origin=default_origin,
+        )
         # _run_generate_raw はエラーを例外ではなく "[Error: ...]" 文字列で返す設計。
         # バッチ処理（ask_character_with_tools 等）が正しくフォールバックできるよう
         # ここで LLMApiError に変換して送出する。
@@ -314,6 +329,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         system_prompt: str,
         messages: list[dict],
         batch_context: dict | None = None,
+        default_origin: str = "real",
     ) -> str:
         """Claude CLI を呼び出して raw stdout 文字列を返す内部メソッド。
 
@@ -322,6 +338,8 @@ class ClaudeCliProvider(BaseLLMProvider):
         Args:
             batch_context: ToolExecutor の挙動切り替えフラグ。指定すると CHOTGOR_BATCH_CONTEXT
                 環境変数として MCP サーバーへ渡る（generate_with_tools 経由のみ使用）。
+            default_origin: 記憶/スレッド保存時の origin ラベル。"real" 以外なら
+                CHOTGOR_DEFAULT_ORIGIN として MCP サーバーへ伝搬される。
         """
         has_images = any(
             isinstance(item, dict) and item.get("type") == "image_url"
@@ -356,7 +374,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         })
 
         try:
-            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(batch_context=batch_context), allowed_tools=self.allowed_tools)
+            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(batch_context=batch_context, default_origin=default_origin), allowed_tools=self.allowed_tools)
 
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")

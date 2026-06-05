@@ -171,6 +171,7 @@ class WorkingMemoryManager:
         importance: float = 0.5,
         relation_target: str | None = None,
         content: str | None = None,
+        origin: str = "real",
     ) -> dict:
         """ワーキングメモリスレッドを新規作成する。
 
@@ -186,6 +187,7 @@ class WorkingMemoryManager:
             importance: 重要度 0.0-1.0。
             relation_target: relation 型のときの相手識別子。
             content: 指定時は作成直後に最初のポストとして追加する。
+            origin: スレッドのソース識別。"real"=日常、"interlude"=シナリオPCモードの幕間。
 
         Returns:
             作成したスレッドの dict。
@@ -226,6 +228,7 @@ class WorkingMemoryManager:
             atmosphere_tag=atmosphere_tag,
             importance=importance,
             relation_target=relation_target if type == "relation" else None,
+            origin=origin,
         )
         if content:
             post_id = str(uuid.uuid4())

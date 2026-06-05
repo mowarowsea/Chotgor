@@ -39,6 +39,10 @@ from backend.character_actions.switcher import (
     SWITCH_ANGLE_SCHEMA,
     SWITCH_ANGLE_TOOL_DESCRIPTION,
 )
+from backend.character_actions.web_searcher import (
+    WEB_SEARCH_SCHEMA,
+    WEB_SEARCH_TOOL_DESCRIPTION,
+)
 
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -71,6 +75,11 @@ class ToolCallRequest(BaseModel):
     MCP 呼び出しでは Python 側 ``ToolExecutor`` インスタンスが共有されないため、
     HTTP ペイロード上で明示的に伝搬しないと in-process プロバイダーとの間に
     挙動差分が出てしまう（forget 蒸留物が in-place 上書きされて道連れ消失する等）。
+
+    ``default_origin`` は inscribe_memory / post_working_memory_thread の保存時に
+    付与する origin ラベル（"real" / "interlude"）。シナリオ PC モードからキャラを
+    動かす経路では mcp_server.py が CHOTGOR_DEFAULT_ORIGIN env から拾って渡す。
+    省略時は "real"。同じく env→HTTP リレーが必要な理由は batch_context と同じ。
     """
 
     character_id: str
@@ -78,6 +87,7 @@ class ToolCallRequest(BaseModel):
     name: str
     arguments: dict
     batch_context: dict | None = None
+    default_origin: str = "real"
 
 
 class ToolCallResponse(BaseModel):
@@ -137,6 +147,11 @@ def _build_tool_definitions() -> list[ToolDefinition]:
             description=SWITCH_ANGLE_TOOL_DESCRIPTION,
             inputSchema=SWITCH_ANGLE_SCHEMA,
         ),
+        ToolDefinition(
+            name="web_search",
+            description=WEB_SEARCH_TOOL_DESCRIPTION,
+            inputSchema=WEB_SEARCH_SCHEMA,
+        ),
     ]
 
 
@@ -164,6 +179,7 @@ async def call_tool(request: Request, payload: ToolCallRequest) -> ToolCallRespo
         memory_manager=state.memory_manager,
         working_memory_manager=state.working_memory_manager,
         batch_context=payload.batch_context,
+        default_origin=payload.default_origin,
     )
     try:
         result_text = executor.execute(payload.name, payload.arguments)

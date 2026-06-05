@@ -33,6 +33,7 @@ class ScenarioChatStoreMixin:
         history_max_turns: int | None = None,
         history_max_chars: int | None = None,
         custom_system_prompt: str | None = None,
+        dice_pool_spec: dict | None = None,
     ):
         """シナリオテンプレートを新規作成する。
 
@@ -40,6 +41,8 @@ class ScenarioChatStoreMixin:
         intro はセッション開始時に固定ターンとして挿入される導入部（@キャラ: 記法）。
         custom_system_prompt はGMシステムプロンプトの完全カスタマイズ。
                          空の場合、デフォルトテンプレートが自動設定される。
+        dice_pool_spec は ensemble_pc エンジン時に毎ターン乱数生成する種別と本数の dict。
+                         例: {"d6": 10, "d100": 5}。NULL なら engine 側既定値 {"d6": 10}。
 
         GM の LLM プリセットはテンプレートには持たない（セッション単位で選択する）。
         """
@@ -59,6 +62,7 @@ class ScenarioChatStoreMixin:
                 history_max_turns=history_max_turns,
                 history_max_chars=history_max_chars,
                 custom_system_prompt=custom_system_prompt,
+                dice_pool_spec=dice_pool_spec,
             )
             session.add(obj)
             session.commit()
@@ -226,6 +230,7 @@ class ScenarioChatStoreMixin:
         gm_preset_id: str,
         synopsis_preset_id: str,
         engine_type: str = "ensemble",
+        pc_assignments: list[dict] | None = None,
     ):
         """シナリオから新しいプレイセッションを起動する。
 
@@ -238,7 +243,10 @@ class ScenarioChatStoreMixin:
             synopsis_preset_id: あらすじ蒸留専用の LLM プリセット ID。
                                 レートリミット節約用に GM とは別モデルを選べる。
                                 通常 GM と同じプリセットを指定すれば従来挙動と同じ。
-            engine_type: P1 では "ensemble" 固定。
+            engine_type: "ensemble"（GMのみ）または "ensemble_pc"（GM+PC配役）。
+            pc_assignments: ensemble_pc 専用。Chotgor キャラを PC として配役するリスト。
+                            [{"character_id": "...", "role_name": "..."}]。
+                            ensemble エンジン時は NULL/省略。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioSession
@@ -250,6 +258,7 @@ class ScenarioChatStoreMixin:
                 synopsis_preset_id=synopsis_preset_id,
                 engine_type=engine_type,
                 status="active",
+                pc_assignments=pc_assignments,
             )
             session.add(obj)
             session.commit()
