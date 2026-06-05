@@ -5,10 +5,11 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Model, ScenarioPreset, ScenarioTemplate } from "../api";
+import type { Character, Model, ScenarioPreset, ScenarioTemplate } from "../api";
 import {
   charNameOf,
   presetNameOf,
+  fetchCharacters,
   fetchScenarioPresets,
   fetchScenarioTemplates,
 } from "../api";
@@ -31,13 +32,25 @@ interface Props {
    * `gmPresetId` は GM プリセット（必須）。`synopsisPresetId` はあらすじ蒸留用プリセットの
    * 初期値で、起動時は GM と同じものを渡す（あらすじ作成モーダルで毎回選び直せるため、
    * ここでは個別に選ばせない）。
+   *
+   * `engineType` は "ensemble"（既存・GM のみ）または "ensemble_pc"（TRPG モード）。
+   * "ensemble_pc" のときは `pcAssignments` を 1 件以上指定すること。
    */
   onStartScenario: (
     scenarioId: string,
     gmPresetId: string,
     synopsisPresetId: string,
-    title?: string,
+    title: string | undefined,
+    engineType: "ensemble" | "ensemble_pc",
+    pcAssignments?: { character_id: string; role_name: string }[],
   ) => void;
+}
+
+/** PC 配役 1 件の編集用 state。GM ターン中に @<roleName> でメンションされる名前と、
+ *  実体の Chotgor キャラ ID を持つ。 */
+interface PcAssignmentDraft {
+  characterId: string;
+  roleName: string;
 }
 
 /** 種別タブの定義。 */
@@ -97,6 +110,16 @@ export default function NewSessionPicker({
   /** GM プリセット選択肢（セッション開始時に必須）。 */
   const [scPresets, setScPresets] = useState<ScenarioPreset[]>([]);
   const [scPresetId, setScPresetId] = useState("");
+  /** エンジン種別。"ensemble"（GMのみ）か "ensemble_pc"（TRPG: GM + PC配役）。 */
+  const [scEngineType, setScEngineType] = useState<"ensemble" | "ensemble_pc">(
+    "ensemble",
+  );
+  /** PC配役編集行（ensemble_pc 専用）。最低1行必要。 */
+  const [scPcAssignments, setScPcAssignments] = useState<PcAssignmentDraft[]>([
+    { characterId: "", roleName: "" },
+  ]);
+  /** Chotgor キャラ一覧（PC配役の選択肢）。 */
+  const [scAllChars, setScAllChars] = useState<Character[]>([]);
 
   // 初期選択キャラクターを設定する。
   useEffect(() => {
@@ -111,7 +134,7 @@ export default function NewSessionPicker({
     }
   }, [selChar, availablePresets, selPreset]);
 
-  // シナリオタブを開いたらテンプレートと GM プリセットの一覧を取得する。
+  // シナリオタブを開いたらテンプレート・GM プリセット・キャラ一覧を取得する。
   useEffect(() => {
     if (type === "scenario") {
       fetchScenarioTemplates().then(setTemplates).catch(() => setTemplates([]));
@@ -122,6 +145,7 @@ export default function NewSessionPicker({
           setScPresetId((prev) => (prev || ps[0]?.id) ?? "");
         })
         .catch(() => setScPresets([]));
+      fetchCharacters().then(setScAllChars).catch(() => setScAllChars([]));
     }
   }, [type]);
 
@@ -144,13 +168,27 @@ export default function NewSessionPicker({
     });
   };
 
+  /** PC配役の有効行（character_id と role_name が両方埋まっている行）のみを抽出する。 */
+  const validPcAssignments = useMemo(
+    () =>
+      scPcAssignments
+        .map((pc) => ({
+          character_id: pc.characterId.trim(),
+          role_name: pc.roleName.trim(),
+        }))
+        .filter((pc) => pc.character_id && pc.role_name),
+    [scPcAssignments],
+  );
+
   /** 現在の入力で作成可能かどうか。 */
   const canCreate =
     type === "1on1"
       ? !!selChar && !!selPreset
       : type === "group"
         ? groupSelected.size >= 2
-        : !!scId && !!scPresetId;
+        : !!scId &&
+          !!scPresetId &&
+          (scEngineType === "ensemble" || validPcAssignments.length >= 1);
 
   /** 作成を確定する。 */
   const handleCreate = () => {
@@ -166,10 +204,27 @@ export default function NewSessionPicker({
         scPresetId,
         scPresetId,
         scTitle.trim() || undefined,
+        scEngineType,
+        scEngineType === "ensemble_pc" ? validPcAssignments : undefined,
       );
     }
     onClose();
   };
+
+  /** PC配役 1 行を編集する。 */
+  const updatePc = (idx: number, patch: Partial<PcAssignmentDraft>) => {
+    setScPcAssignments((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)),
+    );
+  };
+  /** PC配役を 1 行追加する。 */
+  const addPcRow = () =>
+    setScPcAssignments((prev) => [...prev, { characterId: "", roleName: "" }]);
+  /** PC配役行を削除する（最後の1行は残す）。 */
+  const removePcRow = (idx: number) =>
+    setScPcAssignments((prev) =>
+      prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx),
+    );
 
   // モーダルは createPortal で document.body 直下へ出す。
   // サイドバー（transform を持つ）の内側でレンダリングすると position:fixed が
@@ -423,6 +478,118 @@ export default function NewSessionPicker({
                   style={{ border: "1px solid var(--ch-sep2)" }}
                 />
               </div>
+
+              {/* エンジン種別: ensemble（GMのみ）or ensemble_pc（TRPG：GM + PC配役） */}
+              <div>
+                <SectionLabel>ENGINE</SectionLabel>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(
+                    [
+                      {
+                        key: "ensemble" as const,
+                        label: "Standard",
+                        desc: "GMがNarrator+全NPCを演じる（既存）",
+                      },
+                      {
+                        key: "ensemble_pc" as const,
+                        label: "TRPG (PC配役)",
+                        desc: "ユーザ=PC1、Chotgorキャラ=PC2…、別LLM=GM",
+                      },
+                    ]
+                  ).map((opt) => {
+                    const active = scEngineType === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        onClick={() => setScEngineType(opt.key)}
+                        className="text-left rounded-lg px-2.5 py-2 transition-colors"
+                        style={{
+                          border: `1px solid ${active ? "var(--ch-accent)" : "var(--ch-sep2)"}`,
+                          background: active
+                            ? "oklch(50% 0.13 226 / 0.08)"
+                            : "transparent",
+                        }}
+                      >
+                        <div
+                          className="text-xs font-semibold mb-0.5"
+                          style={{
+                            color: active ? "var(--ch-accent)" : "rgb(var(--ch-t1))",
+                          }}
+                        >
+                          {opt.label}
+                        </div>
+                        <div className="text-[10px] text-ch-t3 leading-tight">
+                          {opt.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* PC配役テーブル（ensemble_pc のみ表示） */}
+              {scEngineType === "ensemble_pc" && (
+                <div>
+                  <SectionLabel>
+                    PC配役 · Chotgorキャラ × 配役名
+                  </SectionLabel>
+                  {scAllChars.length === 0 ? (
+                    <p className="text-ch-t3 text-xs">
+                      Chotgor キャラクターが見つかりません。先にキャラクターを作成してください。
+                    </p>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      {scPcAssignments.map((pc, idx) => (
+                        <div key={idx} className="flex gap-1.5 items-center">
+                          <select
+                            value={pc.characterId}
+                            onChange={(e) =>
+                              updatePc(idx, { characterId: e.target.value })
+                            }
+                            className="flex-1 bg-ch-s3 text-ch-t1 text-xs rounded-md px-2 py-1.5 focus:outline-none"
+                            style={{ border: "1px solid var(--ch-sep2)" }}
+                          >
+                            <option value="">-- キャラ選択 --</option>
+                            {scAllChars.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            value={pc.roleName}
+                            onChange={(e) =>
+                              updatePc(idx, { roleName: e.target.value })
+                            }
+                            placeholder="配役名（@で呼ばれる名前）"
+                            className="flex-1 bg-ch-s3 text-ch-t1 placeholder-ch-t3 text-xs rounded-md px-2 py-1.5 focus:outline-none"
+                            style={{ border: "1px solid var(--ch-sep2)" }}
+                          />
+                          <button
+                            onClick={() => removePcRow(idx)}
+                            disabled={scPcAssignments.length <= 1}
+                            className="text-ch-t3 hover:text-ch-t1 text-xs px-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="この行を削除"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={addPcRow}
+                        className="text-ch-t2 hover:text-ch-t1 text-xs text-left mt-0.5"
+                      >
+                        + PC を追加
+                      </button>
+                      <p className="text-[10px] text-ch-t3 mt-0.5 leading-tight">
+                        配役名は GM が `@配役名:` で呼ぶときに使われます。
+                        本名（キャラ本来の名前）でも呼べます。NPC 名・user_alias と
+                        被ると起動時にエラーになります。
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

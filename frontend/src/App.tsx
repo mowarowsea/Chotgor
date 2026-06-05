@@ -501,7 +501,9 @@ export default function App() {
       scenarioId: string,
       gmPresetId: string,
       synopsisPresetId: string,
-      title?: string,
+      title: string | undefined,
+      engineType: "ensemble" | "ensemble_pc",
+      pcAssignments?: { character_id: string; role_name: string }[],
     ) => {
       setError(null);
       try {
@@ -510,6 +512,8 @@ export default function App() {
           gmPresetId,
           synopsisPresetId,
           title,
+          engineType,
+          pcAssignments,
         );
         setScenarioSessions((prev) => [created, ...prev]);
         // ref も即座に更新する。直後の handleSelectSession 等が ref を読むケースに備える。
@@ -641,6 +645,41 @@ export default function App() {
             setScenarioTurns((prev) => [...prev, ev.turn]);
             if (newPending.length > 0) newPending.shift();
             setScenarioPending([...newPending]);
+          } else if (ev.type === "pc_start") {
+            // ensemble_pc 専用: GMターン後に PC（Chotgorキャラ）が応答開始する。
+            // 既存 speaker_start と同じ pendingBubble 機構に乗せる（PC は character として描画）。
+            newPending.push({
+              id:
+                typeof crypto !== "undefined" && "randomUUID" in crypto
+                  ? crypto.randomUUID()
+                  : `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              speaker_type: "pc",
+              speaker_name: ev.character,
+              speaker_id: ev.character_id,
+              is_known: true,
+              content: "",
+            });
+            setScenarioPending([...newPending]);
+          } else if (ev.type === "pc_chunk") {
+            // PC 発話テキストを最新 pending bubble に追記する（speaker_end までに完成する）
+            if (newPending.length > 0) {
+              newPending[newPending.length - 1].content += ev.content;
+              setScenarioPending([...newPending]);
+            }
+          } else if (ev.type === "pc_reasoning") {
+            // 想起記憶・WM スレッド・思考ブロックは現状 UI に出さない（将来 reasoning パネルへ）
+          } else if (ev.type === "pc_done") {
+            // PC ターン完了の最終通知。本文の確定は後続の speaker_end が行うため、ここは何もしない
+          } else if (ev.type === "pc_error") {
+            setError(`${ev.character}: ${ev.message}`);
+          } else if (ev.type === "pc_angle_switched") {
+            // PC が switch_angle した。セッションへの永続化は backend 側未実装のためログのみ
+            console.info(
+              "[scenario_pc] angle switched",
+              ev.character,
+              "→",
+              ev.preset_name,
+            );
           } else if (ev.type === "turn_complete") {
             // ターン完了。残った未確定吹き出しは捨てる（speaker_end でほぼ消えるはず）。
             newPending.length = 0;

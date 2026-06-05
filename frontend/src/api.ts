@@ -411,6 +411,12 @@ export interface ScenarioSession {
    *  セッション開始時に必須・チャット中も同モーダルから変更可。
    */
   synopsis_preset_id: string;
+  /** PC 配役一覧（engine_type="ensemble_pc" のみ。ensemble では空配列）。
+   *
+   *  各エントリは Chotgor キャラを「シナリオ内のプレイヤーキャラ」として割り当てる。
+   *  GM が @<role_name> または @<キャラ本名> で指名した場合に、そのキャラが
+   *  PC として 1on1 ターン相当の応答を返す。 */
+  pc_assignments: { character_id: string; role_name: string }[];
   created_at: string;
   updated_at: string;
   /** フロント側で判別用に追加（バックエンドからは返らない）。 */
@@ -485,6 +491,31 @@ export type ScenarioStreamEvent =
     }
   | { type: "content_delta"; text: string }
   | { type: "speaker_end"; turn: ScenarioTurn }
+  // ── ensemble_pc 専用イベント（PC ターン関連） ─────────────────────────────
+  // GM ターン完了後、メンションで指名された PC（Chotgor キャラ）を順次呼び出す際に発火する。
+  | { type: "pc_start"; character: string; character_id: string }
+  // PC ターン中の応答テキストチャンク。`character` は配役名（role_name）。
+  | { type: "pc_chunk"; character: string; content: string }
+  // PC ターン中の想起記憶・WM スレッド・思考ブロック等（フロントの reasoning 欄相当）。
+  | { type: "pc_reasoning"; character: string; content: string }
+  // PC ターン完了通知。full_text は最終応答、anticipation は ANTICIPATE_RESPONSE 抽出値。
+  | {
+      type: "pc_done";
+      character: string;
+      character_id: string;
+      preset_name: string;
+      full_text: string;
+      anticipation: string | null;
+    }
+  | { type: "pc_error"; character: string; character_id: string; message: string }
+  | {
+      type: "pc_angle_switched";
+      character: string;
+      character_id: string;
+      model_id: string;
+      preset_id: string;
+      preset_name: string;
+    }
   | { type: "turn_complete"; turn_ids: string[] }
   // ターン完了直後のあらすじ進捗（ターン数・文字数と上限）。
   // フロントはこれでバーの表示/色と作成モーダルの自動表示を判定する。
@@ -569,12 +600,18 @@ export async function fetchScenarioTurns(sessionId: string): Promise<ScenarioTur
  * `gmPresetId` はこのセッションで GM を演じる LLM プリセット ID。
  * `synopsisPresetId` はあらすじ蒸留専用の LLM プリセット ID（同じプリセットでもよい）。
  * セッション開始後も左上ヘッダーのモーダルから両方変更可能。
+ *
+ * `engineType` を "ensemble_pc" にした場合は `pcAssignments` を 1 件以上必須とする。
+ * 既存の TRPG 進行に Chotgor キャラを PC として参加させる TRPG モード（GM + PCs）。
+ * 省略時は "ensemble"（GM のみ・既存挙動）。
  */
 export async function startScenarioSession(
   scenarioId: string,
   gmPresetId: string,
   synopsisPresetId: string,
   title?: string,
+  engineType: "ensemble" | "ensemble_pc" = "ensemble",
+  pcAssignments?: { character_id: string; role_name: string }[],
 ): Promise<ScenarioSession> {
   const res = await fetch("/api/scenario_chat/sessions", {
     method: "POST",
@@ -584,6 +621,10 @@ export async function startScenarioSession(
       gm_preset_id: gmPresetId,
       synopsis_preset_id: synopsisPresetId,
       ...(title ? { title } : {}),
+      engine_type: engineType,
+      ...(engineType === "ensemble_pc" && pcAssignments
+        ? { pc_assignments: pcAssignments }
+        : {}),
     }),
   });
   if (!res.ok) {

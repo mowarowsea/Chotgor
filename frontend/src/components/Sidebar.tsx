@@ -35,13 +35,16 @@ interface Props {
   /** シナリオテンプレートからプレイセッションを起動するコールバック。
    *
    * `gmPresetId` は GM プリセット（必須）、`synopsisPresetId` はあらすじ蒸留専用プリセット
-   * （必須）。NewSessionPicker の Scenario タブで選んだ値が渡る。
+   * （必須）。`engineType` は "ensemble"（既存・GMのみ）/ "ensemble_pc"（TRPG: GM+PC配役）。
+   * NewSessionPicker の Scenario タブで選んだ値が渡る。
    */
   onStartScenario: (
     scenarioId: string,
     gmPresetId: string,
     synopsisPresetId: string,
-    title?: string,
+    title: string | undefined,
+    engineType: "ensemble" | "ensemble_pc",
+    pcAssignments?: { character_id: string; role_name: string }[],
   ) => void;
   /** セッション削除時のコールバック（session_type に応じて呼び出し側が分岐） */
   onDeleteSession: (sessionId: string) => void;

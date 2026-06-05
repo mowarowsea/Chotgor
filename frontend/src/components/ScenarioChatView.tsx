@@ -684,6 +684,8 @@ export default function ScenarioChatView({
     if (speaker_type === "npc" || speaker_type === "character") {
       return npcByName[speaker_name]?.image_data ?? null;
     }
+    // pc は Chotgor キャラ実体だが、シナリオ用 npc 表に居ないためここでは画像取得しない
+    // （将来、配役名→Character.image_data を解決して埋める拡張余地あり）
     return null;
   };
 
@@ -693,6 +695,8 @@ export default function ScenarioChatView({
   ): boolean | null => {
     if (speaker_type === "npc") return Boolean(npcByName[speaker_name]);
     if (speaker_type === "user" || speaker_type === "narrator") return true;
+    // pc は配役確定済み（PC 起動時にバリデーション済み）なので known 扱い
+    if (speaker_type === "pc") return true;
     return null;
   };
 
@@ -714,6 +718,18 @@ export default function ScenarioChatView({
   };
 
   const userPlaceholder = scenario?.user_alias ?? "プレイヤー";
+
+  // ensemble_pc（TRPG モード）では @<PC名>: で PC を指名できることを入力欄でヒントする。
+  const isPcMode = session.engine_type === "ensemble_pc";
+  const pcRoleNames = (session.pc_assignments ?? [])
+    .map((pc) => pc.role_name)
+    .filter((n) => !!n);
+  const pcMentionHint = isPcMode && pcRoleNames.length > 0
+    ? ` / @${pcRoleNames[0]} のように指名 / @ALL で全員のうち1人ランダム`
+    : "";
+  const inputPlaceholder =
+    `${userPlaceholder} として発話 (Ctrl+Enter で送信 / *手を握る* で行動描写 / ` +
+    `空欄送信で GM が無言のまま物語を進める${pcMentionHint})`;
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -859,7 +875,7 @@ export default function ScenarioChatView({
           onSend={handleScenarioInput}
           allowImages={false}
           allowEmptySend
-          placeholder={`${userPlaceholder} として発話 (Ctrl+Enter で送信 / *手を握る* で行動描写 / 空欄送信で GM が無言のまま物語を進める)`}
+          placeholder={inputPlaceholder}
         />
       ) : (
         <div
