@@ -48,6 +48,8 @@ export default function MessageInput({
      * テキストエリアの高さをコンテンツに合わせて調整する。
      * 内容が最大高さ（240px）に収まる間は overflow を hidden にして
      * 不要なスクロールバーを出さない。超えたときだけ auto で表示する。
+     * 右下にツールボタンを重ねて表示するため、paddingBottom で
+     * 入力量＋1行分のスクロール余裕を確保している（INPUT_BOTTOM_PAD）。
      */
     const adjustHeight = (el: HTMLTextAreaElement) => {
         el.style.height = "auto";
@@ -113,7 +115,7 @@ export default function MessageInput({
             style={{ borderTop: "1px solid var(--ch-sep)" }}
         >
             {/* 中央寄せ・最大幅 760px のコンテナ */}
-            <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-2.5 pb-3.5 flex flex-col gap-2">
+            <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-0.5 pb-3.5 flex flex-col gap-2">
                 {/* 添付画像サムネイルプレビュー */}
                 {allowImages && pendingFiles.length > 0 && (
                     <div className="flex gap-2 flex-wrap">
@@ -138,17 +140,19 @@ export default function MessageInput({
                     </div>
                 )}
 
-                {/* 入力行: 下線スタイルのテキストエリア + ツールボタン */}
-                <div className="flex gap-2 items-end">
+                {/* 入力行: 下線スタイルのテキストエリア + ツールボタン（右下に絶対配置で重ねる） */}
+                <div className="relative">
                     <textarea
                         ref={textareaRef}
                         value={input}
                         onChange={handleChange}
                         onKeyDown={handleKeyDown}
-                        placeholder={placeholder}
+                        // 標準の placeholder は paddingBottom（ツールボタン用の余白）の影響を受けて
+                        // 2行目もボタン上に描画されてしまう。要件「2行目はボタンと同じ行に出したい」を
+                        // 満たすため placeholder 属性は使わず、下で擬似 placeholder を被せる。
                         rows={1}
                         disabled={sending}
-                        className="flex-1 bg-transparent text-ch-t1 placeholder-ch-t3 text-sm resize-none focus:outline-none disabled:opacity-40 py-1.5 leading-relaxed"
+                        className="w-full block bg-transparent text-ch-t1 text-sm resize-none focus:outline-none disabled:opacity-40 pt-1.5 leading-relaxed"
                         style={{
                             minHeight: "32px",
                             maxHeight: "240px",
@@ -156,6 +160,8 @@ export default function MessageInput({
                             overflowY: "hidden",
                             borderBottom: "1px solid var(--ch-sep)",
                             transition: "border-color .2s",
+                            // 入力末尾がツールボタンに被って隠れないよう、1行分のスクロール余白を確保。
+                            paddingBottom: "28px",
                         }}
                         onFocus={(e) => {
                             e.currentTarget.style.borderBottomColor = "var(--ch-accent)";
@@ -165,8 +171,22 @@ export default function MessageInput({
                         }}
                     />
 
-                    {/* ツールボタン群（右端・下揃え） */}
-                    <div className="flex items-center gap-1.5 shrink-0 pb-1">
+                    {/* 擬似 placeholder: textarea が空のときだけ表示する。
+                        textarea の paddingBottom（ツールボタン用の余白）を無視させたいので、
+                        標準の placeholder 属性ではなく独立した overlay にしている。
+                        2行目がツールボタンと同じ行に重なる位置に出るのが意図した挙動。 */}
+                    {!input && (
+                        <div
+                            aria-hidden
+                            className="absolute inset-x-0 top-0 text-ch-t3 text-sm leading-relaxed pt-1.5 pointer-events-none"
+                            style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                        >
+                            {placeholder}
+                        </div>
+                    )}
+
+                    {/* ツールボタン群（テキストエリア右下に重ねる） */}
+                    <div className="absolute right-0 bottom-1.5 flex items-center gap-1.5 pointer-events-auto">
                         {allowImages && (
                             <>
                                 <input
