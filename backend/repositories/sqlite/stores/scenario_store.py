@@ -34,6 +34,7 @@ class ScenarioChatStoreMixin:
         history_max_chars: int | None = None,
         custom_system_prompt: str | None = None,
         dice_pool_spec: dict | None = None,
+        pc_slots: list[dict] | None = None,
     ):
         """シナリオテンプレートを新規作成する。
 
@@ -43,6 +44,10 @@ class ScenarioChatStoreMixin:
                          空の場合、デフォルトテンプレートが自動設定される。
         dice_pool_spec は ensemble_pc エンジン時に毎ターン乱数生成する種別と本数の dict。
                          例: {"d6": 10, "d100": 5}。NULL なら engine 側既定値 {"d6": 10}。
+        pc_slots は ensemble_pc エンジン時の PC枠定義。
+                         [{"slot_id":"pc1","name":"アリス","description":"剣士。商家の出。..."}]。
+                         シナリオ側で人物像・知っていることを含めて記述する。
+                         セッション開始時に各枠を「ユーザが演じる/AIキャラが演じる」と割り振る。
 
         GM の LLM プリセットはテンプレートには持たない（セッション単位で選択する）。
         """
@@ -63,6 +68,7 @@ class ScenarioChatStoreMixin:
                 history_max_chars=history_max_chars,
                 custom_system_prompt=custom_system_prompt,
                 dice_pool_spec=dice_pool_spec,
+                pc_slots=pc_slots,
             )
             session.add(obj)
             session.commit()
@@ -244,8 +250,11 @@ class ScenarioChatStoreMixin:
                                 レートリミット節約用に GM とは別モデルを選べる。
                                 通常 GM と同じプリセットを指定すれば従来挙動と同じ。
             engine_type: "ensemble"（GMのみ）または "ensemble_pc"（GM+PC配役）。
-            pc_assignments: ensemble_pc 専用。Chotgor キャラを PC として配役するリスト。
-                            [{"character_id": "...", "role_name": "..."}]。
+            pc_assignments: ensemble_pc 専用。スロット割当てリスト。
+                            [{"slot_id":"pc1","player_type":"user"|"character",
+                              "character_id":"...","preset_id":"..."}]。
+                            player_type="user" はそのスロットをユーザが演じる（character_id/preset_id 不要）。
+                            player_type="character" は Chotgor キャラが演じる（character_id 必須）。
                             ensemble エンジン時は NULL/省略。
         """
         with self.get_session() as session:

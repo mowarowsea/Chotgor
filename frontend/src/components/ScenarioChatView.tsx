@@ -719,13 +719,18 @@ export default function ScenarioChatView({
 
   const userPlaceholder = scenario?.user_alias ?? "プレイヤー";
 
-  // ensemble_pc（TRPG モード）では @<PC名>: で PC を指名できることを入力欄でヒントする。
+  // ensemble_pc（TRPG モード）では @<PC枠名> で PC を指名できることを入力欄でヒントする。
+  // session.pc_assignments には slot_id しか入っていないので、scenario.pc_slots から name を引く。
   const isPcMode = session.engine_type === "ensemble_pc";
-  const pcRoleNames = (session.pc_assignments ?? [])
-    .map((pc) => pc.role_name)
-    .filter((n) => !!n);
-  const pcMentionHint = isPcMode && pcRoleNames.length > 0
-    ? ` / @${pcRoleNames[0]} のように指名 / @ALL で全員のうち1人ランダム`
+  const pcSlotsById = new Map(
+    (scenario?.pc_slots ?? []).map((s) => [s.slot_id, s]),
+  );
+  const pcSlotNames = (session.pc_assignments ?? [])
+    .filter((pc) => pc.player_type === "character")
+    .map((pc) => pcSlotsById.get(pc.slot_id)?.name)
+    .filter((n): n is string => !!n);
+  const pcMentionHint = isPcMode && pcSlotNames.length > 0
+    ? ` / @${pcSlotNames[0]} のように指名 / @ALL で全員のうち1人ランダム`
     : "";
   const inputPlaceholder =
     `${userPlaceholder} として発話 (Ctrl+Enter で送信 / *手を握る* で行動描写 / ` +

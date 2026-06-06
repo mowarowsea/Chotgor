@@ -46,6 +46,7 @@ import type {
   ScenarioPreset,
   ScenarioNpc,
   ScenarioTurn,
+  PcAssignment,
 } from "./api";
 import { charNameOf } from "./api";
 
@@ -503,7 +504,7 @@ export default function App() {
       synopsisPresetId: string,
       title: string | undefined,
       engineType: "ensemble" | "ensemble_pc",
-      pcAssignments?: { character_id: string; role_name: string }[],
+      pcAssignments?: PcAssignment[],
     ) => {
       setError(null);
       try {

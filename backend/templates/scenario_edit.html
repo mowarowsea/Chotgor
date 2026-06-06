@@ -95,6 +95,21 @@
                     placeholder='{"d6": 10}'>
             </div>
 
+            <!-- PC枠定義（ensemble_pc 専用） -->
+            <div class="ch-field">
+                <label class="ch-label" for="pc_slots">PC Slots
+                    <span class="ch-hint">
+                        engine_type=ensemble_pc のセッションで使う「PC枠」の一覧。各枠に人物像・知っていること等を 1 テキストで記述します。
+                        JSON 配列で指定:
+                        <code>[{"slot_id":"pc1","name":"アリス","description":"剣士、商家出身、北の村について詳しい"}]</code>。
+                        セッション開始時に「ユーザ／AI キャラが演じる」をユーザが割り当てます。
+                        空欄なら ensemble_pc セッションは起動できません。
+                    </span>
+                </label>
+                <textarea id="pc_slots" name="pc_slots" class="ch-textarea" rows="6"
+                    placeholder='[{"slot_id":"pc1","name":"アリス","description":"..."}]'>{% if scenario and scenario.pc_slots %}{{ scenario.pc_slots|tojson }}{% endif %}</textarea>
+            </div>
+
             <!-- カスタムシステムプロンプト -->
             <div class="ch-field">
                 <label class="ch-label" for="custom_system_prompt">Custom System Prompt

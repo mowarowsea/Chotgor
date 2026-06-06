@@ -455,6 +455,39 @@ def _coalesce_optional_int(form, key: str):
         return None
 
 
+def _parse_pc_slots(value: str | None) -> list[dict] | None:
+    """pc_slots フォーム入力（JSON テキスト）を正規化済みリストへ変換する。
+
+    例:
+        '[{"slot_id":"pc1","name":"アリス","description":"..."}]' → そのまま
+        '' / None / 不正 JSON / 非 list → None
+        slot_id/name 欠落要素はスキップ。
+    """
+    if not value or not value.strip():
+        return None
+    import json as _json
+    try:
+        parsed = _json.loads(value)
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    out: list[dict] = []
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        sid = str(entry.get("slot_id", "")).strip()
+        name = str(entry.get("name", "")).strip()
+        if not sid or not name:
+            continue
+        out.append({
+            "slot_id": sid,
+            "name": name,
+            "description": str(entry.get("description", "") or "").strip(),
+        })
+    return out or None
+
+
 def _parse_dice_pool_spec(value: str | None) -> dict | None:
     """dice_pool_spec フォーム入力（JSON テキスト）を辞書に正規化する。
 
@@ -534,6 +567,7 @@ async def create_scenario(request: Request):
         history_max_chars=_coalesce_optional_int(form, "history_max_chars"),
         custom_system_prompt=(form.get("custom_system_prompt") or "") or None,
         dice_pool_spec=_parse_dice_pool_spec(form.get("dice_pool_spec")),
+        pc_slots=_parse_pc_slots(form.get("pc_slots")),
     )
     return RedirectResponse(url=f"/ui/scenarios/{sid}/edit", status_code=303)
 
@@ -569,6 +603,7 @@ async def update_scenario(request: Request, scenario_id: str):
         "history_max_chars": _coalesce_optional_int(form, "history_max_chars"),
         "custom_system_prompt": (form.get("custom_system_prompt") or "") or None,
         "dice_pool_spec": _parse_dice_pool_spec(form.get("dice_pool_spec")),
+        "pc_slots": _parse_pc_slots(form.get("pc_slots")),
     }
     # タイトルは必須項目。空欄なら更新しない（自動保存の空入力対策）。
     title = (form.get("title") or "").strip()

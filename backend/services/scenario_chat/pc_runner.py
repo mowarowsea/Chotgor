@@ -57,9 +57,19 @@ PC として「{role_name}」を演じています。シナリオの世界観・
 GM 出力中の `@{role_name}` への呼びかけ、状況描写、ダイスの判定はそのまま
 受け取ってください。NPC・他PC・ユーザの発言には `<タグ>` が付いています。
 
+応答時の作法:
+- 普段の 1on1 と同じく、自分の言葉で発話する。`@<名前>:` のような台詞ブロック
+  プレフィックスは要りません（自分の発話の頭に `@{role_name}:` を付けない）。
+- 他の PC や NPC・GM に呼びかけたいときは、本文中で `@<名前>` と書くと
+  そちらに発話順が回ります。何も呼びかけずに発話を終えると、ユーザに
+  ターンが戻ります。
+
 劇中の体験を覚えるときは、本文に「（このシナリオでの出来事として）」と
 劇中の出来事であることが分かる文脈を添えてください（読み返すあなた自身が
 現実体験と区別できるように）。
+
+### この配役について
+{slot_description}
 """
 
 
@@ -159,7 +169,7 @@ async def stream_pc_response(
     """
     new_message_id()
     current_log_feature.set("scenario_chat_pc")
-    current_log_target.set(pc.character_name)
+    current_log_target.set(pc.name)
 
     char = sqlite.get_character(pc.character_id)
     if not char:
@@ -175,7 +185,7 @@ async def stream_pc_response(
     raw_messages = _format_scenario_history_for_pc(
         history,
         self_character_id=pc.character_id,
-        self_role_name=pc.role_name,
+        self_role_name=pc.name,
         user_alias=user_alias,
     )
     messages = [Message(role=m["role"], content=m["content"]) for m in raw_messages]
@@ -184,9 +194,11 @@ async def stream_pc_response(
 
     # ChatRequest を構築。session_id は空（chat_session 前提の機構を無効化）。
     # provider 追記欄の頭に「配役の自覚プロンプト」を差し込み、キャラ既存の追記と合成する。
+    slot_desc = (getattr(pc, "description", "") or "").strip() or "（特記事項なし）"
     preamble = _PC_ROLE_PREAMBLE_TEMPLATE.format(
         scenario_title=scenario_title or "（無題のシナリオ）",
-        role_name=pc.role_name,
+        role_name=pc.name,
+        slot_description=slot_desc,
     )
     model_cfg = (char.enabled_providers or {}).get(preset.id, {})
     existing_additional = (model_cfg.get("additional_instructions", "") or "").strip()
@@ -216,28 +228,28 @@ async def stream_pc_response(
         if chunk_type == "inscribed_memories":
             memory_text = format_recalled_memories(content)
             if memory_text:
-                yield ("pc_reasoning", {"character": pc.role_name, "content": memory_text})
+                yield ("pc_reasoning", {"character": pc.name, "content": memory_text})
         elif chunk_type == "recall_error":
             recall_error_text = content + "\n"
-            yield ("pc_reasoning", {"character": pc.role_name, "content": recall_error_text})
+            yield ("pc_reasoning", {"character": pc.name, "content": recall_error_text})
         elif chunk_type == "working_memory_threads":
             wm_text = format_recalled_threads(content)
             if wm_text:
-                yield ("pc_reasoning", {"character": pc.role_name, "content": wm_text})
+                yield ("pc_reasoning", {"character": pc.name, "content": wm_text})
         elif chunk_type == "thinking":
             thinking_parts.append(content)
-            yield ("pc_reasoning", {"character": pc.role_name, "content": content})
+            yield ("pc_reasoning", {"character": pc.name, "content": content})
         elif chunk_type == "text":
             full_text += content
             if content:
-                yield ("pc_chunk", {"character": pc.role_name, "content": content})
+                yield ("pc_chunk", {"character": pc.name, "content": content})
         elif chunk_type == "anticipation":
             anticipation_text = content
         elif chunk_type == "angle_switched":
             # PC モードでも switch_angle は許容（キャラ本人の判断を尊重）。
             # 呼び出し元（engine 側）でセッションの preset 反映までは行わない。
             yield ("pc_angle_switched", {
-                "character": pc.role_name,
+                "character": pc.name,
                 "character_id": pc.character_id,
                 "model_id": content["model_id"],
                 "preset_id": content["preset_id"],
@@ -250,8 +262,18 @@ async def stream_pc_response(
     if not anticipation_text and parsed_anticipation:
         anticipation_text = parsed_anticipation
 
+    # PC が稀に自身の発話頭に `@<role>:` を付けてくるケースがあるので剥がす
+    # （プロンプトで禁止しているが、保険として）。
+    role_prefix_candidates = (f"@{pc.name}:", f"@{pc.name}：")
+    stripped = clean_text.lstrip()
+    for prefix in role_prefix_candidates:
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):].lstrip()
+            clean_text = stripped
+            break
+
     yield ("pc_done", {
-        "character": pc.role_name,
+        "character": pc.name,
         "character_id": pc.character_id,
         "preset_name": preset.name,
         "full_text": clean_text,

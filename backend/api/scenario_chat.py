@@ -66,7 +66,7 @@ class ScenarioCreate(BaseModel):
     GM プリセットはテンプレートではなくセッション単位（SessionStart.gm_preset_id）で
     指定するため、本リクエストには含めない。
     custom_system_prompt を設定するとGMシステムプロンプトをカスタマイズできる。
-    dice_pool_spec は ensemble_pc エンジンのセッション専用フィールド。
+    dice_pool_spec / pc_slots は ensemble_pc エンジンのセッション専用フィールド。
     """
 
     title: str = Field(min_length=1)
@@ -77,6 +77,7 @@ class ScenarioCreate(BaseModel):
     history_max_chars: int | None = None
     custom_system_prompt: str | None = None
     dice_pool_spec: dict | None = None
+    pc_slots: list[dict] | None = None  # [{slot_id, name, description}]
 
 
 class ScenarioUpdate(BaseModel):
@@ -90,6 +91,7 @@ class ScenarioUpdate(BaseModel):
     history_max_chars: int | None = None
     custom_system_prompt: str | None = None
     dice_pool_spec: dict | None = None
+    pc_slots: list[dict] | None = None
 
 
 class NpcCreate(BaseModel):
@@ -121,15 +123,18 @@ class SessionStart(BaseModel):
     UI 上は両方明示指定させる（同じプリセットでもよい）。
 
     engine_type は "ensemble"（既存・GMのみ）または "ensemble_pc"（GM + PC配役）。
-    "ensemble_pc" の場合は pc_assignments を必ず 1 件以上指定する。
+    "ensemble_pc" の場合、親シナリオの `pc_slots` の各 slot_id について
+    pc_assignments を 1 件以上指定する。形式:
+        [{"slot_id":"pc1","player_type":"user"|"character",
+          "character_id":"...","preset_id":"..."}]
     """
 
     scenario_id: str = Field(min_length=1)
     gm_preset_id: str = Field(min_length=1)
     synopsis_preset_id: str = Field(min_length=1)
-    title: str | None = None  # 省略時はシナリオ title を使う
+    title: str | None = None
     engine_type: str = "ensemble"
-    pc_assignments: list[dict] | None = None  # ensemble_pc 時のみ参照（[{"character_id", "role_name"}]）
+    pc_assignments: list[dict] | None = None
 
 
 class SessionUpdate(BaseModel):
@@ -217,8 +222,34 @@ async def create_scenario(request: Request, body: ScenarioCreate):
         history_max_chars=body.history_max_chars,
         custom_system_prompt=body.custom_system_prompt,
         dice_pool_spec=body.dice_pool_spec,
+        pc_slots=_normalize_pc_slots_input(body.pc_slots),
     )
     return scenario_to_dict(sqlite.get_scenario(sid))
+
+
+def _normalize_pc_slots_input(raw: list[dict] | None) -> list[dict] | None:
+    """API 入力の pc_slots を最低限正規化する。
+
+    - slot_id / name が必須。description は任意。
+    - slot_id は trim + 空チェック。重複は呼出側のバリデーションに任せる。
+    - None なら None を返す（DB 上 NULL のまま）。
+    """
+    if raw is None:
+        return None
+    out: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        sid = str(entry.get("slot_id", "")).strip()
+        name = str(entry.get("name", "")).strip()
+        if not sid or not name:
+            continue
+        out.append({
+            "slot_id": sid,
+            "name": name,
+            "description": str(entry.get("description", "") or "").strip(),
+        })
+    return out
 
 
 @router.get("/scenarios")
@@ -248,6 +279,8 @@ async def update_scenario(request: Request, scenario_id: str, body: ScenarioUpda
     if sqlite.get_scenario(scenario_id) is None:
         raise HTTPException(status_code=404, detail="シナリオが見つかりません")
     update_fields = body.model_dump(exclude_unset=True)
+    if "pc_slots" in update_fields:
+        update_fields["pc_slots"] = _normalize_pc_slots_input(update_fields["pc_slots"])
     updated = sqlite.update_scenario(scenario_id, **update_fields)
     return scenario_to_dict(updated)
 
@@ -360,50 +393,96 @@ async def start_session(request: Request, body: SessionStart):
         from backend.services.scenario_chat.mention import (
             detect_name_conflicts,
             normalize_pc_assignments,
+            normalize_pc_slots,
         )
-        raw_pcs = body.pc_assignments or []
-        if not raw_pcs:
+        pc_slots_norm = normalize_pc_slots(getattr(scenario, "pc_slots", None))
+        if not pc_slots_norm:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "engine_type=ensemble_pc にはシナリオ側に PC枠（pc_slots）を"
+                    "1 件以上定義してください"
+                ),
+            )
+        slot_by_id = {s.slot_id: s for s in pc_slots_norm}
+        raw_assignments = body.pc_assignments or []
+        if not raw_assignments:
             raise HTTPException(
                 status_code=400,
                 detail="engine_type=ensemble_pc には pc_assignments を 1 件以上指定してください",
             )
-        # キャラクター実在チェック + role_name 必須
-        normalized = []
-        for entry in raw_pcs:
+        seen_slot_ids: set[str] = set()
+        normalized: list[dict] = []
+        for entry in raw_assignments:
             if not isinstance(entry, dict):
                 raise HTTPException(
                     status_code=400,
-                    detail="pc_assignments の各要素は dict（character_id, role_name）が必要です",
+                    detail="pc_assignments の各要素は dict（slot_id, player_type など）が必要です",
                 )
-            cid = str(entry.get("character_id", "")).strip()
-            role = str(entry.get("role_name", "")).strip()
-            if not cid or not role:
+            sid = str(entry.get("slot_id", "")).strip()
+            ptype = str(entry.get("player_type", "")).strip()
+            if not sid or ptype not in {"user", "character"}:
                 raise HTTPException(
                     status_code=400,
-                    detail="pc_assignments の各要素には character_id と role_name が必要です",
+                    detail="pc_assignments の各要素には slot_id と player_type(user|character) が必要です",
                 )
-            char = sqlite.get_character(cid)
-            if char is None:
+            if sid not in slot_by_id:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"PC配役のキャラクターが見つかりません: character_id={cid}",
+                    detail=f"pc_assignments の slot_id がシナリオの pc_slots に存在しません: {sid}",
                 )
-            normalized.append({"character_id": cid, "role_name": role})
+            if sid in seen_slot_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"pc_assignments に同じ slot_id が重複しています: {sid}",
+                )
+            seen_slot_ids.add(sid)
+            normalized_entry: dict = {"slot_id": sid, "player_type": ptype}
+            if ptype == "character":
+                cid = str(entry.get("character_id", "")).strip()
+                if not cid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"player_type=character の slot には character_id が必要です: slot_id={sid}",
+                    )
+                if sqlite.get_character(cid) is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"PC枠のキャラクターが見つかりません: slot_id={sid} character_id={cid}",
+                    )
+                normalized_entry["character_id"] = cid
+                preset_id = str(entry.get("preset_id", "") or "").strip()
+                if preset_id:
+                    if sqlite.get_model_preset(preset_id) is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"指定されたPCプリセットが見つかりません: slot_id={sid} preset_id={preset_id}",
+                        )
+                    normalized_entry["preset_id"] = preset_id
+            normalized.append(normalized_entry)
+        # 全 slot_id を割り当て必須（未割り当てがあると挙動が読みづらい）
+        unassigned = [s.slot_id for s in pc_slots_norm if s.slot_id not in seen_slot_ids]
+        if unassigned:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "全 PC枠を割り当ててください。未割当: " + ", ".join(unassigned)
+                ),
+            )
         pc_assignments_validated = normalized
 
-        # 三方衝突検知（NPC名 × PC本名 × PC配役名 × user_alias × narrator）
+        # 名前衝突検知（NPC名 × PC枠名 × PCキャラ本名 × Narrator）
         npcs = sqlite.list_scenario_npcs(body.scenario_id)
-        pcs_norm = normalize_pc_assignments(pc_assignments_validated, sqlite)
+        pcs_norm = normalize_pc_assignments(pc_assignments_validated, pc_slots_norm, sqlite)
         conflicts = detect_name_conflicts(
             pcs_norm,
             npc_names={n.name for n in npcs if getattr(n, "name", None)},
-            user_alias=scenario.user_alias,
         )
         if conflicts:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "PC配役名・本名・NPC名・user_alias・Narrator の中に重複があります: "
+                    "PC枠名・キャラ本名・NPC名・Narrator の中に重複があります: "
                     + ", ".join(conflicts)
                     + "（重複を解消してから再度起動してください）"
                 ),

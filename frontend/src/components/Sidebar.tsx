@@ -4,7 +4,7 @@
  * セッション削除・タイトル編集を担当する。
  */
 import { useState, useRef } from "react";
-import type { Model, ScenarioSession, Session } from "../api";
+import type { Model, PcAssignment, ScenarioSession, Session } from "../api";
 import { charNameOf } from "../api";
 import NewSessionPicker from "./NewSessionPicker";
 import { CharacterAvatar } from "./ChatBubbles";
@@ -44,7 +44,7 @@ interface Props {
     synopsisPresetId: string,
     title: string | undefined,
     engineType: "ensemble" | "ensemble_pc",
-    pcAssignments?: { character_id: string; role_name: string }[],
+    pcAssignments?: PcAssignment[],
   ) => void;
   /** セッション削除時のコールバック（session_type に応じて呼び出し側が分岐） */
   onDeleteSession: (sessionId: string) => void;

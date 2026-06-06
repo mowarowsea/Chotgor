@@ -284,6 +284,11 @@ class Scenario(Base):
     # ダイスプール仕様（JSON: {"d6": 10, "d100": 5} 等）。NULL/未指定なら engine 側で {"d6": 10} を既定値として使う。
     # ensemble_pc エンジン時のみ参照する。毎ターン engine 内で乱数生成して GM system prompt の {dice_pool} へ注入。
     dice_pool_spec = Column(JSON, nullable=True)
+    # PC枠定義（ensemble_pc エンジン時のみ参照）。JSON 配列 [{"slot_id":"pc1","name":"アリス","description":"..."}]。
+    # シナリオ作成時にユーザが PC として登場する「枠」（人物像・知っていること）を定義する。
+    # 各セッション起動時、`scenario_sessions.pc_assignments` で各 slot_id に「ユーザが演じる/AIキャラが演じる」を割り当てる。
+    # NULL/空配列なら ensemble_pc を使えない（API バリデーションで弾く）。
+    pc_slots = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -353,7 +358,11 @@ class ScenarioSession(Base):
     synopsis_auto = Column(Text, nullable=False, default="")
     synopsis_manual = Column(Text, nullable=False, default="")
     synopsis_last_turn_index = Column(Integer, nullable=False, default=-1)
-    # PC配役（ensemble_pc エンジン時のみ参照）。JSON 配列 [{"character_id": "...", "role_name": "..."}]。
+    # PC配役（ensemble_pc エンジン時のみ参照）。JSON 配列。
+    # 形式: [{"slot_id":"pc1","player_type":"user"|"character","character_id":"...","preset_id":"..."}]
+    #   - player_type="user": そのスロットをユーザ自身が演じる。character_id/preset_id 不要。
+    #     ユーザの @タグ名は親シナリオの pc_slots[slot_id].name を使う（user_alias は無視される）。
+    #   - player_type="character": Chotgor キャラが PC として演じる。character_id 必須、preset_id 推奨。
     # ensemble エンジン時は NULL/空配列のまま使われない。
     pc_assignments = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
@@ -700,6 +709,7 @@ class SQLiteStore(
         """Scenario PC モード関連カラムを追加する。
 
         - `scenarios.dice_pool_spec` (JSON, NULL可): ダイスプール仕様。
+        - `scenarios.pc_slots` (JSON, NULL可): PC枠定義。
         - `scenario_sessions.pc_assignments` (JSON, NULL可): PC配役一覧。
 
         いずれも `engine_type='ensemble_pc'` のセッション専用フィールド。
@@ -723,6 +733,10 @@ class SQLiteStore(
                     # SQLite の JSON 型は TEXT として保存される。
                     conn.exec_driver_sql(
                         "ALTER TABLE scenarios ADD COLUMN dice_pool_spec TEXT"
+                    )
+                if "pc_slots" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE scenarios ADD COLUMN pc_slots TEXT"
                     )
             if "scenario_sessions" in tables:
                 cols = {

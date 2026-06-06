@@ -376,8 +376,32 @@ export interface ScenarioTemplate {
   user_alias: string;
   history_max_turns: number | null;
   history_max_chars: number | null;
+  /** PC枠定義（engine_type="ensemble_pc" 用）。各枠は人物像・知っていること等を
+   *  description に 1 テキストで持つ。セッション開始時に「誰が演じるか」を割り当てる。 */
+  pc_slots?: PcSlot[];
   created_at: string;
   updated_at: string;
+}
+
+/** シナリオに紐づく PC枠。AI キャラまたはユーザのどちらが演じるかは
+ *  セッション側で割り当てる（`ScenarioSession.pc_assignments`）。 */
+export interface PcSlot {
+  slot_id: string;
+  name: string;
+  description: string;
+}
+
+/** セッション側の PC枠割当て。slot_id ごとに「ユーザ／AI キャラが演じる」を選ぶ。
+ *
+ *  - player_type="user": そのスロットをユーザ本人が担当する。
+ *  - player_type="character": Chotgor の AI キャラが担当する。character_id 必須、
+ *    preset_id 推奨（未指定ならキャラの enabled_providers 先頭がフォールバック）。
+ */
+export interface PcAssignment {
+  slot_id: string;
+  player_type: "user" | "character";
+  character_id?: string;
+  preset_id?: string;
 }
 
 /** シナリオテンプレートに紐づく NPC。
@@ -412,11 +436,9 @@ export interface ScenarioSession {
    */
   synopsis_preset_id: string;
   /** PC 配役一覧（engine_type="ensemble_pc" のみ。ensemble では空配列）。
-   *
-   *  各エントリは Chotgor キャラを「シナリオ内のプレイヤーキャラ」として割り当てる。
-   *  GM が @<role_name> または @<キャラ本名> で指名した場合に、そのキャラが
-   *  PC として 1on1 ターン相当の応答を返す。 */
-  pc_assignments: { character_id: string; role_name: string }[];
+   *  形式は新仕様: 各エントリはシナリオの pc_slots[slot_id] を「ユーザ／AI キャラ」に
+   *  割り当てる。 */
+  pc_assignments: PcAssignment[];
   created_at: string;
   updated_at: string;
   /** フロント側で判別用に追加（バックエンドからは返らない）。 */
@@ -611,7 +633,7 @@ export async function startScenarioSession(
   synopsisPresetId: string,
   title?: string,
   engineType: "ensemble" | "ensemble_pc" = "ensemble",
-  pcAssignments?: { character_id: string; role_name: string }[],
+  pcAssignments?: PcAssignment[],
 ): Promise<ScenarioSession> {
   const res = await fetch("/api/scenario_chat/sessions", {
     method: "POST",

@@ -53,12 +53,12 @@ class TestListTools:
     持つ必要がある。
     """
 
-    def test_returns_six_tools(self, client_local):
-        """公開されるツールが 6 種すべて返ること。
+    def test_returns_all_tools(self, client_local):
+        """公開されるツール一覧が想定どおり全種返ること。
 
-        現状の MCP 公開ツールは inscribe_memory / post_working_memory_thread / open_working_memory_thread /
-        carve_narrative / power_recall / switch_angle の 6 種。並びと数が変わったらこのテストが
-        知らせる。
+        現状の MCP 公開ツールは inscribe_memory / post_working_memory_thread /
+        open_working_memory_thread / carve_narrative / power_recall / switch_angle /
+        web_search の 7 種。並びと数が変わったらこのテストが知らせる。
         """
         res = client_local.get("/api/mcp/tools")
         assert res.status_code == 200
@@ -71,6 +71,7 @@ class TestListTools:
             "carve_narrative",
             "power_recall",
             "switch_angle",
+            "web_search",
         ]
 
     def test_each_tool_has_required_fields(self, client_local):

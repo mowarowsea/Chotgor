@@ -672,7 +672,7 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
     if not rows:
         return {}
 
-    _MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat", "group_chat"}
+    _MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat", "scenario_chat_pc", "group_chat"}
 
     main_row = next((r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES), rows[0])
     main_rows = [r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES]
