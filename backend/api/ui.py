@@ -48,10 +48,9 @@ def _build_allowed_tools(form) -> dict:
         form: await request.form() の結果。
 
     Returns:
-        {web_search, google_calendar, gmail, google_drive} の bool dict。
+        {google_calendar, gmail, google_drive} の bool dict。
     """
     return {
-        "web_search":       bool(form.get("tool_web_search")),
         "google_calendar":  bool(form.get("tool_google_calendar")),
         "gmail":            bool(form.get("tool_gmail")),
         "google_drive":     bool(form.get("tool_google_drive")),

@@ -34,13 +34,12 @@ CLAUDE_BIN = _find_claude()
 def _build_tools_flag(allowed_tools: dict) -> str:
     """allowed_tools 設定から --tools フラグ文字列を組み立てる。
 
-    web_search が True の場合のみ WebSearch と WebFetch（組み込みツール）を有効化する。
-    Google系ツールは MCP 経由のため --tools フラグでは制御できず、ここでは加算しない。
+    現状、組み込みツール（WebSearch/WebFetch 等）は一切有効化しない方針のため
+    常に空文字列を返す。外部情報の取得は Chotgor MCP の web_search ツール
+    （Tavily 経由）に一本化されている。Google 系ツールは MCP 経由で
+    --tools フラグでは制御されないため、ここでは何も加算しない。
     """
-    tool_names: list[str] = []
-    if allowed_tools.get("web_search"):
-        tool_names.extend(["WebSearch", "WebFetch"])
-    return ",".join(tool_names)
+    return ""
 
 
 def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default", allowed_tools: dict | None = None) -> list[str]:

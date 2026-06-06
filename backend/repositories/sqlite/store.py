@@ -139,7 +139,8 @@ class Character(Base):
     farewell_config = Column(JSON, nullable=True)  # chronicle で更新される感情閾値・退席設定JSON
     relationship_status = Column(String, nullable=False, default="active")  # "active" | "estranged"
     definition_embedding_id = Column(String, nullable=True)  # LanceDB definitions テーブル内の doc ID
-    # キャラクターごとの外部ツール許可設定 (web_search/google_calendar/gmail/google_drive)
+    # キャラクターごとの外部ツール許可設定 (google_calendar/gmail/google_drive)。
+    # 旧 web_search キーは廃止（外部情報取得は Chotgor MCP の web_search ツールに一本化）。
     allowed_tools = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
