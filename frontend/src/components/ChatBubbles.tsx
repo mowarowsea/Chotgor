@@ -9,6 +9,7 @@
  *   ボーダー/サーフェス    — すべてニュートラルグレー。緑はキャラ名・アクセントのみ。
  */
 import React, { useState, useCallback, useEffect, createContext, useContext } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -778,14 +779,14 @@ function RawLogModal({ messageId, filename, onClose }: { messageId: string; file
       .finally(() => setLoading(false));
   }, [messageId, filename]);
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
       style={{ background: "var(--ch-overlay)", backdropFilter: "blur(4px)" }}
       onClick={onClose}
     >
       <div
-        className="bg-ch-bg rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden"
+        className="bg-ch-bg rounded-xl w-full max-w-[90vw] max-h-[90vh] flex flex-col overflow-hidden"
         style={{ border: "1px solid var(--ch-sep2)", boxShadow: "var(--ch-shadow)" }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -803,7 +804,8 @@ function RawLogModal({ messageId, filename, onClose }: { messageId: string; file
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

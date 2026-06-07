@@ -141,8 +141,7 @@ function renderJsonHtml(text) {
 }
 
 /**
- * ツール呼び出しのログファイルをインライン展開・折りたたみする。
- * ボタンの次の兄弟要素（.log-inline-body）をトグルする。
+ * ログファイルをモーダルで表示する。
  * 初回クリック時に /ui/logs/{messageId}/raw/{filename} を fetch してレンダリングする。
  *
  * @param {HTMLElement} btn - クリックされたボタン要素。
@@ -150,37 +149,51 @@ function renderJsonHtml(text) {
  * @param {string} filename - ログファイル名。
  */
 async function toggleInlineLog(btn, messageId, filename) {
-    // data-filename 属性で対応する .log-inline-body を探す
-    const block = btn.closest('.log-tool-block');
-    const container = block
-        ? block.querySelector(`.log-inline-body[data-filename="${CSS.escape(filename)}"]`)
-        : null;
-    if (!container) return;
+    const prev = btn.textContent;
+    btn.textContent = '… ' + prev.replace('▶ ', '');
+    btn.disabled = true;
 
-    if (container.style.display !== 'none') {
-        container.style.display = 'none';
-        btn.textContent = btn.textContent.replace('▼', '▶');
-        return;
+    try {
+        const res = await fetch(`/ui/logs/${messageId}/raw/${filename}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+
+        // モーダルを動的生成・表示（dialog のUA強制スタイル回避のため div ベース）
+        const modal = document.createElement('div');
+        modal.className = 'ch-modal ch-modal--fullwidth';
+        modal.innerHTML = `
+            <div class="ch-modal__card">
+                <div class="ch-modal__head">
+                    <div class="ch-modal__title">${filename}</div>
+                    <button type="button" class="ch-modal__close" aria-label="Close">×</button>
+                </div>
+                <div class="ch-modal__body">
+                    <pre class="log-inline-pre">${renderJsonHtml(text)}</pre>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const closeModal = () => modal.remove();
+
+        // クローズボタンのイベント
+        modal.querySelector('.ch-modal__close').addEventListener('click', closeModal);
+
+        // バックドロップクリックでクローズ
+        modal.addEventListener('click', e => {
+            if (e.target === modal) closeModal();
+        });
+
+        // ESCキーでクローズ
+        const onEsc = e => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onEsc); } };
+        document.addEventListener('keydown', onEsc);
+    } catch (e) {
+        alert(`読み込み失敗: ${e.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
     }
-    if (!container.dataset.loaded) {
-        const prev = btn.textContent;
-        btn.textContent = '… ' + prev.replace('▶ ', '');
-        btn.disabled = true;
-        try {
-            const res = await fetch(`/ui/logs/${messageId}/raw/${filename}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const text = await res.text();
-            container.innerHTML = '<pre class="log-inline-pre">' + renderJsonHtml(text) + '</pre>';
-            container.dataset.loaded = '1';
-        } catch (e) {
-            container.innerHTML = `<span style="color:#c87070;font-size:0.75rem">読み込み失敗: ${e.message}</span>`;
-        } finally {
-            btn.disabled = false;
-            btn.textContent = prev;
-        }
-    }
-    container.style.display = '';
-    btn.textContent = btn.textContent.replace('▶', '▼');
 }
 
 /**
