@@ -24,6 +24,11 @@ interface Props {
      * シナリオの「空欄送信で GM が無言のまま物語を進める」モード用。
      */
     allowEmptySend?: boolean;
+    /**
+     * 送信ボタンの直前に挿入される追加ツール。
+     * シナリオの「宛先 PC 切替トグル」など、ページ固有の補助 UI を差し込むため。
+     */
+    extraTools?: React.ReactNode;
 }
 
 /** ユーザのメッセージ入力を受け付けるコンポーネント。 */
@@ -35,6 +40,7 @@ export default function MessageInput({
     allowImages = true,
     onSkip,
     allowEmptySend = false,
+    extraTools,
 }: Props) {
     // 下書きの localStorage 連携は useDraft hook に集約済み。
     // setInput("") を呼ぶと hook 内の useEffect が走り、localStorage の該当キーも削除される。
@@ -220,6 +226,7 @@ export default function MessageInput({
                                 スキップ
                             </button>
                         )}
+                        {extraTools}
                         {/* 送信ボタン: 入力がある時のみアクセント色で点灯する */}
                         <button
                             type="submit"

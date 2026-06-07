@@ -838,6 +838,154 @@
 }
 .ch-panel--flush { padding: 0; overflow: hidden; }
 
+/* カードグリッド — NPC/PC等を並べる共通レイアウト。
+   minmax で 1 行に最低 220px のカードを並べ、画面幅で自動折り返し。 */
+.ch-cardgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* カード — クリック可能な軽量パネル。NPC/PC一覧の各エントリ用。 */
+.ch-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 8px;
+  padding: 14px;
+  background: var(--ch-bg-s);
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-lg);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color .12s, background .12s;
+}
+.ch-card:hover { border-color: var(--ch-a-soft); background: var(--ch-a-faint); }
+.ch-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+.ch-card__avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ch-a-faint);
+  object-fit: cover;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ch-fm);
+  font-size: 14px;
+  color: var(--ch-t3);
+  overflow: hidden;
+}
+.ch-card__title {
+  font-family: var(--ch-f);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ch-t);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ch-card__meta {
+  font-family: var(--ch-fm);
+  font-size: 11px;
+  color: var(--ch-t3);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+/* "+ 新規追加" 用のダッシュドカード */
+.ch-card--add {
+  border-style: dashed;
+  background: transparent;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  color: var(--ch-t3);
+  font-family: var(--ch-fm);
+  font-size: 12px;
+}
+.ch-card--add:hover { color: var(--ch-a); border-color: var(--ch-a); }
+
+/* モーダル — 汎用ダイアログ。NPC/PC 詳細編集等に使う。
+   `hidden` 属性で開閉、JS から外せば表示される。 */
+.ch-modal[hidden] { display: none; }
+.ch-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  padding: 20px;
+}
+.ch-modal__card {
+  background: var(--ch-bg);
+  border: 1px solid var(--ch-sep2);
+  border-radius: var(--ch-radius-lg);
+  box-shadow: var(--ch-shadow);
+  width: 100%;
+  max-width: 560px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ch-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ch-sep);
+  flex-shrink: 0;
+}
+.ch-modal__title {
+  flex: 1;
+  font-family: var(--ch-f);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ch-t);
+  margin: 0;
+}
+.ch-modal__close {
+  background: none;
+  border: none;
+  color: var(--ch-t3);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.ch-modal__close:hover { color: var(--ch-t); }
+.ch-modal__body {
+  padding: 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+.ch-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--ch-sep);
+  flex-shrink: 0;
+}
+
 .ch-divider { border: none; border-top: 1px solid var(--ch-sep); margin: 0; }
 
 /* インラインコード */

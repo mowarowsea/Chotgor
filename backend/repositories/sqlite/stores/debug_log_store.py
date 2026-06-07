@@ -187,9 +187,11 @@ class DebugLogStoreMixin:
         from backend.repositories.sqlite.store import DebugLogEntry
         from sqlalchemy import func, desc
 
-        # タイプ別 source_type セット定義
+        # タイプ別 source_type セット定義。
+        # scenario_chat_pc は TRPG モード（ensemble_pc）の PC ターンログ。
+        # シナリオ進行の一部なので Scenario タブに含める。
         _CHAT_TYPES = ("chat", "group_chat", "farewell", "trigger")
-        _SCENARIO_TYPES = ("scenario", "scenario_chat")
+        _SCENARIO_TYPES = ("scenario", "scenario_chat", "scenario_chat_pc")
         _ALL_TYPED = _CHAT_TYPES + _SCENARIO_TYPES
 
         with self.get_session() as sess:

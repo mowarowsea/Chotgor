@@ -26,8 +26,10 @@ import uuid
 from typing import Any, AsyncGenerator
 
 from backend.character_actions.anticipator import extract_anticipation
+from backend.lib.debug_logger import logger as debug_logger
 from backend.lib.log_context import (
     current_log_feature,
+    current_log_session_id,
     current_log_target,
     new_message_id,
 )
@@ -142,6 +144,7 @@ async def stream_pc_response(
     sqlite,
     settings: dict,
     chat_service: ChatService,
+    scenario_session_id: str = "",
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """指定 PC（Chotgor キャラ）の応答 1 ターン分をストリーミングする非同期ジェネレータ。
 
@@ -167,9 +170,40 @@ async def stream_pc_response(
         ("pc_done",     {"character": role_name, "speaker_id": cid,
                           "full_text": str, "anticipation": str | None}) — 完了通知
     """
+    # PC ターンは「ユーザの 1 リクエスト中に走る独立した LLM 呼び出し」なので、
+    # ログ機構上は新しい MAIN 行として扱う（ChotgorLogger._MAIN_SOURCE_TYPES 参照）。
+    # new_message_id() で msg_id / db_entry_id / counter をリセットしてから、
+    # log_front_input を呼んで MAIN 行を INSERT する。これがないと provider_request /
+    # provider_response が紐づく先が無く、Backend/Logs に PC のターンが現れない。
     new_message_id()
     current_log_feature.set("scenario_chat_pc")
     current_log_target.set(pc.name)
+    # new_message_id() で session_id も None にリセットされるので再セット。
+    # これがないと debug_log_entries.session_id が NULL になり、シナリオ別の
+    # フィルタが効かなくなる。
+    if scenario_session_id:
+        current_log_session_id.set(scenario_session_id)
+
+    # PC の「ユーザ入力」相当は直前の GM 発話（場面描写・呼びかけ）。それを
+    # FrontInput としてログに残し、debug_log_entries.user_message として可視化する。
+    # history が空でも log_front_input は呼ぶ（MAIN 行を作る目的）。
+    _last_speaker = ""
+    _last_content = ""
+    for _t in reversed(history or []):
+        _stype = getattr(_t, "speaker_type", "")
+        if _stype in {"narrator", "npc", "user", "pc"}:
+            _last_speaker = getattr(_t, "speaker_name", "") or _stype
+            _last_content = getattr(_t, "content", "") or ""
+            break
+    debug_logger.log_front_input({
+        "trigger": "scenario_chat_pc_turn",
+        "pc_role_name": pc.name,
+        "character_id": pc.character_id,
+        "scenario_title": scenario_title,
+        "preset_id": preset_id,
+        "previous_speaker": _last_speaker,
+        "content": (f"@{_last_speaker}: {_last_content}" if _last_speaker else _last_content),
+    })
 
     char = sqlite.get_character(pc.character_id)
     if not char:

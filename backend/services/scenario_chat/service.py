@@ -491,7 +491,17 @@ async def run_scenario_turn(
                     next_kind, next_target = find_last_routing_mention(
                         gm_last_raw, pcs, npc_names,
                     )
-                    if next_kind == "none":
+                    # GM 直後の特例: 明示的に @<PC> / @ALL のいずれかが
+                    # 指定されていない限り、必ず @ALL にフォールバックする。
+                    # find_last_routing_mention は GM ラベル / NPC名 / Narrator も
+                    # kind="gm" として返すが、GM が NPC を呼び合うだけのループを
+                    # 防ぐため、ここでは pc/all 以外を ALL に格上げする。
+                    # PC が 1 人もいなければ ALL は無意味なので従来どおり終了。
+                    if next_kind not in {"pc", "all"}:
+                        if pcs:
+                            next_kind = "all"
+                            next_target = None
+                            continue
                         break
                     continue
                 # 通常モード（ensemble）または PC モードでもメンション無し → 終了
@@ -546,6 +556,7 @@ async def run_scenario_turn(
                         sqlite=sqlite,
                         settings=settings,
                         chat_service=chat_service,
+                        scenario_session_id=session_id,
                     ):
                         if ev_type == "pc_done":
                             full_text = payload["full_text"]

@@ -233,8 +233,12 @@ class ChotgorLogger:
             content = self._format_json(data, default=str)
         self._write_log(f"{feature}_Response_{preset_name}", content)
 
-        # メイン行（chat/scenario）はプリセット名だけ更新する
-        _MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat"}
+        # メイン行（chat/scenario）はプリセット名だけ更新する。
+        # group_chat / scenario_chat_pc も「ユーザの1リクエスト = 1 LLM呼び出し」と
+        # 構造が異なる（1リクエスト中に複数キャラのターンが続けて走る）が、
+        # 各キャラのターンを独立した MAIN 行として扱う設計（pc_runner / group_chat の
+        # 冒頭で log_front_input が呼ばれ、MAIN 行が新規 INSERT される）。
+        _MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat", "scenario_chat_pc", "group_chat"}
         if feature in _MAIN_SOURCE_TYPES:
             self._update_main_entry_preset(preset_name)
         else:

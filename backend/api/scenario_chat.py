@@ -451,14 +451,18 @@ async def start_session(request: Request, body: SessionStart):
                         detail=f"PC枠のキャラクターが見つかりません: slot_id={sid} character_id={cid}",
                     )
                 normalized_entry["character_id"] = cid
-                preset_id = str(entry.get("preset_id", "") or "").strip()
-                if preset_id:
-                    if sqlite.get_model_preset(preset_id) is None:
+                preset_ref = str(entry.get("preset_id", "") or "").strip()
+                if preset_ref:
+                    # /v1/models 経由のフロントは preset 名を送ってくるが、
+                    # SQLite では LLMModelPreset.id が正規キー。ID で引けなければ
+                    # 名前で再検索して ID へ正規化する。
+                    preset_obj = sqlite.get_model_preset(preset_ref) or sqlite.get_model_preset_by_name(preset_ref)
+                    if preset_obj is None:
                         raise HTTPException(
                             status_code=400,
-                            detail=f"指定されたPCプリセットが見つかりません: slot_id={sid} preset_id={preset_id}",
+                            detail=f"指定されたPCプリセットが見つかりません: slot_id={sid} preset_id={preset_ref}",
                         )
-                    normalized_entry["preset_id"] = preset_id
+                    normalized_entry["preset_id"] = preset_obj.id
             normalized.append(normalized_entry)
         # 全 slot_id を割り当て必須（未割り当てがあると挙動が読みづらい）
         unassigned = [s.slot_id for s in pc_slots_norm if s.slot_id not in seen_slot_ids]

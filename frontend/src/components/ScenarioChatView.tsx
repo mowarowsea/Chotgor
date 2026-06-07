@@ -701,20 +701,31 @@ export default function ScenarioChatView({
   };
 
   /**
+   * 宛先 PC トグルの状態。null=OFF（メンションなし）、それ以外は @<name> として
+   * 送信メッセージ先頭に付与する文字列。ユーザがメッセージを送るたびに OFF に戻す。
+   * クリックで OFF → PC1 → PC2 → … → "ALL" → OFF を循環する。
+   */
+  const [mentionTarget, setMentionTarget] = useState<string | null>(null);
+
+  /**
    * 共通 `MessageInput` からの送信を受ける。
    *
    * 入力が空の場合は「ユーザは無言で続きを促す」モード（auto_advance）で送る。
    * user turn は保存されず履歴に痕跡が残らない一方、GM プロンプトには
    * 「プレイヤーは今ターン何も発言していない」旨が OOC 指示として伝わる。
    * 画像添付はシナリオでは未対応のため第2引数（files）は無視する。
+   * 宛先 PC トグルが ON の場合は本文先頭に `@<target> ` を付ける。
    */
   const handleScenarioInput = (content: string) => {
     const trimmed = content.trim();
     if (trimmed === "") {
       onSend("", true);
     } else {
-      onSend(trimmed, false);
+      const prefix = mentionTarget ? `@${mentionTarget} ` : "";
+      onSend(prefix + trimmed, false);
     }
+    // 送信のたびに宛先トグルを OFF へ戻す（ユーザターンが来るたびにリセット）。
+    setMentionTarget(null);
   };
 
   const userPlaceholder = scenario?.user_alias ?? "プレイヤー";
@@ -735,6 +746,50 @@ export default function ScenarioChatView({
   const inputPlaceholder =
     `${userPlaceholder} として発話 (Ctrl+Enter で送信 / *手を握る* で行動描写 / ` +
     `空欄送信で GM が無言のまま物語を進める${pcMentionHint})`;
+
+  /**
+   * 宛先トグルの候補（PCモードのみ）。AI キャラ枠の名前 + "ALL" を循環する。
+   * ユーザ枠は自分自身宛になるため候補から除外する。
+   */
+  const mentionOptions =
+    isPcMode && pcSlotNames.length > 0 ? [...pcSlotNames, "ALL"] : [];
+
+  /** クリックで宛先を OFF → PC1 → PC2 → … → ALL → OFF と循環させる。 */
+  const cycleMentionTarget = () => {
+    if (mentionOptions.length === 0) return;
+    setMentionTarget((prev) => {
+      if (prev === null) return mentionOptions[0];
+      const idx = mentionOptions.indexOf(prev);
+      if (idx === -1 || idx === mentionOptions.length - 1) return null;
+      return mentionOptions[idx + 1];
+    });
+  };
+
+  /** 宛先ボタン: MessageInput の extraTools として送信ボタンの直前に描画される。
+   *  ON のときはアクセント色 + `@<name>` 表示、OFF は `@` アイコンのみ。 */
+  const mentionToggleButton =
+    mentionOptions.length > 0 ? (
+      <button
+        type="button"
+        onClick={cycleMentionTarget}
+        disabled={sending}
+        title={
+          mentionTarget
+            ? `宛先: @${mentionTarget}（クリックで切替）`
+            : "宛先 PC を指定（クリックで切替）"
+        }
+        className="text-xs rounded px-1.5 py-0.5 transition-colors disabled:opacity-30 max-w-[120px] truncate"
+        style={{
+          color: mentionTarget ? "var(--ch-accent)" : "var(--ch-t3)",
+          border: `1px solid ${
+            mentionTarget ? "var(--ch-accent)" : "var(--ch-sep2)"
+          }`,
+          lineHeight: 1.2,
+        }}
+      >
+        {mentionTarget ? `@${mentionTarget}` : "@"}
+      </button>
+    ) : null;
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
@@ -881,6 +936,7 @@ export default function ScenarioChatView({
           allowImages={false}
           allowEmptySend
           placeholder={inputPlaceholder}
+          extraTools={mentionToggleButton}
         />
       ) : (
         <div

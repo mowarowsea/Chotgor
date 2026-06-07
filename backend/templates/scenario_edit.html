@@ -18,7 +18,7 @@
 
     {# ── 本体フォーム ───────────────────────────────── #}
     <section class="ch-section">
-        <form method="post" action="{{ action }}" {% if scenario %}data-autosave{% endif %}>
+        <form method="post" action="{{ action }}" {% if scenario %}data-autosave id="scenarioMainForm"{% endif %}>
             {% if scenario %}
             <p class="ch-autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
             {% endif %}
@@ -95,20 +95,9 @@
                     placeholder='{"d6": 10}'>
             </div>
 
-            <!-- PC枠定義（ensemble_pc 専用） -->
-            <div class="ch-field">
-                <label class="ch-label" for="pc_slots">PC Slots
-                    <span class="ch-hint">
-                        engine_type=ensemble_pc のセッションで使う「PC枠」の一覧。各枠に人物像・知っていること等を 1 テキストで記述します。
-                        JSON 配列で指定:
-                        <code>[{"slot_id":"pc1","name":"アリス","description":"剣士、商家出身、北の村について詳しい"}]</code>。
-                        セッション開始時に「ユーザ／AI キャラが演じる」をユーザが割り当てます。
-                        空欄なら ensemble_pc セッションは起動できません。
-                    </span>
-                </label>
-                <textarea id="pc_slots" name="pc_slots" class="ch-textarea" rows="6"
-                    placeholder='[{"slot_id":"pc1","name":"アリス","description":"..."}]'>{% if scenario and scenario.pc_slots %}{{ scenario.pc_slots|tojson }}{% endif %}</textarea>
-            </div>
+            <!-- PC枠 hidden（JSが書き換える） -->
+            <input type="hidden" id="pc_slots" name="pc_slots"
+                   value='{% if scenario and scenario.pc_slots %}{{ scenario.pc_slots|tojson }}{% endif %}'>
 
             <!-- カスタムシステムプロンプト -->
             <div class="ch-field">
@@ -150,113 +139,373 @@
     </section>
 
     {% if scenario %}
-    {# ── NPC 編集 ───────────────────────────────────── #}
+    {# ── PC 枠（ensemble_pc 専用） ─────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">PC Slots</h2>
+        </div>
+        <p class="ch-prose" style="margin-bottom:18px">
+            engine_type=ensemble_pc のセッションで使う「PC枠」一覧。
+            セッション開始時に「ユーザ／AI キャラが演じる」をユーザが割り当てます。
+        </p>
+        <div id="pcCardGrid" class="ch-cardgrid"></div>
+    </section>
+
+    {# ── NPC ───────────────────────────────────────── #}
     <section class="ch-section">
         <div class="ch-section__head">
             <h2 class="ch-section-title">NPCs</h2>
         </div>
         <p class="ch-prose" style="margin-bottom:18px">
             このシナリオに登場する NPC を定義します。`@名前:` の発話タグとして使われます。
-            description には人物像・口調・話し方を自由テキストで全部記述してください。
         </p>
 
-        {% if npcs %}
-        {% for n in npcs %}
-        <div class="ch-panel" style="margin-bottom:12px">
-            <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/edit"
-                  enctype="multipart/form-data" data-autosave>
-                <div class="image-upload-row" style="margin-bottom:14px">
-                    <div>
-                        {% if n.image_data %}
-                        <img src="{{ n.image_data }}" class="icon-preview" alt="{{ n.name }}">
-                        {% else %}
-                        <div class="icon-placeholder">{{ n.name[0] if n.name else '?' }}</div>
-                        {% endif %}
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:8px">
-                        <input type="file" name="image" accept="image/*">
-                        <label class="ch-inline-toggle">
-                            <span class="ch-toggle">
-                                <input type="checkbox" name="remove_image">
-                                <span class="ch-toggle__track"></span>
-                            </span>
-                            <span>画像を削除</span>
-                        </label>
-                    </div>
+        <div class="ch-cardgrid">
+            {% if npcs %}
+            {% for n in npcs %}
+            <button type="button" class="ch-card" data-modal-open="npc-{{ n.id }}">
+                <div class="ch-card__head">
+                    {% if n.image_data %}
+                    <img class="ch-card__avatar" src="{{ n.image_data }}" alt="{{ n.name }}">
+                    {% else %}
+                    <span class="ch-card__avatar">{{ n.name[0] if n.name else '?' }}</span>
+                    {% endif %}
+                    <span class="ch-card__title">{{ n.name }}</span>
                 </div>
-                <div class="ch-field">
-                    <label class="ch-label">Name</label>
-                    <input type="text" name="name" class="ch-input" value="{{ n.name }}" required>
-                </div>
-                <div class="ch-field">
-                    <label class="ch-label">Description
-                        <span class="ch-hint">人物像・口調・話し方を自由記述</span>
-                    </label>
-                    <textarea name="description" class="ch-textarea" style="min-height:140px"
-                              placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
-                </div>
-                <div style="display:flex;gap:8px">
-                    <button type="submit" formmethod="post"
-                            formaction="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/delete"
-                            formnovalidate
-                            class="ch-btn ch-btn--danger"
-                            onclick="return confirm('Delete {{ n.name }}?')">Delete</button>
-                </div>
-            </form>
-        </div>
-        {% endfor %}
-        {% else %}
-        <p class="ch-hint">まだ NPC が登録されていません。</p>
-        {% endif %}
+                {% if n.description %}
+                <div class="ch-card__meta">{{ n.description }}</div>
+                {% endif %}
+            </button>
+            {% endfor %}
+            {% endif %}
 
-        <div class="ch-section__head" style="margin-top:24px">
-            <h3 class="ch-section-title">Add NPC</h3>
-        </div>
-        <div class="ch-panel">
-            <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/new" enctype="multipart/form-data">
-                <div class="image-upload-row" style="margin-bottom:14px">
-                    <div>
-                        <div class="icon-placeholder">?</div>
-                    </div>
-                    <div>
-                        <label class="ch-label">Avatar Image (任意)</label>
-                        <input type="file" name="image" accept="image/*">
-                    </div>
-                </div>
-                <div class="ch-field">
-                    <label class="ch-label">Name</label>
-                    <input type="text" name="name" class="ch-input" required placeholder="レイカ">
-                </div>
-                <div class="ch-field">
-                    <label class="ch-label">Description
-                        <span class="ch-hint">人物像・口調・話し方を自由記述</span>
-                    </label>
-                    <textarea name="description" class="ch-textarea" style="min-height:140px"
-                              placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。"></textarea>
-                </div>
-                <button type="submit" class="ch-btn ch-btn--primary">+ Add NPC</button>
-            </form>
+            <!-- 新規追加カード -->
+            <button type="button" class="ch-card ch-card--add" data-modal-open="npc-new">
+                + Add NPC
+            </button>
         </div>
     </section>
+
+    {# ── NPC 編集モーダル群（各NPC + 新規追加） ────── #}
+    {% for n in npcs %}
+    <div class="ch-modal" id="modal-npc-{{ n.id }}" hidden data-modal>
+        <div class="ch-modal__card">
+            <div class="ch-modal__head">
+                <h3 class="ch-modal__title">Edit NPC — {{ n.name }}</h3>
+                <button type="button" class="ch-modal__close" data-modal-close aria-label="閉じる">✕</button>
+            </div>
+            <div class="ch-modal__body">
+                <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/edit"
+                      enctype="multipart/form-data" data-autosave>
+                    <div class="image-upload-row" style="margin-bottom:14px">
+                        <div>
+                            {% if n.image_data %}
+                            <img src="{{ n.image_data }}" class="icon-preview" alt="{{ n.name }}">
+                            {% else %}
+                            <div class="icon-placeholder">{{ n.name[0] if n.name else '?' }}</div>
+                            {% endif %}
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:8px">
+                            <input type="file" name="image" accept="image/*">
+                            <label class="ch-inline-toggle">
+                                <span class="ch-toggle">
+                                    <input type="checkbox" name="remove_image">
+                                    <span class="ch-toggle__track"></span>
+                                </span>
+                                <span>画像を削除</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">Name</label>
+                        <input type="text" name="name" class="ch-input" value="{{ n.name }}" required>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">Description
+                            <span class="ch-hint">人物像・口調・話し方を自由記述</span>
+                        </label>
+                        <textarea name="description" class="ch-textarea" style="min-height:140px"
+                                  placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="ch-modal__actions">
+                <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/delete"
+                      onsubmit="return confirm('Delete {{ n.name }}?')">
+                    <button type="submit" class="ch-btn ch-btn--danger">Delete</button>
+                </form>
+                <button type="button" class="ch-btn" data-modal-close>閉じる</button>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- NPC 新規追加モーダル -->
+    <div class="ch-modal" id="modal-npc-new" hidden data-modal>
+        <div class="ch-modal__card">
+            <div class="ch-modal__head">
+                <h3 class="ch-modal__title">Add NPC</h3>
+                <button type="button" class="ch-modal__close" data-modal-close aria-label="閉じる">✕</button>
+            </div>
+            <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/new" enctype="multipart/form-data">
+                <div class="ch-modal__body">
+                    <div class="image-upload-row" style="margin-bottom:14px">
+                        <div>
+                            <div class="icon-placeholder">?</div>
+                        </div>
+                        <div>
+                            <label class="ch-label">Avatar Image (任意)</label>
+                            <input type="file" name="image" accept="image/*">
+                        </div>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">Name</label>
+                        <input type="text" name="name" class="ch-input" required placeholder="レイカ">
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">Description
+                            <span class="ch-hint">人物像・口調・話し方を自由記述</span>
+                        </label>
+                        <textarea name="description" class="ch-textarea" style="min-height:140px"
+                                  placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。"></textarea>
+                    </div>
+                </div>
+                <div class="ch-modal__actions">
+                    <button type="button" class="ch-btn" data-modal-close>キャンセル</button>
+                    <button type="submit" class="ch-btn ch-btn--primary">+ Add</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {# ── PC 編集モーダル（単一・JSで再利用） ────── #}
+    <div class="ch-modal" id="modal-pc-edit" hidden data-modal>
+        <div class="ch-modal__card">
+            <div class="ch-modal__head">
+                <h3 class="ch-modal__title" id="pcModalTitle">Edit PC Slot</h3>
+                <button type="button" class="ch-modal__close" data-modal-close aria-label="閉じる">✕</button>
+            </div>
+            <div class="ch-modal__body">
+                <!-- このフォーム自体は送信しない。JS が値を取って hidden#pc_slots を更新する。 -->
+                <div class="ch-field">
+                    <label class="ch-label" for="pcModalSlotId">Slot ID
+                        <span class="ch-hint">セッション開始時の割当てキー（半角英数推奨）。重複不可</span>
+                    </label>
+                    <input type="text" id="pcModalSlotId" class="ch-input" placeholder="pc1">
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label" for="pcModalName">Name
+                        <span class="ch-hint">GM や PC が @&lt;name&gt; で呼ぶ際の表示名</span>
+                    </label>
+                    <input type="text" id="pcModalName" class="ch-input" placeholder="アリス">
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label" for="pcModalDescription">Description
+                        <span class="ch-hint">人物像・出自・知っていることを自由記述</span>
+                    </label>
+                    <textarea id="pcModalDescription" class="ch-textarea" style="min-height:160px"
+                              placeholder="例: 剣士、商家出身、北の村について詳しい"></textarea>
+                </div>
+            </div>
+            <div class="ch-modal__actions">
+                <button type="button" class="ch-btn ch-btn--danger" id="pcModalDelete" hidden>Delete</button>
+                <button type="button" class="ch-btn" data-modal-close>キャンセル</button>
+                <button type="button" class="ch-btn ch-btn--primary" id="pcModalSave">保存</button>
+            </div>
+        </div>
+    </div>
     {% endif %}
 </div>
 
 <script>
+/**
+ * カスタムシステムプロンプトを既定テンプレートに戻す。
+ */
 function resetCustomSystemPrompt() {
-    // APIからデフォルトのシステムプロンプトテンプレートを取得して自動入力
     fetch('/api/scenario_chat/default-system-prompt-template')
         .then(response => response.json())
         .then(data => {
             document.getElementById('custom_system_prompt').value = data.template;
-            // autosave トリガー
             document.getElementById('custom_system_prompt').dispatchEvent(new Event('input', {bubbles:true}));
         })
         .catch(error => {
             console.error('Failed to fetch default template:', error);
-            // エラー時は空にする
             document.getElementById('custom_system_prompt').value = '';
             document.getElementById('custom_system_prompt').dispatchEvent(new Event('input', {bubbles:true}));
         });
 }
+
+{% if scenario %}
+/**
+ * モーダル開閉の共通ハンドラ。`data-modal-open="<key>"` を押すと
+ * `#modal-<key>` の hidden 属性を外し、`data-modal-close` または背景クリックで閉じる。
+ */
+(function () {
+    function openModal(key) {
+        var el = document.getElementById('modal-' + key);
+        if (el) el.hidden = false;
+    }
+    function closeModal(el) {
+        if (!el) return;
+        var modal = el.closest('[data-modal]') || el;
+        modal.hidden = true;
+    }
+    document.addEventListener('click', function (e) {
+        var opener = e.target.closest('[data-modal-open]');
+        if (opener) {
+            openModal(opener.getAttribute('data-modal-open'));
+            return;
+        }
+        if (e.target.matches('[data-modal-close]') || e.target.closest('[data-modal-close]')) {
+            closeModal(e.target);
+            return;
+        }
+        // 背景クリック（モーダル本体の透明部分）で閉じる
+        if (e.target.matches('[data-modal]')) {
+            closeModal(e.target);
+        }
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            var openOnes = document.querySelectorAll('[data-modal]:not([hidden])');
+            openOnes.forEach(function (m) { m.hidden = true; });
+        }
+    });
+
+    /* ────────── PC枠カード管理 ──────────
+     * hidden#pc_slots に JSON 配列で保持。`pcState` が in-memory の正本。
+     * カードクリック→モーダルで編集→「保存」で配列更新→hidden 反映→
+     * autosave トリガー。
+     */
+    var hidden = document.getElementById('pc_slots');
+    var grid = document.getElementById('pcCardGrid');
+    var modal = document.getElementById('modal-pc-edit');
+    var titleEl = document.getElementById('pcModalTitle');
+    var slotIdEl = document.getElementById('pcModalSlotId');
+    var nameEl = document.getElementById('pcModalName');
+    var descEl = document.getElementById('pcModalDescription');
+    var deleteBtn = document.getElementById('pcModalDelete');
+    var saveBtn = document.getElementById('pcModalSave');
+
+    /** PC枠の配列を hidden から読む。パース失敗時は空配列。 */
+    function loadSlots() {
+        var raw = hidden.value || '';
+        if (!raw.trim()) return [];
+        try {
+            var parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            console.warn('pc_slots JSON parse failed:', e);
+            return [];
+        }
+    }
+    /** PC枠の配列を hidden へ書き戻し、autosave をトリガーする。 */
+    function saveSlots(slots) {
+        hidden.value = JSON.stringify(slots);
+        if (window.chotgorAutosave) window.chotgorAutosave('#scenarioMainForm');
+    }
+    /** 簡易エスケープ。XSS 対策。 */
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
+        });
+    }
+    /** カードグリッドを再描画する。 */
+    function renderCards() {
+        var slots = loadSlots();
+        var html = slots.map(function (s, idx) {
+            var initial = esc((s.name || '?')[0] || '?');
+            return ''
+                + '<button type="button" class="ch-card" data-pc-edit="' + idx + '">'
+                + '  <div class="ch-card__head">'
+                + '    <span class="ch-card__avatar">' + initial + '</span>'
+                + '    <span class="ch-card__title">' + esc(s.name) + '</span>'
+                + '  </div>'
+                + (s.description
+                    ? '<div class="ch-card__meta">' + esc(s.description) + '</div>'
+                    : '')
+                + '  <div class="ch-card__meta" style="font-family:var(--ch-fm);font-size:10px;opacity:.6">'
+                +     'slot_id: ' + esc(s.slot_id)
+                + '  </div>'
+                + '</button>';
+        }).join('');
+        html += '<button type="button" class="ch-card ch-card--add" data-pc-edit="new">+ Add PC Slot</button>';
+        grid.innerHTML = html;
+    }
+    /** モーダルを編集モードで開く（idx="new" なら新規追加）。 */
+    function openEditor(idxRaw) {
+        var slots = loadSlots();
+        var isNew = (idxRaw === 'new');
+        var current;
+        if (isNew) {
+            // 次の slot_id 候補（pc1, pc2, …）
+            var nextNum = slots.length + 1;
+            while (slots.some(function (s) { return s.slot_id === 'pc' + nextNum; })) nextNum++;
+            current = { slot_id: 'pc' + nextNum, name: '', description: '' };
+        } else {
+            current = slots[parseInt(idxRaw, 10)] || { slot_id: '', name: '', description: '' };
+        }
+        titleEl.textContent = isNew ? 'Add PC Slot' : 'Edit PC Slot — ' + (current.name || current.slot_id);
+        slotIdEl.value = current.slot_id || '';
+        nameEl.value = current.name || '';
+        descEl.value = current.description || '';
+        deleteBtn.hidden = isNew;
+        saveBtn.dataset.editing = idxRaw;
+        modal.hidden = false;
+        setTimeout(function () { nameEl.focus(); }, 0);
+    }
+
+    // カードクリックを委譲
+    grid.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-pc-edit]');
+        if (btn) openEditor(btn.getAttribute('data-pc-edit'));
+    });
+
+    // 保存
+    saveBtn.addEventListener('click', function () {
+        var slots = loadSlots();
+        var sid = (slotIdEl.value || '').trim();
+        var nm = (nameEl.value || '').trim();
+        if (!sid) { alert('Slot ID を入力してください'); return; }
+        if (!nm) { alert('Name を入力してください'); return; }
+        var entry = { slot_id: sid, name: nm, description: (descEl.value || '').trim() };
+        var editing = saveBtn.dataset.editing;
+        if (editing === 'new') {
+            // slot_id 重複は禁止
+            if (slots.some(function (s) { return s.slot_id === sid; })) {
+                alert('slot_id "' + sid + '" は既に使われています');
+                return;
+            }
+            slots.push(entry);
+        } else {
+            var idx = parseInt(editing, 10);
+            // 自分以外と slot_id 重複は禁止
+            if (slots.some(function (s, i) { return i !== idx && s.slot_id === sid; })) {
+                alert('slot_id "' + sid + '" は既に使われています');
+                return;
+            }
+            slots[idx] = entry;
+        }
+        saveSlots(slots);
+        renderCards();
+        modal.hidden = true;
+    });
+
+    // 削除
+    deleteBtn.addEventListener('click', function () {
+        var editing = saveBtn.dataset.editing;
+        if (editing === 'new') return;
+        var idx = parseInt(editing, 10);
+        var slots = loadSlots();
+        if (!confirm('Delete PC slot "' + (slots[idx] && slots[idx].name) + '"?')) return;
+        slots.splice(idx, 1);
+        saveSlots(slots);
+        renderCards();
+        modal.hidden = true;
+    });
+
+    renderCards();
+})();
+{% endif %}
 </script>
 {% endblock %}
