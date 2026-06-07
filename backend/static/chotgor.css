@@ -1464,9 +1464,10 @@ body.ch-root {
 .log-summary {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 10px;
   padding: 11px 12px;
+  overflow: hidden;
   cursor: pointer;
   font-family: var(--ch-fm);
   font-size: 12px;
@@ -1489,8 +1490,8 @@ body.ch-root {
 }
 details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
 
-.log-dt { color: var(--ch-t3); font-variant-numeric: tabular-nums; }
-.log-model { color: var(--ch-t); }
+.log-dt    { color: var(--ch-t3); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+.log-model { color: var(--ch-t); white-space: nowrap; flex-shrink: 0; }
 /* 旧 .text-muted の代替（logs 内のみ。style.css 撤去後もログのプリセット名等を弱色に） */
 #log-main-content .text-muted { color: var(--ch-t3); }
 .log-preview {
@@ -1654,13 +1655,23 @@ details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 試行アコーディオンを開いたときはヘッダのプレビューを折り返して全文表示する。
-   閉じている間は1行省略（上の既定）のまま。 */
-.log-attempt-detail[open] > .log-attempt-summary .log-attempt-preview {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-  overflow-wrap: anywhere;
+/* ヘッダプレビューは開閉に関わらず常に1行省略。全文は本文「全文」行で表示。 */
+
+/* 全文行レイアウト */
+.log-response-fulltext-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.log-response-snippet {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ch-t2);
 }
 
 /* デバッグ未有効アラート（fragment 先頭）— 未移行ページに波及しないよう logs 内に限定 */

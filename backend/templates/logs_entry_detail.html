@@ -21,6 +21,19 @@
             </summary>
             <div class="log-attempt-body">
 
+                <!-- レスポンス全文 -->
+                {% if a.response %}
+                <div class="log-row">
+                    <span class="ch-eyebrow">全文</span>
+                    <div class="log-response-fulltext-row">
+                        <span class="log-response-snippet">{{ a.response[:100] }}{% if a.response|length > 100 %}…{% endif %}</span>
+                        <button class="ch-btn ch-btn--xs"
+                                data-text="{{ a.response | e }}"
+                                onclick="toggleInlineLog(this,'{{ a.dir_id }}',null)">全文</button>
+                    </div>
+                </div>
+                {% endif %}
+
                 <!-- 思考（Reasoning） -->
                 {% if a.reasoning %}
                 <div class="log-row">

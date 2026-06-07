@@ -141,12 +141,42 @@ function renderJsonHtml(text) {
 }
 
 /**
+ * モーダルを動的生成して表示する共通ヘルパー。
+ * toggleInlineLog（ログファイル表示）と全文ボタンで共用する。
+ *
+ * @param {string} title - モーダルタイトル。
+ * @param {string} contentHtml - モーダル本文として挿入する HTML 文字列。
+ */
+function _openModal(title, contentHtml) {
+    const modal = document.createElement('div');
+    modal.className = 'ch-modal ch-modal--fullwidth';
+    modal.innerHTML = `
+        <div class="ch-modal__card">
+            <div class="ch-modal__head">
+                <div class="ch-modal__title">${title}</div>
+                <button type="button" class="ch-modal__close" aria-label="Close">×</button>
+            </div>
+            <div class="ch-modal__body">
+                ${contentHtml}
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    const closeModal = () => modal.remove();
+    modal.querySelector('.ch-modal__close').addEventListener('click', closeModal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+    const onEsc = e => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onEsc); } };
+    document.addEventListener('keydown', onEsc);
+}
+
+/**
  * ログファイルをモーダルで表示する。
- * 初回クリック時に /ui/logs/{messageId}/raw/{filename} を fetch してレンダリングする。
+ * filename が null の場合はボタンの data-text 属性からテキストを直接取得する。
+ * それ以外は /ui/logs/{messageId}/raw/{filename} を fetch してレンダリングする。
  *
  * @param {HTMLElement} btn - クリックされたボタン要素。
  * @param {string} messageId - リクエストID（8桁hex）。
- * @param {string} filename - ログファイル名。
+ * @param {string|null} filename - ログファイル名。null の場合は data-text から取得。
  */
 async function toggleInlineLog(btn, messageId, filename) {
     const prev = btn.textContent;
@@ -154,40 +184,19 @@ async function toggleInlineLog(btn, messageId, filename) {
     btn.disabled = true;
 
     try {
-        const res = await fetch(`/ui/logs/${messageId}/raw/${filename}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
+        let text, title;
+        if (filename === null) {
+            // data-text 属性（HTMLエスケープ済みプレーンテキスト）から取得
+            text = btn.dataset.text;
+            title = 'レスポンス全文';
+        } else {
+            const res = await fetch(`/ui/logs/${messageId}/raw/${filename}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            text = await res.text();
+            title = filename;
+        }
 
-        // モーダルを動的生成・表示（dialog のUA強制スタイル回避のため div ベース）
-        const modal = document.createElement('div');
-        modal.className = 'ch-modal ch-modal--fullwidth';
-        modal.innerHTML = `
-            <div class="ch-modal__card">
-                <div class="ch-modal__head">
-                    <div class="ch-modal__title">${filename}</div>
-                    <button type="button" class="ch-modal__close" aria-label="Close">×</button>
-                </div>
-                <div class="ch-modal__body">
-                    <pre class="log-inline-pre">${renderJsonHtml(text)}</pre>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(modal);
-
-        const closeModal = () => modal.remove();
-
-        // クローズボタンのイベント
-        modal.querySelector('.ch-modal__close').addEventListener('click', closeModal);
-
-        // バックドロップクリックでクローズ
-        modal.addEventListener('click', e => {
-            if (e.target === modal) closeModal();
-        });
-
-        // ESCキーでクローズ
-        const onEsc = e => { if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onEsc); } };
-        document.addEventListener('keydown', onEsc);
+        _openModal(title, `<pre class="log-inline-pre">${renderJsonHtml(text)}</pre>`);
     } catch (e) {
         alert(`読み込み失敗: ${e.message}`);
     } finally {
