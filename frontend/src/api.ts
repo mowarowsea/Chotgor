@@ -222,20 +222,6 @@ export async function* streamMessage(
   yield* parseSSEStream<StreamEvent>(res);
 }
 
-/** メッセージを送信してキャラクターの応答を受け取る。 */
-export async function sendMessage(
-  sessionId: string,
-  content: string
-): Promise<{ user_message: ChatMessage; character_message: ChatMessage }> {
-  const res = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) throw new Error("メッセージの送信に失敗しました");
-  return res.json();
-}
-
 /** 複数の画像ファイルをアップロードしてセッションに紐づける。 */
 export async function uploadImages(
   sessionId: string,
@@ -292,41 +278,6 @@ export async function createGroupSession(
     throw new Error(err.detail ?? "グループセッションの作成に失敗しました");
   }
   return res.json();
-}
-
-/** SELF_DRIFT指針の型定義。 */
-export interface Drift {
-  id: string;
-  session_id: string;
-  character_id: string;
-  content: string;
-  enabled: boolean;
-  created_at: string;
-}
-
-/** セッションの全SELF_DRIFT一覧を取得する。 */
-export async function fetchDrifts(sessionId: string): Promise<Drift[]> {
-  const res = await fetch(`/api/chat/sessions/${sessionId}/drifts`);
-  if (!res.ok) throw new Error("SELF_DRIFT一覧の取得に失敗しました");
-  return res.json();
-}
-
-/** SELF_DRIFT の enabled フラグを反転する。 */
-export async function toggleDrift(sessionId: string, driftId: string): Promise<Drift> {
-  const res = await fetch(`/api/chat/sessions/${sessionId}/drifts/${driftId}/toggle`, {
-    method: "PATCH",
-  });
-  if (!res.ok) throw new Error("SELF_DRIFT のトグルに失敗しました");
-  return res.json();
-}
-
-/** 指定キャラの全SELF_DRIFTを削除する。 */
-export async function resetDrifts(sessionId: string, characterId: string): Promise<void> {
-  const res = await fetch(
-    `/api/chat/sessions/${sessionId}/drifts?character_id=${encodeURIComponent(characterId)}`,
-    { method: "DELETE" }
-  );
-  if (!res.ok) throw new Error("SELF_DRIFT のリセットに失敗しました");
 }
 
 /** グループチャットメッセージをSSEでストリーミング送信し、イベントをyieldする。
@@ -686,18 +637,6 @@ export async function deleteScenarioSession(sessionId: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("シナリオセッションの削除に失敗しました");
-}
-
-/** プレイセッションを終了する（status=ended）。 */
-export async function endScenarioSession(
-  sessionId: string,
-): Promise<ScenarioSession> {
-  const res = await fetch(`/api/scenario_chat/sessions/${sessionId}/end`, {
-    method: "POST",
-  });
-  if (!res.ok) throw new Error("シナリオセッションの終了に失敗しました");
-  const data = (await res.json()) as Omit<ScenarioSession, "session_type">;
-  return tagScenarioSession(data);
 }
 
 /** 指定ターン以降（自身を含む）をすべて削除する。編集・再生成の前処理。 */

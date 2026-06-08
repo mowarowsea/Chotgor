@@ -65,10 +65,9 @@ class ChatStoreMixin:
     def delete_chat_session(self, session_id: str) -> bool:
         """チャットセッションとそのメッセージ・画像レコードを削除する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatSession, ChatMessage, ChatImage, SessionDrift
+            from backend.repositories.sqlite.store import ChatSession, ChatMessage, ChatImage
             session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
             session.query(ChatImage).filter(ChatImage.session_id == session_id).delete()
-            session.query(SessionDrift).filter(SessionDrift.session_id == session_id).delete()
             obj = session.get(ChatSession, session_id)
             if not obj:
                 session.commit()

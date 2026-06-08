@@ -3,7 +3,6 @@
 `delete_character_cascade` が、対象キャラクターに紐づく
 - inscribed_memories
 - working_memory_threads ＋ working_memory_posts
-- session_drifts
 - 1on1 chat_sessions ＋ chat_messages ＋ chat_images
 を全て削除し、かつ
 - 別キャラクターのデータは一切巻き込まない
@@ -19,7 +18,6 @@ from backend.repositories.sqlite.store import (
     InscribedMemory,
     WorkingMemoryThread,
     WorkingMemoryPost,
-    SessionDrift,
     ChatSession,
     ChatMessage,
     ChatImage,
@@ -29,7 +27,7 @@ from backend.repositories.sqlite.store import (
 def _seed_character(store, name: str) -> str:
     """1キャラクターと、紐づく全種類のデータを1セット作成し character_id を返す。
 
-    inscribed_memory / working_memory(thread+post) / 1on1 chat(session+message+image+drift)
+    inscribed_memory / working_memory(thread+post) / 1on1 chat(session+message+image)
     をひととおり作る。
     """
     char_id = str(uuid.uuid4())
@@ -56,7 +54,6 @@ def _seed_character(store, name: str) -> str:
     store.create_chat_image(
         image_id=str(uuid.uuid4()), session_id=session_id, mime_type="image/png", message_id=msg_id
     )
-    store.add_session_drift(session_id=session_id, character_id=char_id, content="drift")
 
     return char_id
 
@@ -91,9 +88,6 @@ def _counts(store, char_id: str, char_name: str) -> dict:
                 if thread_ids
                 else 0
             ),
-            "drifts": s.query(SessionDrift).filter(
-                SessionDrift.character_id == char_id
-            ).count(),
             "sessions": s.query(ChatSession).filter(
                 ChatSession.model_id.like(f"{char_name}@%")
             ).count(),
@@ -135,7 +129,7 @@ def test_cascade_deletes_all_related_rows(sqlite_store):
 def test_cascade_does_not_touch_other_character(sqlite_store):
     """別キャラクターのデータが巻き込まれないことを検証する。
 
-    Alice を削除しても Bob のキャラクター・記憶・WM・チャット・ドリフトは
+    Alice を削除しても Bob のキャラクター・記憶・WM・チャットは
     すべて残っていなければならない。
     """
     alice_id = _seed_character(sqlite_store, "Alice")

@@ -15,7 +15,6 @@ import {
   fetchUserName,
   createGroupSession,
   streamGroupMessage,
-  fetchDrifts,
   fetchCharacters,
   updateSessionTitle,
   fetchScenarioSessions,
@@ -37,7 +36,6 @@ import type {
   ChatMessage,
   StreamEvent,
   GroupStreamEvent,
-  Drift,
   Character,
   ScenarioSession,
   ScenarioSynopsis,
@@ -49,6 +47,18 @@ import type {
   PcAssignment,
 } from "./api";
 import { charNameOf } from "./api";
+import Sidebar from "./components/Sidebar";
+import type { AnySession } from "./components/Sidebar";
+import ChatView from "./components/ChatView";
+import GroupChatView from "./components/GroupChatView";
+import ScenarioChatView from "./components/ScenarioChatView";
+import type { PendingBubble } from "./components/ScenarioChatView";
+import ExportDialog from "./components/ExportDialog";
+import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
+import CharPresetMenu from "./components/CharPresetMenu";
+import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
+import SynopsisCreateModal from "./components/SynopsisCreateModal";
+import { useTheme } from "./hooks/useTheme";
 
 /**
  * ScenarioTurns を ExportDialog が期待する ChatMessage 形式に変換する。
@@ -85,19 +95,6 @@ function scenarioTurnsToExportMessages(
     };
   });
 }
-import Sidebar from "./components/Sidebar";
-import type { AnySession } from "./components/Sidebar";
-import ChatView from "./components/ChatView";
-import GroupChatView from "./components/GroupChatView";
-import ScenarioChatView from "./components/ScenarioChatView";
-import type { PendingBubble } from "./components/ScenarioChatView";
-import DriftBadge from "./components/DriftBadge";
-import ExportDialog from "./components/ExportDialog";
-import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
-import CharPresetMenu from "./components/CharPresetMenu";
-import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
-import SynopsisCreateModal from "./components/SynopsisCreateModal";
-import { useTheme } from "./hooks/useTheme";
 
 /** アプリ全体のルートコンポーネント。 */
 export default function App() {
@@ -117,8 +114,6 @@ export default function App() {
   const [reasoningMap, setReasoningMap] = useState<Record<string, string>>({});
   const [userName, setUserName] = useState("ユーザ");
   const [error, setError] = useState<string | null>(null);
-  /** アクティブセッションのSELF_DRIFT一覧。 */
-  const [drifts, setDrifts] = useState<Drift[]>([]);
   /** エクスポートダイアログの開閉状態。 */
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   /** ライト/ダークテーマの状態と切り替え関数。 */
@@ -163,8 +158,6 @@ export default function App() {
    * ストリーミング中から正しいモデル名を表示できる。
    */
   const characterName = (selectedModel || activeSession?.model_id) ?? "キャラクター";
-  /** アクティブセッションに紐づくキャラクターID（1on1チャット時のDriftBadge用）。 */
-  const activeCharacterId = drifts.length > 0 ? drifts[0].character_id : "";
   /** アクティブセッションがグループチャットかどうか。 */
   const isGroupSession = activeSession?.session_type === "group";
   /**
@@ -205,12 +198,11 @@ export default function App() {
     }
     return m;
   }, [messages]);
-  /** グループチャット参加者のキャラクター名+ID+プリセット名リスト（ヘッダのDriftBadge用）。 */
+  /** グループチャット参加者のキャラクター名+プリセット名リスト（ヘッダのアバター・名前表示用）。 */
   const groupParticipants = groupParticipantEntries.map(({ char_name, preset_name }) => ({
     charName: char_name,
     // group_config の preset_name（新セッション）→ 旧セッションはメッセージから補完。
     presetName: preset_name || groupPresetFallback.get(char_name) || "",
-    characterId: characters.find((c) => c.name === char_name)?.id ?? "",
   }));
   /**
    * セッション切り替え競合防止用 ref。
@@ -318,21 +310,10 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** アクティブセッションのSELF_DRIFT一覧を再取得する。 */
-  const refreshDrifts = useCallback(async (sessionId: string) => {
-    try {
-      const d = await fetchDrifts(sessionId);
-      setDrifts(d);
-    } catch {
-      // drift取得失敗は無視する
-    }
-  }, []);
-
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
     setHeaderVisible(true);
-    setDrifts([]);
     setError(null);
     // ストリーミング中だった場合の状態をリセットする
     setSending(false);
@@ -383,7 +364,6 @@ export default function App() {
     try {
       const [detail] = await Promise.all([
         fetchSession(sessionId),
-        fetchDrifts(sessionId).then(setDrifts).catch(() => {}),
       ]);
       // 1on1チャットの場合、そのセッションで最後に使ったモデルをセレクタに反映する
       if (detail.session_type !== "group" && detail.model_id) {
@@ -981,7 +961,6 @@ export default function App() {
           setMessages(detail.messages);
           const updated = await fetchSessions();
           setSessions(updated);
-          refreshDrifts(sessionId);
         }
       } catch {
         // 取得失敗は無視する
@@ -991,7 +970,7 @@ export default function App() {
       setGroupStreamingReasoning(null);
       setSending(false);
     }
-  }, [refreshDrifts]);
+  }, []);
 
   /**
    * グループチャットの編集・再生成共通ハンドラ。
@@ -1110,8 +1089,6 @@ export default function App() {
           ]);
           const updated = await fetchSessions();
           setSessions(updated);
-          // SELF_DRIFT が更新されている可能性があるため再取得する
-          refreshDrifts(sessionId);
         } else if (event.type === "error") {
           throw new Error((event as StreamEvent & { type: "error" }).message);
         }
@@ -1385,25 +1362,14 @@ export default function App() {
                   ))}
                 </div>
                 <div className="flex items-center gap-2.5 flex-wrap min-w-0">
-                  {groupParticipants.map(({ charName, presetName, characterId }) => {
-                    const charDrifts = drifts.filter((d) => d.character_id === characterId);
-                    return (
-                      <div key={charName} className="flex items-center gap-1 shrink-0">
-                        <span className="text-ch-t1 text-[13px] font-semibold">{charName}</span>
-                        {presetName && (
-                          <span className="text-ch-t3 text-[10px] font-mono">@{presetName}</span>
-                        )}
-                        {charDrifts.length > 0 && characterId && (
-                          <DriftBadge
-                            drifts={charDrifts}
-                            sessionId={activeSessionId}
-                            characterId={characterId}
-                            onDriftsChange={() => refreshDrifts(activeSessionId)}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
+                  {groupParticipants.map(({ charName, presetName }) => (
+                    <div key={charName} className="flex items-center gap-1 shrink-0">
+                      <span className="text-ch-t1 text-[13px] font-semibold">{charName}</span>
+                      {presetName && (
+                        <span className="text-ch-t3 text-[10px] font-mono">@{presetName}</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             ) : activeSessionId && !isGroupSession ? (
@@ -1421,14 +1387,6 @@ export default function App() {
                   <span className="text-ch-t1 text-[13px] font-semibold truncate">{selectedModel || activeSession?.model_id || characterName}</span>
                   <span className="text-ch-t3 text-[9px] shrink-0">▾</span>
                 </button>
-                {activeCharacterId && (
-                  <DriftBadge
-                    drifts={drifts}
-                    sessionId={activeSessionId}
-                    characterId={activeCharacterId}
-                    onDriftsChange={() => refreshDrifts(activeSessionId)}
-                  />
-                )}
                 {/* モデル切り替えメニュー（キャラ/プリセット2段選択） */}
                 {modelMenuOpen && (
                   <CharPresetMenu

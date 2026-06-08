@@ -1,9 +1,9 @@
 """Chotgor MCP stdio サーバー。
 
 Claude Code CLI がスポーンする MCP サーバーとして機能する。
-環境変数からキャラクターコンテキストを受け取り、
-inscribe_memory / drift / drift_reset / carve_narrative / power_recall
-の 5 ツールを公開する。
+環境変数からキャラクターコンテキストを受け取り、backend の
+``/api/mcp/tools`` から動的取得したツール群（inscribe_memory / carve_narrative /
+power_recall / web_search / working memory スレッド操作 など）を公開する。
 
 このプロセスは **Chotgor backend (uvicorn) の薄いプロキシ** として動作する。
 LanceStore / InscribedMemoryManager / DriftManager は backend が保持する単一インスタンスを

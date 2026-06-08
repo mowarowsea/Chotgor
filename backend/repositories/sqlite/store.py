@@ -1,14 +1,13 @@
 """SQLite store — 設定・キャラクターメタデータ・保存記憶レコードの永続化層。
 
 SQLiteStore はドメイン別 Mixin を多重継承したファサードクラス。
-各ドメインの実装は backend/core/memory/stores/ 以下を参照。
+各ドメインの実装は backend/repositories/sqlite/stores/ 以下を参照。
 
   SettingsStoreMixin                — グローバル設定 (key/value)
   CharacterStoreMixin               — キャラクター管理
   InscribedMemoryStoreMixin         — 保存記憶レコード
   PresetStoreMixin                  — LLMモデルプリセット
   ChatStoreMixin                    — セッション・メッセージ・画像
-  DriftStoreMixin                   — SELF_DRIFT指針
   WorkingMemoryStoreMixin           — ワーキングメモリ（短期記憶スレッド・ポスト）
   ScenarioChatStoreMixin            — シナリオチャット（テンプレ・セッション・NPC・ターン）
 """
@@ -34,7 +33,6 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from backend.repositories.sqlite.stores.character_store import CharacterStoreMixin
 from backend.repositories.sqlite.stores.chat_store import ChatStoreMixin
 from backend.repositories.sqlite.stores.debug_log_store import DebugLogStoreMixin
-from backend.repositories.sqlite.stores.drift_store import DriftStoreMixin
 from backend.repositories.sqlite.stores.inscribed_memory_store import (
     InscribedMemoryStoreMixin,
 )
@@ -229,19 +227,6 @@ class WorkingMemoryPost(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
-class SessionDrift(Base):
-    """SELF_DRIFT — キャラクターがチャット内で自分自身に課した一時的な行動指針。"""
-
-    __tablename__ = "session_drifts"
-
-    id = Column(String, primary_key=True)           # UUID
-    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
-    character_id = Column(String, nullable=False)   # キャラクターID（参照のみ）
-    content = Column(Text, nullable=False)           # drift内容テキスト
-    enabled = Column(Integer, nullable=False, default=1)  # 1=ON, 0=OFF
-    created_at = Column(DateTime, default=lambda: datetime.now())
-
-
 class LLMModelPreset(Base):
     """LLMモデルプリセット — プロバイダー・モデルIDの設定を保持する。"""
 
@@ -427,7 +412,6 @@ class SQLiteStore(
     InscribedMemoryStoreMixin,
     PresetStoreMixin,
     ChatStoreMixin,
-    DriftStoreMixin,
     WorkingMemoryStoreMixin,
     ScenarioChatStoreMixin,
     DebugLogStoreMixin,
@@ -459,6 +443,17 @@ class SQLiteStore(
         self._migrate_add_scenario_turn_anticipation()
         self._migrate_add_memory_origin()
         self._migrate_add_scenario_pc_mode()
+        self._migrate_drop_session_drifts()
+
+    def _migrate_drop_session_drifts(self) -> None:
+        """SELF_DRIFT 機能撤去に伴い session_drifts テーブルを削除する。
+
+        ドリフト機能（drift_manager.py / chat_drifts.py / drift ツール）は撤去済みのため、
+        既存 DB にのみ残る session_drifts テーブルを物理削除する。
+        新規 DB には ORM 定義が無く作成されないため、本マイグレーションは冪等。
+        """
+        with self.engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE IF EXISTS session_drifts")
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。

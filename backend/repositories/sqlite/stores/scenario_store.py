@@ -442,22 +442,6 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
-    def update_scenario_turn_log_request_id(
-        self, turn_id: str, log_request_id: str
-    ) -> None:
-        """発話ターンの log_request_id を更新する。
-
-        Args:
-            turn_id: 更新対象ターンの UUID。
-            log_request_id: セットする debug_log_entries.request_id。
-        """
-        with self.get_session() as session:
-            from backend.repositories.sqlite.store import ScenarioTurn
-            obj = session.get(ScenarioTurn, turn_id)
-            if obj:
-                obj.log_request_id = log_request_id
-                session.commit()
-
     def list_scenario_turns(self, session_id: str) -> list:
         """セッション内の全ターンを turn_index 昇順で返す。"""
         with self.get_session() as session:

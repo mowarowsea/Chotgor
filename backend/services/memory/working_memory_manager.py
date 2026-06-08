@@ -302,13 +302,6 @@ class WorkingMemoryManager:
             self._reindex_thread(thread_id)
         return ok
 
-    def delete_thread(self, thread_id: str) -> bool:
-        """スレッドと配下ポストを物理削除する（SQLite → LanceStore）。"""
-        ok = self.sqlite.delete_working_memory_thread(thread_id)
-        if ok:
-            self.vector_store.delete_working_memory_thread(thread_id)
-        return ok
-
     # ------------------------------------------------------------------
     # 参照（システムプロンプト注入 / ツール）
     # ------------------------------------------------------------------

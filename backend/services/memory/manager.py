@@ -454,20 +454,6 @@ class InscribedMemoryManager:
             self.vector_store.delete_inscribed_memory(memory_id=memory_id, character_id=character_id)
         return ok
 
-    def restore_memory(self, memory_id: str) -> bool:
-        """ソフトデリート済み記憶を復元する。
-
-        LanceStore は復元対象外（再インデックスは write_inscribed_memory を使用）。
-        SQLite の deleted_at を NULL に戻すだけ。
-
-        Args:
-            memory_id: 復元対象の記憶 ID。
-
-        Returns:
-            復元成否。False の場合は記憶が存在しないか削除されていない。
-        """
-        return self.sqlite.restore_inscribed_memory(memory_id)
-
     def delete_character_with_inscribed_memories(self, character_id: str) -> bool:
         """キャラクターと、紐づく全データをカスケード削除する。
 
@@ -476,7 +462,7 @@ class InscribedMemoryManager:
 
         削除対象（SQLite は delete_character_cascade が担当）:
         - SQLite: characters / inscribed_memories / working_memory_threads(+posts) /
-          session_drifts / 1on1 chat_sessions(+messages/images)
+          1on1 chat_sessions(+messages/images)
         - LanceDB: inscribed_memories / working_memory_threads / chat_turns / definitions
 
         保持: debug_log_entries（監査記録）。

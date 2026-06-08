@@ -146,12 +146,6 @@ async def _build_chat_request(
     )
 
 
-async def _call_llm(request: Request, session, history_messages: list, user_content: str) -> str:
-    """LLMを呼び出してキャラクターの応答テキストを返す。"""
-    chat_request = await _build_chat_request(request, session, history_messages, user_content)
-    return await request.app.state.chat_service.execute(chat_request)
-
-
 # --- エンドポイント ---
 
 @router.get("/settings/user-name")
@@ -228,56 +222,6 @@ async def delete_messages_from(request: Request, session_id: str, message_id: st
     ok = request.app.state.sqlite.delete_chat_messages_from(session_id, message_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Message not found")
-
-
-@router.post("/sessions/{session_id}/messages")
-async def send_message(request: Request, session_id: str, body: MessageCreate):
-    """ユーザーメッセージを送信し、キャラクターの応答を返す。"""
-    state = request.app.state
-
-    session = state.sqlite.get_chat_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    user_msg_id = str(uuid.uuid4())
-    user_msg = state.sqlite.create_chat_message(
-        message_id=user_msg_id,
-        session_id=session_id,
-        role="user",
-        content=body.content,
-    )
-
-    history_before = state.sqlite.list_chat_messages(session_id)
-    history = [m for m in history_before if m.id != user_msg_id]
-
-    if len(history) == 0 and session.title == "新しいチャット":
-        auto_title = body.content[:30].replace("\n", " ")
-        state.sqlite.update_chat_session(session_id, title=auto_title)
-
-    try:
-        response_text = await _call_llm(request, session, history, body.content)
-    except HTTPException:
-        raise
-    except Exception as e:
-        response_text = f"[エラー: {e}]"
-
-    char_msg_id = str(uuid.uuid4())
-    char_msg = state.sqlite.create_chat_message(
-        message_id=char_msg_id,
-        session_id=session_id,
-        role="character",
-        content=response_text,
-    )
-
-    state.sqlite.update_chat_session(
-        session_id,
-        title=state.sqlite.get_chat_session(session_id).title,
-    )
-
-    return {
-        "user_message": message_to_dict(user_msg),
-        "character_message": message_to_dict(char_msg),
-    }
 
 
 @router.post("/sessions/{session_id}/messages/stream")

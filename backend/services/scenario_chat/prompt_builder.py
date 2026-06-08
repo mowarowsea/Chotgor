@@ -29,14 +29,6 @@ CLAUDE.md 準拠の注意:
 from typing import Any, Iterable
 
 
-def _block(title: str, body: str) -> str:
-    """1 ブロックを `# タイトル` + 本文の形に整形する。本文が空なら空文字列。"""
-    body = (body or "").strip()
-    if not body:
-        return ""
-    return f"# {title}\n{body}"
-
-
 def _format_npc_line(npc: Any) -> str:
     """既知 NPC リスト 1 行を整形する: `@<名前>   <descriptionの冒頭一部>`。
 

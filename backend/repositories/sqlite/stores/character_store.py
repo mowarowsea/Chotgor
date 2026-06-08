@@ -96,22 +96,6 @@ class CharacterStoreMixin:
             session.refresh(char)
             return char
 
-    def delete_character(self, character_id: str) -> bool:
-        """キャラクターを削除する（characters 行のみ。紐づくデータは削除しない）。
-
-        SQLite には FK の ON DELETE CASCADE も ORM の relationship(cascade) も無いため、
-        この単体メソッドは characters 行しか消さない。キャラクターに紐づく全データを
-        まとめて消す場合は delete_character_cascade を使うこと。
-        """
-        with self.get_session() as session:
-            from backend.repositories.sqlite.store import Character
-            char = session.get(Character, character_id)
-            if not char:
-                return False
-            session.delete(char)
-            session.commit()
-            return True
-
     def delete_character_cascade(self, character_id: str) -> bool:
         """キャラクターと、SQLite 上で紐づく全レコードを1トランザクションで削除する。
 
@@ -119,9 +103,8 @@ class CharacterStoreMixin:
         削除対象:
         - inscribed_memories（character_id）
         - working_memory_threads ＋ 配下の working_memory_posts（character_id / thread_id）
-        - session_drifts（character_id）
         - 1on1 chat_sessions（model_id が "キャラ名@..."）＋ 配下の
-          chat_messages / chat_images / session_drifts（session_id）
+          chat_messages / chat_images（session_id）
         - characters 本体
 
         保持するもの:
@@ -142,7 +125,6 @@ class CharacterStoreMixin:
                 InscribedMemory,
                 WorkingMemoryThread,
                 WorkingMemoryPost,
-                SessionDrift,
                 ChatSession,
                 ChatMessage,
                 ChatImage,
@@ -173,7 +155,7 @@ class CharacterStoreMixin:
                 InscribedMemory.character_id == character_id
             ).delete(synchronize_session=False)
 
-            # --- 1on1 チャット（セッション＋メッセージ＋画像＋ドリフト） ---
+            # --- 1on1 チャット（セッション＋メッセージ＋画像） ---
             # model_id は "{character_name}@{preset_name}" 形式。グループチャット
             # （model_id="group"）は対象外。
             session_ids = [
@@ -189,17 +171,9 @@ class CharacterStoreMixin:
                 session.query(ChatImage).filter(
                     ChatImage.session_id.in_(session_ids)
                 ).delete(synchronize_session=False)
-                session.query(SessionDrift).filter(
-                    SessionDrift.session_id.in_(session_ids)
-                ).delete(synchronize_session=False)
                 session.query(ChatSession).filter(
                     ChatSession.id.in_(session_ids)
                 ).delete(synchronize_session=False)
-
-            # --- 感情ドリフト（character_id 由来。グループ等の取りこぼし分も含め一括） ---
-            session.query(SessionDrift).filter(
-                SessionDrift.character_id == character_id
-            ).delete(synchronize_session=False)
 
             # --- キャラクター本体 ---
             session.delete(char)
@@ -244,11 +218,3 @@ class CharacterStoreMixin:
                     count += 1
                     break  # 1セッションにつき1カウント
         return count
-
-    def list_estranged_characters(self) -> list:
-        """relationship_status が 'estranged' のキャラクター一覧を返す。"""
-        with self.get_session() as session:
-            from backend.repositories.sqlite.store import Character
-            return session.query(Character).filter(
-                Character.relationship_status == "estranged"
-            ).all()

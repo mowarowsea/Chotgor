@@ -121,10 +121,6 @@ def _save_response(request: Request, redirect_url: str):
     return RedirectResponse(url=redirect_url, status_code=303)
 
 
-def setup_templates(templates_dir: str) -> Jinja2Templates:
-    return Jinja2Templates(directory=templates_dir)
-
-
 templates: Jinja2Templates | None = None
 
 
