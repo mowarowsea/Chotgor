@@ -2,15 +2,13 @@
  * アプリルートコンポーネント。
  * セッション管理・モデル取得・メッセージ送受信のロジックを担当する。
  */
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   fetchModels,
   fetchSessions,
   fetchSession,
   deleteSession,
-  deleteMessagesFrom,
   uploadImages,
-  streamMessage,
   fetchUserName,
   fetchCharacters,
   fetchScenarioSessions,
@@ -20,7 +18,6 @@ import type {
   Model,
   Session,
   ChatMessage,
-  StreamEvent,
   Character,
   ScenarioSession,
   ScenarioPreset,
@@ -39,6 +36,7 @@ import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
 import SynopsisCreateModal from "./components/SynopsisCreateModal";
 import { useTheme } from "./hooks/useTheme";
 import { useSessions } from "./hooks/useSessions";
+import { useChat } from "./hooks/useChat";
 import { useGroupChat } from "./hooks/useGroupChat";
 import { useScenarioChat } from "./hooks/useScenarioChat";
 
@@ -84,13 +82,8 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [characters, setCharacters] = useState<Character[]>([]);
   const [sending, setSending] = useState(false);
-  const [streamingContent, setStreamingContent] = useState<string | null>(null);
   /** サイドバーの開閉状態。デスクトップはデフォルト開、モバイルはデフォルト閉。 */
   const [sidebarOpen, setSidebarOpen] = useState(typeof window !== "undefined" ? window.innerWidth >= 640 : true);
-  /** ストリーミング中の思考ブロック・想起記憶テキスト（null = なし） */
-  const [streamingReasoning, setStreamingReasoning] = useState<string | null>(null);
-  /** 完了済みメッセージIDに紐付いた reasoning テキスト。ページリロードまで保持する。 */
-  const [reasoningMap, setReasoningMap] = useState<Record<string, string>>({});
   const [userName, setUserName] = useState("ユーザ");
   const [error, setError] = useState<string | null>(null);
   /** エクスポートダイアログの開閉状態。 */
@@ -262,6 +255,33 @@ export default function App() {
     setElapsedMap,
   });
 
+  /**
+   * 1on1チャットの state・ストリーミング送受信ハンドラ群。
+   * 共有 state（messages / sessions / selectedModel 等）の setter を渡し、1on1 専用 state は
+   * フック内に閉じ込める。返り値の setReasoningMap / resetStreamingState はセッション復元/切替に使う。
+   */
+  const {
+    streamingContent,
+    streamingReasoning,
+    reasoningMap,
+    setReasoningMap,
+    resetStreamingState: resetChatStreamingState,
+    doStream,
+    handleRetry,
+  } = useChat({
+    activeSessionId,
+    sending,
+    activeSessionIdRef,
+    selectedModel,
+    setSelectedModel,
+    setMessages,
+    setSessions,
+    setError,
+    setSending,
+    setElapsedMap,
+    setMsgLogIds,
+  });
+
   /** Sidebar に渡す統合セッションリスト（更新日時降順）。 */
   const combinedSessions: AnySession[] = useMemo(() => {
     const all: AnySession[] = [...sessions, ...scenarioSessions];
@@ -315,8 +335,7 @@ export default function App() {
     setError(null);
     // ストリーミング中だった場合の状態をリセットする
     setSending(false);
-    setStreamingContent(null);
-    setStreamingReasoning(null);
+    resetChatStreamingState();
     resetGroupStreamingState();
     // シナリオ関連の状態もリセット
     resetScenarioState();
@@ -388,87 +407,6 @@ export default function App() {
   }, [activeSessionId, scenarioSessions, deleteScenario, resetScenarioState]);
 
   /**
-   * ストリーミング送信の共通実装。楽観的ユーザメッセージ表示 + SSE受信を行う。
-   * handleSend / handleRetry の両方から呼ばれる。
-   */
-  const _doStream = useCallback(async (sessionId: string, content: string, imageIds: string[] = [], modelId?: string) => {
-    setError(null);
-    setStreamingContent("");
-    setStreamingReasoning(null);
-    // モデルリクエスト〜応答完了までの経過時間を計測する開始時刻。
-    const streamStartedAt = performance.now();
-
-    const optimisticUserMsg: ChatMessage = {
-      id: `optimistic-${Date.now()}`,
-      session_id: sessionId,
-      role: "user",
-      content,
-      images: imageIds.length > 0 ? imageIds : undefined,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, optimisticUserMsg]);
-
-    let accumulatedReasoning = "";
-    try {
-      for await (const event of streamMessage(sessionId, content, imageIds, modelId)) {
-        if (event.type === "chunk") {
-          setStreamingContent((prev) => (prev ?? "") + event.content);
-        } else if (event.type === "clear") {
-          // switch_angle 発動: 第1プロバイダーの表示をクリアして第2プロバイダーを待つ
-          setStreamingContent("");
-          accumulatedReasoning = "";
-          setStreamingReasoning(null);
-        } else if (event.type === "angle_switched") {
-          // switch_angle 完了: selectedModel を切り替え先に更新する。
-          // これを行わないと次ターン以降も元のプリセットでリクエストされ続け、
-          // 切り替えが1ターン限りで消えてしまう。
-          setSelectedModel(event.model_id);
-        } else if (event.type === "reasoning") {
-          accumulatedReasoning += event.content;
-          setStreamingReasoning(accumulatedReasoning);
-        } else if (event.type === "done") {
-          // セッションが切り替わっていたら state を汚染しない
-          if (sessionId !== activeSessionIdRef.current) return;
-          if (accumulatedReasoning) {
-            setReasoningMap((prev) => ({
-              ...prev,
-              [event.character_message.id]: accumulatedReasoning,
-            }));
-          }
-          // デバッグログIDをバブルと紐付ける
-          if (event.log_message_id) {
-            setMsgLogIds((prev) => ({
-              ...prev,
-              [event.character_message.id]: event.log_message_id!,
-            }));
-          }
-          // 経過時間を記録する（ストリーム送信〜done受信）
-          setElapsedMap((prev) => ({
-            ...prev,
-            [event.character_message.id]: performance.now() - streamStartedAt,
-          }));
-          setStreamingContent(null);
-          setStreamingReasoning(null);
-          setMessages((prev) => [
-            ...prev.filter((m) => m.id !== optimisticUserMsg.id),
-            event.user_message,
-            event.character_message,
-          ]);
-          const updated = await fetchSessions();
-          setSessions(updated);
-        } else if (event.type === "error") {
-          throw new Error((event as StreamEvent & { type: "error" }).message);
-        }
-      }
-    } catch (e) {
-      setStreamingContent(null);
-      setStreamingReasoning(null);
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
-      setError(String(e));
-    }
-  }, []);
-
-  /**
    * メッセージ送信。画像がある場合は先にアップロードしてから送信する。
    * グループ・1on1どちらも画像対応済み。
    */
@@ -493,38 +431,13 @@ export default function App() {
     }
     setSending(true);
     try {
-      await _doStream(activeSessionId, content, imageIds, selectedModel || undefined);
+      await doStream(activeSessionId, content, imageIds, selectedModel || undefined);
     } catch (e) {
       setError(String(e));
     } finally {
       setSending(false);
     }
-  }, [activeSessionId, isGroupSession, selectedModel, doGroupStream, _doStream]);
-
-  /**
-   * ユーザメッセージ編集 / キャラクター応答再生成の共通ハンドラ。
-   * fromMessageId 以降をDBから削除し、content でストリームを再送する。
-   * 再生成の場合は fromMessageId = 直前ユーザメッセージのID、content = そのメッセージ本文。
-   * imageIds = 再送する画像IDリスト（再生成時は元メッセージの画像を引き継ぐ）。
-   */
-  const handleRetry = useCallback(async (fromMessageId: string, content: string, imageIds: string[] = []) => {
-    if (!activeSessionId || sending) return;
-    setSending(true);
-    setError(null);
-    // ローカル状態を即時切り詰めてUIを反映する
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === fromMessageId);
-      return idx >= 0 ? prev.slice(0, idx) : prev;
-    });
-    try {
-      await deleteMessagesFrom(activeSessionId, fromMessageId);
-      await _doStream(activeSessionId, content, imageIds, selectedModel || undefined);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSending(false);
-    }
-  }, [activeSessionId, sending, selectedModel, _doStream]);
+  }, [activeSessionId, isGroupSession, selectedModel, doGroupStream, doStream]);
 
   return (
     /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。 */
