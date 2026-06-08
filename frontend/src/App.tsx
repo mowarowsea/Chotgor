@@ -7,15 +7,12 @@ import {
   fetchModels,
   fetchSessions,
   fetchSession,
-  createSession,
   deleteSession,
   deleteMessagesFrom,
   uploadImages,
   streamMessage,
   fetchUserName,
-  createGroupSession,
   fetchCharacters,
-  updateSessionTitle,
   fetchScenarioSessions,
   fetchScenarioPresets,
 } from "./api";
@@ -41,6 +38,7 @@ import CharPresetMenu from "./components/CharPresetMenu";
 import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
 import SynopsisCreateModal from "./components/SynopsisCreateModal";
 import { useTheme } from "./hooks/useTheme";
+import { useSessions } from "./hooks/useSessions";
 import { useGroupChat } from "./hooks/useGroupChat";
 import { useScenarioChat } from "./hooks/useScenarioChat";
 
@@ -84,10 +82,7 @@ function scenarioTurnsToExportMessages(
 export default function App() {
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [sessions, setSessions] = useState<Session[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   /** サイドバーの開閉状態。デスクトップはデフォルト開、モバイルはデフォルト閉。 */
@@ -109,6 +104,24 @@ export default function App() {
    * 上スクロール（過去ログ閲覧）で隠れ、下スクロール・最下部・1画面に収まる場合は表示する。
    */
   const [headerVisible, setHeaderVisible] = useState(true);
+
+  /**
+   * セッション一覧・中核 state（sessions / activeSessionId / messages）と
+   * 自己完結するセッション操作ハンドラ群。
+   * useGroupChat / useScenarioChat より先に呼び、返す setter・ref をそれらへ渡す。
+   */
+  const {
+    sessions,
+    setSessions,
+    activeSessionId,
+    setActiveSessionId,
+    messages,
+    setMessages,
+    activeSessionIdRef,
+    handleNewChat,
+    handleNewGroupChat,
+    handleRenameSession,
+  } = useSessions({ setError, setSelectedModel });
 
   /** アクティブセッションのキャラクター名を model_id から抽出する。 */
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -164,13 +177,6 @@ export default function App() {
     // group_config の preset_name（新セッション）→ 旧セッションはメッセージから補完。
     presetName: preset_name || groupPresetFallback.get(char_name) || "",
   }));
-  /**
-   * セッション切り替え競合防止用 ref。
-   * _doStream / _doGroupStream の非同期処理がセッション切り替え後に state を汚染しないよう、
-   * 完了時点でのアクティブセッション ID と比較するために使用する。
-   */
-  const activeSessionIdRef = useRef<string | null>(activeSessionId);
-  activeSessionIdRef.current = activeSessionId;
   /** char_msg_id → log_message_id（8桁hex）のマッピング。バブルのログ折りたたみに使用する。 */
   const [msgLogIds, setMsgLogIds] = useState<Record<string, string>>({});
   /**
@@ -354,57 +360,6 @@ export default function App() {
       setReasoningMap(restored);
       setGroupReasoningMap(restored);
       setMsgLogIds(restoredLogIds);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  /**
-   * 新規チャット作成。
-   *
-   * @param modelId - "{char_name}@{preset_name}" 形式のモデルID。
-   */
-  const handleNewChat = useCallback(async (modelId: string) => {
-    setError(null);
-    try {
-      const session = await createSession(modelId);
-      setSessions((prev) => [session, ...prev]);
-      setActiveSessionId(session.id);
-      setMessages([]);
-      // 新セッションで選んだキャラ/プリセットを selectedModel に反映する。
-      // これをやらないと直前セッションの selectedModel が残り続け、
-      // 最初の送信が body.model_id 経由で別キャラへ届いてしまう。
-      setSelectedModel(modelId);
-      // リロード後に同じセッションを復元できるようにハッシュを更新する
-      window.location.hash = session.id;
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  /** 新規グループチャット作成（司会モデルはシステム設定で管理）。 */
-  const handleNewGroupChat = useCallback(async (
-    participants: string[],
-    maxAutoTurns: number,
-  ) => {
-    setError(null);
-    try {
-      const session = await createGroupSession(participants, maxAutoTurns, 30);
-      setSessions((prev) => [session, ...prev]);
-      setActiveSessionId(session.id);
-      setMessages([]);
-      // リロード後に同じセッションを復元できるようにハッシュを更新する
-      window.location.hash = session.id;
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  /** セッションタイトル変更。 */
-  const handleRenameSession = useCallback(async (sessionId: string, newTitle: string) => {
-    try {
-      const updated = await updateSessionTitle(sessionId, newTitle);
-      setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, title: updated.title } : s));
     } catch (e) {
       setError(String(e));
     }
