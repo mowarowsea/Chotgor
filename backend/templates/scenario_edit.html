@@ -31,16 +31,6 @@
                     placeholder="e.g. 古城に潜む影" required>
             </div>
 
-            <!-- ユーザ alias -->
-            <div class="ch-field">
-                <label class="ch-label" for="user_alias">Player Alias
-                    <span class="ch-hint">@タグで使われるプレイヤーの呼称</span>
-                </label>
-                <input type="text" id="user_alias" name="user_alias" class="ch-input"
-                    value="{% if scenario %}{{ scenario.user_alias }}{% else %}プレイヤー{% endif %}"
-                    placeholder="e.g. ヴァン, 旅人, プレイヤー" required>
-            </div>
-
             <!-- シナリオ概要 -->
             <div class="ch-field">
                 <label class="ch-label" for="scenario">Scenario / World
@@ -53,7 +43,7 @@
             <!-- 導入部 -->
             <div class="ch-field">
                 <label class="ch-label" for="intro">Intro / Prologue
-                    <span class="ch-hint">セッション開始時に固定で挿入される導入部。`@キャラ: 本文` 記法で各話者の発話を記述（`@Narrator:` / `@{{ scenario.user_alias if scenario else 'プレイヤー' }}:` も使用可）</span>
+                    <span class="ch-hint">セッション開始時に固定で挿入される導入部。`@キャラ: 本文` 記法で各話者の発話を記述（`@Narrator:` / `@&lt;PC枠名&gt;:` も使用可）</span>
                 </label>
                 <textarea id="intro" name="intro" class="ch-textarea" style="min-height:200px"
                     placeholder="@Narrator: 雨の中、古城の門前に到着した。
@@ -106,7 +96,7 @@
                     設定するとGMへの自動生成プロンプト（役割定義・出力規則等）を完全に置き換えます。直近の履歴とプレイヤー発話は末尾に自動追加されます。
                     <br/>
                     <strong>使用可能なテンプレートタグ:</strong>
-                    <code>{user_alias}</code> (プレイヤー呼称),
+                    <code>{user_alias}</code> (ユーザPC名),
                     <code>{narrator_name}</code> (ナレーター名),
                     <code>{scenario}</code> (シナリオテキスト),
                     <code>{npcs_summary}</code> (NPC一覧),

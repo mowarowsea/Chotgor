@@ -183,18 +183,28 @@ class TestFormatPcSummary:
     def test_PCゼロなら空文字列(self):
         assert format_pc_summary([]) == ""
 
-    def test_AIキャラ枠は別AIキャラが演じる文言(self):
+    def test_AIキャラ枠も均一にPC表示_中の人ラベルなし(self):
+        """AIキャラPCも「@名前 ← PC」で均一表示し、中の人ラベルや本名を出さないこと。
+
+        中の人（人間/AI）を区別しない方針に伴い、旧「別のAIキャラが演じる」ラベルは廃止。
+        AI キャラの本名（character_name）も GM へは開示しない。
+        """
         pcs = [_pc_char(name="アリス", character_name="はる", description="剣士")]
         text = format_pc_summary(pcs)
         assert "@アリス" in text
-        assert "別のAIキャラが演じる" in text
+        assert "別のAIキャラが演じる" not in text
+        assert "ユーザが演じる" not in text
+        # AI キャラの本名は GM に開示しない
+        assert "はる" not in text
         assert "代弁" in text
 
-    def test_ユーザ枠はユーザが演じる文言(self):
+    def test_ユーザ枠も均一にPC表示_中の人ラベルなし(self):
+        """ユーザPCも他PCと同じ「@名前 ← PC」で表示し、ユーザ専用ラベルを出さないこと。"""
         pcs = [_pc_user(name="主人公", description="新米冒険者")]
         text = format_pc_summary(pcs)
         assert "@主人公" in text
-        assert "ユーザが演じる" in text
+        assert "ユーザが演じる" not in text
+        assert "別のAIキャラが演じる" not in text
 
     def test_descriptionが80文字超で省略される(self):
         long_desc = "あ" * 200

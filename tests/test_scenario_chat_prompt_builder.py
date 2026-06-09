@@ -61,13 +61,24 @@ class TestBasicStructure:
         # 冒頭付近に出ること（ベスト・エフォート）
         assert out.find("語り手") < 100
 
-    def test_user_alias_shown_in_known_speakers(self):
-        """`@{user_alias}` が既知の話者リストに含まれること。"""
-        session = FakeSession(user_alias="勇者")
-        out = build_gm_system_prompt(session, npcs=[], history_text="")
+    def test_user_pc_shown_in_roster(self):
+        """ユーザPCが PC ロスター（pc_summary）に均一表示され、「主役」フレーミングが無いこと。
+
+        旧仕様ではユーザPCを「主役」として既知の話者ブロックに特別表示していたが、
+        中の人（人間/AI）を区別しない方針に伴い、ユーザPCも他PCと同じ pc_summary
+        ロスターへ集約する。GM へ「誰が主役か／誰が人間か」を一切示さない。
+        """
+        session = FakeSession()
+        out = build_gm_system_prompt(
+            session,
+            npcs=[],
+            history_text="",
+            user_speaker_name="勇者",
+            pc_summary="@勇者 ← PC。",
+        )
         assert "@勇者" in out
-        # 主役マーク
-        assert "プレイヤー" in out or "主役" in out
+        # 「主役」という単一主人公フレーミングは廃止された
+        assert "主役" not in out
 
     def test_narrator_shown_in_known_speakers(self):
         """`@Narrator` が既知の話者リストに含まれること。"""
@@ -84,16 +95,22 @@ class TestBasicStructure:
         assert "@語り部" in out
         assert "@Narrator" not in out
 
-    def test_npcs_listed_in_known_speakers(self):
-        """登録 NPC 全員が `@<名前>` で既知の話者リストに並ぶこと。"""
+    def test_npcs_listed_in_detail_block_only(self):
+        """登録 NPC が NPC詳細ブロックに `## <名前>` で並び、二重掲載されないこと。
+
+        旧仕様では既知の話者ブロックにも `@<名前>` の簡潔リストがあり NPC 紹介が二重だった。
+        NPC詳細へ一本化し、既知の話者側の簡潔リストは廃止した。
+        """
         session = FakeSession()
         npcs = [
             FakeNpc(name="レイカ", description="赤髪の魔法使い"),
             FakeNpc(name="トウコ", description="無口な少女"),
         ]
         out = build_gm_system_prompt(session, npcs=npcs, history_text="")
-        assert "@レイカ" in out
-        assert "@トウコ" in out
+        assert "## レイカ" in out
+        assert "## トウコ" in out
+        # 既知の話者側の `@<名前>` 簡潔リストは廃止（二重掲載しない）
+        assert "@レイカ" not in out
 
     def test_npc_descriptions_in_detail_block(self):
         """NPC 詳細ブロックに description（人物像 + 口調を含む自由記述）が含まれること。"""
@@ -122,9 +139,10 @@ class TestBasicStructure:
 
         履歴と同じ `@名前: 本文` 規約で出力される。
         """
-        session = FakeSession(user_alias="勇者")
+        session = FakeSession()
         out = build_gm_system_prompt(
-            session, npcs=[], history_text="", user_message="どうも"
+            session, npcs=[], history_text="", user_message="どうも",
+            user_speaker_name="勇者",
         )
         assert "@勇者:\nどうも" in out
         assert "プレイヤーの発話" in out
@@ -153,12 +171,12 @@ class TestOutputRules:
         assert "@名前" in out or "@" in out
         assert "形式" in out or "フォーマット" in out or "形" in out
 
-    def test_user_alias_no_speak_rule(self):
-        """ユーザ代弁禁止ルールが明記されていること。"""
-        session = FakeSession(user_alias="勇者")
-        out = build_gm_system_prompt(session, npcs=[], history_text="")
-        # 「@勇者 の発話は絶対に書かない」相当の警告が含まれる
-        assert "勇者" in out
+    def test_pc_no_speak_rule(self):
+        """PC 代弁禁止ルールが明記されていること（特定の主役名に依存しない汎用文言）。"""
+        out = build_gm_system_prompt(
+            FakeSession(), npcs=[], history_text="", user_speaker_name="勇者",
+        )
+        # 「PC を代弁しない／領分を侵さない」相当の警告が含まれる
         assert "代弁" in out or "絶対" in out or "領分" in out
 
     def test_unknown_npc_allowed_rule(self):

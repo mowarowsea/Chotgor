@@ -66,13 +66,14 @@ def build_gm_system_prompt(
     previous_anticipation: str = "",
     pc_summary: str = "",
     dice_pool: str = "",
+    user_speaker_name: str = "プレイヤー",
 ) -> str:
     """GM 用の system prompt を組み立てる。
 
     Args:
         scenario: Scenario ORM 風オブジェクト。
-                  必須属性: user_alias。
-                  任意属性: scenario, location, scene_summary, narrator_style, pacing。
+                  任意属性: scenario, custom_system_prompt, pc_slots など。
+                  （旧 user_alias は廃止。ユーザPC名は user_speaker_name で渡す。）
         npcs: ScenarioNpc ORM 風オブジェクトのイテラブル。順序は表示順。
         history_text: format_history_for_gm() で整形済みの履歴テキスト。
                       `<話者>本文</話者>` の連結。
@@ -92,7 +93,8 @@ def build_gm_system_prompt(
         重複させない設計（呼び出し側 engine.py が決める）。
     """
     npcs = list(npcs)
-    user_alias = getattr(scenario, "user_alias", "ユーザ")
+    # 旧 scenario.user_alias は廃止。呼び出し側が解決した user_speaker_name を使う。
+    user_alias = user_speaker_name
 
     # システムプロンプトのブロック構築
     # テンプレート（DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE）内の {history_block} は
@@ -141,6 +143,7 @@ def build_gm_system_prompt(
         previous_anticipation=previous_anticipation,
         pc_summary=pc_summary,
         dice_pool=dice_pool,
+        user_speaker_name=user_speaker_name,
     )
     # ensemble_pc 経路用フォールバック：custom_system_prompt が {pc_summary} / {dice_pool}
     # タグを含まないテンプレ（既存シナリオを ensemble_pc にした場合など）でも、
@@ -229,6 +232,7 @@ def _replace_template_tags(
     previous_anticipation: str = "",
     pc_summary: str = "",
     dice_pool: str = "",
+    user_speaker_name: str = "プレイヤー",
 ) -> str:
     """プロンプトテンプレート内のタグを実際の値に置き換える。
 
@@ -246,7 +250,8 @@ def _replace_template_tags(
         {dice_pool}        - このターンで使えるダイス（ensemble_pc 専用、ensemble では空）
     """
     result = template
-    user_alias = getattr(scenario, "user_alias", "ユーザ")
+    # 旧 scenario.user_alias は廃止。呼び出し側が解決した user_speaker_name を使う。
+    user_alias = user_speaker_name
     scenario_text = (getattr(scenario, "scenario", "") or "").strip()
     synopsis_manual_text = (synopsis_manual or "").strip()
 
@@ -314,11 +319,10 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 {previous_anticipation}
 
 # 既知の話者
-@{user_alias}   ← この物語の主役（プレイヤー）。あなたは絶対に代弁しない。
 @{narrator_name}       ← 情景・状況描写。会話禁止。1〜3文目安。
-{npcs_summary}
+（NPC の顔ぶれと人物像は下記「NPC詳細」を参照）
 
-# PC配役（プレイヤーキャラクター）
+# プレイヤーキャラクター（PC）
 {pc_summary}
 
 # 出力規則
@@ -332,8 +336,8 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
   - 次のターンであなた自身に「前回の予想」として示される
 
 ■ プレイヤーキャラクター（PC）の領分を侵さない（最重要）
-ここで言う **PC** は、@{user_alias} と「PC配役」セクションに掲げた全員を指します。
-PC はそれぞれ別の人格（ユーザ本人または別の AI キャラクター）が演じます。
+ここで言う **PC** は、「プレイヤーキャラクター（PC）」セクションに掲げた全員を指します。
+PC はそれぞれ別の人格が演じます（あなた＝GM はその中身が人間か AI かを意識しません）。
 
 PC それぞれについて、次のことは絶対に禁止です:
 - 発言・台詞を書くこと（`@<PC名>:` 形式の台詞ブロックを GM 側から書いてはならない）

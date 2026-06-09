@@ -70,13 +70,14 @@ class ScenarioCreate(BaseModel):
     """
 
     title: str = Field(min_length=1)
-    user_alias: str = Field(min_length=1)
     scenario: str | None = None
     intro: str | None = None
     history_max_turns: int | None = None
     history_max_chars: int | None = None
     custom_system_prompt: str | None = None
     dice_pool_spec: dict | None = None
+    # 全PC（ユーザPC含む）を定義する単一ソース。旧 user_alias は廃止し、ユーザPCも
+    # この pc_slots の 1 枠として表現する（セッション開始時に player_type="user" を割り当てる）。
     pc_slots: list[dict] | None = None  # [{slot_id, name, description}]
 
 
@@ -84,7 +85,6 @@ class ScenarioUpdate(BaseModel):
     """シナリオテンプレート更新リクエスト（部分更新）。"""
 
     title: str | None = None
-    user_alias: str | None = None
     scenario: str | None = None
     intro: str | None = None
     history_max_turns: int | None = None
@@ -215,7 +215,6 @@ async def create_scenario(request: Request, body: ScenarioCreate):
     sqlite.create_scenario(
         scenario_id=sid,
         title=body.title,
-        user_alias=body.user_alias,
         scenario=body.scenario,
         intro=body.intro,
         history_max_turns=body.history_max_turns,
@@ -491,6 +490,16 @@ async def start_session(request: Request, body: SessionStart):
                     + "（重複を解消してから再度起動してください）"
                 ),
             )
+    elif engine_type == "ensemble":
+        # ensemble はユーザPC 1 枠のみ。シナリオ pc_slots の先頭枠をユーザ割当にする。
+        # （旧 user_alias 廃止後、ユーザPC名はこの user 割当スロットから解決される）
+        from backend.services.scenario_chat.mention import normalize_pc_slots
+
+        pc_slots_norm = normalize_pc_slots(getattr(scenario, "pc_slots", None))
+        if pc_slots_norm:
+            pc_assignments_validated = [
+                {"slot_id": pc_slots_norm[0].slot_id, "player_type": "user"}
+            ]
 
     sid = str(uuid.uuid4())
     title = body.title or scenario.title

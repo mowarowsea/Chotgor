@@ -548,7 +548,6 @@ async def create_scenario(request: Request):
     """
     form = await request.form()
     title = (form.get("title") or "").strip()
-    user_alias = (form.get("user_alias") or "").strip() or "プレイヤー"
     if not title:
         return RedirectResponse(url="/ui/scenarios/new", status_code=303)
 
@@ -556,7 +555,6 @@ async def create_scenario(request: Request):
     request.app.state.sqlite.create_scenario(
         scenario_id=sid,
         title=title,
-        user_alias=user_alias,
         scenario=(form.get("scenario") or "") or None,
         intro=(form.get("intro") or "") or None,
         history_max_turns=_coalesce_optional_int(form, "history_max_turns"),
@@ -592,7 +590,6 @@ async def update_scenario(request: Request, scenario_id: str):
     """シナリオテンプレートを更新する（プレイ中のセッションには影響しない）。"""
     form = await request.form()
     update_kwargs = {
-        "user_alias": (form.get("user_alias") or "").strip() or "プレイヤー",
         "scenario": (form.get("scenario") or "") or None,
         "intro": (form.get("intro") or "") or None,
         "history_max_turns": _coalesce_optional_int(form, "history_max_turns"),

@@ -262,7 +262,8 @@ class Scenario(Base):
     title = Column(String, nullable=False)
     scenario = Column(Text, nullable=True)                 # シナリオ概要・世界観テキスト（自由記述：場所・空気感・語り口など全部ここに詰める）
     intro = Column(Text, nullable=True)                    # 導入部（@キャラ:記法）。セッション開始時に固定ターンとして挿入
-    user_alias = Column(String, nullable=False)            # ユーザの @タグ用エイリアス
+    # （旧 user_alias 列は廃止。ユーザPCも pc_slots の 1 枠として表現し、
+    #   セッションの pc_assignments で player_type="user" を割り当てる。）
     history_max_turns = Column(Integer, nullable=True)     # 送信履歴の最大ターン数。NULL=settings 既定
     history_max_chars = Column(Integer, nullable=True)     # 送信履歴の最大文字数。NULL=settings 既定
     custom_system_prompt = Column(Text, nullable=True)     # GMシステムプロンプトの完全カスタマイズ。NULLなら自動生成ロジック使用
@@ -444,6 +445,7 @@ class SQLiteStore(
         self._migrate_add_memory_origin()
         self._migrate_add_scenario_pc_mode()
         self._migrate_drop_session_drifts()
+        self._migrate_unify_user_alias_to_pc_slot()
 
     def _migrate_drop_session_drifts(self) -> None:
         """SELF_DRIFT 機能撤去に伴い session_drifts テーブルを削除する。
@@ -454,6 +456,183 @@ class SQLiteStore(
         """
         with self.engine.begin() as conn:
             conn.exec_driver_sql("DROP TABLE IF EXISTS session_drifts")
+
+    def _migrate_unify_user_alias_to_pc_slot(self) -> None:
+        """`scenarios.user_alias` を廃止し、ユーザPCを PC Slot へ一本化する。
+
+        旧スキーマ: ユーザの呼称は scenarios.user_alias（単一・NOT NULL）。
+        新スキーマ: ユーザも 1 つの PC枠（scenarios.pc_slots の 1 要素）として表現し、
+                    セッションの pc_assignments で player_type="user" を割り当てる。
+                    user_alias 列は廃止する。
+
+        移行手順（冪等）:
+            1. user_alias 列が無ければ移行済み → 何もしない。
+            2. ensemble テンプレ（pc_slots 空）は user_alias 名の user 枠を新規作成して
+               pc_slots へ入れる（呼称を失わないため）。
+            3. player_type="user" の割当が無いセッションには、user 枠への割当
+               {"slot_id":..., "player_type":"user"} を追加する。user 枠が無ければ
+               user_alias 名で作成（既存に同名枠があれば再利用）。
+               ※ ensemble_pc テンプレで既に全セッションがユーザ枠を持つ場合は触らない
+                 （余計な枠を生やさない）。
+            4. scenarios.user_alias 列を DROP COLUMN する（SQLite 3.35+）。
+
+        新規 DB（ORM に user_alias 列が無い）では 1 で抜けるため冪等。
+        """
+        import json
+
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "scenarios" not in tables:
+                return
+            scen_cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenarios)"
+                ).fetchall()
+            }
+            if "user_alias" not in scen_cols:
+                return  # 既に移行済み
+            has_sessions_table = "scenario_sessions" in tables
+
+            def _unify_legacy_gm_prompt(text: str) -> str:
+                """既存 custom_system_prompt から旧「主役（プレイヤー）」フレーミングを除く。
+
+                ユーザPCを特別扱いせず全PCを均一ロスターへ集約する新方針に合わせ、
+                既知の話者ブロックの主役行と、PC領分節の中の人言及を置換する。
+                ユーザが編集して文言がずれている場合は一致せず no-op（ベストエフォート）。
+                """
+                replacements = [
+                    # 既知の話者ブロックの「主役」行を丸ごと削除（後続改行ごと）
+                    (
+                        "@{user_alias}   ← この物語の主役（プレイヤー）。"
+                        "あなたは絶対に代弁しない。\n",
+                        "",
+                    ),
+                    # PC配役ブロック見出しを新名称へ
+                    ("# PC配役（プレイヤーキャラクター）", "# プレイヤーキャラクター（PC）"),
+                    # NPC 紹介の二重掲載を解消（既知の話者側の簡潔リストを廃し NPC詳細へ一本化）
+                    (
+                        "{npcs_summary}",
+                        "（NPC の顔ぶれと人物像は下記「NPC詳細」を参照）",
+                    ),
+                    # PC領分節の user_alias 参照と中の人言及を中立化
+                    (
+                        "ここで言う **PC** は、@{user_alias} と「PC配役」"
+                        "セクションに掲げた全員を指します。\n"
+                        "PC はそれぞれ別の人格（ユーザ本人または別の AI キャラクター）"
+                        "が演じます。",
+                        "ここで言う **PC** は、「プレイヤーキャラクター（PC）」"
+                        "セクションに掲げた全員を指します。\n"
+                        "PC はそれぞれ別の人格が演じます"
+                        "（あなた＝GM はその中身が人間か AI かを意識しません）。",
+                    ),
+                ]
+                for old, new in replacements:
+                    text = text.replace(old, new)
+                return text
+
+            scen_rows = conn.exec_driver_sql(
+                "SELECT id, user_alias, pc_slots, custom_system_prompt FROM scenarios"
+            ).fetchall()
+            for sid, alias, pc_slots_raw, csp_raw in scen_rows:
+                alias = (str(alias or "").strip()) or "プレイヤー"
+                try:
+                    pc_slots = json.loads(pc_slots_raw) if pc_slots_raw else []
+                    if not isinstance(pc_slots, list):
+                        pc_slots = []
+                except (json.JSONDecodeError, TypeError):
+                    pc_slots = []
+
+                # pc_slots の永続化は変更があったときだけ行うためのフラグ。
+                slots_dirty = False
+
+                def ensure_user_slot() -> str:
+                    """user_alias 名の PC枠を確保して slot_id を返す（必要時のみ生成）。"""
+                    nonlocal slots_dirty
+                    existing = next(
+                        (
+                            s for s in pc_slots
+                            if isinstance(s, dict)
+                            and str(s.get("name", "")).strip() == alias
+                        ),
+                        None,
+                    )
+                    if existing is not None:
+                        return str(existing.get("slot_id"))
+                    existing_ids = {
+                        str(s.get("slot_id"))
+                        for s in pc_slots if isinstance(s, dict)
+                    }
+                    new_id = "user"
+                    n = 2
+                    while new_id in existing_ids:
+                        new_id = f"user{n}"
+                        n += 1
+                    pc_slots.insert(0, {
+                        "slot_id": new_id, "name": alias, "description": "",
+                    })
+                    slots_dirty = True
+                    return new_id
+
+                user_slot_id: str | None = None
+                # 2. ensemble テンプレ（pc_slots 空）は呼称保全のため user 枠を作る
+                if not pc_slots:
+                    user_slot_id = ensure_user_slot()
+
+                # 3. ユーザ割当の無いセッションへ user 割当を補う
+                if has_sessions_table:
+                    sess_rows = conn.exec_driver_sql(
+                        "SELECT id, pc_assignments FROM scenario_sessions "
+                        "WHERE scenario_id = ?",
+                        (sid,),
+                    ).fetchall()
+                    for sess_id, asn_raw in sess_rows:
+                        try:
+                            asn = json.loads(asn_raw) if asn_raw else []
+                            if not isinstance(asn, list):
+                                asn = []
+                        except (json.JSONDecodeError, TypeError):
+                            asn = []
+                        has_user = any(
+                            isinstance(a, dict)
+                            and str(a.get("player_type", "")) == "user"
+                            for a in asn
+                        )
+                        if has_user:
+                            continue
+                        if user_slot_id is None:
+                            user_slot_id = ensure_user_slot()
+                        asn.append({
+                            "slot_id": user_slot_id, "player_type": "user",
+                        })
+                        conn.exec_driver_sql(
+                            "UPDATE scenario_sessions SET pc_assignments = ? "
+                            "WHERE id = ?",
+                            (json.dumps(asn, ensure_ascii=False), sess_id),
+                        )
+
+                if slots_dirty:
+                    conn.exec_driver_sql(
+                        "UPDATE scenarios SET pc_slots = ? WHERE id = ?",
+                        (json.dumps(pc_slots, ensure_ascii=False), sid),
+                    )
+
+                # 既存 custom_system_prompt の旧「主役」フレーミングを除去する（ベストエフォート）。
+                if csp_raw:
+                    new_csp = _unify_legacy_gm_prompt(csp_raw)
+                    if new_csp != csp_raw:
+                        conn.exec_driver_sql(
+                            "UPDATE scenarios SET custom_system_prompt = ? WHERE id = ?",
+                            (new_csp, sid),
+                        )
+
+            # 4. 旧 user_alias 列を削除（SQLite 3.35+）
+            conn.exec_driver_sql("ALTER TABLE scenarios DROP COLUMN user_alias")
 
     def _migrate_gm_preset_id_to_session(self) -> None:
         """`gm_preset_id` を scenarios → scenario_sessions に移行する。

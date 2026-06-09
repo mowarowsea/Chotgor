@@ -324,7 +324,6 @@ export interface ScenarioTemplate {
   title: string;
   scenario: string | null;
   intro: string | null;
-  user_alias: string;
   history_max_turns: number | null;
   history_max_chars: number | null;
   /** PC枠定義（engine_type="ensemble_pc" 用）。各枠は人物像・知っていること等を

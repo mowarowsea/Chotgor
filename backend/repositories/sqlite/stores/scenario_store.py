@@ -27,7 +27,6 @@ class ScenarioChatStoreMixin:
         self,
         scenario_id: str,
         title: str,
-        user_alias: str,
         scenario: str | None = None,
         intro: str | None = None,
         history_max_turns: int | None = None,
@@ -49,6 +48,9 @@ class ScenarioChatStoreMixin:
                          シナリオ側で人物像・知っていることを含めて記述する。
                          セッション開始時に各枠を「ユーザが演じる/AIキャラが演じる」と割り振る。
 
+        旧 user_alias は廃止。ユーザPCも pc_slots の 1 枠として定義する
+        （セッション開始時に player_type="user" を割り当てる）。
+
         GM の LLM プリセットはテンプレートには持たない（セッション単位で選択する）。
         """
         # custom_system_prompt が None または空の場合、デフォルトテンプレートを設定
@@ -63,7 +65,6 @@ class ScenarioChatStoreMixin:
                 title=title,
                 scenario=scenario,
                 intro=intro,
-                user_alias=user_alias,
                 history_max_turns=history_max_turns,
                 history_max_chars=history_max_chars,
                 custom_system_prompt=custom_system_prompt,

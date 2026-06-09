@@ -38,10 +38,14 @@ def _make_scenario(
     テンプレ作成では受け付けない。
     """
     scenario_id = str(uuid.uuid4())
+    # 旧 user_alias は廃止。ユーザPCを pc_slots の 1 枠（先頭）として表現する。
+    if "pc_slots" not in kwargs and user_alias:
+        kwargs["pc_slots"] = [
+            {"slot_id": "user", "name": user_alias, "description": ""}
+        ]
     return store.create_scenario(
         scenario_id=scenario_id,
         title=title,
-        user_alias=user_alias,
         **kwargs,
     )
 
@@ -124,7 +128,8 @@ class TestScenarioCRUD:
         scenario = _make_scenario(sqlite_store)
         assert scenario.id
         assert scenario.title == "テストシナリオ"
-        assert scenario.user_alias == "プレイヤー"
+        # 旧 user_alias は廃止。ユーザPCは pc_slots の先頭枠として保持される。
+        assert scenario.pc_slots[0]["name"] == "プレイヤー"
         # 省略フィールドは None
         assert scenario.scenario is None
         assert scenario.history_max_turns is None
@@ -823,3 +828,192 @@ class TestScenarioSessionSynopsis:
         assert sess.synopsis_auto == "X"
         assert sess.synopsis_manual == "Y"
         assert sess.synopsis_last_turn_index == 7
+
+
+class TestUserAliasToPcSlotMigration:
+    """`_migrate_unify_user_alias_to_pc_slot` のバックフィルと冪等性を検証する。
+
+    旧スキーマ（scenarios.user_alias 列あり）を再現し、移行が
+      - ユーザPC枠を pc_slots に生成すること
+      - セッションへ player_type="user" 割当を補完すること
+      - user_alias 列を削除すること
+      - 既に user 割当を持つ ensemble_pc データには余計な枠を作らないこと
+      - 二度実行しても安全（冪等）であること
+    を網羅的に確認する。破壊的スキーマ変更（DROP COLUMN）を含むため、
+    旧データからの移行が無損失であることをテストで保証する意義は大きい。
+    """
+
+    @staticmethod
+    def _readd_user_alias_and_set(store, scenario_id, alias):
+        """移行テスト用に user_alias 列を旧スキーマ相当で復活させ、値を設定する。
+
+        新スキーマでは ORM に user_alias が無いため、移行前状態を再現するには
+        生 SQL で列を足してから値を入れる必要がある。
+        """
+        with store.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenarios)"
+                ).fetchall()
+            }
+            if "user_alias" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenarios ADD COLUMN user_alias TEXT"
+                )
+            conn.exec_driver_sql(
+                "UPDATE scenarios SET user_alias = ? WHERE id = ?",
+                (alias, scenario_id),
+            )
+
+    @staticmethod
+    def _user_alias_column_exists(store) -> bool:
+        """scenarios テーブルに user_alias 列が残っているかを返す。"""
+        with store.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenarios)"
+                ).fetchall()
+            }
+        return "user_alias" in cols
+
+    def test_ensemble_backfill_and_drop(self, sqlite_store):
+        """ensemble 旧データから user 枠を生成・割当補完し、user_alias 列を削除すること。
+
+        旧 ensemble シナリオ（pc_slots NULL）とセッション（pc_assignments NULL）に対し、
+        user_alias("勇者") を pc_slots 先頭の user 枠へ昇格し、セッションへ user 割当を補い、
+        最後に user_alias 列が消えていることを確認する。
+        """
+        store = sqlite_store
+        scenario = _make_scenario(store, pc_slots=None)  # 旧 ensemble（pc_slots NULL）
+        session = _make_session(store, scenario.id)       # pc_assignments NULL
+        self._readd_user_alias_and_set(store, scenario.id, "勇者")
+
+        store._migrate_unify_user_alias_to_pc_slot()
+
+        fetched = store.get_scenario(scenario.id)
+        slots = fetched.pc_slots
+        assert slots and slots[0]["name"] == "勇者"
+        user_slot_id = slots[0]["slot_id"]
+        sess = store.get_scenario_session(session.id)
+        assert any(
+            a.get("slot_id") == user_slot_id and a.get("player_type") == "user"
+            for a in (sess.pc_assignments or [])
+        )
+        assert not self._user_alias_column_exists(store)
+
+    def test_idempotent_second_run(self, sqlite_store):
+        """移行を二度走らせても例外が出ず結果が壊れないこと（列削除後は早期 return）。"""
+        store = sqlite_store
+        scenario = _make_scenario(store, pc_slots=None)
+        _make_session(store, scenario.id)
+        self._readd_user_alias_and_set(store, scenario.id, "旅人")
+
+        store._migrate_unify_user_alias_to_pc_slot()
+        # 2 回目: user_alias 列はもう無い → 早期 return（例外が出ないこと）
+        store._migrate_unify_user_alias_to_pc_slot()
+
+        fetched = store.get_scenario(scenario.id)
+        assert fetched.pc_slots[0]["name"] == "旅人"
+
+    def test_ensemble_pc_existing_user_not_duplicated(self, sqlite_store):
+        """既に user 割当を持つ ensemble_pc データには余計な user 枠を作らないこと。"""
+        store = sqlite_store
+        cast = [
+            {"slot_id": "pc1", "name": "アリス", "description": ""},
+            {"slot_id": "pc2", "name": "ボブ", "description": ""},
+        ]
+        scenario = _make_scenario(store, pc_slots=cast)
+        store.create_scenario_session(
+            session_id=str(uuid.uuid4()),
+            scenario_id=scenario.id,
+            title="pc play",
+            gm_preset_id="preset-test",
+            synopsis_preset_id="preset-test",
+            engine_type="ensemble_pc",
+            pc_assignments=[{"slot_id": "pc1", "player_type": "user"}],
+        )
+        self._readd_user_alias_and_set(store, scenario.id, "vestige")
+
+        store._migrate_unify_user_alias_to_pc_slot()
+
+        fetched = store.get_scenario(scenario.id)
+        names = [s["name"] for s in fetched.pc_slots]
+        # vestige という余計な枠が増えず、既存 cast のままであること
+        assert "vestige" not in names
+        assert names == ["アリス", "ボブ"]
+
+    def test_legacy_custom_prompt_unified(self, sqlite_store):
+        """既存 custom_system_prompt の旧「主役（プレイヤー）」行が移行で除去されること。"""
+        store = sqlite_store
+        legacy = (
+            "# 既知の話者\n"
+            "@{user_alias}   ← この物語の主役（プレイヤー）。"
+            "あなたは絶対に代弁しない。\n"
+            "@{narrator_name}       ← 情景・状況描写。\n"
+        )
+        scenario = _make_scenario(
+            store, pc_slots=None, custom_system_prompt=legacy
+        )
+        self._readd_user_alias_and_set(store, scenario.id, "勇者")
+
+        store._migrate_unify_user_alias_to_pc_slot()
+
+        fetched = store.get_scenario(scenario.id)
+        # 主役行は除去され、Narrator 行は残る
+        assert "主役（プレイヤー）" not in fetched.custom_system_prompt
+        assert "@{narrator_name}" in fetched.custom_system_prompt
+
+
+class TestResolveUserSpeakerName:
+    """`resolve_user_speaker_name`（ユーザPC名の統一解決）を検証する。
+
+    旧 user_alias 廃止後、ユーザの @タグ名は engine_type に依存せず
+    pc_assignments の player_type="user" スロットの name から解決される。
+    user 割当が無い異常時は default を返すことも確認する。
+    """
+
+    def test_returns_user_assignment_slot_name(self, sqlite_store):
+        """user 割当スロットの name を返すこと。"""
+        from backend.services.scenario_chat.service import resolve_user_speaker_name
+
+        store = sqlite_store
+        scenario = _make_scenario(
+            store, pc_slots=[{"slot_id": "pc1", "name": "アリス", "description": ""}]
+        )
+        session = store.create_scenario_session(
+            session_id=str(uuid.uuid4()),
+            scenario_id=scenario.id,
+            title="t",
+            gm_preset_id="preset-test",
+            synopsis_preset_id="preset-test",
+            engine_type="ensemble_pc",
+            pc_assignments=[{"slot_id": "pc1", "player_type": "user"}],
+        )
+        assert resolve_user_speaker_name(scenario, session, store) == "アリス"
+
+    def test_returns_default_when_no_user_assignment(self, sqlite_store):
+        """user 割当が無ければフォールバック名を返すこと。"""
+        from backend.services.scenario_chat.service import resolve_user_speaker_name
+
+        store = sqlite_store
+        scenario = _make_scenario(
+            store, pc_slots=[{"slot_id": "pc1", "name": "アリス", "description": ""}]
+        )
+        # character_id が存在しない割当のみ → normalize で除外され user なしになる
+        session = store.create_scenario_session(
+            session_id=str(uuid.uuid4()),
+            scenario_id=scenario.id,
+            title="t",
+            gm_preset_id="preset-test",
+            synopsis_preset_id="preset-test",
+            engine_type="ensemble_pc",
+            pc_assignments=[
+                {"slot_id": "pc1", "player_type": "character", "character_id": "missing"}
+            ],
+        )
+        assert (
+            resolve_user_speaker_name(scenario, session, store, default="プレイヤー")
+            == "プレイヤー"
+        )

@@ -279,12 +279,13 @@ def detect_name_conflicts(
 def format_pc_summary(pcs: list[PcAssignment]) -> str:
     """GM の system prompt に差し込む `{pc_summary}` ブロック本文を整形する。
 
-    各 PC を「@<name>（player_type, description）」形式で並べる。GM は PC を
-    代弁してはならず、ここに列挙された名前で台詞ブロックを書こうとしないように
-    強い禁止文言を付ける。
+    全 PC を「@<name> ← PC。<description>」形式で**均一に**並べる。各 PC の「中の人」
+    （人間プレイヤーか別の AI キャラか）は GM に一切開示しない — TRPG の卓では全員が
+    等価なプレイヤーキャラクターであり、GM は誰が人間かを意識せず全 PC を等しく扱う。
+    GM は PC を代弁してはならないため、強い禁止文言を付ける。
 
     Args:
-        pcs: 正規化済み PC 配役リスト。
+        pcs: 正規化済み PC 配役リスト（ユーザPC・AIキャラPC を区別せず全件）。
 
     Returns:
         プロンプトに差し込み可能なテキスト。pcs が空なら空文字列。
@@ -294,20 +295,19 @@ def format_pc_summary(pcs: list[PcAssignment]) -> str:
     lines = [
         "以下の PC は「プレイヤーキャラクター」枠です。あなたは絶対に代弁しません。",
         "PC への呼びかけは NPC の台詞や状況描写で行ってください。",
-        "PC が反応するかどうかは別の人格（ユーザまたは別のAI）に任せます。",
+        "各 PC が反応するかどうかは、それぞれを演じる本人に任せます。",
         "",
     ]
     for pc in pcs:
-        actor = "ユーザが演じる" if pc.is_user else "別のAIキャラが演じる"
         # description は GM 側に共有して問題ないが、長文なので 1 行サマリだけ抜く。
         desc_brief = (pc.description or "").strip().replace("\n", " ")
         if len(desc_brief) > 80:
             desc_brief = desc_brief[:80] + "…"
-        # AI キャラの本名は GM 視点では別キャラのメタ情報なので、混同を避けるため出さない。
+        # 中の人（user/character）も AI キャラ本名も GM には出さない（区別させない）。
         if desc_brief:
-            lines.append(f"@{pc.name} ← PC（{actor}）。{desc_brief}")
+            lines.append(f"@{pc.name} ← PC。{desc_brief}")
         else:
-            lines.append(f"@{pc.name} ← PC（{actor}）。")
+            lines.append(f"@{pc.name} ← PC。")
     return "\n".join(lines)
 
 

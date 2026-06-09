@@ -94,10 +94,18 @@ class TestBuildSynopsisSystemPrompt:
     プロンプトに正しく表現されていることを検証する。
     """
 
-    def test_includes_user_alias_as_protagonist(self):
-        """プロンプトに主役（user_alias）が含まれること。"""
-        out = build_synopsis_system_prompt(FakeScenario(user_alias="勇者"), "")
-        assert "@勇者" in out
+    def test_pc_centric_rule_without_single_protagonist(self):
+        """あらすじ蒸留プロンプトが特定の主役名に依存せず PC 中心の記述規則を持つこと。
+
+        旧仕様では「主役は @user（プレイヤー）」と単一主人公を名指ししていたが、
+        中の人を区別しない方針に伴い、PC たちを軸にする中立的な規則へ変更した。
+        """
+        out = build_synopsis_system_prompt(
+            FakeScenario(), "", user_speaker_name="勇者",
+        )
+        assert "PC" in out or "プレイヤーキャラクター" in out
+        # 単一主人公フレーミングは廃止
+        assert "主役" not in out
 
     def test_existing_auto_embedded(self):
         """既存 auto が「これまでのあらすじ」セクションとして埋め込まれること。"""

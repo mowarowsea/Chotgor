@@ -268,7 +268,7 @@ interface UserBubbleRowProps {
  * ユーザ発話バブル。1on1 の UserBubble と同じ操作感:
  *   - ホバー時に右下に Copy ボタン + 鉛筆アイコン
  *   - 鉛筆クリックでインライン textarea に切り替わる
- *   - textarea で Shift+Enter で送信、Esc でキャンセル
+ *   - textarea で Ctrl+Enter で送信、Esc でキャンセル
  *
  * ユーザ発話はアバターを表示しない（右寄せのバブルのみ）。
  *
@@ -304,7 +304,8 @@ function UserBubbleRowImpl({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && e.shiftKey) {
+    // 下部の入力欄（MessageInput）と同じく Ctrl+Enter で送信する。
+    if (e.key === "Enter" && e.ctrlKey) {
       e.preventDefault();
       submit();
     }
@@ -352,7 +353,7 @@ function UserBubbleRowImpl({
               </button>
             </div>
             <p className="text-ch-t4 text-[10px] text-right">
-              Shift+Enter で送信 / Esc でキャンセル（この発言以降は削除されます）
+              Ctrl+Enter で送信 / Esc でキャンセル（この発言以降は削除されます）
             </p>
           </div>
         ) : (
@@ -728,7 +729,7 @@ export default function ScenarioChatView({
     setMentionTarget(null);
   };
 
-  const userPlaceholder = scenario?.user_alias ?? "プレイヤー";
+  const userPlaceholder = scenario?.pc_slots?.[0]?.name ?? "プレイヤー";
 
   // ensemble_pc（TRPG モード）では @<PC枠名> で PC を指名できることを入力欄でヒントする。
   // session.pc_assignments には slot_id しか入っていないので、scenario.pc_slots から name を引く。
@@ -740,12 +741,7 @@ export default function ScenarioChatView({
     .filter((pc) => pc.player_type === "character")
     .map((pc) => pcSlotsById.get(pc.slot_id)?.name)
     .filter((n): n is string => !!n);
-  const pcMentionHint = isPcMode && pcSlotNames.length > 0
-    ? ` / @${pcSlotNames[0]} のように指名 / @ALL で全員のうち1人ランダム`
-    : "";
-  const inputPlaceholder =
-    `${userPlaceholder} として発話 (Ctrl+Enter で送信 / *手を握る* で行動描写 / ` +
-    `空欄送信で GM が無言のまま物語を進める${pcMentionHint})`;
+  const inputPlaceholder = `${userPlaceholder} として発話`;
 
   /**
    * 宛先トグルの候補（PCモードのみ）。AI キャラ枠の名前 + "ALL" を循環する。

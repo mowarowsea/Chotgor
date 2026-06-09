@@ -186,6 +186,7 @@ class EnsembleEngine:
         pc_summary: str = "",
         dice_pool: str = "",
         suppress_names: set[str] | None = None,
+        user_speaker_name: str = "プレイヤー",
     ) -> AsyncIterator[Any]:
         """1 ターンの発話列をストリーミング生成する。
 
@@ -219,7 +220,7 @@ class EnsembleEngine:
         max_turns, max_chars = resolve_history_limits(scenario, settings)
         sliced = slice_history(history, max_turns=max_turns, max_chars=max_chars)
         history_text = format_history_for_gm(
-            sliced, user_alias=scenario.user_alias
+            sliced, user_alias=user_speaker_name
         )
 
         # 2. GM 用 system prompt
@@ -234,6 +235,7 @@ class EnsembleEngine:
             previous_anticipation=previous_anticipation,
             pc_summary=pc_summary,
             dice_pool=dice_pool,
+            user_speaker_name=user_speaker_name,
         )
 
         # 3. プロバイダ生成
@@ -270,7 +272,7 @@ class EnsembleEngine:
         }
         parser = ScenarioChatParser(
             known_npc_names=known_map,
-            user_alias=scenario.user_alias,
+            user_alias=user_speaker_name,
             suppress_names=suppress_names,
         )
 

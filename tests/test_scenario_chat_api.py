@@ -60,7 +60,8 @@ def _create_scenario(client, **overrides) -> dict:
     """POST /scenarios のラッパ。GM プリセットはセッション側で指定するので含まない。"""
     payload = {
         "title": "テストシナリオ",
-        "user_alias": "プレイヤー",
+        # 旧 user_alias は廃止。ユーザPCを pc_slots の先頭枠として渡す。
+        "pc_slots": [{"slot_id": "user", "name": "プレイヤー", "description": ""}],
     }
     payload.update(overrides)
     res = client.post("/api/scenario_chat/scenarios", json=payload)
@@ -111,7 +112,8 @@ class TestScenarioCRUD:
         body = _create_scenario(client)
         assert body["id"]
         assert body["title"] == "テストシナリオ"
-        assert body["user_alias"] == "プレイヤー"
+        # 旧 user_alias は廃止。ユーザPCは pc_slots の先頭枠として保持される。
+        assert body["pc_slots"][0]["name"] == "プレイヤー"
         assert "gm_preset_id" not in body
 
     def test_create_full(self, sqlite_store):
@@ -131,7 +133,7 @@ class TestScenarioCRUD:
         # title 抜けで 422
         res = client.post(
             "/api/scenario_chat/scenarios",
-            json={"user_alias": "p"},
+            json={"scenario": "本文のみ"},
         )
         assert res.status_code == 422
 

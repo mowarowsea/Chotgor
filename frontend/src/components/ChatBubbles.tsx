@@ -1178,7 +1178,8 @@ export function UserBubble({
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && e.shiftKey) {
+    // 下部の入力欄（MessageInput）と同じく Ctrl+Enter で送信する。
+    if (e.key === "Enter" && e.ctrlKey) {
       e.preventDefault();
       handleEditSubmit();
     }

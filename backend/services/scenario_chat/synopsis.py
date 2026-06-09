@@ -29,6 +29,7 @@ def build_synopsis_system_prompt(
     scenario: Any,
     existing_auto: str,
     narrator_name: str = "Narrator",
+    user_speaker_name: str = "プレイヤー",
 ) -> str:
     """あらすじ蒸留用の system prompt を組み立てる。
 
@@ -44,7 +45,8 @@ def build_synopsis_system_prompt(
     Returns:
         system prompt 文字列。
     """
-    user_alias = getattr(scenario, "user_alias", "ユーザ")
+    # 旧 scenario.user_alias は廃止。呼び出し側が解決した user_speaker_name を使う。
+    _ = user_speaker_name  # 現状あらすじ本文では特定PCを主役扱いしないため未使用
     scenario_text = (getattr(scenario, "scenario", "") or "").strip()
 
     parts = [
@@ -55,7 +57,7 @@ def build_synopsis_system_prompt(
         "全体を 1 本のあらすじとして蒸留し直すこと。",
         "",
         "規則:",
-        f"- 主役は @{user_alias}（プレイヤー）。プレイヤーの意思決定と行動を軸に描写",
+        "- プレイヤーキャラクター（PC）たちの意思決定と行動を軸に、関係や状況の変化を描写",
         "- 直近の展開は具体的に、古い経緯は要点だけに圧縮する（新しいほど厚く）",
         "- ただし古い経緯でも「誰が・何をして・何が確定したか」の",
         "  事実関係は省かない（薄くはしても消さない）",
@@ -87,6 +89,7 @@ async def update_auto_synopsis(
     synopsis_preset_id: str,
     provider_factory: Callable[..., Any] = create_provider,
     narrator_name: str = "Narrator",
+    user_speaker_name: str = "プレイヤー",
 ) -> str | None:
     """既存 `existing_auto` と `new_turns` を統合し、全体を再蒸留した結果を返す。
 
@@ -146,11 +149,12 @@ async def update_auto_synopsis(
         scenario=scenario,
         existing_auto=existing_auto or "",
         narrator_name=narrator_name,
+        user_speaker_name=user_speaker_name,
     )
 
     history_text = format_history_for_gm(
         new_turns,
-        user_alias=getattr(scenario, "user_alias", "ユーザ"),
+        user_alias=user_speaker_name,
         narrator_name=narrator_name,
     )
     user_content = (

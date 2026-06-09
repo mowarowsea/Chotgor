@@ -685,7 +685,7 @@ export default function App() {
           }
           userName={
             isScenarioSession
-              ? (activeScenarioTemplate?.user_alias ?? userName)
+              ? (activeScenarioTemplate?.pc_slots?.[0]?.name ?? userName)
               : userName
           }
           reasoningMap={isGroupSession ? groupReasoningMap : reasoningMap}

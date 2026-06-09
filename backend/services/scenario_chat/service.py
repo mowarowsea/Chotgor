@@ -53,7 +53,6 @@ def scenario_to_dict(scenario: Any) -> dict:
         "title": scenario.title,
         "scenario": scenario.scenario,
         "intro": scenario.intro,
-        "user_alias": scenario.user_alias,
         "history_max_turns": scenario.history_max_turns,
         "history_max_chars": scenario.history_max_chars,
         "custom_system_prompt": scenario.custom_system_prompt,
@@ -62,6 +61,37 @@ def scenario_to_dict(scenario: Any) -> dict:
         "created_at": scenario.created_at.isoformat() if scenario.created_at else None,
         "updated_at": scenario.updated_at.isoformat() if scenario.updated_at else None,
     }
+
+
+def resolve_user_speaker_name(
+    scenario: Any, session: Any, sqlite, default: str = "プレイヤー"
+) -> str:
+    """ユーザPCの @タグ名を pc_slots + pc_assignments から解決する。
+
+    旧 `scenarios.user_alias` 廃止後の統一解決ロジック。engine_type に依存せず、
+    セッションの pc_assignments で player_type="user" となっているスロットの name を返す。
+    user 枠が見つからない異常時は default を返す。
+
+    Args:
+        scenario: Scenario ORM（pc_slots を参照）。
+        session: ScenarioSession ORM（pc_assignments を参照）。
+        sqlite: SQLiteStore（character 名 lookup 用に normalize へ渡す）。
+        default: user 枠が無い場合のフォールバック名。
+
+    Returns:
+        ユーザPCの表示名。
+    """
+    from backend.services.scenario_chat.mention import (
+        normalize_pc_assignments,
+        normalize_pc_slots,
+    )
+
+    pc_slots = normalize_pc_slots(getattr(scenario, "pc_slots", None))
+    pcs = normalize_pc_assignments(
+        getattr(session, "pc_assignments", None), pc_slots, sqlite,
+    )
+    user_pc = next((p for p in pcs if p.is_user), None)
+    return user_pc.name if user_pc else default
 
 
 def scenario_session_to_dict(session: Any) -> dict:
@@ -232,6 +262,11 @@ async def maybe_update_auto_synopsis(
             sum(len(getattr(t, "content", "") or "") for t in new_turns),
             force,
         )
+        # ユーザPC名を解決してあらすじ蒸留プロンプトへ渡す（旧 user_alias 廃止）。
+        synopsis_session = sqlite.get_scenario_session(session_id)
+        user_speaker_name = resolve_user_speaker_name(
+            scenario, synopsis_session, sqlite,
+        )
         new_auto = await update_auto_synopsis(
             scenario=scenario,
             new_turns=new_turns,
@@ -239,6 +274,7 @@ async def maybe_update_auto_synopsis(
             settings=settings,
             preset_loader=loader,
             synopsis_preset_id=synopsis_preset_id,
+            user_speaker_name=user_speaker_name,
         )
         if new_auto is None:
             # update_auto_synopsis 側の WARN で詳細理由は出ているので、ここは要約のみ
@@ -389,27 +425,25 @@ async def run_scenario_turn(
     )
     from backend.services.scenario_chat.engine import generate_dice_pool
 
-    pc_slots = normalize_pc_slots(getattr(scenario, "pc_slots", None)) if is_pc_mode else []
+    # PC枠・配役は engine_type に依存せず常に正規化する（ユーザPCも 1 枠として扱うため）。
+    # 旧 user_alias 廃止後、ユーザの @タグ名は user 割当スロットの name から解決する。
+    pc_slots = normalize_pc_slots(getattr(scenario, "pc_slots", None))
     pcs = normalize_pc_assignments(
         getattr(session, "pc_assignments", None), pc_slots, sqlite,
-    ) if is_pc_mode else []
-    pc_summary_text = format_pc_summary(pcs) if is_pc_mode else ""
+    )
+    # PCロスター（ユーザPC含む全PC）。GM へ「全PCを代弁するな」と均一に提示する。
+    pc_summary_text = format_pc_summary(pcs)
 
-    # ユーザの @タグ名: user スロットがあればその name、無ければ scenario.user_alias を使う
-    user_speaker_name = scenario.user_alias
-    if is_pc_mode:
-        user_pc = next((p for p in pcs if p.is_user), None)
-        if user_pc:
-            user_speaker_name = user_pc.name
+    # ユーザの @タグ名: player_type="user" のスロット name。無ければフォールバック。
+    user_pc = next((p for p in pcs if p.is_user), None)
+    user_speaker_name = user_pc.name if user_pc else "プレイヤー"
 
-    # GM が代弁してはならない名前: user 枠 + 全 PC枠名 + 全 AI キャラ本名
-    suppress_names: set[str] | None = None
-    if is_pc_mode:
-        suppress_names = {user_speaker_name}
-        for pc in pcs:
-            suppress_names.add(pc.name)
-            if pc.is_character and pc.character_name:
-                suppress_names.add(pc.character_name)
+    # GM が代弁してはならない名前: 全 PC枠名 + 全 AI キャラ本名（ユーザPCも含む）。
+    suppress_names: set[str] = {user_speaker_name}
+    for pc in pcs:
+        suppress_names.add(pc.name)
+        if pc.is_character and pc.character_name:
+            suppress_names.add(pc.character_name)
 
     previous_anticipation = _latest_scenario_anticipation(sqlite.list_scenario_turns(session_id))
     gm_preset_id = getattr(session, "gm_preset_id", "") or ""
@@ -470,6 +504,7 @@ async def run_scenario_turn(
                         if is_pc_mode else ""
                     ),
                     suppress_names=suppress_names,
+                    user_speaker_name=user_speaker_name,
                     sqlite=sqlite,
                     session_id=session_id,
                     saved_turn_ids=saved_turn_ids,
@@ -636,6 +671,7 @@ async def _run_gm_turn(
     pc_summary: str,
     dice_pool: str,
     suppress_names: set[str] | None,
+    user_speaker_name: str,
     sqlite,
     session_id: str,
     saved_turn_ids: list[str],
@@ -663,6 +699,7 @@ async def _run_gm_turn(
         pc_summary=pc_summary,
         dice_pool=dice_pool,
         suppress_names=suppress_names,
+        user_speaker_name=user_speaker_name,
     ):
         if isinstance(item, UtteranceDelta):
             if item.is_speaker_change:
@@ -821,9 +858,12 @@ def seed_intro_turns(sqlite, session_id: str, scenario) -> int:
         return 0
     npcs = sqlite.list_scenario_npcs(scenario.id)
     known = {n.name: n.id for n in npcs if getattr(n, "name", None)}
+    # ユーザPC名は user 割当スロットから解決する（旧 user_alias 廃止）。
+    session = sqlite.get_scenario_session(session_id)
+    user_speaker_name = resolve_user_speaker_name(scenario, session, sqlite)
     blocks = parse_intro_to_turns(
         intro_text=intro_text,
-        user_alias=scenario.user_alias,
+        user_alias=user_speaker_name,
         known_npc_names=known,
     )
     saved = 0

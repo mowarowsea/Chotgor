@@ -73,7 +73,7 @@ interface UseScenarioChatResult {
   scenarioSessionsRef: MutableRefObject<ScenarioSession[]>;
   /** 現在選択中のシナリオプレイセッション。 */
   activeScenarioSession: ScenarioSession | null;
-  /** 元シナリオテンプレ（場所表示・user_alias 表示に使う）。 */
+  /** 元シナリオテンプレ（場所表示・ユーザPC名(pc_slots[0])表示に使う）。 */
   activeScenarioTemplate: ScenarioTemplate | null;
   /** GM プリセット一覧（gm_preset_id → 表示名解決に使う）。 */
   scenarioPresets: ScenarioPreset[];
@@ -191,7 +191,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   scenarioSessionsRef.current = scenarioSessions;
   /** 現在選択中のシナリオプレイセッション。 */
   const [activeScenarioSession, setActiveScenarioSession] = useState<ScenarioSession | null>(null);
-  /** 元シナリオテンプレ（場所表示・user_alias 表示に使う）。 */
+  /** 元シナリオテンプレ（場所表示・ユーザPC名(pc_slots[0])表示に使う）。 */
   const [activeScenarioTemplate, setActiveScenarioTemplate] = useState<ScenarioTemplate | null>(null);
   /** GM プリセット一覧（シナリオヘッダーの gm_preset_id → 表示名解決に使う）。 */
   const [scenarioPresets, setScenarioPresets] = useState<ScenarioPreset[]>([]);
