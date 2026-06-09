@@ -31,6 +31,42 @@ def _find_claude() -> str:
 CLAUDE_BIN = _find_claude()
 
 
+# 実行時 claude CLI を動かす作業ディレクトリ。
+# Chotgor リポジトリの外（親ディレクトリ直下）の専用ディレクトリで CLI を起動することで、
+# リポジトリの CLAUDE.md と自動生成 MEMORY.md を読み込ませず、呼び出しごとのトークン消費を
+# 削減する（キャラクター応答の生成に CLAUDE.md / MEMORY.md は不要なため）。
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+_CLAUDE_CWD = os.path.join(os.path.dirname(_REPO_ROOT), "Chotgor_ClaudeCodeWorkDir")
+
+
+def _ensure_claude_cwd() -> str | None:
+    """実行時 claude CLI 用の作業ディレクトリを冪等に用意し、その絶対パスを返す。
+
+    Chotgor リポジトリ外で CLI を起動すると、リポジトリの ``.claude/settings.json``
+    （MCP ツール許可 permissions.allow）も読まれなくなる。非対話（``--print``）モードでは
+    未許可ツールが拒否されてしまうため、リポジトリ側 settings.json をこの作業
+    ディレクトリへ複製し、inscribe_memory などの MCP ツールが従来どおり許可される
+    状態を保つ。リポジトリ側を source of truth として毎起動時に複製するため、
+    許可の二重管理（追加し忘れ）が起きない。
+
+    ディレクトリ準備に失敗した場合は None を返す。呼び出し側は cwd 指定なし
+    （親プロセスのカレントディレクトリ継承）へフォールバックして従来どおり動作する。
+    """
+    try:
+        claude_dir = os.path.join(_CLAUDE_CWD, ".claude")
+        os.makedirs(claude_dir, exist_ok=True)
+        repo_settings = os.path.join(_REPO_ROOT, ".claude", "settings.json")
+        if os.path.isfile(repo_settings):
+            shutil.copyfile(repo_settings, os.path.join(claude_dir, "settings.json"))
+        return _CLAUDE_CWD
+    except Exception:
+        return None
+
+
+# モジュールロード時に1回だけ作業ディレクトリを用意する（None ならフォールバック）。
+_CLAUDE_CWD_READY = _ensure_claude_cwd()
+
+
 def _build_tools_flag(allowed_tools: dict) -> str:
     """allowed_tools 設定から --tools フラグ文字列を組み立てる。
 
@@ -76,6 +112,9 @@ def _clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if k not in _CLAUDE_ENV_EXCLUDES}
     # プロンプトキャッシュを無効化してコストを削減する（キャッシュ料金を避けるため）
     env["DISABLE_PROMPT_CACHING"] = "1"
+    # 自動メモリ（~/.claude/projects/.../memory/MEMORY.md）の読み込みを無効化し、
+    # システムプロンプトへの不要な注入を防いでトークン消費を削減する。
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     return env
 
 
@@ -168,6 +207,7 @@ async def invoke_claude_cli(system_prompt: str, input_text: str) -> str:
             input=input_text.encode("utf-8"),
             capture_output=True,
             env=env,
+            cwd=_CLAUDE_CWD_READY,
         )
 
     result = await asyncio.to_thread(run)
@@ -454,6 +494,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=env,
+                    cwd=_CLAUDE_CWD_READY,
                 )
                 proc.stdin.write(conversation.encode("utf-8"))
                 proc.stdin.close()
@@ -555,6 +596,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=env,
+                    cwd=_CLAUDE_CWD_READY,
                 )
                 proc.stdin.write(conversation.encode("utf-8"))
                 proc.stdin.close()
@@ -639,6 +681,7 @@ async def _run_claude(
             input=msg_content.encode("utf-8"),
             capture_output=True,
             env=env,
+            cwd=_CLAUDE_CWD_READY,
         )
 
     return await asyncio.to_thread(run)
