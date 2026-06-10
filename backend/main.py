@@ -92,12 +92,13 @@ async def lifespan(app: FastAPI):
     # UI テンプレートを初期化する
     from fastapi.templating import Jinja2Templates
 
-    ui_module.templates = Jinja2Templates(directory=TEMPLATES_DIR)
+    templates = Jinja2Templates(directory=TEMPLATES_DIR)
     # CSS キャッシュバスティング：サーバ起動時のタイムスタンプを全テンプレートに注入
-    ui_module.templates.env.globals["css_version"] = str(int(time.time()))
+    templates.env.globals["css_version"] = str(int(time.time()))
+    ui_module.set_templates(templates)
 
     # ログUIにも同じテンプレートインスタンスを共有する
-    logs_ui_module.set_templates(ui_module.templates)
+    logs_ui_module.set_templates(templates)
 
     # debug_logger に SQLiteStore をセットして DB ログ書き込みを有効化する
     from backend.lib.debug_logger import logger as debug_logger
