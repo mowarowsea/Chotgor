@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
     ui_module.templates.env.globals["css_version"] = str(int(time.time()))
 
     # ログUIにも同じテンプレートインスタンスを共有する
-    logs_ui_module.templates = ui_module.templates
+    logs_ui_module.set_templates(ui_module.templates)
 
     # debug_logger に SQLiteStore をセットして DB ログ書き込みを有効化する
     from backend.lib.debug_logger import logger as debug_logger
