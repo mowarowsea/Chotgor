@@ -21,6 +21,8 @@ export interface ScenarioTemplate {
   /** PC枠定義（engine_type="ensemble_pc" 用）。各枠は人物像・知っていること等を
    *  description に 1 テキストで持つ。セッション開始時に「誰が演じるか」を割り当てる。 */
   pc_slots?: PcSlot[];
+  /** バナー画像の base64 data URI（オプション）。一覧・選択画面の見栄え用。 */
+  banner_data?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -31,6 +33,8 @@ export interface PcSlot {
   slot_id: string;
   name: string;
   description: string;
+  /** アバター画像の base64 data URI（オプション）。表示専用でプロンプトには載らない。 */
+  image_data?: string | null;
 }
 
 /** セッション側の PC枠割当て。slot_id ごとに「ユーザ／AI キャラが演じる」を選ぶ。

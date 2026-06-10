@@ -247,11 +247,15 @@ class Scenario(Base):
     # ダイスプール仕様（JSON: {"d6": 10, "d100": 5} 等）。NULL/未指定なら engine 側で {"d6": 10} を既定値として使う。
     # ensemble_pc エンジン時のみ参照する。毎ターン engine 内で乱数生成して GM system prompt の {dice_pool} へ注入。
     dice_pool_spec = Column(JSON, nullable=True)
-    # PC枠定義（ensemble_pc エンジン時のみ参照）。JSON 配列 [{"slot_id":"pc1","name":"アリス","description":"..."}]。
+    # PC枠定義（ensemble_pc エンジン時のみ参照）。JSON 配列
+    # [{"slot_id":"pc1","name":"アリス","description":"...","image_data":"data:image/..."}]。
     # シナリオ作成時にユーザが PC として登場する「枠」（人物像・知っていること）を定義する。
+    # image_data は任意のアバター（base64 data URI）。プロンプトには載らない
+    # （normalize_pc_slots が既知キーのみ抽出するため表示専用）。
     # 各セッション起動時、`scenario_sessions.pc_assignments` で各 slot_id に「ユーザが演じる/AIキャラが演じる」を割り当てる。
     # NULL/空配列なら ensemble_pc を使えない（API バリデーションで弾く）。
     pc_slots = Column(JSON, nullable=True)
+    banner_data = Column(Text, nullable=True)              # バナー画像 (base64 data URI)。一覧・編集画面の見栄え用
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,

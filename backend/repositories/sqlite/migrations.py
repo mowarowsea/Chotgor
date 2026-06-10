@@ -407,6 +407,24 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE scenario_turns ADD COLUMN anticipation TEXT"
                 )
 
+    def _migrate_add_scenario_banner_data(self) -> None:
+        """`scenarios` に `banner_data` 列を追加する。
+
+        シナリオのバナー画像（base64 data URI）を保存する列。
+        既存 DB には列がないため ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenarios)"
+                ).fetchall()
+            }
+            if "banner_data" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenarios ADD COLUMN banner_data TEXT"
+                )
+
     def _migrate_add_memory_origin(self) -> None:
         """`inscribed_memories` と `working_memory_threads` に `origin` 列を追加する。
 

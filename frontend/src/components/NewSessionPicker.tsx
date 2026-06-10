@@ -439,14 +439,22 @@ export default function NewSessionPicker({
                         <button
                           key={t.id}
                           onClick={() => setScId(t.id)}
-                          className="text-left rounded-lg px-2.5 py-2 transition-colors"
+                          className="text-left rounded-lg overflow-hidden transition-colors"
                           style={{
                             border: `1px solid ${active ? "var(--ch-accent)" : "var(--ch-sep2)"}`,
                             background: active ? "oklch(50% 0.13 226 / 0.08)" : "transparent",
                           }}
                         >
+                          {t.banner_data && (
+                            <img
+                              src={t.banner_data}
+                              alt={t.title}
+                              className="w-full object-cover"
+                              style={{ aspectRatio: "3 / 1" }}
+                            />
+                          )}
                           <div
-                            className="text-xs font-semibold"
+                            className="text-xs font-semibold px-2.5 py-2"
                             style={{ color: active ? "var(--ch-accent)" : "rgb(var(--ch-t1))" }}
                           >
                             {t.title}

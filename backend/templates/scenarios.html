@@ -27,7 +27,11 @@
     <div class="ch-list" id="ch-scenario-list">
         {% for s in scenarios %}
         <div class="ch-row" data-href="/ui/scenarios/{{ s.id }}/edit">
+            {% if s.banner_data %}
+            <img src="{{ s.banner_data }}" class="ch-row__banner" alt="{{ s.title }}">
+            {% else %}
             <div class="ch-row__avatar ch-row__avatar--ph">{{ s.title[0] if s.title else '?' }}</div>
+            {% endif %}
 
             <div class="ch-row__body">
                 <div class="ch-row__head">

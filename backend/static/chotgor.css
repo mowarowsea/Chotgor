@@ -1267,6 +1267,34 @@ body.ch-root {
 .btn-remove:hover { color: var(--ch-danger); background: var(--ch-danger-bg); }
 .accordion-body { padding: 4px 12px 12px; border-top: 1px solid var(--ch-sep); }
 .accordion-body .form-group { margin-top: 12px; }
+
+/* シナリオバナー — 一覧サムネイル（scenarios）と編集ページプレビュー（scenario_edit） */
+.ch-row__banner {
+  width: 144px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--ch-radius-sm);
+  flex-shrink: 0;
+}
+.scenario-banner-preview {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 3 / 1;
+  object-fit: cover;
+  border-radius: var(--ch-radius-md);
+}
+.scenario-banner-preview--ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ch-bg-s);
+  border: 1px dashed var(--ch-sep);
+  color: var(--ch-t4);
+  font-family: var(--ch-fm);
+  font-size: 11px;
+}
+
 .add-model-row { display: flex; gap: 8px; margin-top: 10px; }
 .add-model-row .form-control { flex: 1; }
 

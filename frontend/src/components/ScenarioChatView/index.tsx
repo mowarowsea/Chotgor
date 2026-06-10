@@ -134,6 +134,12 @@ export default function ScenarioChatView({
     [npcs],
   );
 
+  /** PC枠名 → PcSlot のマップ（PC アバター取得用）。 */
+  const pcSlotByName = useMemo(
+    () => Object.fromEntries((scenario?.pc_slots ?? []).map((s) => [s.name, s])),
+    [scenario],
+  );
+
   /**
    * あらすじ区切り線を直前に挿入すべきターンの id を計算する。
    *
@@ -213,8 +219,10 @@ export default function ScenarioChatView({
     if (speaker_type === "npc" || speaker_type === "character") {
       return npcByName[speaker_name]?.image_data ?? null;
     }
-    // pc は Chotgor キャラ実体だが、シナリオ用 npc 表に居ないためここでは画像取得しない
-    // （将来、配役名→Character.image_data を解決して埋める拡張余地あり）
+    // pc はシナリオの pc_slots に登録されたアバター（image_data）を名前で解決する
+    if (speaker_type === "pc") {
+      return pcSlotByName[speaker_name]?.image_data ?? null;
+    }
     return null;
   };
 

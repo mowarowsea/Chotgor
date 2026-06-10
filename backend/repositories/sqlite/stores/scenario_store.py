@@ -34,6 +34,7 @@ class ScenarioChatStoreMixin:
         custom_system_prompt: str | None = None,
         dice_pool_spec: dict | None = None,
         pc_slots: list[dict] | None = None,
+        banner_data: str | None = None,
     ):
         """シナリオテンプレートを新規作成する。
 
@@ -44,9 +45,10 @@ class ScenarioChatStoreMixin:
         dice_pool_spec は ensemble_pc エンジン時に毎ターン乱数生成する種別と本数の dict。
                          例: {"d6": 10, "d100": 5}。NULL なら engine 側既定値 {"d6": 10}。
         pc_slots は ensemble_pc エンジン時の PC枠定義。
-                         [{"slot_id":"pc1","name":"アリス","description":"剣士。商家の出。..."}]。
+                         [{"slot_id":"pc1","name":"アリス","description":"剣士。商家の出。...","image_data":"data:image/..."}]。
                          シナリオ側で人物像・知っていることを含めて記述する。
                          セッション開始時に各枠を「ユーザが演じる/AIキャラが演じる」と割り振る。
+        banner_data はシナリオのバナー画像（base64 data URI）。一覧・編集画面の見栄え用。
 
         旧 user_alias は廃止。ユーザPCも pc_slots の 1 枠として定義する
         （セッション開始時に player_type="user" を割り当てる）。
@@ -70,6 +72,7 @@ class ScenarioChatStoreMixin:
                 custom_system_prompt=custom_system_prompt,
                 dice_pool_spec=dice_pool_spec,
                 pc_slots=pc_slots,
+                banner_data=banner_data,
             )
             session.add(obj)
             session.commit()

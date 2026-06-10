@@ -33,9 +33,14 @@ def get_templates() -> Jinja2Templates:
     return templates
 
 
-async def _read_image_data(form) -> str | None:
-    """フォームから画像を読み込みbase64 data URIとして返す。画像がなければNone。"""
-    image_file = form.get("image")
+async def _read_image_data(form, field: str = "image") -> str | None:
+    """フォームから画像を読み込みbase64 data URIとして返す。画像がなければNone。
+
+    Args:
+        form: await request.form() の結果。
+        field: 読み込むファイルフィールド名（既定 "image"。バナーは "banner"）。
+    """
+    image_file = form.get(field)
     if not image_file or not hasattr(image_file, "read"):
         return None
     content = await image_file.read()

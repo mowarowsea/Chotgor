@@ -20,6 +20,7 @@ def scenario_to_dict(scenario: Any) -> dict:
         "custom_system_prompt": scenario.custom_system_prompt,
         "dice_pool_spec": getattr(scenario, "dice_pool_spec", None),
         "pc_slots": getattr(scenario, "pc_slots", None) or [],
+        "banner_data": getattr(scenario, "banner_data", None),
         "created_at": scenario.created_at.isoformat() if scenario.created_at else None,
         "updated_at": scenario.updated_at.isoformat() if scenario.updated_at else None,
     }

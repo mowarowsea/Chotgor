@@ -29,6 +29,7 @@ def _parse_pc_slots(value: str | None) -> list[dict] | None:
         '[{"slot_id":"pc1","name":"アリス","description":"..."}]' → そのまま
         '' / None / 不正 JSON / 非 list → None
         slot_id/name 欠落要素はスキップ。
+        image_data は data:image/ で始まる文字列のみ保持（表示専用アバター）。
     """
     if not value or not value.strip():
         return None
@@ -47,11 +48,15 @@ def _parse_pc_slots(value: str | None) -> list[dict] | None:
         name = str(entry.get("name", "")).strip()
         if not sid or not name:
             continue
-        out.append({
+        normalized = {
             "slot_id": sid,
             "name": name,
             "description": str(entry.get("description", "") or "").strip(),
-        })
+        }
+        image_data = entry.get("image_data")
+        if isinstance(image_data, str) and image_data.startswith("data:image/"):
+            normalized["image_data"] = image_data
+        out.append(normalized)
     return out or None
 
 
@@ -133,6 +138,7 @@ async def create_scenario(request: Request):
         custom_system_prompt=(form.get("custom_system_prompt") or "") or None,
         dice_pool_spec=_parse_dice_pool_spec(form.get("dice_pool_spec")),
         pc_slots=_parse_pc_slots(form.get("pc_slots")),
+        banner_data=await _read_image_data(form, field="banner"),
     )
     return RedirectResponse(url=f"/ui/scenarios/{sid}/edit", status_code=303)
 
@@ -173,6 +179,12 @@ async def update_scenario(request: Request, scenario_id: str):
     title = (form.get("title") or "").strip()
     if title:
         update_kwargs["title"] = title
+    # バナーは新規アップロード時のみ更新、remove_banner チェック時はクリア。
+    new_banner = await _read_image_data(form, field="banner")
+    if new_banner:
+        update_kwargs["banner_data"] = new_banner
+    elif form.get("remove_banner"):
+        update_kwargs["banner_data"] = None
     request.app.state.sqlite.update_scenario(scenario_id, **update_kwargs)
     return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
 

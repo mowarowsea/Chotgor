@@ -66,6 +66,7 @@ def _normalize_pc_slots_input(raw: list[dict] | None) -> list[dict] | None:
 
     - slot_id / name が必須。description は任意。
     - slot_id は trim + 空チェック。重複は呼出側のバリデーションに任せる。
+    - image_data は data:image/ で始まる文字列のみ保持（表示専用アバター）。
     - None なら None を返す（DB 上 NULL のまま）。
     """
     if raw is None:
@@ -78,11 +79,15 @@ def _normalize_pc_slots_input(raw: list[dict] | None) -> list[dict] | None:
         name = str(entry.get("name", "")).strip()
         if not sid or not name:
             continue
-        out.append({
+        normalized = {
             "slot_id": sid,
             "name": name,
             "description": str(entry.get("description", "") or "").strip(),
-        })
+        }
+        image_data = entry.get("image_data")
+        if isinstance(image_data, str) and image_data.startswith("data:image/"):
+            normalized["image_data"] = image_data
+        out.append(normalized)
     return out
 
 
