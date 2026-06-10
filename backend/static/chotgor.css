@@ -1295,6 +1295,24 @@ body.ch-root {
   font-size: 11px;
 }
 
+/* Ghost Model 選択 — アコーディオンヘッダ内のスライドトグル型ラジオ（character_edit） */
+.ghost-pick {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.ghost-pick + .btn-remove { margin-left: 8px; }
+.ghost-pick__label {
+  font-family: var(--ch-fm);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ch-t4);
+  transition: color .15s;
+}
+.ghost-pick:has(input:checked) .ghost-pick__label { color: var(--ch-a); }
 .add-model-row { display: flex; gap: 8px; margin-top: 10px; }
 .add-model-row .form-control { flex: 1; }
 

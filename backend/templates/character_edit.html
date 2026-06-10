@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if character %}{{ character.name }}{% else %}new character{% endif %} &mdash; Chotgor{% endblock %}
-{% block breadcrumb %}/ <a href="/ui/" class="ch-crumb">characters</a> / {% if character %}{{ character.name }}{% else %}new{% endif %}{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/characters" class="ch-crumb">characters</a> / {% if character %}{{ character.name }}{% else %}new{% endif %}{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
@@ -34,7 +34,7 @@
             <div class="ch-pagehead__actions">
                 <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
                 <a href="/ui/working-memory/{{ character.id }}" class="ch-btn ch-btn--sm">working memory</a>
-                <a href="/ui/" class="ch-btn ch-btn--sm ch-btn--ghost">← 戻る</a>
+                <a href="/ui/characters" class="ch-btn ch-btn--sm ch-btn--ghost">← 戻る</a>
             </div>
         </div>
         {% else %}
@@ -138,7 +138,7 @@
 
             <div class="ch-field">
                 <span class="ch-label">利用モデル
-                    <span class="ch-hint">有効にしたモデルがモデルリストに表示される</span>
+                    <span class="ch-hint">有効にしたモデルがモデルリストに表示される。ghost スイッチでダイジェスト・忘却処理に使うモデル（Ghost Model）を1つ選べる</span>
                 </span>
 
                 <div class="accordion" id="model-accordion">
@@ -148,12 +148,20 @@
                     <div class="accordion-item" data-preset-id="{{ preset.id }}">
                         <input type="hidden" name="preset_ids" value="{{ preset.id }}">
                         <div class="accordion-header">
-                            <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
+                            <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▸</button>
                             <strong>{{ preset.name }}</strong>
                             <span class="ch-tag ch-tag--accent">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
+                            <label class="ghost-pick" title="Ghost Model（ダイジェスト・忘却処理に使うモデル）に設定する">
+                                <span class="ghost-pick__label">ghost</span>
+                                <span class="ch-toggle">
+                                    <input type="radio" name="ghost_model" value="{{ preset.id }}"
+                                        {% if character and character.ghost_model == preset.id %}checked{% endif %}>
+                                    <span class="ch-toggle__track"></span>
+                                </span>
+                            </label>
                             <button type="button" class="btn-remove" onclick="removePreset(this, '{{ preset.id }}')">✕</button>
                         </div>
-                        <div class="accordion-body">
+                        <div class="accordion-body" style="display:none">
                             <div class="ch-field">
                                 <label class="ch-label">Additional Instructions
                                     <span class="ch-hint">このモデル向けの追記指示（省略可）</span>
@@ -209,21 +217,6 @@
                 </label>
             </div>
 
-            {# Ghost Model #}
-            <div class="ch-field">
-                <label class="ch-label" for="ghost_model">Ghost Model
-                    <span class="ch-hint">ダイジェスト・忘却処理に使うモデル</span>
-                </label>
-                <select id="ghost_model" name="ghost_model" class="ch-select">
-                    <option value="">(未設定)</option>
-                    {% for preset in model_presets %}
-                    <option value="{{ preset.id }}"
-                        {% if character and character.ghost_model == preset.id %}selected{% endif %}>
-                        {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
         </section>
 
         {# ── tools ・ 外部連携 ── #}
@@ -320,9 +313,9 @@
         <div class="ch-actionbar">
             {% if not character %}
             <button type="submit" class="ch-btn ch-btn--primary">キャラクターを作成</button>
-            <a href="/ui/" class="ch-btn ch-btn--ghost">キャンセル</a>
+            <a href="/ui/characters" class="ch-btn ch-btn--ghost">キャンセル</a>
             {% else %}
-            <a href="/ui/" class="ch-btn ch-btn--ghost">← 戻る</a>
+            <a href="/ui/characters" class="ch-btn ch-btn--ghost">← 戻る</a>
             <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
             <span class="ch-spacer"></span>
             <span class="ch-meta">自動保存</span>
@@ -334,6 +327,11 @@
                     onclick="return confirm('「{{ character.name }}」と、その全ての記憶を削除します。\nこの操作は元に戻せません。本当に削除しますか？')">削除</button>
             {% endif %}
         </div>
+
+        {% if character %}
+        {# キャラクターUUID（DBを見に行かずに参照できるよう小さく表示） #}
+        <p style="margin-top:10px;font-family:var(--ch-fm);font-size:10px;color:var(--ch-t4);user-select:all">uuid: {{ character.id }}</p>
+        {% endif %}
     </form>
 
     {# クロップモーダル #}
@@ -367,10 +365,32 @@
         presetGroup.style.display = (mode === 'local_trigger') ? '' : 'none';
     }
 
-    /** アコーディオンを開閉する。 */
+    /** アコーディオンを開閉する（初期表示は閉、グリフ ▸/▾ も連動）。 */
     function toggleAccordion(btn) {
         const body = btn.closest('.accordion-item').querySelector('.accordion-body');
-        body.style.display = body.style.display === 'none' ? 'block' : 'none';
+        const isOpen = body.style.display !== 'none';
+        body.style.display = isOpen ? 'none' : 'block';
+        btn.textContent = isOpen ? '▸' : '▾';
+    }
+
+    /**
+     * Ghost Model ラジオに「選択済みをもう一度クリックで解除」の挙動を取り付ける。
+     * ラジオ単体では未設定に戻せないため、2度目のクリックで checked を外して
+     * 明示的に自動保存をトリガーする（change イベントが発生しないため）。
+     */
+    function attachGhostRadio(radio) {
+        radio.dataset.wasChecked = radio.checked ? '1' : '0';
+        radio.addEventListener('click', function () {
+            if (this.dataset.wasChecked === '1') {
+                this.checked = false;
+                this.dataset.wasChecked = '0';
+                if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
+            } else {
+                document.querySelectorAll('#model-accordion input[name="ghost_model"]')
+                    .forEach(r => { r.dataset.wasChecked = '0'; });
+                this.dataset.wasChecked = '1';
+            }
+        });
     }
 
     /**
@@ -432,6 +452,13 @@
             <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
             <strong>${name}</strong>
             <span class="ch-tag ch-tag--accent">${providerLabel}</span>
+            <label class="ghost-pick" title="Ghost Model（ダイジェスト・忘却処理に使うモデル）に設定する">
+                <span class="ghost-pick__label">ghost</span>
+                <span class="ch-toggle">
+                    <input type="radio" name="ghost_model" value="${presetId}">
+                    <span class="ch-toggle__track"></span>
+                </span>
+            </label>
             <button type="button" class="btn-remove" onclick="removePreset(this, '${presetId}')">✕</button>
         </div>
         <div class="accordion-body">
@@ -450,6 +477,7 @@
         </div>
     `;
         accordion.appendChild(item);
+        attachGhostRadio(item.querySelector('input[name="ghost_model"]'));
 
         opt.disabled = true;
         sel.value = '';
@@ -466,6 +494,8 @@
             updateWhenToSwitchVisibility(cb.checked);
             cb.addEventListener('change', () => updateWhenToSwitchVisibility(cb.checked));
         }
+        document.querySelectorAll('#model-accordion input[name="ghost_model"]')
+            .forEach(attachGhostRadio);
     });
 
     // ── アイコントリミング (Cropper.js) ──────────────
