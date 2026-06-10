@@ -295,6 +295,91 @@ class TestExtractTagsFromFile:
         assert tags[0]["tag_name"] == "ANTICIPATE_RESPONSE"
         assert tags[0]["fields"]["予想"] == "深掘りされそう"
 
+    def test_anticipation_survives_tool_calls_in_same_response(self, tmp_path):
+        """tool_use と ANTICIPATE_RESPONSE が同一レスポンスに共存しても両方表示されること。
+
+        ANTICIPATE_RESPONSE は tool-use 化していない全プロバイダー一律のテキストタグ。
+        以前は tool_use（例: post_working_memory_thread）が見つかると早期 return し、
+        本文のタグがスキャンされず予想バッジが消えていた（Bug修正確認）。
+        """
+        assistant_tool = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "id": "toolu_01",
+                     "name": "mcp__chotgor__post_working_memory_thread",
+                     "input": {"thread_id": "t1", "content": "進捗メモ"}},
+                ]
+            },
+        }
+        assistant_text = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "本文[ANTICIPATE_RESPONSE:続きが気になるはず]"}
+                ]
+            },
+        }
+        f = tmp_path / "response.log"
+        f.write_text(
+            json.dumps(assistant_tool, ensure_ascii=False) + "\n"
+            + json.dumps(assistant_text, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        tags = _extract_tags_from_file(f)
+
+        names = [t["tag_name"] for t in tags]
+        assert "POST_WORKING_MEMORY_THREAD" in names
+        assert "ANTICIPATE_RESPONSE" in names
+        anticipate = next(t for t in tags if t["tag_name"] == "ANTICIPATE_RESPONSE")
+        assert anticipate["fields"]["予想"] == "続きが気になるはず"
+
+    def test_anticipation_rewritten_after_tool_error_keeps_last_only(self, tmp_path):
+        """ツールエラー後の書き直しで文面の異なる予想タグが複数あっても最後の1件だけ表示されること。
+
+        実行時の extract_anticipation() は最後のタグを採用して保存するため、
+        ログ表示もそれに合わせる（完全一致でない重複は _dedupe_tags では潰せない）。
+        """
+        f = tmp_path / "response.log"
+        f.write_text(
+            "一度目の本文[ANTICIPATE_RESPONSE:最初の予想]\n"
+            "（ツールエラー後の書き直し）[ANTICIPATE_RESPONSE:書き直した予想]",
+            encoding="utf-8",
+        )
+        tags = _extract_tags_from_file(f)
+
+        anticipates = [t for t in tags if t["tag_name"] == "ANTICIPATE_RESPONSE"]
+        assert len(anticipates) == 1
+        assert anticipates[0]["fields"]["予想"] == "書き直した予想"
+
+    def test_multiline_tool_use_event_is_collected(self, tmp_path):
+        """tool_use の input に生改行を含み複数行に分断されたイベントも収集されること。
+
+        debug_logger は JSON 文字列値内の \\n を実際の改行に展開するため、
+        stream-json のイベントが複数行にまたがる。行単体パースだけだと
+        tool_use を取りこぼし、タグ方式フォールバックに落ちてしまう（Bug修正確認）。
+        """
+        event = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "id": "toolu_01",
+                     "name": "mcp__chotgor__post_working_memory_thread",
+                     "input": {"thread_id": "t1", "content": "1行目\n2行目\n3行目"}},
+                ]
+            },
+        }
+        # ensure_ascii=False かつ改行を実改行へ展開して debug_logger の出力を再現する
+        raw = json.dumps(event, ensure_ascii=False).replace("\\n", "\n")
+        assert "\n" in raw  # 前提: 複数行にまたがっている
+        f = tmp_path / "response.log"
+        f.write_text(raw + "\n", encoding="utf-8")
+
+        tags = _extract_tags_from_file(f)
+
+        assert len(tags) == 1
+        assert tags[0]["tag_name"] == "POST_WORKING_MEMORY_THREAD"
+
     def test_distinct_tags_with_same_name_are_kept(self, tmp_path):
         """同じタグ名でも fields が異なる重複（別引数で2回呼ばれた等）は両方残ること。
 

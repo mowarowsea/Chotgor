@@ -10,13 +10,14 @@ from pathlib import Path
 
 from backend.character_actions import tool_tags
 from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_NAME
+from backend.lib.stream_json import iter_stream_json_events
 from backend.lib.tag_parser import parse_tags
 
-# タグとして認識する名前一覧。
-# - tool_tags.TOOL_TO_TAG.values(): MCP/関数呼び出しから抽出されるタグ
-# - ANTICIPATE_RESPONSE: tool-use 化していない全プロバイダー一律のテキストタグ
-#   （anticipator.py の設計意図に従う）
-_KNOWN_TAG_NAMES = list(tool_tags.TOOL_TO_TAG.values()) + [ANTICIPATE_RESPONSE_TAG_NAME]
+# タグ方式フォールバックで認識する名前一覧（MCP/関数呼び出しから抽出されるタグ）。
+# ANTICIPATE_RESPONSE は tool-use 化していない全プロバイダー一律のテキストタグのため
+# ここには含めず、_last_anticipation_tag() で常に独立して抽出する
+# （anticipator.py の設計意図に従う）。
+_KNOWN_TAG_NAMES = list(tool_tags.TOOL_TO_TAG.values())
 
 # debug_logger._unescape_text() が JSON 文字列値内の \\n を実際の改行に展開するため、
 # バックスラッシュ直後の改行（\<LF>）が不正 JSON エスケープになる場合がある。
@@ -173,35 +174,44 @@ def _collect_tool_calls_from_single_json(data: dict) -> list[tuple[str, dict]]:
     return calls
 
 
+def _collect_tool_calls_from_cli_event(event: dict) -> list[tuple[str, dict]]:
+    """Claude CLI stream-json の1イベントからtool_useブロックを収集する。
+
+    tool_use ブロックは type=assistant イベントの message.content 配列内に含まれる。
+
+    Args:
+        event: パース済みのイベント辞書。
+
+    Returns:
+        (tool_name, args_dict) のリスト。
+    """
+    if not isinstance(event, dict) or event.get("type") != "assistant":
+        return []
+    calls: list[tuple[str, dict]] = []
+    for block in ((event.get("message") or {}).get("content") or []):
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            calls.append((block.get("name", ""), block.get("input", {}) or {}))
+    return calls
+
+
 def _collect_tool_calls_from_stream_json(text: str) -> list[tuple[str, dict]]:
     """stream-json（NDJSON）形式のClaude CLI出力からtool_useブロックを収集する。
 
     Claude CLI が --output-format stream-json --verbose で出力する形式では、
-    各行が独立したJSONイベントになる。tool_use ブロックは assistant イベントの
-    message.content 配列内に含まれる。
+    各行が独立したJSONイベントになる。ただし debug_logger が文字列値内の \\n を
+    実際の改行に展開するため、tool_use の input に改行を含むイベントは複数行に
+    分断される。複数行またがり・非 JSON 行混在の解釈は
+    iter_stream_json_events（backend/lib/stream_json.py）に委ねる。
 
     Args:
-        text: stream-json形式のテキスト（1行1JSONイベント）。
+        text: stream-json形式のテキスト（1行1JSONイベント、複数行またがりあり）。
 
     Returns:
         (tool_name, args_dict) のリスト。
     """
     calls: list[tuple[str, dict]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line, strict=False)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if not isinstance(event, dict):
-            continue
-        if event.get("type") != "assistant":
-            continue
-        for block in ((event.get("message") or {}).get("content") or []):
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                calls.append((block.get("name", ""), block.get("input", {}) or {}))
+    for event in iter_stream_json_events(text):
+        calls.extend(_collect_tool_calls_from_cli_event(event))
     return calls
 
 
@@ -249,6 +259,30 @@ def _extract_function_calls_from_json(text: str) -> list[dict]:
     return results
 
 
+def _last_anticipation_tag(text: str) -> list[dict]:
+    """テキストから [ANTICIPATE_RESPONSE:...] を抽出し、最後の1件だけ構造化して返す。
+
+    実行時の抽出（anticipator.extract_anticipation）と同じく「最後のタグを採用」する。
+    Claude CLI の stream-json では同一テキストが assistant text と result に重複して
+    現れるうえ、ツールエラー後の書き直しで**文面の異なる**タグが複数残ることもある。
+    実際に保存・次ターン注入されるのは最後の1件だけなので、ログ表示もそれに合わせる。
+
+    Args:
+        text: ログファイルのテキスト内容。
+
+    Returns:
+        構造化タグ辞書のリスト（0件 or 1件）。
+    """
+    try:
+        _, matches = parse_tags(text, [ANTICIPATE_RESPONSE_TAG_NAME], multiline=True)
+    except Exception:
+        return []
+    found = matches.get(ANTICIPATE_RESPONSE_TAG_NAME, [])
+    if not found:
+        return []
+    return [_parse_tag_body(ANTICIPATE_RESPONSE_TAG_NAME, found[-1].body)]
+
+
 def _extract_tags_from_file(file_path: Path) -> list[dict]:
     """ファイルからタグ / ツール呼び出しを抽出して構造化リストで返す。
 
@@ -261,6 +295,10 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
     タグ方式プロバイダー（Ollama / OpenRouter 等）はツール呼び出しが存在しないため、
     テキスト内のタグをフォールバックとして抽出する。
 
+    ANTICIPATE_RESPONSE は tool-use 化していない全プロバイダー一律のテキストタグのため、
+    どちらの経路でも本文から独立して抽出して合流させる（ツール呼び出しが見つかった
+    場合に予想タグが表示されなくなる取りこぼしを防ぐ）。
+
     Args:
         file_path: ログファイルのパス。
 
@@ -272,16 +310,19 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
     except Exception:
         return []
 
+    # 予想タグは経路によらず本文から抽出する（最後の1件のみ）
+    anticipation_tags = _last_anticipation_tag(text)
+
     # ツール呼び出し（JSON / stream-json）を優先して試みる
     tool_call_tags = _extract_function_calls_from_json(text)
     if tool_call_tags:
-        return _dedupe_tags(tool_call_tags)
+        return _dedupe_tags(tool_call_tags + anticipation_tags)
 
     # ツール呼び出しが見つからなければタグ方式（Ollama等）としてフォールバック
     try:
         _, matches = parse_tags(text, _KNOWN_TAG_NAMES, multiline=True)
     except Exception:
-        return []
+        return anticipation_tags
 
     # 全タグを (start位置, tag_name, body) フラットリストにしてから位置順にソートする。
     # タグ種別ごとに固める（INSCRIBE→DRIFT→...）のではなく、
@@ -292,7 +333,8 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
             flat.append((m.start, tag_name, m.body))
     flat.sort(key=lambda x: x[0])
 
-    return _dedupe_tags([_parse_tag_body(tn, body) for _, tn, body in flat])
+    # 予想タグは応答末尾に書かれる運用のため、リスト末尾に合流させる
+    return _dedupe_tags([_parse_tag_body(tn, body) for _, tn, body in flat] + anticipation_tags)
 
 
 def _dedupe_tags(tags: list[dict]) -> list[dict]:
