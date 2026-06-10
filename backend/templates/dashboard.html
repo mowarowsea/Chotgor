@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}characters &mdash; Chotgor{% endblock %}
-{% block breadcrumb %}/ <a href="/ui/" class="ch-crumb">characters</a>{% endblock %}
+{% block title %}dashboard &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/" class="ch-crumb">dashboard</a>{% endblock %}
 
 {% block content %}
 <div class="ch-shell">
@@ -8,87 +8,206 @@
     <header class="ch-hero">
         <span class="ch-eyebrow ch-hero__eyebrow">index</span>
         <div class="ch-hero__title">
-            <h1 class="ch-display">characters</h1>
-            <span class="ch-hero__count">· 全 {{ characters|length }} 名</span>
+            <h1 class="ch-display">dashboard</h1>
         </div>
     </header>
 
-    {% if characters %}
-    {# ── フィルタバー ─────────────────────────────────── #}
-    {% set active_count = characters|selectattr('relationship_status', 'equalto', 'active')|list|length %}
-    {% set estranged_count = characters|selectattr('relationship_status', 'equalto', 'estranged')|list|length %}
-    <div class="ch-filterbar">
-        <div class="ch-filters" id="ch-char-filters">
-            <span class="ch-filter is-active" data-filter="all">すべて<span class="ch-filter__count">{{ characters|length }}</span></span>
-            <span class="ch-filter" data-filter="active">active<span class="ch-filter__count">{{ active_count }}</span></span>
-            <span class="ch-filter" data-filter="estranged">estranged<span class="ch-filter__count">{{ estranged_count }}</span></span>
-        </div>
-        <a href="/ui/characters/new" class="ch-btn ch-btn--primary">+ 新規</a>
-    </div>
-
-    {# ── キャラクター一覧 ───────────────────────────────── #}
-    <div class="ch-list" id="ch-char-list">
-        {% for char in characters %}
-        <div class="ch-row" data-href="/ui/characters/{{ char.id }}" data-status="{{ char.relationship_status }}">
-            {% if char.image_data %}
-            <img src="{{ char.image_data }}" class="ch-row__avatar" alt="{{ char.name }}">
-            {% else %}
-            <div class="ch-row__avatar ch-row__avatar--ph">{{ char.name[0] }}</div>
-            {% endif %}
-
-            <div class="ch-row__body">
-                <div class="ch-row__head">
-                    <h2 class="ch-row__name">{{ char.name }}</h2>
-                    {% if char.relationship_status == 'estranged' %}
-                    <span class="ch-pill ch-pill--estranged"><span class="ch-dot"></span>estranged</span>
-                    {% else %}
-                    <span class="ch-pill ch-pill--active"><span class="ch-dot"></span>active</span>
-                    {% endif %}
+    {# ── 入口リンク ───────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-cardgrid">
+            <a href="/ui/characters" class="ch-card" style="text-decoration:none">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">C</span>
+                    <span class="ch-card__title">characters</span>
                 </div>
-                {% if char.system_prompt_block1 %}
-                <p class="ch-row__excerpt">{{ char.system_prompt_block1[:140] }}{% if char.system_prompt_block1|length > 140 %}…{% endif %}</p>
-                {% else %}
-                <p class="ch-row__excerpt">まだ輪郭が定まっていない。名前を選び、人格と物語を書く。</p>
-                {% endif %}
+                <div class="ch-card__meta">全 {{ character_count }} 名のキャラクター</div>
+            </a>
+            <a href="/ui/scenarios" class="ch-card" style="text-decoration:none">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">S</span>
+                    <span class="ch-card__title">scenarios</span>
+                </div>
+                <div class="ch-card__meta">全 {{ scenario_count }} 件のシナリオ</div>
+            </a>
+            <a href="/ui/logs" class="ch-card" style="text-decoration:none">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">L</span>
+                    <span class="ch-card__title">logs</span>
+                </div>
+                <div class="ch-card__meta">リクエスト・応答・ツール呼び出しの記録</div>
+            </a>
+            <a href="/ui/model-presets" class="ch-card" style="text-decoration:none">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">M</span>
+                    <span class="ch-card__title">models</span>
+                </div>
+                <div class="ch-card__meta">LLM モデルプリセット管理</div>
+            </a>
+        </div>
+    </section>
+
+    {# ── 使用量サマリー（今日・今週） ─────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">usage <small>・ LLM 使用量</small></h2>
+        </div>
+        <p class="ch-hint" style="margin-bottom:12px">
+            claude_cli / google プロバイダーのレスポンスから記録（それ以外のプロバイダーは未集計）。
+            コストは Claude CLI の参考値のみ。
+        </p>
+        <div class="ch-cardgrid">
+            <div class="ch-card">
+                <div class="ch-card__head"><span class="ch-card__title">今日</span></div>
+                <div class="ch-card__meta">
+                    リクエスト <strong>{{ usage_today.requests }}</strong> 回<br>
+                    In <strong>{{ "{:,}".format(usage_today.input_tokens) }}</strong> tok ／
+                    Out <strong>{{ "{:,}".format(usage_today.output_tokens) }}</strong> tok
+                    {% if usage_today.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_today.cost_usd) }}{% endif %}
+                </div>
+            </div>
+            <div class="ch-card">
+                <div class="ch-card__head"><span class="ch-card__title">今週（月曜起点）</span></div>
+                <div class="ch-card__meta">
+                    リクエスト <strong>{{ usage_week.requests }}</strong> 回<br>
+                    In <strong>{{ "{:,}".format(usage_week.input_tokens) }}</strong> tok ／
+                    Out <strong>{{ "{:,}".format(usage_week.output_tokens) }}</strong> tok
+                    {% if usage_week.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_week.cost_usd) }}{% endif %}
+                </div>
             </div>
         </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="ch-empty">
-        <p>まだ誰もいない。</p>
-        <a href="/ui/characters/new" class="ch-btn ch-btn--primary">最初のひとりを迎える</a>
-    </div>
-    {% endif %}
+    </section>
+
+    {# ── 日次集計 ─────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">daily <small>・ 直近14日</small></h2>
+        </div>
+        {% if daily %}
+        <div class="ch-table-wrap">
+            <table class="ch-table">
+                <thead>
+                    <tr>
+                        <th>日付</th><th>プロバイダー</th>
+                        <th style="text-align:right">リクエスト</th>
+                        <th style="text-align:right">In (tok)</th>
+                        <th style="text-align:right">Out (tok)</th>
+                        <th style="text-align:right">コスト</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in daily %}
+                    <tr>
+                        <td>{{ d.label }}</td>
+                        <td>{{ d.providers[0].provider if d.providers|length == 1 else '合計' }}</td>
+                        <td style="text-align:right"><strong>{{ d.requests }}</strong></td>
+                        <td style="text-align:right"><strong>{{ "{:,}".format(d.input_tokens) }}</strong></td>
+                        <td style="text-align:right"><strong>{{ "{:,}".format(d.output_tokens) }}</strong></td>
+                        <td style="text-align:right">{% if d.cost_usd %}${{ "%.4f"|format(d.cost_usd) }}{% else %}–{% endif %}</td>
+                    </tr>
+                    {# プロバイダーが複数の日のみ内訳行を出す（1種の日は上の行に名前を出している） #}
+                    {% if d.providers|length > 1 %}
+                    {% for p in d.providers %}
+                    <tr style="opacity:.65">
+                        <td></td>
+                        <td>{{ p.provider }}</td>
+                        <td style="text-align:right">{{ p.requests }}</td>
+                        <td style="text-align:right">{{ "{:,}".format(p.input_tokens) }}</td>
+                        <td style="text-align:right">{{ "{:,}".format(p.output_tokens) }}</td>
+                        <td style="text-align:right">{% if p.cost_usd %}${{ "%.4f"|format(p.cost_usd) }}{% else %}–{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="ch-hint">まだ記録がありません。claude_cli / google プロバイダーで会話すると集計されます。</p>
+        {% endif %}
+    </section>
+
+    {# ── 週次集計 ─────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">weekly <small>・ 直近8週</small></h2>
+        </div>
+        {% if weekly %}
+        <div class="ch-table-wrap">
+            <table class="ch-table">
+                <thead>
+                    <tr>
+                        <th>週</th><th>プロバイダー</th>
+                        <th style="text-align:right">リクエスト</th>
+                        <th style="text-align:right">In (tok)</th>
+                        <th style="text-align:right">Out (tok)</th>
+                        <th style="text-align:right">コスト</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for w in weekly %}
+                    <tr>
+                        <td>{{ w.label }}</td>
+                        <td>{{ w.providers[0].provider if w.providers|length == 1 else '合計' }}</td>
+                        <td style="text-align:right"><strong>{{ w.requests }}</strong></td>
+                        <td style="text-align:right"><strong>{{ "{:,}".format(w.input_tokens) }}</strong></td>
+                        <td style="text-align:right"><strong>{{ "{:,}".format(w.output_tokens) }}</strong></td>
+                        <td style="text-align:right">{% if w.cost_usd %}${{ "%.4f"|format(w.cost_usd) }}{% else %}–{% endif %}</td>
+                    </tr>
+                    {% for p in w.providers %}
+                    {% if w.providers|length > 1 %}
+                    <tr style="opacity:.65">
+                        <td></td>
+                        <td>{{ p.provider }}</td>
+                        <td style="text-align:right">{{ p.requests }}</td>
+                        <td style="text-align:right">{{ "{:,}".format(p.input_tokens) }}</td>
+                        <td style="text-align:right">{{ "{:,}".format(p.output_tokens) }}</td>
+                        <td style="text-align:right">{% if p.cost_usd %}${{ "%.4f"|format(p.cost_usd) }}{% else %}–{% endif %}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="ch-hint">まだ記録がありません。</p>
+        {% endif %}
+    </section>
+
+    {# ── 直近リクエスト ───────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">recent <small>・ 直近のリクエスト</small></h2>
+        </div>
+        {% if recent_events %}
+        <div class="ch-table-wrap">
+            <table class="ch-table">
+                <thead>
+                    <tr>
+                        <th>時刻</th><th>対象</th><th>feature</th><th>モデル</th>
+                        <th style="text-align:right">In</th>
+                        <th style="text-align:right">Out</th>
+                        <th style="text-align:right">コスト</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in recent_events %}
+                    <tr>
+                        <td style="white-space:nowrap">{{ e.created_at.strftime("%m-%d %H:%M") if e.created_at else "" }}</td>
+                        <td>{{ e.target }}{% if e.preset_name %}<span class="ch-hint">@{{ e.preset_name }}</span>{% endif %}</td>
+                        <td>{{ e.feature }}</td>
+                        <td>{{ e.model or e.provider }}</td>
+                        <td style="text-align:right">{{ "{:,}".format(e.input_tokens) }}</td>
+                        <td style="text-align:right">{{ "{:,}".format(e.output_tokens) }}</td>
+                        <td style="text-align:right">{% if e.total_cost_usd %}${{ "%.4f"|format(e.total_cost_usd) }}{% else %}–{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="ch-hint">まだ記録がありません。</p>
+        {% endif %}
+    </section>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-  (function () {
-    // 行クリックで編集画面へ。内部リンク（data-stop）はそのまま。
-    document.querySelectorAll('#ch-char-list .ch-row').forEach(function (row) {
-      row.addEventListener('click', function (e) {
-        if (e.target.closest('[data-stop]')) return;
-        var href = row.getAttribute('data-href');
-        if (href) window.location.href = href;
-      });
-    });
-
-    // ステータスフィルタ
-    var filters = document.querySelectorAll('#ch-char-filters .ch-filter');
-    var rows = document.querySelectorAll('#ch-char-list .ch-row');
-    filters.forEach(function (f) {
-      f.addEventListener('click', function () {
-        filters.forEach(function (x) { x.classList.remove('is-active'); });
-        f.classList.add('is-active');
-        var want = f.getAttribute('data-filter');
-        rows.forEach(function (row) {
-          var ok = want === 'all' || row.getAttribute('data-status') === want;
-          row.style.display = ok ? '' : 'none';
-        });
-      });
-    });
-  })();
-</script>
 {% endblock %}

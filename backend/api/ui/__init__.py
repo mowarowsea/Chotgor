@@ -3,7 +3,8 @@
 旧 `backend/api/ui.py`（単一ファイル）をページ単位で分割したパッケージ。
 
 - common.py     — テンプレート保持・共有フォーム/レスポンスヘルパー
-- characters.py — ダッシュボード＆キャラクター管理
+- dashboard.py  — ダッシュボード（index・LLM 使用量集計）
+- characters.py — キャラクター管理
 - memories.py   — 保存記憶＆ワーキングメモリ閲覧
 - presets.py    — LLM モデルプリセット管理
 - scenarios.py  — シナリオテンプレート＆NPC 管理
@@ -19,10 +20,11 @@ from backend.api.ui.common import (  # noqa: F401
     get_templates,
     set_templates,
 )
-from backend.api.ui import characters, memories, presets, scenarios, settings
+from backend.api.ui import characters, dashboard, memories, presets, scenarios, settings
 
 # 各ページルーターを集約した親ルーター（main.py が include する）
 router = APIRouter()
+router.include_router(dashboard.router)
 router.include_router(characters.router)
 router.include_router(memories.router)
 router.include_router(presets.router)

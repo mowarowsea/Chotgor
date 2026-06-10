@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 
+from backend.lib.stream_json import iter_stream_json_events
 from backend.providers.base import BaseLLMProvider
 
 
@@ -135,6 +136,45 @@ def _parse_stream_json(raw: str) -> str:
                 if block.get("type") == "text":
                     collected += block["text"]
     return collected
+
+
+def _extract_usage_from_stream_json(raw: str) -> dict | None:
+    """Claude CLI stream-json 出力からトークン使用量を抽出する。
+
+    type == "result" イベントの usage（実行全体の合計）と total_cost_usd、
+    および assistant イベントの message.model（実際に使われたモデルID）を集める。
+    result イベントが存在しない（途中エラー等）場合は None を返す。
+
+    Returns:
+        {"model", "input_tokens", "output_tokens", "cache_read_input_tokens",
+         "cache_creation_input_tokens", "total_cost_usd"} の辞書、または None。
+    """
+    model = ""
+    usage: dict | None = None
+    cost: float | None = None
+    # CLI の生 stdout は1行1イベントだが、複数行またがり・非 JSON 行混在にも
+    # 対応できるよう iter_stream_json_events（backend/lib/stream_json.py）で走査する。
+    for event in iter_stream_json_events(raw):
+        etype = event.get("type")
+        if etype == "assistant" and not model:
+            model = (event.get("message") or {}).get("model", "") or ""
+        elif etype == "result":
+            u = event.get("usage")
+            if isinstance(u, dict):
+                usage = u
+            c = event.get("total_cost_usd")
+            if isinstance(c, (int, float)):
+                cost = float(c)
+    if usage is None:
+        return None
+    return {
+        "model": model,
+        "input_tokens": int(usage.get("input_tokens") or 0),
+        "output_tokens": int(usage.get("output_tokens") or 0),
+        "cache_read_input_tokens": int(usage.get("cache_read_input_tokens") or 0),
+        "cache_creation_input_tokens": int(usage.get("cache_creation_input_tokens") or 0),
+        "total_cost_usd": cost,
+    }
 
 
 def _extract_thinking_from_stream_json(raw: str) -> str:
@@ -285,6 +325,28 @@ class ClaudeCliProvider(BaseLLMProvider):
             allowed_tools=allowed_tools,
         )
 
+    def _record_usage_from_raw(self, raw: str) -> None:
+        """raw stream-json から使用量を抽出して llm_usage_events へ記録する。
+
+        result イベントが無い（エラー中断等）場合は何もしない。
+        記録失敗はチャット本流に影響しない（usage_recorder 側で握り潰す）。
+        """
+        from backend.lib.usage_recorder import record_usage
+
+        usage = _extract_usage_from_stream_json(raw)
+        if usage is None:
+            return
+        record_usage(
+            provider=self.PROVIDER_ID,
+            model=usage["model"] or self.model,
+            preset_name=self.preset_name,
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            cache_read_input_tokens=usage["cache_read_input_tokens"],
+            cache_creation_input_tokens=usage["cache_creation_input_tokens"],
+            total_cost_usd=usage["total_cost_usd"],
+        )
+
     def _make_env(
         self,
         batch_context: dict | None = None,
@@ -427,6 +489,7 @@ class ClaudeCliProvider(BaseLLMProvider):
 
             raw_stdout = result.stdout.decode("utf-8", errors="replace")
             self._log_response(raw_stdout)
+            self._record_usage_from_raw(raw_stdout)
             return raw_stdout
 
         except FileNotFoundError:
@@ -530,7 +593,11 @@ class ClaudeCliProvider(BaseLLMProvider):
             finally:
                 # ツール呼び出しを含む全NDJSONイベント行をログに記録する。
                 # テキストのみだとtool_useブロックが欠落してログUIにバッジが表示されない。
-                self._log_response("\n".join(raw_lines))
+                raw_joined = "\n".join(raw_lines)
+                self._log_response(raw_joined)
+                # contextvars は ctx.run でコピー済みのため、このスレッドからの記録でも
+                # feature / target / request_id が正しく付く。
+                self._record_usage_from_raw(raw_joined)
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         ctx = contextvars.copy_context()
@@ -639,7 +706,11 @@ class ClaudeCliProvider(BaseLLMProvider):
             finally:
                 # ツール呼び出しを含む全NDJSONイベント行をログに記録する。
                 # テキストのみだとtool_useブロックが欠落してログUIにバッジが表示されない。
-                self._log_response("\n".join(raw_lines))
+                raw_joined = "\n".join(raw_lines)
+                self._log_response(raw_joined)
+                # contextvars は ctx.run でコピー済みのため、このスレッドからの記録でも
+                # feature / target / request_id が正しく付く。
+                self._record_usage_from_raw(raw_joined)
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         ctx = contextvars.copy_context()

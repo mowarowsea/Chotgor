@@ -25,7 +25,8 @@
         </div>
         <nav class="ch-topbar__right">
             <div class="ch-nav">
-                <a href="/ui/" class="ch-nav__link {% if path == '/ui/' %}is-active{% endif %}">characters</a>
+                <a href="/ui/" class="ch-nav__link {% if path == '/ui/' %}is-active{% endif %}">dashboard</a>
+                <a href="/ui/characters" class="ch-nav__link {% if path.startswith('/ui/characters') or path.startswith('/ui/inscribed_memories') or path.startswith('/ui/working-memory') %}is-active{% endif %}">characters</a>
                 <a href="/ui/scenarios" class="ch-nav__link {% if path.startswith('/ui/scenarios') %}is-active{% endif %}">scenarios</a>
                 <a href="/ui/model-presets" class="ch-nav__link {% if path.startswith('/ui/model-presets') %}is-active{% endif %}">models</a>
                 <a href="/ui/settings" class="ch-nav__link {% if path.startswith('/ui/settings') %}is-active{% endif %}">settings</a>

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}characters &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/characters" class="ch-crumb">characters</a>{% endblock %}
+
+{% block content %}
+<div class="ch-shell">
+    {# ── ヒーロー ─────────────────────────────────────── #}
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">index</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">characters</h1>
+            <span class="ch-hero__count">· 全 {{ characters|length }} 名</span>
+        </div>
+    </header>
+
+    {% if characters %}
+    {# ── フィルタバー ─────────────────────────────────── #}
+    {% set active_count = characters|selectattr('relationship_status', 'equalto', 'active')|list|length %}
+    {% set estranged_count = characters|selectattr('relationship_status', 'equalto', 'estranged')|list|length %}
+    <div class="ch-filterbar">
+        <div class="ch-filters" id="ch-char-filters">
+            <span class="ch-filter is-active" data-filter="all">すべて<span class="ch-filter__count">{{ characters|length }}</span></span>
+            <span class="ch-filter" data-filter="active">active<span class="ch-filter__count">{{ active_count }}</span></span>
+            <span class="ch-filter" data-filter="estranged">estranged<span class="ch-filter__count">{{ estranged_count }}</span></span>
+        </div>
+        <a href="/ui/characters/new" class="ch-btn ch-btn--primary">+ 新規</a>
+    </div>
+
+    {# ── キャラクター一覧 ───────────────────────────────── #}
+    <div class="ch-list" id="ch-char-list">
+        {% for char in characters %}
+        <div class="ch-row" data-href="/ui/characters/{{ char.id }}" data-status="{{ char.relationship_status }}">
+            {% if char.image_data %}
+            <img src="{{ char.image_data }}" class="ch-row__avatar" alt="{{ char.name }}">
+            {% else %}
+            <div class="ch-row__avatar ch-row__avatar--ph">{{ char.name[0] }}</div>
+            {% endif %}
+
+            <div class="ch-row__body">
+                <div class="ch-row__head">
+                    <h2 class="ch-row__name">{{ char.name }}</h2>
+                    {% if char.relationship_status == 'estranged' %}
+                    <span class="ch-pill ch-pill--estranged"><span class="ch-dot"></span>estranged</span>
+                    {% else %}
+                    <span class="ch-pill ch-pill--active"><span class="ch-dot"></span>active</span>
+                    {% endif %}
+                </div>
+                {% if char.system_prompt_block1 %}
+                <p class="ch-row__excerpt">{{ char.system_prompt_block1[:140] }}{% if char.system_prompt_block1|length > 140 %}…{% endif %}</p>
+                {% else %}
+                <p class="ch-row__excerpt">まだ輪郭が定まっていない。名前を選び、人格と物語を書く。</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="ch-empty">
+        <p>まだ誰もいない。</p>
+        <a href="/ui/characters/new" class="ch-btn ch-btn--primary">最初のひとりを迎える</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    // 行クリックで編集画面へ。内部リンク（data-stop）はそのまま。
+    document.querySelectorAll('#ch-char-list .ch-row').forEach(function (row) {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('[data-stop]')) return;
+        var href = row.getAttribute('data-href');
+        if (href) window.location.href = href;
+      });
+    });
+
+    // ステータスフィルタ
+    var filters = document.querySelectorAll('#ch-char-filters .ch-filter');
+    var rows = document.querySelectorAll('#ch-char-list .ch-row');
+    filters.forEach(function (f) {
+      f.addEventListener('click', function () {
+        filters.forEach(function (x) { x.classList.remove('is-active'); });
+        f.classList.add('is-active');
+        var want = f.getAttribute('data-filter');
+        rows.forEach(function (row) {
+          var ok = want === 'all' || row.getAttribute('data-status') === want;
+          row.style.display = ok ? '' : 'none';
+        });
+      });
+    });
+  })();
+</script>
+{% endblock %}

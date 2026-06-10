@@ -6,6 +6,7 @@ import pytest
 
 from backend.providers.claude_cli_provider import (
     _extract_switch_angle_from_stream_json,
+    _extract_usage_from_stream_json,
     _format_conversation,
 )
 
@@ -277,3 +278,118 @@ class TestExtractSwitchAngleFromStreamJson:
             },
         ])
         assert _extract_switch_angle_from_stream_json(raw) == ("fastModel", "軽く")
+
+
+class TestExtractUsageFromStreamJson:
+    """Claude CLI の stream-json 出力からトークン使用量を抽出する関数のテスト。
+
+    使用量はダッシュボード（/ui/）の集計の元データになるため、抽出の正確さと
+    「取れないときは記録しない（None）」の両方を確認する：
+    - 正常系: result イベントの usage / total_cost_usd と assistant イベントの
+      message.model（実際に使われたモデルID）が揃って抽出される
+    - 欠落系: result イベントが無い（途中エラー等）場合は None
+    - 部分欠落系: usage のキー欠け・cost 無しはゼロ／None で補完される
+    - 汚染系: 非 JSON 行が混ざっても result イベントを取りこぼさない
+    - 複数件: result が複数あるときは最後の1件（最終的な合計）を採用する
+    """
+
+    def _make_result_event(self, usage: dict, cost: float | None = None) -> str:
+        """result イベント1行を組み立てるヘルパー。"""
+        event: dict = {"type": "result", "usage": usage}
+        if cost is not None:
+            event["total_cost_usd"] = cost
+        return json.dumps(event, ensure_ascii=False)
+
+    def test_extract_full_usage(self):
+        """usage 全項目・cost・モデルIDが揃った stream-json から全て抽出されること。"""
+        raw = (
+            json.dumps({
+                "type": "assistant",
+                "message": {"model": "claude-sonnet-4-6", "content": []},
+            })
+            + "\n"
+            + self._make_result_event(
+                {
+                    "input_tokens": 1200,
+                    "output_tokens": 340,
+                    "cache_read_input_tokens": 800,
+                    "cache_creation_input_tokens": 50,
+                },
+                cost=0.0123,
+            )
+        )
+
+        assert _extract_usage_from_stream_json(raw) == {
+            "model": "claude-sonnet-4-6",
+            "input_tokens": 1200,
+            "output_tokens": 340,
+            "cache_read_input_tokens": 800,
+            "cache_creation_input_tokens": 50,
+            "total_cost_usd": 0.0123,
+        }
+
+    def test_returns_none_without_result_event(self):
+        """result イベントが無い（途中エラー等で打ち切られた）場合は None が返ること。"""
+        raw = json.dumps({
+            "type": "assistant",
+            "message": {"model": "claude-sonnet-4-6", "content": []},
+        })
+
+        assert _extract_usage_from_stream_json(raw) is None
+
+    def test_missing_usage_keys_default_to_zero(self):
+        """usage のキーが一部欠けていてもゼロ補完され、cost 無しは None になること。"""
+        raw = self._make_result_event({"input_tokens": 10})
+
+        extracted = _extract_usage_from_stream_json(raw)
+
+        assert extracted == {
+            "model": "",
+            "input_tokens": 10,
+            "output_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "total_cost_usd": None,
+        }
+
+    def test_garbage_lines_do_not_swallow_result(self):
+        """非 JSON 行が混ざっても後続の result イベントを取りこぼさないこと。"""
+        raw = "WARNING: cli notice\n" + self._make_result_event(
+            {"input_tokens": 7, "output_tokens": 3}
+        )
+
+        extracted = _extract_usage_from_stream_json(raw)
+
+        assert extracted is not None
+        assert extracted["input_tokens"] == 7
+        assert extracted["output_tokens"] == 3
+
+    def test_last_result_event_wins(self):
+        """result イベントが複数ある場合は最後の1件（最終合計）が採用されること。"""
+        raw = (
+            self._make_result_event({"input_tokens": 1, "output_tokens": 1}, cost=0.001)
+            + "\n"
+            + self._make_result_event({"input_tokens": 100, "output_tokens": 50}, cost=0.02)
+        )
+
+        extracted = _extract_usage_from_stream_json(raw)
+
+        assert extracted is not None
+        assert extracted["input_tokens"] == 100
+        assert extracted["output_tokens"] == 50
+        assert extracted["total_cost_usd"] == 0.02
+
+    def test_first_assistant_model_wins(self):
+        """assistant イベントが複数あるときは最初の model を採用すること（tool-use ループでも同一実行）。"""
+        raw = (
+            json.dumps({"type": "assistant", "message": {"model": "model-a", "content": []}})
+            + "\n"
+            + json.dumps({"type": "assistant", "message": {"model": "model-b", "content": []}})
+            + "\n"
+            + self._make_result_event({"input_tokens": 1, "output_tokens": 1})
+        )
+
+        extracted = _extract_usage_from_stream_json(raw)
+
+        assert extracted is not None
+        assert extracted["model"] == "model-a"

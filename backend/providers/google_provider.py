@@ -147,6 +147,30 @@ class GoogleProvider(BaseLLMProvider):
             models.append({"id": model_id, "name": m.get("displayName", model_id)})
         return sorted(models, key=lambda m: m["id"])
 
+    def _record_usage_from_metadata(self, usage_metadata) -> None:
+        """usage_metadata（GenerateContentResponseUsageMetadata）から使用量を記録する。
+
+        prompt_token_count を入力、candidates_token_count + thoughts_token_count を
+        出力としてカウントする。usage_metadata が無い場合は何もしない。
+        記録失敗はチャット本流に影響しない（usage_recorder 側で握り潰す）。
+        """
+        from backend.lib.usage_recorder import record_usage
+
+        if usage_metadata is None:
+            return
+        prompt = int(getattr(usage_metadata, "prompt_token_count", 0) or 0)
+        candidates = int(getattr(usage_metadata, "candidates_token_count", 0) or 0)
+        thoughts = int(getattr(usage_metadata, "thoughts_token_count", 0) or 0)
+        cached = int(getattr(usage_metadata, "cached_content_token_count", 0) or 0)
+        record_usage(
+            provider=self.PROVIDER_ID,
+            model=self.model,
+            preset_name=self.preset_name,
+            input_tokens=prompt,
+            output_tokens=candidates + thoughts,
+            cache_read_input_tokens=cached,
+        )
+
     @staticmethod
     def _extract_block_reason(response_or_chunk) -> str | None:
         """レスポンス/ストリームチャンクからブロック理由を抽出する内部ヘルパー。
@@ -294,6 +318,7 @@ class GoogleProvider(BaseLLMProvider):
         try:
             response = await asyncio.to_thread(run)
             self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
+            self._record_usage_from_metadata(getattr(response, "usage_metadata", None))
             # thought=True のパートは思考ブロック（Gemma4/Gemini共通）。回答テキストのみ結合して返す。
             text_parts = []
             for candidate in (response.candidates or []):
@@ -349,6 +374,8 @@ class GoogleProvider(BaseLLMProvider):
 
         # 累積テキストをスレッド外に渡すためのコンテナ
         result_holder: list[str] = []
+        # 最終チャンクの usage_metadata をスレッド外に渡すためのコンテナ
+        usage_holder: list = []
 
         def run():
             """同期SDKストリーミングを走査し、思考ブロックと通常テキストを区別してキューへ送信する。
@@ -361,6 +388,10 @@ class GoogleProvider(BaseLLMProvider):
                 for chunk in client.models.generate_content_stream(
                     model=self.model, contents=contents, config=config
                 ):
+                    # usage_metadata は最終チャンクに合計値が入る（途中チャンクの値は上書きされる）
+                    um = getattr(chunk, "usage_metadata", None)
+                    if um is not None:
+                        usage_holder[:] = [um]
                     # candidates[0].content.parts を直接走査して思考ブロックを抽出する
                     candidates = getattr(chunk, "candidates", None)
                     if not candidates:
@@ -434,6 +465,7 @@ class GoogleProvider(BaseLLMProvider):
 
         # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
         self._log_response(result_holder[0] if result_holder else "")
+        self._record_usage_from_metadata(usage_holder[0] if usage_holder else None)
 
         if error_item is not None:
             yield ("text", f"[Google API error: {error_item}]")
@@ -512,6 +544,7 @@ class GoogleProvider(BaseLLMProvider):
 
         # _log_response は asyncio コンテキストで呼び出す（スレッド終了後）
         self._log_response(response.model_dump() if hasattr(response, "model_dump") else str(response))
+        self._record_usage_from_metadata(getattr(response, "usage_metadata", None))
 
         text = ""
         thinking = ""

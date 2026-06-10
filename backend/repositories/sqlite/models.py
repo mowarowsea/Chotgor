@@ -364,6 +364,32 @@ class DebugLogEntry(Base):
     raw_dir = Column(String, nullable=True)        # 生ファイルフォルダのパス
 
 
+class LlmUsageEvent(Base):
+    """LLM 使用量イベント — 1 API 呼び出し単位のリクエスト数・トークン数の記録。
+
+    レスポンスから使用量が判明するプロバイダー（claude_cli / google）が
+    usage_recorder 経由で1呼び出しごとに1行を追加する。tool-use ループで
+    複数回 API を叩いた場合はその回数だけ行が増える（リクエストごとの粒度）。
+    ダッシュボード（/ui/）の日次・週次集計の元データ。
+    """
+
+    __tablename__ = "llm_usage_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(), index=True)
+    provider = Column(String, nullable=False)       # claude_cli / google 等
+    model = Column(String, nullable=True)           # 実際に使われたモデルID（レスポンス由来があれば優先）
+    preset_name = Column(String, nullable=True)     # 使用プリセット名
+    target = Column(String, nullable=True)          # キャラ名/シナリオ名/バッチ対象名（log_context 由来）
+    feature = Column(String, nullable=True)         # chat / scenario / chronicle / trigger 等
+    request_id = Column(String, nullable=True, index=True)  # debug_log_entries.request_id と同じ8桁hex
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cache_read_input_tokens = Column(Integer, nullable=False, default=0)      # claude_cli のみ
+    cache_creation_input_tokens = Column(Integer, nullable=False, default=0)  # claude_cli のみ
+    total_cost_usd = Column(Float, nullable=True)   # claude_cli の result イベント由来（参考値）
+
+
 class ScenarioTurn(Base):
     """シナリオセッションの発話ターン — ユーザ・Narrator・NPC・(将来)既存キャラを多態で格納する。"""
 

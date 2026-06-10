@@ -73,18 +73,16 @@ def _build_enabled_providers(form) -> dict:
     return enabled_providers
 
 
-# --- Dashboard ---
+# --- Characters ---
 
-@router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+@router.get("/characters", response_class=HTMLResponse)
+async def characters_list(request: Request):
+    """キャラクター一覧ページ（旧 index。index はダッシュボードに譲った）。"""
     chars = request.app.state.sqlite.list_characters()
     return get_templates().TemplateResponse(
-        "dashboard.html",
+        "characters.html",
         {"request": request, "characters": chars},
     )
-
-
-# --- Characters ---
 
 @router.get("/characters/new", response_class=HTMLResponse)
 async def new_character_form(request: Request):
@@ -133,14 +131,14 @@ async def create_character(request: Request):
         self_reflection_n_turns=self_reflection_n_turns,
         allowed_tools=allowed_tools,
     )
-    return RedirectResponse(url="/ui/", status_code=303)
+    return RedirectResponse(url="/ui/characters", status_code=303)
 
 
 @router.get("/characters/{character_id}", response_class=HTMLResponse)
 async def edit_character_form(request: Request, character_id: str):
     char = request.app.state.sqlite.get_character(character_id)
     if not char:
-        return RedirectResponse(url="/ui/", status_code=303)
+        return RedirectResponse(url="/ui/characters", status_code=303)
     model_presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
         "character_edit.html",
@@ -189,14 +187,14 @@ async def update_character(request: Request, character_id: str):
         update_kwargs["image_data"] = None
 
     request.app.state.sqlite.update_character(character_id, **update_kwargs)
-    return _save_response(request, "/ui/")
+    return _save_response(request, "/ui/characters")
 
 
 @router.post("/characters/{character_id}/delete")
 async def delete_character(request: Request, character_id: str):
     """キャラクターと、紐づく全データをカスケード削除する（SQLite → LanceDB の順）。"""
     request.app.state.memory_manager.delete_character_with_inscribed_memories(character_id)
-    return RedirectResponse(url="/ui/", status_code=303)
+    return RedirectResponse(url="/ui/characters", status_code=303)
 
 
 # --- Memories ---

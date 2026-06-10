@@ -32,6 +32,7 @@ from backend.repositories.sqlite.models import (  # noqa: F401
     DebugLogEntry,
     GlobalSetting,
     InscribedMemory,
+    LlmUsageEvent,
     LLMModelPreset,
     Scenario,
     ScenarioNpc,
@@ -50,6 +51,7 @@ from backend.repositories.sqlite.stores.inscribed_memory_store import (
 from backend.repositories.sqlite.stores.preset_store import PresetStoreMixin
 from backend.repositories.sqlite.stores.scenario_store import ScenarioChatStoreMixin
 from backend.repositories.sqlite.stores.settings_store import SettingsStoreMixin
+from backend.repositories.sqlite.stores.usage_store import UsageStoreMixin
 from backend.repositories.sqlite.stores.working_memory_store import (
     WorkingMemoryStoreMixin,
 )
@@ -64,6 +66,7 @@ class SQLiteStore(
     WorkingMemoryStoreMixin,
     ScenarioChatStoreMixin,
     DebugLogStoreMixin,
+    UsageStoreMixin,
     SQLiteMigrationsMixin,
 ):
     """SQLite永続化ストア — 全テーブルへのCRUD操作を提供するファサードクラス。
