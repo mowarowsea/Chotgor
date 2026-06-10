@@ -1,20 +1,27 @@
-"""Tests for GoogleProvider — Gemma限定処理廃止とモジュールレベルimport対応。
+"""GoogleProvider のユニットテスト。
 
-今回の変更点を重点的に検証する：
-1. _build_contents がシステムプロンプトをメッセージに埋め込まなくなったこと
-2. _build_generate_config が常に system_instruction をセットすること
-3. Gemmaモデルに対しても Gemini と同じ扱い（system_instruction セット）になること
-4. モジュールレベルimport 移行後も _GOOGLE_GENAI_AVAILABLE=False 時にエラーを返すこと
+外部 API 通信（google-genai SDK）はすべてモックに置き換え、
+SDK 境界の変換・組み立て・エラー伝搬ロジックを検証する。
 
-外部API通信はすべてモックで置き換える。
+検証する観点:
+    - _build_contents — メッセージ → types.Content 変換
+      （role マッピング・空コンテンツ除外・システムプロンプトを本文へ埋め込まないこと）
+    - _build_generate_config — system_instruction / thinking_config の組み立て
+    - generate / generate_stream / generate_stream_typed — thought=True パートの除外と
+      ('thinking', ...) 分離（実APIは通常テキストに thought=None を返す。False ではない）
+    - _extract_block_reason / ブロック時のエラー伝搬 — PROHIBITED_CONTENT 等で
+      応答が空のとき UI へエラーが届くこと（過去の実バグの回帰テスト）
+    - google-genai 未インストール時のエラー返却
 """
 
 import pytest
 from unittest.mock import MagicMock, patch
 
+from backend.providers.google_provider import GoogleProvider
+
 
 # ---------------------------------------------------------------------------
-# ヘルパー: モジュール名前空間を差し替えるコンテキストマネージャ
+# ヘルパー: モジュール名前空間・SDKレスポンスのモック生成
 # ---------------------------------------------------------------------------
 
 
@@ -65,47 +72,93 @@ def _patch_provider(mock_client=None, available: bool = True):
     return stack
 
 
+def _make_mock_part(text: str, thought):
+    """指定した text と thought 属性を持つ part モックを生成する。
+
+    Args:
+        text: パートのテキスト内容。
+        thought: True=思考ブロック、None=通常テキスト（実APIの挙動に合わせる）。
+    """
+    part = MagicMock()
+    part.text = text
+    part.thought = thought
+    return part
+
+
+def _make_mock_response(parts_spec: list[tuple]):
+    """指定したパーツ仕様からレスポンス／ストリームチャンクのモックを生成する。
+
+    generate のレスポンスと generate_stream のチャンクは同じ構造
+    （candidates[0].content.parts）なので、どちらのテストでも共用する。
+
+    Args:
+        parts_spec: (text, thought) のタプルリスト。thought は True または None。
+
+    Returns:
+        response/chunk モック。candidates[0].content.parts に parts_spec が反映される。
+    """
+    parts = [_make_mock_part(text, thought) for text, thought in parts_spec]
+    content = MagicMock()
+    content.parts = parts
+    candidate = MagicMock()
+    candidate.content = content
+    response = MagicMock()
+    response.candidates = [candidate]
+    # debug_logger がレスポンスを JSON 化する経路向け（dict を返せば安全）
+    response.model_dump = MagicMock(return_value={})
+    return response
+
+
+def _make_blocked_chunk(block_reason: str | None = None, finish_reason: str | None = None, has_content: bool = False):
+    """ブロック検出テスト用の chunk/response モックを生成するヘルパー。
+
+    PROHIBITED_CONTENT のような状況を再現するため、prompt_feedback.block_reason や
+    candidates[0].finish_reason をセットできる柔軟なモックを返す。
+
+    Args:
+        block_reason: prompt_feedback.block_reason の値（None なら未設定）。
+        finish_reason: candidates[0].finish_reason の値（None なら candidates 自体を空にする）。
+        has_content: True なら candidate.content をテキスト付きで生成、False なら content=None。
+    """
+    obj = MagicMock()
+    obj.model_dump = MagicMock(return_value={})
+    if block_reason is not None:
+        pf = MagicMock()
+        pf.block_reason = block_reason
+        obj.prompt_feedback = pf
+    else:
+        obj.prompt_feedback = None
+
+    if finish_reason is not None:
+        candidate = MagicMock()
+        candidate.finish_reason = finish_reason
+        if has_content:
+            part = _make_mock_part("回答", None)
+            content = MagicMock()
+            content.parts = [part]
+            candidate.content = content
+        else:
+            candidate.content = None
+        obj.candidates = [candidate]
+    else:
+        obj.candidates = []
+    return obj
+
+
 # ---------------------------------------------------------------------------
-# _build_contents — システムプロンプト非埋め込みの確認
+# _build_contents — メッセージ変換
 # ---------------------------------------------------------------------------
 
 
 class TestBuildContents:
-    """_build_contents の動作を検証するテストクラス。
+    """_build_contents のメッセージ → types.Content 変換を検証するテストクラス。
 
-    Gemma/Gemini によるモデル分岐がなくなり、
-    システムプロンプトをメッセージ内に埋め込まなくなったことを確認する。
+    role マッピング・空コンテンツ除外と、システムプロンプトをメッセージ本文へ
+    埋め込まないこと（system_instruction 経由に一本化されていること）を確認する。
     """
-
-    def _make_provider(self, model: str = "gemini-2.0-flash"):
-        """テスト用 GoogleProvider を生成するヘルパー。
-
-        Args:
-            model: 使用するモデルID。
-
-        Returns:
-            GoogleProvider インスタンス。
-        """
-        from backend.providers.google_provider import GoogleProvider
-        return GoogleProvider(api_key="dummy", model=model)
-
-    def test_text_message_converted_to_part(self):
-        """プレーンテキストメッセージが types.Part(text=...) に変換されること。"""
-        from backend.providers.google_provider import GoogleProvider
-
-        provider = GoogleProvider(api_key="dummy")
-        messages = [{"role": "user", "content": "こんにちは"}]
-
-        with _patch_provider() as stack:
-            contents = provider._build_contents(messages)
-
-        # types.Content が1件生成されること
-        assert len(contents) == 1
 
     def test_assistant_role_mapped_to_model(self):
         """role='assistant' のメッセージが types.Content(role='model', ...) に変換されること。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy")
         messages = [{"role": "assistant", "content": "はい"}]
 
@@ -114,15 +167,13 @@ class TestBuildContents:
         with _patch_provider() as stack:
             # Content コンストラクタの呼び出し引数を捕捉する
             stack._mock_types.Content = MagicMock(side_effect=lambda **kw: captured_calls.append(kw))
-            contents = provider._build_contents(messages)
+            provider._build_contents(messages)
 
         assert any(c.get("role") == "model" for c in captured_calls), \
             "assistant ロールは 'model' にマッピングされるべき"
 
     def test_user_role_not_remapped(self):
         """role='user' のメッセージが types.Content(role='user', ...) のままであること。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy")
         messages = [{"role": "user", "content": "テスト"}]
 
@@ -130,18 +181,16 @@ class TestBuildContents:
 
         with _patch_provider() as stack:
             stack._mock_types.Content = MagicMock(side_effect=lambda **kw: captured_calls.append(kw))
-            contents = provider._build_contents(messages)
+            provider._build_contents(messages)
 
         assert any(c.get("role") == "user" for c in captured_calls)
 
     def test_system_prompt_not_injected_into_first_user_message(self):
         """_build_contents はシステムプロンプトをユーザーメッセージに埋め込まないこと。
 
-        旧Gemma対応コードではシステムプロンプトを最初のユーザーターン先頭に
-        挿入していたが、Gemma4以降は不要のため削除された。
+        システムプロンプトは _build_generate_config の system_instruction 経由で
+        渡される設計であり、メッセージ本文には混入しない。
         """
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy", model="gemma-3-27b-it")
         messages = [{"role": "user", "content": "本文"}]
 
@@ -157,29 +206,8 @@ class TestBuildContents:
         assert captured_part_texts == ["本文"], \
             f"システムプロンプトがメッセージに埋め込まれている: {captured_part_texts}"
 
-    def test_gemma_model_no_special_handling(self):
-        """Gemmaモデルでも Gemini と同じコードパスを通ること（分岐なし）。
-
-        旧コードにあった `supports_system_instruction` フラグが廃止され、
-        戻り値がタプルではなくリスト単体になっていることを確認する。
-        """
-        from backend.providers.google_provider import GoogleProvider
-
-        provider = GoogleProvider(api_key="dummy", model="gemma-3-27b-it")
-        messages = [{"role": "user", "content": "hi"}]
-
-        with _patch_provider():
-            result = provider._build_contents(messages)
-
-        # 旧コードはタプル (contents, bool) を返していたが、
-        # 現在はリストのみを返すことを確認する
-        assert isinstance(result, list), \
-            f"_build_contents はリストを返すべきだが {type(result)} が返った"
-
     def test_empty_content_skipped(self):
         """content が空（None や空文字）のメッセージは contents に追加されないこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy")
         messages = [
             {"role": "user", "content": None},
@@ -194,24 +222,19 @@ class TestBuildContents:
 
 
 # ---------------------------------------------------------------------------
-# _build_generate_config — system_instruction が常に設定されること
+# _build_generate_config — system_instruction / thinking_config
 # ---------------------------------------------------------------------------
 
 
 class TestBuildGenerateConfig:
-    """_build_generate_config の動作を検証するテストクラス。
+    """_build_generate_config の設定組み立てを検証するテストクラス。
 
-    Gemma/Gemini の分岐廃止により system_instruction が常にセットされることを確認する。
+    system_instruction が全モデルで常にセットされること、
+    thinking_level に応じた thinking_config の有無を確認する。
     """
 
     def test_system_instruction_always_set(self):
-        """system_instruction が常に GenerateContentConfig に渡されること。
-
-        旧コードでは Gemma の場合に system_instruction を省略していたが、
-        廃止後は全モデルで設定される。
-        """
-        from backend.providers.google_provider import GoogleProvider
-
+        """system_instruction が常に GenerateContentConfig に渡されること（Gemma 含む全モデル）。"""
         provider = GoogleProvider(api_key="dummy", model="gemma-3-27b-it")
         captured_kwargs: dict = {}
 
@@ -224,25 +247,8 @@ class TestBuildGenerateConfig:
         assert captured_kwargs.get("system_instruction") == "システムプロンプト", \
             "system_instruction が GenerateContentConfig に渡されていない"
 
-    def test_system_instruction_set_for_gemini_too(self):
-        """Geminiモデルでも system_instruction が設定されること（従来通り）。"""
-        from backend.providers.google_provider import GoogleProvider
-
-        provider = GoogleProvider(api_key="dummy", model="gemini-2.0-flash")
-        captured_kwargs: dict = {}
-
-        with _patch_provider() as stack:
-            stack._mock_types.GenerateContentConfig = MagicMock(
-                side_effect=lambda **kw: captured_kwargs.update(kw)
-            )
-            provider._build_generate_config("Geminiプロンプト")
-
-        assert captured_kwargs.get("system_instruction") == "Geminiプロンプト"
-
     def test_thinking_config_set_when_thinking_level_not_default(self):
         """thinking_level != 'default' のとき thinking_config が設定されること。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy", model="gemini-2.5-flash", thinking_level="medium")
         thinking_kwargs: dict = {}
 
@@ -258,8 +264,6 @@ class TestBuildGenerateConfig:
 
     def test_thinking_config_not_set_when_default(self):
         """thinking_level == 'default' のとき thinking_config が設定されないこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy", model="gemini-2.0-flash", thinking_level="default")
         captured_kwargs: dict = {}
 
@@ -288,8 +292,6 @@ class TestPackageUnavailable:
     @pytest.mark.asyncio
     async def test_generate_returns_error_when_unavailable(self):
         """google-genai 未インストール時に generate がエラー文字列を返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy")
 
         with patch("backend.providers.google_provider._GOOGLE_GENAI_AVAILABLE", False):
@@ -300,8 +302,6 @@ class TestPackageUnavailable:
     @pytest.mark.asyncio
     async def test_generate_stream_yields_error_when_unavailable(self):
         """google-genai 未インストール時に generate_stream がエラーをyieldして終了すること。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy")
 
         with patch("backend.providers.google_provider._GOOGLE_GENAI_AVAILABLE", False):
@@ -315,8 +315,6 @@ class TestPackageUnavailable:
     @pytest.mark.asyncio
     async def test_generate_stream_typed_yields_error_when_unavailable(self):
         """google-genai 未インストール時に generate_stream_typed がエラータプルをyieldすること。"""
-        from backend.providers.google_provider import GoogleProvider
-
         provider = GoogleProvider(api_key="dummy")
 
         with patch("backend.providers.google_provider._GOOGLE_GENAI_AVAILABLE", False):
@@ -335,38 +333,6 @@ class TestPackageUnavailable:
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_part(text: str, thought):
-    """指定した text と thought 属性を持つ part モックを生成する。
-
-    Args:
-        text: パートのテキスト内容。
-        thought: True=思考ブロック、None=通常テキスト（実APIの挙動に合わせる）。
-    """
-    part = MagicMock()
-    part.text = text
-    part.thought = thought
-    return part
-
-
-def _make_mock_response(parts_spec: list[tuple]):
-    """指定したパーツ仕様から generate 用レスポンスモックを生成する。
-
-    Args:
-        parts_spec: (text, thought) のタプルリスト。thought は True または None。
-
-    Returns:
-        response モック。candidates[0].content.parts に parts_spec が反映される。
-    """
-    parts = [_make_mock_part(text, thought) for text, thought in parts_spec]
-    content = MagicMock()
-    content.parts = parts
-    candidate = MagicMock()
-    candidate.content = content
-    response = MagicMock()
-    response.candidates = [candidate]
-    return response
-
-
 class TestThoughtFiltering:
     """thought=True のパートが回答テキストに混入しないことを検証するテストクラス。
 
@@ -377,8 +343,6 @@ class TestThoughtFiltering:
     @pytest.mark.asyncio
     async def test_generate_excludes_thought_parts(self):
         """generate が thought=True のパートを除外して通常テキストのみ返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         response = _make_mock_response([
             ("思考テキスト", True),
             ("回答テキスト", None),
@@ -397,8 +361,6 @@ class TestThoughtFiltering:
     @pytest.mark.asyncio
     async def test_generate_returns_only_text_when_no_thought(self):
         """thought パートがない場合は全テキストをそのまま返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         response = _make_mock_response([
             ("part1", None),
             ("part2", None),
@@ -416,17 +378,11 @@ class TestThoughtFiltering:
     @pytest.mark.asyncio
     async def test_generate_stream_excludes_thought_parts(self):
         """generate_stream が thought=True のパートをyieldしないこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         # thought=True パートと通常テキストパートを1チャンクに混在させる
-        thought_part = _make_mock_part("思考テキスト", True)
-        text_part = _make_mock_part("回答テキスト", None)
-        content = MagicMock()
-        content.parts = [thought_part, text_part]
-        candidate = MagicMock()
-        candidate.content = content
-        chunk = MagicMock()
-        chunk.candidates = [candidate]
+        chunk = _make_mock_response([
+            ("思考テキスト", True),
+            ("回答テキスト", None),
+        ])
 
         mock_client = MagicMock()
         mock_client.models.generate_content_stream.return_value = iter([chunk])
@@ -443,16 +399,10 @@ class TestThoughtFiltering:
     @pytest.mark.asyncio
     async def test_generate_stream_typed_thought_true_is_thinking(self):
         """generate_stream_typed が thought=True を ('thinking', ...) としてyieldすること。"""
-        from backend.providers.google_provider import GoogleProvider
-
-        thought_part = _make_mock_part("思考テキスト", True)
-        text_part = _make_mock_part("回答テキスト", None)
-        content = MagicMock()
-        content.parts = [thought_part, text_part]
-        candidate = MagicMock()
-        candidate.content = content
-        chunk = MagicMock()
-        chunk.candidates = [candidate]
+        chunk = _make_mock_response([
+            ("思考テキスト", True),
+            ("回答テキスト", None),
+        ])
 
         mock_client = MagicMock()
         mock_client.models.generate_content_stream.return_value = iter([chunk])
@@ -473,15 +423,7 @@ class TestThoughtFiltering:
 
         実APIは通常テキストに thought=None を返す（False ではない）。
         """
-        from backend.providers.google_provider import GoogleProvider
-
-        text_part = _make_mock_part("通常テキスト", None)
-        content = MagicMock()
-        content.parts = [text_part]
-        candidate = MagicMock()
-        candidate.content = content
-        chunk = MagicMock()
-        chunk.candidates = [candidate]
+        chunk = _make_mock_response([("通常テキスト", None)])
 
         mock_client = MagicMock()
         mock_client.models.generate_content_stream.return_value = iter([chunk])
@@ -495,7 +437,6 @@ class TestThoughtFiltering:
 
         assert result == [("text", "通常テキスト")]
 
-
     @pytest.mark.asyncio
     async def test_tool_turn_separates_thought_into_thinking_field(self):
         """_tool_turn が thought=True のパートを text ではなく thinking フィールドに格納すること。
@@ -504,17 +445,10 @@ class TestThoughtFiltering:
         実際の呼び出しパスであり、思考テキストは text ではなく thinking に格納されることで
         service.py が ("thinking", ...) チャンクとして UI に転送できるようになる。
         """
-        from backend.providers.google_provider import GoogleProvider
-
-        thought_part = _make_mock_part("思考テキスト", True)
-        text_part = _make_mock_part("回答テキスト", None)
-        content = MagicMock()
-        content.parts = [thought_part, text_part]
-        candidate = MagicMock()
-        candidate.content = content
-        response = MagicMock()
-        response.candidates = [candidate]
-        response.model_dump = MagicMock(return_value={})
+        response = _make_mock_response([
+            ("思考テキスト", True),
+            ("回答テキスト", None),
+        ])
 
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = response
@@ -535,41 +469,6 @@ class TestThoughtFiltering:
 # ---------------------------------------------------------------------------
 
 
-def _make_blocked_chunk(block_reason: str | None = None, finish_reason: str | None = None, has_content: bool = False):
-    """ブロック検出テスト用の chunk/response モックを生成するヘルパー。
-
-    PROHIBITED_CONTENT のような状況を再現するため、prompt_feedback.block_reason や
-    candidates[0].finish_reason をセットできる柔軟なモックを返す。
-
-    Args:
-        block_reason: prompt_feedback.block_reason の値（None なら未設定）。
-        finish_reason: candidates[0].finish_reason の値（None なら candidates 自体を空にする）。
-        has_content: True なら candidate.content をテキスト付きで生成、False なら content=None。
-    """
-    obj = MagicMock()
-    if block_reason is not None:
-        pf = MagicMock()
-        pf.block_reason = block_reason
-        obj.prompt_feedback = pf
-    else:
-        obj.prompt_feedback = None
-
-    if finish_reason is not None:
-        candidate = MagicMock()
-        candidate.finish_reason = finish_reason
-        if has_content:
-            part = _make_mock_part("回答", None)
-            content = MagicMock()
-            content.parts = [part]
-            candidate.content = content
-        else:
-            candidate.content = None
-        obj.candidates = [candidate]
-    else:
-        obj.candidates = []
-    return obj
-
-
 class TestExtractBlockReason:
     """_extract_block_reason の動作を検証するテストクラス。
 
@@ -580,43 +479,31 @@ class TestExtractBlockReason:
 
     def test_returns_block_reason_from_prompt_feedback(self):
         """prompt_feedback.block_reason がある場合、その値を文字列で返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         obj = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT")
         assert GoogleProvider._extract_block_reason(obj) == "PROHIBITED_CONTENT"
 
     def test_returns_finish_reason_when_content_empty(self):
         """finish_reason が STOP/MAX_TOKENS 以外かつ content=None のとき finish_reason を返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         obj = _make_blocked_chunk(finish_reason="SAFETY", has_content=False)
         assert GoogleProvider._extract_block_reason(obj) == "SAFETY"
 
     def test_returns_none_for_normal_stop(self):
         """finish_reason=STOP の通常応答に対しては None を返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         obj = _make_blocked_chunk(finish_reason="STOP", has_content=True)
         assert GoogleProvider._extract_block_reason(obj) is None
 
     def test_returns_none_for_max_tokens(self):
         """finish_reason=MAX_TOKENS は正常終了扱いで None を返すこと（途中まで応答あり）。"""
-        from backend.providers.google_provider import GoogleProvider
-
         obj = _make_blocked_chunk(finish_reason="MAX_TOKENS", has_content=True)
         assert GoogleProvider._extract_block_reason(obj) is None
 
     def test_returns_none_when_no_block_info(self):
         """ブロック情報も candidates もない通常チャンクに対しては None を返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         obj = _make_blocked_chunk()  # 何も設定しない
         assert GoogleProvider._extract_block_reason(obj) is None
 
     def test_prompt_feedback_takes_priority_over_finish_reason(self):
         """prompt_feedback.block_reason と finish_reason が両方ある場合、block_reason を優先すること。"""
-        from backend.providers.google_provider import GoogleProvider
-
         obj = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT", finish_reason="SAFETY")
         assert GoogleProvider._extract_block_reason(obj) == "PROHIBITED_CONTENT"
 
@@ -632,10 +519,7 @@ class TestBlockedResponseHandling:
     @pytest.mark.asyncio
     async def test_tool_turn_returns_error_on_blocked(self):
         """_tool_turn が PROHIBITED_CONTENT のとき error=True とエラーテキストを返すこと。"""
-        from backend.providers.google_provider import GoogleProvider
-
         response = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT")
-        response.model_dump = MagicMock(return_value={})
 
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = response
@@ -653,10 +537,7 @@ class TestBlockedResponseHandling:
     @pytest.mark.asyncio
     async def test_tool_turn_no_error_on_normal_response(self):
         """_tool_turn が通常応答に対しては error=False のままであること（誤検知防止）。"""
-        from backend.providers.google_provider import GoogleProvider
-
         response = _make_mock_response([("通常応答", None)])
-        response.model_dump = MagicMock(return_value={})
         # 通常応答にも prompt_feedback がついてくる場合がある（block_reason=None）
         pf = MagicMock()
         pf.block_reason = None
@@ -680,8 +561,6 @@ class TestBlockedResponseHandling:
         実ログ（gemma-4-31b-it の PROHIBITED_CONTENT）と同じ構造を再現する:
         chunk.candidates が空かつ prompt_feedback.block_reason がセットされている状態。
         """
-        from backend.providers.google_provider import GoogleProvider
-
         chunk = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT")
         chunk.text = None  # chunk.text フォールバックも発火しないこと
 
@@ -707,8 +586,6 @@ class TestBlockedResponseHandling:
 
         candidates は存在するが finish_reason=SAFETY 等で content が None になるパターン。
         """
-        from backend.providers.google_provider import GoogleProvider
-
         chunk = _make_blocked_chunk(finish_reason="SAFETY", has_content=False)
         chunk.text = None
 
@@ -726,38 +603,3 @@ class TestBlockedResponseHandling:
             t == "text" and "SAFETY" in msg
             for t, msg in items
         ), f"ブロック理由のテキストが yield されていない: {items}"
-
-
-# ---------------------------------------------------------------------------
-# generate — Gemmaモデルで system_instruction が使われること
-# ---------------------------------------------------------------------------
-
-
-class TestGemmaSystemInstruction:
-    """Gemmaモデルで system_instruction が設定されることを統合的に検証するテストクラス。
-
-    旧コードでは Gemma の場合にシステムプロンプトをメッセージに埋め込み、
-    system_instruction を省略していた。廃止後は常に system_instruction が設定される。
-    """
-
-    @pytest.mark.asyncio
-    async def test_generate_uses_system_instruction_for_gemma(self):
-        """Gemmaモデルで generate を呼んだとき system_instruction が設定されること。"""
-        from backend.providers.google_provider import GoogleProvider
-
-        response = _make_mock_response([("応答", None)])
-        mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = response
-
-        provider = GoogleProvider(api_key="dummy", model="gemma-3-27b-it")
-
-        captured_config_kwargs: dict = {}
-
-        with _patch_provider(mock_client) as stack:
-            stack._mock_types.GenerateContentConfig = MagicMock(
-                side_effect=lambda **kw: captured_config_kwargs.update(kw) or MagicMock()
-            )
-            await provider.generate("テストシステムプロンプト", [{"role": "user", "content": "hi"}])
-
-        assert captured_config_kwargs.get("system_instruction") == "テストシステムプロンプト", \
-            "Gemmaモデルでも system_instruction が GenerateContentConfig に渡されるべき"

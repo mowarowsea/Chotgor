@@ -8,6 +8,7 @@ ChatService のフロー全体を検証する:
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from backend.character_actions.executor import ToolCall, ToolTurnResult
 from backend.services.chat.models import ChatRequest, Message
 from backend.services.chat.service import ChatService, extract_text_content
 
@@ -204,7 +205,6 @@ def _make_tool_provider(turn_results: list):
         BaseLLMProvider サブクラスのインスタンス。
     """
     from backend.providers.base import BaseLLMProvider
-    from backend.character_actions.executor import ToolTurnResult
 
     class FakeToolProvider(BaseLLMProvider):
         """テスト用ツール対応プロバイダー。"""
@@ -234,7 +234,6 @@ async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
     サービス → generate_with_tools → ToolExecutor → inscribe_memory → memory_manager という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
     """
-    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -276,7 +275,6 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
     サービス → generate_with_tools → ToolExecutor → carve_narrative → Carver → sqlite という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
     """
-    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -319,7 +317,6 @@ async def test_execute_with_tools_creates_thread_via_post_working_memory_thread(
     サービス → generate_with_tools → ToolExecutor → Threader → WorkingMemoryManager という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
     """
-    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -368,7 +365,6 @@ async def test_execute_with_tools_adds_post_via_post_working_memory_thread():
     """SUPPORTS_TOOLS=True のプロバイダーが post_working_memory_thread ツール（既存更新）を呼び出したとき、
     working_memory_manager.add_post が実際に呼ばれること。
     """
-    from backend.character_actions.executor import ToolCall, ToolTurnResult
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])

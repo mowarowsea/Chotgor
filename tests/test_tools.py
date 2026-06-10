@@ -4,8 +4,12 @@
 SELF_DRIFT 操作・switch_angle が InscribedMemoryManager / DriftManager を通じて正しく実行されるかを検証する。
 """
 
+import asyncio
+
 import pytest
 from unittest.mock import MagicMock, patch
+
+from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn
 
 from backend.character_actions.executor import (
     ANTHROPIC_TOOLS,
@@ -432,9 +436,6 @@ class TestApiGuardDecorator:
 
     def test_missing_package_returns_error_string(self):
         """存在しないパッケージ名でデコレートされた generate() はエラー文字列を返す。"""
-        import asyncio
-        from backend.providers.base import _api_guard
-        from backend.providers.base import BaseLLMProvider
 
         class FakeProvider(BaseLLMProvider):
             """テスト用フェイクプロバイダー（パッケージ不在）。"""
@@ -455,9 +456,6 @@ class TestApiGuardDecorator:
 
     def test_empty_api_key_returns_error_with_settings_key_name(self):
         """api_key が空の場合、_API_SETTINGS_KEY の名前を含むエラーメッセージを返す。"""
-        import asyncio
-        from backend.providers.base import _api_guard
-        from backend.providers.base import BaseLLMProvider
 
         class FakeProvider(BaseLLMProvider):
             """テスト用フェイクプロバイダー（APIキー空）。"""
@@ -479,9 +477,6 @@ class TestApiGuardDecorator:
 
     def test_valid_api_key_passes_through(self):
         """api_key が設定されていれば元のメソッドを呼び出す。"""
-        import asyncio
-        from backend.providers.base import _api_guard
-        from backend.providers.base import BaseLLMProvider
 
         class FakeProvider(BaseLLMProvider):
             """テスト用フェイクプロバイダー（正常）。"""
@@ -501,9 +496,6 @@ class TestApiGuardDecorator:
 
     def test_async_generator_yields_error_on_missing_package(self):
         """async generator にデコレートされた generate_stream() はエラーを yield してリターンする。"""
-        import asyncio
-        from backend.providers.base import _api_guard
-        from backend.providers.base import BaseLLMProvider
 
         class FakeProvider(BaseLLMProvider):
             """テスト用フェイクプロバイダー（ストリーミング・パッケージ不在）。"""
@@ -529,9 +521,6 @@ class TestApiGuardDecorator:
 
     def test_async_generator_yields_error_on_empty_api_key(self):
         """async generator にデコレートされた generate_stream() は API key エラーを yield してリターンする。"""
-        import asyncio
-        from backend.providers.base import _api_guard
-        from backend.providers.base import BaseLLMProvider
 
         class FakeProvider(BaseLLMProvider):
             """テスト用フェイクプロバイダー（ストリーミング・APIキー空）。"""
@@ -558,7 +547,6 @@ class TestApiGuardDecorator:
 
     def test_xai_inherits_correct_settings_key(self):
         """XAIProvider の generate() は xai_api_key を含むエラーメッセージを返す。"""
-        import asyncio
         from backend.providers.xai_provider import XAIProvider
 
         async def run():
@@ -570,7 +558,6 @@ class TestApiGuardDecorator:
 
     def test_anthropic_settings_key_in_error(self):
         """AnthropicProvider の generate() は anthropic_api_key を含むエラーメッセージを返す。"""
-        import asyncio
         from backend.providers.anthropic_provider import AnthropicProvider
 
         async def run():
@@ -586,8 +573,6 @@ class TestApiGuardToolTurnDecorator:
 
     def test_missing_package_returns_tool_turn_result_with_error(self):
         """存在しないパッケージ名でデコレートされた _tool_turn() はエラー ToolTurnResult を返す。"""
-        import asyncio
-        from backend.providers.base import _api_guard_tool_turn, BaseLLMProvider
         from backend.character_actions.executor import ToolTurnResult
 
         class FakeProvider(BaseLLMProvider):
@@ -609,8 +594,6 @@ class TestApiGuardToolTurnDecorator:
 
     def test_empty_api_key_returns_tool_turn_result_with_error(self):
         """api_key が空の場合、_API_SETTINGS_KEY の名前を含むエラー ToolTurnResult を返す。"""
-        import asyncio
-        from backend.providers.base import _api_guard_tool_turn, BaseLLMProvider
         from backend.character_actions.executor import ToolTurnResult
 
         class FakeProvider(BaseLLMProvider):
@@ -634,7 +617,6 @@ class TestApiGuardToolTurnDecorator:
 
     def test_anthropic_tool_turn_error_on_no_key(self):
         """AnthropicProvider の _tool_turn() は api_key なしでエラー ToolTurnResult を返す。"""
-        import asyncio
         from backend.providers.anthropic_provider import AnthropicProvider
 
         async def run():
@@ -663,7 +645,6 @@ class TestGenerateWithToolsLoop:
         Returns:
             BaseLLMProvider を継承したモックプロバイダーインスタンス。
         """
-        from backend.providers.base import BaseLLMProvider
 
         class MockProvider(BaseLLMProvider):
             """テスト用ツールループプロバイダー。"""
@@ -686,7 +667,6 @@ class TestGenerateWithToolsLoop:
 
     def test_no_tool_calls_returns_text_directly(self):
         """ツール呼び出しなしの場合、テキストをそのまま返す。"""
-        import asyncio
 
         provider = self._make_provider([
             ToolTurnResult(text="こんにちは", tool_calls=[]),
@@ -699,7 +679,6 @@ class TestGenerateWithToolsLoop:
 
     def test_single_inscribe_memory_call_executes_and_continues(self):
         """1回の inscribe_memory 呼び出し → 実行 → 継続が正しく行われる。"""
-        import asyncio
 
         tc = ToolCall(id="tc-1", name="inscribe_memory", input={"content": "X", "category": "user", "impact": 1.0})
         mm = MagicMock()
@@ -716,7 +695,6 @@ class TestGenerateWithToolsLoop:
 
     def test_single_carve_narrative_call_executes_and_continues(self):
         """1回の carve_narrative 呼び出し → 実行 → 継続が正しく行われる。"""
-        import asyncio
 
         tc = ToolCall(id="tc-2", name="carve_narrative", input={"mode": "append", "content": "新指針"})
         mm = MagicMock()
@@ -736,7 +714,6 @@ class TestGenerateWithToolsLoop:
 
     def test_multiple_tool_calls_in_sequence(self):
         """複数ターンのツール呼び出しが正しくループする。"""
-        import asyncio
 
         tc1 = ToolCall(id="t1", name="post_working_memory_thread", input={"type": "topic", "summary": "話題"})
         tc2 = ToolCall(id="t2", name="inscribe_memory", input={"content": "Y", "category": "identity", "impact": 0.5})
@@ -758,7 +735,6 @@ class TestGenerateWithToolsLoop:
 
     def test_text_accumulates_across_turns(self):
         """複数ターンにわたるテキストが結合されて返される。"""
-        import asyncio
 
         tc = ToolCall(id="t1", name="post_working_memory_thread", input={"type": "topic", "summary": "テスト"})
         provider = self._make_provider([

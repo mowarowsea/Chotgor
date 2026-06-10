@@ -10,10 +10,10 @@
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 
-from backend.character_actions.recaller import Recaller
+from backend.character_actions.recaller import Recaller, format_power_recall_turn
 from backend.lib.tag_parser import StreamingTagStripper
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.chat.request_builder import build_system_prompt
@@ -211,7 +211,6 @@ class TestFormatPowerRecallTurn:
 
     def test_記憶ヒットがターンに含まれる(self):
         """memories のコンテンツが Chotgor ターンに含まれること。"""
-        from backend.character_actions.recaller import format_power_recall_turn
         results = {
             "inscribed_memories": [
                 {"content": "コーヒーが好き", "distance": 0.1, "metadata": {"category": "user"}}
@@ -225,7 +224,6 @@ class TestFormatPowerRecallTurn:
 
     def test_チャットヒットのコンテキストがターンに含まれる(self):
         """chat_turns のコンテキストメッセージが Chotgor ターンに含まれること。"""
-        from backend.character_actions.recaller import format_power_recall_turn
         results = {
             "inscribed_memories": [],
             "chat_turns": [
@@ -248,14 +246,12 @@ class TestFormatPowerRecallTurn:
 
     def test_結果なしでも正常に動作する(self):
         """memories と chat_turns が空でも例外が発生しないこと。"""
-        from backend.character_actions.recaller import format_power_recall_turn
         turn = format_power_recall_turn({"inscribed_memories": [], "chat_turns": []}, "何か")
         assert "POWER_RECALL COMPLETE" in turn
         assert "見つかりませんでした" in turn
 
     def test_再検索禁止メッセージが含まれる(self):
         """生成されたターンに再検索禁止の指示が含まれること。"""
-        from backend.character_actions.recaller import format_power_recall_turn
         turn = format_power_recall_turn({}, "クエリ")
         assert "禁止" in turn
 
@@ -285,7 +281,6 @@ class TestChatServicePowerRecallLoop:
 
     def _make_stream_provider(self, text: str):
         """指定テキストを1チャンクで返す generate_stream_typed モックプロバイダーを作る。"""
-        from unittest.mock import AsyncMock, MagicMock
 
         async def fake_stream(*_args, **_kwargs):
             yield ("text", text)
@@ -309,7 +304,6 @@ class TestChatServicePowerRecallLoop:
 
         ループ防止条件（request.power_recalled が非空）が初回は適用されないことを確認する。
         """
-        from unittest.mock import patch, AsyncMock
         from backend.services.chat.service import ChatService
 
         mm = self._make_memory_manager()
@@ -344,7 +338,6 @@ class TestChatServicePowerRecallLoop:
         これがループ防止の核心: 再呼び出し後にキャラクターが再度タグを出しても
         さらなる再呼び出しは発生しない。
         """
-        from unittest.mock import patch, AsyncMock
         from backend.services.chat.service import ChatService
         from backend.character_actions.inscriber import Inscriber
         from backend.character_actions.carver import Carver

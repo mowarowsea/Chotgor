@@ -1,5 +1,7 @@
 """Tests for backend.lib.web_fetch — URL detection and fetching."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 import pytest_asyncio
 
@@ -45,7 +47,6 @@ class TestFetchUrls:
     @pytest.mark.asyncio
     async def test_fetch_success(self, monkeypatch):
         """正常時: content と truncated フラグが返る。"""
-        from unittest.mock import AsyncMock, MagicMock
         import httpx
 
         mock_response = MagicMock()
@@ -73,7 +74,6 @@ class TestFetchUrls:
     @pytest.mark.asyncio
     async def test_fetch_http_error(self, monkeypatch):
         """4xx/5xx: error キーが入る。"""
-        from unittest.mock import AsyncMock, MagicMock
 
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -96,7 +96,6 @@ class TestFetchUrls:
     @pytest.mark.asyncio
     async def test_fetch_connect_error(self, monkeypatch):
         """接続エラー: error キーが日本語メッセージで入る。"""
-        from unittest.mock import AsyncMock
         import httpx
 
         mock_client = AsyncMock()

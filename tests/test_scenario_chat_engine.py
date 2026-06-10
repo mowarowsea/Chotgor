@@ -17,6 +17,7 @@ LLM プロバイダはモック化する: provider_factory を差し替えて
 """
 
 import asyncio
+import random
 from dataclasses import dataclass, field
 import pytest
 
@@ -549,7 +550,6 @@ class TestGenerateDicePool:
 
     def test_既定で_d6_10個_が生成される(self):
         """spec が None なら DEFAULT_DICE_POOL_SPEC（d6×10）が使われる。"""
-        import random
         text = generate_dice_pool(None, rng=random.Random(0))
         assert "d6=" in text
         assert text.count(",") == 9  # 10 個 → カンマ 9 個
@@ -557,7 +557,6 @@ class TestGenerateDicePool:
 
     def test_仕様通りに複数種別を生成する(self):
         """`{"d6": 3, "d20": 2}` を渡すと 2 行のダイス出力が並ぶ。"""
-        import random
         text = generate_dice_pool({"d6": 3, "d20": 2}, rng=random.Random(42))
         assert "d6=" in text
         assert "d20=" in text
@@ -569,7 +568,6 @@ class TestGenerateDicePool:
 
     def test_範囲内の値しか出ない(self):
         """d6 なら 1〜6 の整数のみ。境界を超えないこと。"""
-        import random
         text = generate_dice_pool({"d6": 100}, rng=random.Random(123))
         line = [ln for ln in text.splitlines() if ln.startswith("d6=")][0]
         values = [int(v) for v in line[3:].split(",")]
@@ -578,7 +576,6 @@ class TestGenerateDicePool:
 
     def test_不正エントリは黙って無視される(self):
         """`{"x": 5, "d6": 0, "d-1": 3, "d6": 2}` のような変な指定は破棄。"""
-        import random
         text = generate_dice_pool(
             {"x": 5, "d0": 3, "d6": 2, "d-1": 3},
             rng=random.Random(7),

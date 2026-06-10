@@ -11,7 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.providers.anthropic_provider import AnthropicProvider
 from backend.providers.base import BaseLLMProvider
+from backend.providers.claude_cli_provider import ClaudeCliProvider
+from backend.providers.google_provider import GoogleProvider
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +91,6 @@ def _patch_anthropic_module(mock_client):
 @pytest.mark.asyncio
 async def test_anthropic_generate_stream_typed_thinking():
     """AnthropicProvider が thinking_delta を ("thinking", ...) としてyieldする。"""
-    from backend.providers.anthropic_provider import AnthropicProvider
 
     events = [
         _make_delta_event("thinking_delta", "考え中..."),
@@ -116,7 +118,6 @@ async def test_anthropic_generate_stream_typed_thinking():
 @pytest.mark.asyncio
 async def test_anthropic_generate_stream_typed_text_only_when_no_thinking():
     """thinking_level == "default" のとき thinking_delta がなければ ("text", ...) のみyieldされる。"""
-    from backend.providers.anthropic_provider import AnthropicProvider
 
     events = [
         _make_delta_event("text_delta", "part1"),
@@ -148,7 +149,6 @@ async def test_anthropic_generate_stream_typed_missing_api_key():
 
     api_key チェックは import の前に行われるため、anthropic モジュールのモックは不要。
     """
-    from backend.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider(api_key="", model="claude-sonnet-4-6")
 
@@ -169,7 +169,6 @@ async def test_anthropic_generate_stream_typed_missing_api_key():
 @pytest.mark.asyncio
 async def test_anthropic_generate_stream_typed_sdk_error():
     """SDKがRuntimeErrorを送出した場合、("text", エラーメッセージ) をyieldして終了する。"""
-    from backend.providers.anthropic_provider import AnthropicProvider
 
     mock_stream_ctx = MagicMock()
     mock_stream_ctx.__enter__ = MagicMock(side_effect=RuntimeError("connection refused"))
@@ -210,7 +209,6 @@ def _cli_line(event_type: str, blocks: list) -> bytes:
 @pytest.mark.asyncio
 async def test_cli_generate_stream_typed_thinking_and_text():
     """ClaudeCliProvider が stream-json の thinking ブロックを ("thinking", ...) としてyieldする。"""
-    from backend.providers.claude_cli_provider import ClaudeCliProvider
 
     lines = [
         _cli_line("assistant", [
@@ -244,7 +242,6 @@ async def test_cli_generate_stream_typed_thinking_and_text():
 @pytest.mark.asyncio
 async def test_cli_generate_stream_typed_text_only():
     """thinking ブロックがない場合は ("text", ...) のみyieldされる。"""
-    from backend.providers.claude_cli_provider import ClaudeCliProvider
 
     lines = [
         _cli_line("assistant", [{"type": "text", "text": "テキストのみ"}]),
@@ -275,7 +272,6 @@ async def test_cli_generate_stream_typed_text_only():
 @pytest.mark.asyncio
 async def test_cli_generate_stream_typed_empty_thinking_skipped():
     """thinking フィールドが空文字のブロックはyieldしない。"""
-    from backend.providers.claude_cli_provider import ClaudeCliProvider
 
     lines = [
         _cli_line("assistant", [
@@ -310,7 +306,6 @@ async def test_cli_generate_stream_typed_empty_thinking_skipped():
 @pytest.mark.asyncio
 async def test_cli_generate_stream_typed_cli_not_found():
     """CLI が存在しない場合は ("text", エラーメッセージ) をyieldして終了する。"""
-    from backend.providers.claude_cli_provider import ClaudeCliProvider
 
     provider = ClaudeCliProvider(model="", character_name="Dana")
 
@@ -334,7 +329,6 @@ async def test_cli_generate_stream_typed_cli_not_found():
 @pytest.mark.asyncio
 async def test_cli_generate_stream_typed_nonzero_exit():
     """CLI が非ゼロ終了コードで終了した場合、エラーチャンクをyieldする。"""
-    from backend.providers.claude_cli_provider import ClaudeCliProvider
 
     mock_proc = MagicMock()
     mock_proc.stdin = MagicMock()
@@ -434,7 +428,6 @@ def _patch_google_module(mock_client):
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_thinking_and_text():
     """GoogleProvider が thought=True のパートを ("thinking", ...) としてyieldする。"""
-    from backend.providers.google_provider import GoogleProvider
 
     chunks_from_api = [
         _make_google_chunk([(True, "思考中...")]),
@@ -458,7 +451,6 @@ async def test_google_generate_stream_typed_thinking_and_text():
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_text_only_when_no_thinking():
     """thinking_level == "default" のとき thought パートがなければ ("text", ...) のみyieldされる。"""
-    from backend.providers.google_provider import GoogleProvider
 
     chunks_from_api = [
         _make_google_chunk([(False, "part1")]),
@@ -483,7 +475,6 @@ async def test_google_generate_stream_typed_text_only_when_no_thinking():
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_mixed_parts_in_one_chunk():
     """1チャンクに thought パートと text パートが混在しても正しく分離してyieldされる。"""
-    from backend.providers.google_provider import GoogleProvider
 
     chunks_from_api = [
         _make_google_chunk([
@@ -511,7 +502,6 @@ async def test_google_generate_stream_typed_mixed_parts_in_one_chunk():
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_empty_text_part_skipped():
     """text が空のパートはyieldしない。"""
-    from backend.providers.google_provider import GoogleProvider
 
     chunks_from_api = [
         _make_google_chunk([(True, ""), (False, "応答")]),  # 空thought → スキップ
@@ -541,7 +531,6 @@ async def test_google_generate_stream_typed_parts_fallback_to_chunk_text():
     prompt_feedback を None にしておかないと、MagicMock が自動生成する truthy な
     block_reason をブロックと誤検出し、フォールバックではなくエラーが出てしまうので明示する。
     """
-    from backend.providers.google_provider import GoogleProvider
 
     # candidates が空（候補なし）・ブロックではない・chunk.text のみ存在するチャンク
     bad_chunk = MagicMock()
@@ -565,7 +554,6 @@ async def test_google_generate_stream_typed_parts_fallback_to_chunk_text():
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_logs_missing_candidates_diagnostic():
     """candidates=None のチャンクは落とさず、原因調査用情報を Response ログへ残す。"""
-    from backend.providers.google_provider import GoogleProvider
 
     chunk = MagicMock()
     chunk.candidates = None
@@ -600,7 +588,6 @@ async def test_google_generate_stream_typed_logs_missing_candidates_diagnostic()
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_include_thoughts_set_when_thinking():
     """thinking_level != "default" のとき ThinkingConfig が include_thoughts=True で呼ばれること。"""
-    from backend.providers.google_provider import GoogleProvider
 
     mock_client = MagicMock()
     mock_client.models.generate_content_stream.return_value = iter([])
@@ -641,7 +628,6 @@ async def test_google_generate_stream_typed_include_thoughts_set_when_thinking()
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_missing_api_key():
     """APIキー未設定のとき ("text", エラーメッセージ) をyieldして終了する。"""
-    from backend.providers.google_provider import GoogleProvider
 
     provider = GoogleProvider(api_key="", model="gemini-2.0-flash")
 
@@ -661,7 +647,6 @@ async def test_google_generate_stream_typed_missing_api_key():
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_sdk_error():
     """SDK が RuntimeError を送出した場合、("text", エラーメッセージ) をyieldして終了する。"""
-    from backend.providers.google_provider import GoogleProvider
 
     mock_client = MagicMock()
     mock_client.models.generate_content_stream.side_effect = RuntimeError("quota exceeded")
