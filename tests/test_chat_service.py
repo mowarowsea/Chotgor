@@ -603,3 +603,118 @@ async def test_execute_stream_yields_anticipation_event():
     assert ("text", "こんにちは！") in events
     # 予想が anticipation イベントとして流れること
     assert ("anticipation", "次は質問が来ると思う") in events
+
+
+# --- ChatService — 記憶縮退のキャラクター向け告知（memory_degraded フラグの伝搬） ---
+
+@pytest.mark.asyncio
+async def test_prepare_context_passes_memory_degraded_on_recall_embedding_failure():
+    """長期記憶の想起が EmbeddingError で失敗した場合、build_system_prompt に
+    memory_degraded=True が渡ること。
+
+    記憶縮退の通知先はユーザ（recall_error → UIスケッチ欄）だけでなく、
+    キャラクター本人（システムプロンプト内の運用告知ブロック）でもある、という
+    Chotgor の思想（記憶へのアクセス断絶は本人の身に起きている事象）を回帰防止する。
+    """
+    from backend.repositories.lance.store import EmbeddingError
+
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.side_effect = EmbeddingError("connection refused")
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
+
+    with (
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        await _collect_stream_events(service, request)
+
+    assert mock_build.call_args.kwargs["memory_degraded"] is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_context_passes_memory_degraded_on_wm_embedding_failure():
+    """ワーキングメモリの heat 想起が EmbeddingError で失敗した場合も memory_degraded=True が
+    渡り、ユーザ向けには WM 用の recall_error イベントが流れること。
+
+    従来は WM 取得失敗が warning ログのみで、ユーザにもキャラクターにも完全に無通知だった
+    （Block 8 が静かに消えるだけ）。本テストは「WM 失敗も縮退として両系統に通知される」
+    ことを保証する。長期記憶の想起自体は成功しているケースなので、recall 系の
+    エラーメッセージではなく WM 専用メッセージが選ばれることも確認する。
+    """
+    from backend.repositories.lance.store import EmbeddingError
+
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+
+    working_memory_manager = MagicMock()
+    working_memory_manager.list_all_threads.return_value = []
+    working_memory_manager.get_fixed_threads.return_value = []
+    working_memory_manager.recall_threads.side_effect = EmbeddingError("connection refused")
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
+
+    with (
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(
+            memory_manager=memory_manager,
+            working_memory_manager=working_memory_manager,
+        )
+        events = await _collect_stream_events(service, request)
+
+    assert mock_build.call_args.kwargs["memory_degraded"] is True
+    assert ("recall_error", "ワーキングメモリの取得に失敗しました（embedding接続エラー）") in events
+
+
+@pytest.mark.asyncio
+async def test_prepare_context_memory_degraded_false_on_success():
+    """記憶・WM の取得がすべて成功した通常時は memory_degraded=False が渡ること（回帰防止）。"""
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
+
+    with (
+        patch("backend.services.chat.service.create_provider", return_value=fake_provider),
+        patch("backend.services.chat.service.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.services.chat.service.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        await _collect_stream_events(service, request)
+
+    assert mock_build.call_args.kwargs["memory_degraded"] is False

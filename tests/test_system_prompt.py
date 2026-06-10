@@ -162,3 +162,49 @@ def test_build_system_prompt_previous_anticipation_absent_when_empty():
     """
     prompt = build_system_prompt("You are a cat.")
     assert "## 前回のあなたの予想（期待）" not in prompt
+
+
+# --- 記憶システム縮退時の運用告知ブロック（memory_degraded） ---
+
+def test_build_system_prompt_memory_degraded_includes_notice():
+    """memory_degraded=True のとき、記憶縮退の運用告知ブロックが含まれること。
+
+    告知には「記憶が消えたわけではない」の明示が必須。これが無いと、キャラクターが
+    想起ゼロの状態を「忘れてしまった」と誤解し、inner_narrative や関係認識を
+    書き換えてしまう二次事故につながるため、文言レベルで回帰を防止する。
+
+    また受け皿の案内は「今夜の棚卸し（Chronicle）」であること。Chronicle は当日会話を
+    SQLite から読み返すため embedding 障害中も無傷で機能する、嘘のない受け皿である。
+    （「復旧後に改めて刻んで」のような案内は、ツールコールの意図が後続ターンの文脈に
+    残らない以上、実行不可能なので書かない。）
+    """
+    prompt = build_system_prompt("You are a cat.", memory_degraded=True)
+    assert "【Chotgor運用担当からのお知らせ】" in prompt
+    assert "あなたの記憶が消えたわけではありません" in prompt
+    assert "棚卸し（Chronicle）" in prompt
+
+
+def test_build_system_prompt_memory_degraded_default_off():
+    """既定（memory_degraded=False）では運用告知ブロックが含まれないこと。
+
+    通常時のシステムプロンプトに障害告知が混入すると、キャラクターが常に
+    「記憶が不安定だ」という前提で振る舞ってしまうため、平常時の非注入を保証する。
+    """
+    prompt = build_system_prompt("You are a cat.")
+    assert "【Chotgor運用担当からのお知らせ】" not in prompt
+
+
+def test_build_system_prompt_memory_notice_placed_before_guide():
+    """運用告知ブロックは inner_narrative の後・Chotgor 操作ガイド（常に末尾）の前に置かれること。
+
+    末尾に近いほどキャラクターへの影響力が強いというテンプレ設計（Block 9-10 が最優先地帯）
+    に基づき、告知が操作ガイド直前という強い位置に差し込まれることを保証する。
+    """
+    prompt = build_system_prompt(
+        "You are a cat.",
+        inner_narrative="私は自由な猫だ",
+        memory_degraded=True,
+    )
+    notice_pos = prompt.index("【Chotgor運用担当からのお知らせ】")
+    assert prompt.index("## あなた自身の物語") < notice_pos
+    assert notice_pos < prompt.index("## あなたの記憶について")

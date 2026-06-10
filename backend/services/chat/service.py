@@ -300,6 +300,10 @@ class ChatService:
         recalled_identity: list[dict] = []
         recalled: list[dict] = []
         recall_error: str | None = None
+        # 記憶系（長期記憶・WM）の読み出しがこのターンで縮退しているか。
+        # True なら build_system_prompt が運用告知ブロックをキャラクター本人へ注入する
+        # （recall_error はユーザ向け UI 通知、こちらはキャラクター向け通知と役割を分ける）。
+        memory_degraded = False
         if last_user_msg:
             try:
                 recalled_identity, recalled = self.memory_manager.recall_with_identity(
@@ -309,9 +313,11 @@ class ChatService:
                 # embedding サーバ（infinity 等）に接続できないケース。原因が分かるよう専用メッセージにする。
                 _log.warning("記憶想起失敗（embedding）char=%s error=%s", request.character_id, e)
                 recall_error = "記憶の想起に失敗しました（embedding接続エラー）"
+                memory_degraded = True
             except Exception as e:
                 _log.warning("記憶想起失敗 char=%s error=%s", request.character_id, e)
                 recall_error = "記憶の想起に失敗しました"
+                memory_degraded = True
 
         # --- 1b. ワーキングメモリ（スレッド）を取得 ---
         # 全スレッド一覧（self_history 代替）／emotion・body・relation の固定注入／
@@ -334,8 +340,17 @@ class ChatService:
                         )
                         or None
                     )
+            except EmbeddingError as e:
+                # heat 想起（recall_threads）の embedding 失敗。一覧・固定注入は取得済みのまま残る。
+                _log.warning("ワーキングメモリ取得失敗（embedding）char=%s error=%s", request.character_id, e)
+                memory_degraded = True
+                if recall_error is None:
+                    recall_error = "ワーキングメモリの取得に失敗しました（embedding接続エラー）"
             except Exception as e:
                 _log.warning("ワーキングメモリ取得失敗 char=%s error=%s", request.character_id, e)
+                memory_degraded = True
+                if recall_error is None:
+                    recall_error = "ワーキングメモリの取得に失敗しました"
 
         # --- 2. URLの自動fetch ---
         fetched_contents = []
@@ -379,6 +394,7 @@ class ChatService:
             available_presets=request.available_presets or None,
             current_preset_name=request.current_preset_name,
             previous_anticipation=request.previous_anticipation,
+            memory_degraded=memory_degraded,
         )
 
         return _Context(

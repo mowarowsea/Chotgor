@@ -745,3 +745,87 @@ class TestGenerateWithToolsLoop:
 
         text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
         assert text == "前半後半"
+
+
+class TestToolExecutorEmbeddingDegraded:
+    """embedding サーバ停止時（EmbeddingError）の ToolExecutor のキャラクター向け応答を検証する。
+
+    背景: infinity 等の embedding サーバが落ちると、inscribe_memory は類似検索の時点で、
+    power_recall はクエリのベクトル化の時点で EmbeddingError を送出する。
+    従来は汎用の `[xxx error: ...]` に生の例外文字列が入るだけで、キャラクターには
+    「自分の記憶がどうなったのか」が伝わらなかった。本クラスは、embedding 起因の失敗が
+    「記憶は消えていない／保存はされていない」と実行可能な受け皿（WM 退避・Chronicle）を
+    キャラクター本人に伝える専用メッセージへ変換されることを保証する。
+
+    なお「復旧後にもう一度試して」という案内は禁句である。ツールコールの意図は
+    後続ターンの文脈に残らないため、復旧時点では本人も何を刻もうとしていたか
+    分からず、実行不可能なアドバイスになるため。
+    """
+
+    def _make_executor(self, memory_manager):
+        """テスト用の ToolExecutor を生成するヘルパー。
+
+        Args:
+            memory_manager: InscribedMemoryManager のモック。
+
+        Returns:
+            ToolExecutor インスタンス。
+        """
+        return ToolExecutor(
+            character_id="char-1",
+            session_id="sess-1",
+            memory_manager=memory_manager,
+            working_memory_manager=MagicMock(),
+        )
+
+    def test_inscribe_memory_embedding_error_returns_character_facing_message(self):
+        """inscribe_memory が EmbeddingError で失敗したとき、
+        「まだ保存されていない」「既存の記憶は消えていない」を伝え、実行可能な受け皿
+        （WM への退避・今夜の Chronicle）を案内するメッセージを返すこと。
+
+        embedding 失敗時は類似検索の段階で例外となり SQLite にも書き込まれないため、
+        「保存されていない」事実を正確に伝えないと、キャラクターが刻んだつもりに
+        なってしまい記憶が静かに欠落する。受け皿2つはいずれも障害中に実在する経路:
+        post_working_memory_thread は SQLite 先行書き込み（embed は遅延）のため保存でき、
+        Chronicle は当日会話を SQLite から読み返すため embedding 非依存で機能する。
+        """
+        from backend.repositories.lance.store import EmbeddingError
+
+        mm = MagicMock()
+        mm.write_inscribed_memory.side_effect = EmbeddingError("connection refused")
+        executor = self._make_executor(mm)
+        result = executor.execute(
+            "inscribe_memory",
+            {"content": "ユーザは猫が好き", "category": "user_info", "impact": 1.0},
+        )
+        assert "[inscribe_memory error:" in result
+        assert "embedding接続エラー" in result
+        assert "まだ保存されていません" in result
+        assert "消えたわけではありません" in result
+        # 実行可能な受け皿2つ（WM 退避・Chronicle）が案内されていること
+        assert "post_working_memory_thread" in result
+        assert "棚卸し（Chronicle）" in result
+        # 実行不可能な「復旧後に再試行」を案内していないこと
+        assert "もう一度試して" not in result
+
+    def test_power_recall_embedding_error_returns_character_facing_message(self):
+        """power_recall が EmbeddingError で失敗したとき、
+        「記憶が消えたわけではない」「復旧すればまた思い出せる」を伝えるメッセージを返すこと。
+
+        想起の失敗を「忘却」と誤解させないことが目的。生の例外文字列ではなく、
+        キャラクター本人に状況が伝わる文面であることを保証する。再試行の指示はしない
+        （想起は必要が再び生じたときに自然に行われ、自動想起も復旧すれば勝手に再開するため）。
+        """
+        from backend.repositories.lance.store import EmbeddingError
+
+        mm = MagicMock()
+        mm.power_recall.side_effect = EmbeddingError("connection refused")
+        executor = self._make_executor(mm)
+        result = executor.execute("power_recall", {"query": "猫の話", "top_k": 5})
+        assert "[power_recall error:" in result
+        assert "embedding接続エラー" in result
+        # 文言は「消えたわけではなく…」と続くため、活用に依存しない語幹で判定する
+        assert "消えたわけでは" in result
+        assert "思い出せます" in result
+        # 実行不可能な「復旧後に再試行」を案内していないこと
+        assert "もう一度試して" not in result

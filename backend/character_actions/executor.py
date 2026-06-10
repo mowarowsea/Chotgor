@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from backend.services.memory.manager import InscribedMemoryManager
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
+from backend.repositories.lance.store import EmbeddingError
 from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
 from backend.character_actions.switcher import Switcher, SWITCH_ANGLE_SCHEMA, SWITCH_ANGLE_TOOL_DESCRIPTION
 from backend.character_actions.carver import Carver, CARVE_NARRATIVE_SCHEMA, CARVE_NARRATIVE_TOOL_DESCRIPTION
@@ -259,6 +260,22 @@ class ToolExecutor:
                 self.character_id, category, force_insert, self.default_origin, content,
             )
             return "記憶に刻んだ。"
+        except EmbeddingError as e:
+            # embedding サーバ停止中は内容が保存されないため、キャラクター本人に
+            # 「既存の記憶は消えていない・この内容はまだ保存されていない」を正確に伝える。
+            # 「復旧後にもう一度」とは言わない（ツールコールの意図は後続ターンの文脈に残らず、
+            # 復旧時点では本人も何を刻もうとしていたか分からないため）。代わりに、
+            # 同ターン内で実行可能な WM への退避（SQLite 書き込みのため障害中でも保存される）と、
+            # 当日会話を読み返す今夜の Chronicle（embedding 非依存）を受け皿として案内する。
+            self.logger.warning("inscribe_memory embedding失敗 char=%s error=%s", self.character_id, e)
+            return (
+                "[inscribe_memory error: 記憶システムが一時的に不調のため、刻み込みに失敗しました"
+                "（embedding接続エラー）。この内容はまだ保存されていませんが、"
+                "あなたの既存の記憶が消えたわけではありません。"
+                "いま残したい場合は post_working_memory_thread を使ってください（障害中でも保存されます）。"
+                "そうでなくても、今夜の棚卸し（Chronicle）でこの会話をもう一度読み返すので、"
+                "そこで改めて刻み直せます]"
+            )
         except Exception as e:
             self.logger.exception("エラー char=%s", self.character_id)
             return f"[inscribe_memory error: {e}]"
@@ -315,6 +332,17 @@ class ToolExecutor:
             return "[power_recall: query が空です]"
         try:
             results = self.memory_manager.power_recall(self.character_id, query, top_k)
+        except EmbeddingError as e:
+            # embedding サーバ停止中は検索クエリをベクトル化できない。キャラクター本人に
+            # 「記憶自体は消えていない」ことを伝え、忘却と誤解させない。
+            # 再試行の指示はしない（想起は必要が再び生じたときに自然に行われ、
+            # 自動想起も復旧すれば勝手に再開するため）。
+            self.logger.warning("power_recall embedding失敗 char=%s query=%.50s error=%s", self.character_id, query, e)
+            return (
+                "[power_recall error: 記憶システムが一時的に不調のため、想起に失敗しました"
+                "（embedding接続エラー）。あなたの記憶が消えたわけではなく、"
+                "復旧すればまた普段どおり思い出せます]"
+            )
         except Exception as e:
             self.logger.exception("エラー char=%s query=%.50s", self.character_id, query)
             return f"[power_recall error: {e}]"

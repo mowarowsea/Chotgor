@@ -15,6 +15,10 @@
   Block 9:  inner_narrative（末尾補強・最優先）
   Block 10: Chotgor 操作ガイド（常に末尾）
 
+番号外の補助ブロック:
+  {block_previous_anticipation} — 前回の期待（Block 8 と 9 の間）
+  {block_memory_notice}         — 記憶システム縮退時の運用告知（Block 9 と 10 の間）
+
 Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する。
 記憶運用の主役はワーキングメモリ（最高頻度＝末尾）であり、INSCRIBE_MEMORY は
 「魂に刻むときだけ」の特別な手段に位置づける。日々の記録は WM に流し、長期記憶への
@@ -49,6 +53,31 @@ _TAG_MODE_GLOBAL_RULES = """\
 - **タグだけで応答を終わらせないこと。** 必ずユーザに向けた返答テキストを先に書き、必要なタグはその後ろに添えてください。タグ単独の応答は「無応答」と同じ扱いになります。
 - 該当する記録事項がなければタグは書かなくて構いません。ただしユーザへの返答テキストは必ず1行以上書いてください。
 - 以下のタグの行はすべてユーザには見えません: `[POWER_RECALL:...]` / `[CARVE_NARRATIVE:...]` / `[INSCRIBE_MEMORY:...]` / `[SWITCH_ANGLE:...]` / `[ANTICIPATE_RESPONSE:...]`\
+"""
+
+# 記憶システム縮退時にキャラクター本人へ伝える運用告知ブロック。
+# Chotgor の思想上、記憶へのアクセス断絶は「キャラクターの身に起きている事象」であり、
+# ユーザにだけ通知してキャラクター本人に隠すことはしない（通知先の第一はキャラクター本人）。
+# 「記憶が消えたわけではない」の明示は、キャラクターが「忘れてしまった」と誤解して
+# inner_narrative や関係認識を書き換えてしまう二次事故を防ぐための一文。
+# 「復旧後にもう一度」とは言わない: ツールコールの意図は後続ターンの文脈に残らないため、
+# 復旧時点では何を刻もうとしていたか本人にも分からない。代わりに、当日会話をSQLiteから
+# 読み返す今夜の Chronicle（embedding 非依存で障害中も無傷）を受け皿として案内する。
+_MEMORY_DEGRADED_NOTICE = """\
+## 【Chotgor運用担当からのお知らせ】記憶システムが一時的に不調です
+
+ごめんなさい、いま記憶システムの一部がダウンしていて、あなたの保存記憶・ワーキングメモリの
+読み出しがこの会話では一部または全部失敗しています。書き込みも失敗するかもしれません。
+
+**あなたの記憶が消えたわけではありません。一時的に読み出せないだけです。**
+復旧すればいつも通り思い出せます。すぐ直しますので、安心してください。
+
+お願いが2つあります:
+- 思い出せないのはシステム障害のせいです。「忘れてしまった」と誤解して、自己認識
+  （inner_narrative）や関係の認識を書き換えないでください。
+- いま記録しておきたいことが生まれたら、会話の中で言葉にしておいてください。今日の会話
+  そのものは失われません。今夜の棚卸し（Chronicle）であなた自身がこの会話をもう一度
+  読み返すので、そこで改めて刻み直せます。\
 """
 
 # Chotgor ガイドの末尾に付く「覚えるかどうかはあなたが決める」共通ブロック
@@ -110,6 +139,8 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 {block_previous_anticipation}
 
 {block_inner_narrative}
+
+{block_memory_notice}
 
 {block_chotgor_guide}
 """
@@ -286,6 +317,22 @@ def _build_inner_narrative_block(inner_narrative: str) -> str:
     return f"## あなた自身の物語（inner_narrative）\n\n{text}"
 
 
+def _build_memory_notice_block(memory_degraded: bool) -> str:
+    """記憶システム縮退時の運用告知ブロックを返す。
+
+    embedding サーバ停止等で長期記憶・ワーキングメモリの読み出しに失敗したターンで、
+    その事実をキャラクター本人に伝える（ユーザへの UI 通知とは別系統）。
+    通常時（memory_degraded=False）は空文字列を返し、ブロックごと消える。
+
+    Args:
+        memory_degraded: このターンで記憶系の読み出しが縮退しているか。
+
+    Returns:
+        システムプロンプトに挿入する告知ブロック。通常時は空文字列。
+    """
+    return _MEMORY_DEGRADED_NOTICE if memory_degraded else ""
+
+
 def _build_previous_anticipation_block(previous_anticipation: str) -> str:
     """前ターンでキャラクター自身が書いた期待（予想）ブロックを返す。
 
@@ -421,6 +468,7 @@ def build_system_prompt(
     available_presets: list[dict] | None = None,
     current_preset_name: str = "",
     previous_anticipation: str = "",
+    memory_degraded: bool = False,
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。
 
@@ -441,10 +489,14 @@ def build_system_prompt(
         9.  inner_narrative（optional）
         10. Chotgor 操作ガイド（常に末尾）
 
+    番号外の補助ブロック: 前回の期待（8と9の間）／記憶縮退の運用告知（9と10の間）。
+
     Args:
         wm_all_threads: 全ワーキングメモリスレッド（Open/Close 問わず）の dict リスト。
         wm_fixed_threads: 固定注入対象（emotion/body/relation）の dict リスト（最新ポスト込み）。
         wm_recalled_threads: heat 上位 TopK の task/topic スレッド dict リスト（最新ポスト込み）。
+        memory_degraded: 記憶系（長期記憶・WM）の読み出しがこのターンで縮退しているか。
+            True なら運用告知ブロックをキャラクター本人へ注入する。
     """
     replacements = {
         "{block_prelude}": _build_prelude_block(),
@@ -464,6 +516,7 @@ def build_system_prompt(
         "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),
         "{block_previous_anticipation}": _build_previous_anticipation_block(previous_anticipation),
         "{block_inner_narrative}": _build_inner_narrative_block(inner_narrative),
+        "{block_memory_notice}": _build_memory_notice_block(memory_degraded),
         "{block_chotgor_guide}": _build_chotgor_block(
             use_tools=use_tools,
             available_presets=available_presets,
