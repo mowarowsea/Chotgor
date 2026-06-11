@@ -51,6 +51,12 @@
                 <p class="ch-row__excerpt">まだ輪郭が定まっていない。名前を選び、人格と物語を書く。</p>
                 {% endif %}
             </div>
+            <div class="ch-row__actions" data-stop>
+                <button type="button" class="ch-btn ch-btn--xs ch-btn--ghost"
+                        onclick="runBatch(this, '{{ char.id }}', 'chronicle')">Chronicle</button>
+                <button type="button" class="ch-btn ch-btn--xs ch-btn--ghost"
+                        onclick="runBatch(this, '{{ char.id }}', 'forget')">Forget</button>
+            </div>
         </div>
         {% endfor %}
     </div>
@@ -90,5 +96,36 @@
       });
     });
   })();
+
+  /**
+   * Chronicle / Forget バッチを手動実行する。
+   * @param {HTMLElement} btn - クリックされたボタン要素。
+   * @param {string} characterId - キャラクターID。
+   * @param {'chronicle'|'forget'} type - バッチ種別。
+   */
+  async function runBatch(btn, characterId, type) {
+    const label = type === 'chronicle' ? 'Chronicle' : 'Forget';
+    const prev = btn.textContent;
+    btn.textContent = '…';
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/inscribed_memories/${characterId}/${type}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(`${label} 失敗: ${data.detail || res.status}`);
+      } else {
+        const status = data.status || 'done';
+        const msg = status === 'skipped' ? `${label}: 対象なし` : `${label}: 完了 (${status})`;
+        btn.textContent = '✓';
+        setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
+        console.info(msg, data);
+        return;
+      }
+    } catch (e) {
+      alert(`${label} エラー: ${e.message}`);
+    }
+    btn.textContent = prev;
+    btn.disabled = false;
+  }
 </script>
 {% endblock %}

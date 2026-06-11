@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.batch.chronicle_job import run_chronicle
+from backend.batch.forget_job import run_forget_process
 from backend.lib.log_context import new_message_id
 
 router = APIRouter(prefix="/api/inscribed_memories", tags=["inscribed_memories"])
@@ -72,5 +73,35 @@ async def trigger_chronicle(
         vector_store=request.app.state.vector_store,
         memory_manager=request.app.state.memory_manager,
         working_memory_manager=request.app.state.working_memory_manager,
+    )
+    return result
+
+
+@router.post("/{character_id}/forget", status_code=200)
+async def trigger_forget(
+    request: Request,
+    character_id: str,
+    threshold: float = Query(0.2, description="忘却判定の閾値（decayed_score がこれ未満の記憶が対象）"),
+):
+    """指定キャラクターの forget 処理を手動実行する。
+
+    decayed_score が閾値を下回る長期記憶を対象に、キャラクター自身が「芯に残るもの」を
+    inner_narrative へ昇華（carve_narrative）し、残りを手放す（soft-delete）。
+    ghost_model が未設定のキャラクターはエラーを返す。
+    """
+    char = request.app.state.sqlite.get_character(character_id)
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    new_message_id()
+    settings = request.app.state.sqlite.get_all_settings()
+    result = await run_forget_process(
+        character_id=character_id,
+        character_name=char.name,
+        memory_manager=request.app.state.memory_manager,
+        sqlite=request.app.state.sqlite,
+        settings=settings,
+        threshold=threshold,
+        ghost_model=char.ghost_model,
     )
     return result

@@ -34,6 +34,10 @@
             <div class="ch-pagehead__actions">
                 <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
                 <a href="/ui/working-memory/{{ character.id }}" class="ch-btn ch-btn--sm">working memory</a>
+                <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                        onclick="runBatch(this, '{{ character.id }}', 'chronicle')">Chronicle</button>
+                <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                        onclick="runBatch(this, '{{ character.id }}', 'forget')">Forget</button>
                 <a href="/ui/characters" class="ch-btn ch-btn--sm ch-btn--ghost">← 戻る</a>
             </div>
         </div>
@@ -595,4 +599,36 @@
     }
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
+<script>
+  /**
+   * Chronicle / Forget バッチを手動実行する。
+   * @param {HTMLElement} btn - クリックされたボタン要素。
+   * @param {string} characterId - キャラクターID。
+   * @param {'chronicle'|'forget'} type - バッチ種別。
+   */
+  async function runBatch(btn, characterId, type) {
+    const label = type === 'chronicle' ? 'Chronicle' : 'Forget';
+    const prev = btn.textContent;
+    btn.textContent = '…';
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/inscribed_memories/${characterId}/${type}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(`${label} 失敗: ${data.detail || res.status}`);
+      } else {
+        const status = data.status || 'done';
+        const msg = status === 'skipped' ? `${label}: 対象なし` : `${label}: 完了 (${status})`;
+        btn.textContent = '✓';
+        setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
+        console.info(msg, data);
+        return;
+      }
+    } catch (e) {
+      alert(`${label} エラー: ${e.message}`);
+    }
+    btn.textContent = prev;
+    btn.disabled = false;
+  }
+</script>
 {% endblock %}

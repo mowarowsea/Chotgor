@@ -13,6 +13,7 @@ from backend.api.scenario_chat.schemas import (
 from backend.lib.log_context import (
     current_log_feature,
     current_log_session_id,
+    current_log_target,
     new_message_id,
 )
 from backend.services.scenario_chat.service import (
@@ -358,6 +359,10 @@ async def regenerate_session_synopsis(
     sess = sqlite.get_scenario_session(session_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
+    # シナリオ名をログターゲットに設定（Logs画面の Scenario タブでシナリオ名を表示するため）
+    _scen = sqlite.get_scenario(sess.scenario_id)
+    if _scen:
+        current_log_target.set(_scen.title)
     # preset 指定があれば検証してセッションへ永続化し、最新の sess を取り直す。
     requested_preset_id = body.synopsis_preset_id if body else None
     if requested_preset_id:

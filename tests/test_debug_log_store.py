@@ -394,3 +394,46 @@ class TestGetEntriesByRequestIds:
         for s, b in zip(single, bulk):
             assert s["source_type"] == b["source_type"]
             assert s["response"] == b["response"]
+
+
+# ─── synopsis タブ振り分け ──────────────────────────────────────────────────────
+
+
+class TestSynopsisTabFilter:
+    """synopsis source_type が Scenario タブに振り分けられることを検証するテストクラス。
+
+    シナリオあらすじ蒸留ログ（source_type='synopsis'）は Scenario タブに属すること、
+    Batch タブには含まれないことを確認する。
+    """
+
+    def test_synopsis_appears_in_scenario_tab(self, store):
+        """synopsis エントリが request_type='scenario' で返ること。"""
+        store.insert_debug_log_entry(request_id="syn001", source_type="synopsis")
+        ids, total = store.get_debug_log_request_ids_paged(request_type="scenario")
+        assert "syn001" in ids
+        assert total == 1
+
+    def test_synopsis_excluded_from_batch_tab(self, store):
+        """synopsis エントリが request_type='batch' に含まれないこと。"""
+        store.insert_debug_log_entry(request_id="syn002", source_type="synopsis")
+        store.insert_debug_log_entry(request_id="batch001", source_type="chronicle")
+        ids, _ = store.get_debug_log_request_ids_paged(request_type="batch")
+        assert "syn002" not in ids
+        assert "batch001" in ids
+
+    def test_synopsis_excluded_from_chat_tab(self, store):
+        """synopsis エントリが request_type='chat' に含まれないこと。"""
+        store.insert_debug_log_entry(request_id="syn003", source_type="synopsis")
+        store.insert_debug_log_entry(request_id="chat001", source_type="chat")
+        ids, _ = store.get_debug_log_request_ids_paged(request_type="chat")
+        assert "syn003" not in ids
+        assert "chat001" in ids
+
+    def test_synopsis_in_scenario_tab_with_target(self, store):
+        """synopsis エントリに target（シナリオ名）を付与しても Scenario タブで返ること。"""
+        store.insert_debug_log_entry(
+            request_id="syn004", source_type="synopsis",
+            target="テストシナリオ", preset="default"
+        )
+        ids, total = store.get_debug_log_request_ids_paged(request_type="scenario")
+        assert "syn004" in ids
