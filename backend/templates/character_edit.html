@@ -38,7 +38,6 @@
                         onclick="runBatch(this, '{{ character.id }}', 'chronicle')">Chronicle</button>
                 <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
                         onclick="runBatch(this, '{{ character.id }}', 'forget')">Forget</button>
-                <a href="/ui/characters" class="ch-btn ch-btn--sm ch-btn--ghost">← 戻る</a>
             </div>
         </div>
         {% else %}
@@ -319,7 +318,6 @@
             <button type="submit" class="ch-btn ch-btn--primary">キャラクターを作成</button>
             <a href="/ui/characters" class="ch-btn ch-btn--ghost">キャンセル</a>
             {% else %}
-            <a href="/ui/characters" class="ch-btn ch-btn--ghost">← 戻る</a>
             <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
             <span class="ch-spacer"></span>
             <span class="ch-meta">自動保存</span>
