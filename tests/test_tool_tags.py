@@ -406,3 +406,33 @@ class TestMcpPrefixStripping:
         )
         assert result["tag_name"] == "INSCRIBE_MEMORY"
         assert result["fields"]["カテゴリ"] == "user_info"
+
+
+class TestStructuredTagAnticipateResponse:
+    """ANTICIPATE_RESPONSE の表示変換を検証するテストクラス。
+
+    ANTICIPATE_RESPONSE は tool-use 化していないテキストタグだが、実行イベント記録
+    方式（2026-06-11〜）では tool_name="anticipate_response" のイベントとして
+    tool_call_events に記録されるため、tool_call_to_structured_tag() が
+    タグ方式の表示（fields["予想"]）と同じ形式へ変換できる必要がある。
+    """
+
+    def test_anticipate_response_converted(self):
+        """content 引数が fields["予想"] と preview に変換されること。"""
+        result = tool_call_to_structured_tag(
+            "anticipate_response", {"content": "次は昨日の散歩の話をしてくれるはず"}
+        )
+        assert result["tag_name"] == "ANTICIPATE_RESPONSE"
+        assert result["fields"]["予想"] == "次は昨日の散歩の話をしてくれるはず"
+        assert result["preview"] == "次は昨日の散歩の話をしてくれるはず"
+
+    def test_anticipate_response_meta_from_tag_meta(self):
+        """表示メタ（label / cls）が TAG_META の定義から引かれること。"""
+        result = tool_call_to_structured_tag("anticipate_response", {"content": "x"})
+        assert result["meta"]["label"] == "予想"
+        assert result["meta"]["cls"] == "tag-anticipate"
+
+    def test_anticipate_response_empty_content(self):
+        """content 欠落時も例外にならず空文字で変換されること。"""
+        result = tool_call_to_structured_tag("anticipate_response", {})
+        assert result["fields"]["予想"] == ""

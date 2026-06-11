@@ -27,6 +27,7 @@ from typing import Any, AsyncGenerator
 
 from backend.character_actions.anticipator import extract_anticipation
 from backend.lib.debug_logger import logger as debug_logger
+from backend.lib.tool_event_recorder import record_tool_event
 from backend.lib.log_context import (
     current_log_feature,
     current_log_session_id,
@@ -291,6 +292,12 @@ async def stream_pc_response(
     # ChatService 側で anticipation chunk が出ていればそちら優先。なければパースした方を採用。
     if not anticipation_text and parsed_anticipation:
         anticipation_text = parsed_anticipation
+        # この分岐は ChatService が予想を抽出しなかった場合の保険経路。
+        # chunk 経由（ChatService.execute_stream）の予想は ChatService 側で記録済みのため、
+        # フォールバック採用が確定したここでのみ記録する（二重記録にはならない）。
+        record_tool_event(
+            "anticipate_response", {"content": parsed_anticipation}, source="anticipation",
+        )
 
     # PC が稀に自身の発話頭に `@<role>:` を付けてくるケースがあるので剥がす
     # （プロンプトで禁止しているが、保険として）。

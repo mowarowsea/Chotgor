@@ -108,6 +108,9 @@ async def lifespan(app: FastAPI):
     # usage_recorder に SQLiteStore をセットして LLM 使用量の記録を有効化する
     from backend.lib import usage_recorder
     usage_recorder.set_store(sqlite)
+    # tool_event_recorder に SQLiteStore をセットしてツール実行イベントの記録を有効化する
+    from backend.lib import tool_event_recorder
+    tool_event_recorder.set_store(sqlite)
 
     _log.info("Chotgor backend 起動 sqlite=%s", SQLITE_DB_PATH)
 

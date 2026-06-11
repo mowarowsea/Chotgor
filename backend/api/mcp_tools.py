@@ -17,6 +17,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.character_actions.executor import ToolExecutor
+from backend.lib.log_context import (
+    current_log_dir_id,
+    current_log_feature,
+    current_log_target,
+    current_message_id,
+)
 from backend.character_actions.inscriber import (
     INSCRIBE_MEMORY_SCHEMA,
     INSCRIBE_MEMORY_TOOL_DESCRIPTION,
@@ -52,6 +58,35 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
+def _restore_log_context(log_context: dict | None) -> None:
+    """env→HTTP リレーで運ばれた元リクエストのログ文脈を ContextVar へ復元する。
+
+    Claude CLI の MCP プロセスは backend と別プロセスのため、チャットリクエスト時の
+    ContextVar（current_message_id 等）はこの HTTP リクエストには引き継がれない。
+    tool_event_recorder がツール実行イベントを元リクエストへ紐付けられるよう、
+    リレーされた値をここで復元する。値が欠けているキーは触らない
+    （デフォルトの "--------" のままなら recorder 側で None に正規化される）。
+
+    Args:
+        log_context: mcp_server.py がリレーした {"request_id", "dir_id", "feature",
+            "target"} の辞書。None / 空なら何もしない。
+    """
+    if not log_context:
+        return
+    request_id = str(log_context.get("request_id") or "").strip()
+    dir_id = str(log_context.get("dir_id") or "").strip()
+    feature = str(log_context.get("feature") or "").strip()
+    target = str(log_context.get("target") or "").strip()
+    if request_id:
+        current_message_id.set(request_id)
+    if dir_id:
+        current_log_dir_id.set(dir_id)
+    if feature:
+        current_log_feature.set(feature)
+    if target:
+        current_log_target.set(target)
+
+
 def _ensure_local(request: Request) -> None:
     """リクエストが localhost からのものであることを保証する。違えば 403。
 
@@ -80,6 +115,12 @@ class ToolCallRequest(BaseModel):
     付与する origin ラベル（"real" / "interlude"）。シナリオ PC モードからキャラを
     動かす経路では mcp_server.py が CHOTGOR_DEFAULT_ORIGIN env から拾って渡す。
     省略時は "real"。同じく env→HTTP リレーが必要な理由は batch_context と同じ。
+
+    ``log_context`` は元リクエストのログ文脈（request_id / dir_id / feature / target）。
+    ツール実行イベント（tool_call_events）を元のチャットリクエストに紐付けるために
+    使う。MCP プロセスは別プロセスのため backend 側 ContextVar が届かず、
+    CHOTGOR_LOG_CONTEXT env → HTTP のリレーで明示的に運ぶ必要がある
+    （batch_context / default_origin と同じ理由）。
     """
 
     character_id: str
@@ -88,6 +129,7 @@ class ToolCallRequest(BaseModel):
     arguments: dict
     batch_context: dict | None = None
     default_origin: str = "real"
+    log_context: dict | None = None
 
 
 class ToolCallResponse(BaseModel):
@@ -170,8 +212,15 @@ async def call_tool(request: Request, payload: ToolCallRequest) -> ToolCallRespo
     リクエストごとにキャラ／セッションを束ねた ToolExecutor を生成する。
     ``execute`` 自体が文字列を返す素直なインターフェースなので、
     そのまま ``result`` フィールドに乗せる。
+
+    ``log_context`` が渡された場合は、実行前に元リクエストのログ文脈を本 HTTP
+    リクエストの ContextVar へ復元する。これにより ToolExecutor 内の
+    tool_event_recorder が正しい request_id / dir_id でイベントを記録でき、
+    backend ログ行の [msg_id] も元のチャットリクエストと揃う。
+    ContextVar は ASGI リクエストごとに独立しているため、他リクエストへ漏れない。
     """
     _ensure_local(request)
+    _restore_log_context(payload.log_context)
     state = request.app.state
     executor = ToolExecutor(
         character_id=payload.character_id,

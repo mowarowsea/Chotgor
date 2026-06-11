@@ -424,3 +424,107 @@ class TestLoadEntries:
         assert total == 1
 
 
+
+
+# ─── ツール実行イベント（DB）優先と過去ログ互換フォールバック ─────────────────
+
+
+class TestParseEntryToolEventPriority:
+    """_parse_entry() のツール使用表示の経路切り替えを検証するテストクラス。
+
+    実行イベント記録方式（2026-06-11 導入）では、ツール使用表示の source of truth は
+    tool_call_events テーブルであり、生ログ解析（tag_extract.py）はイベントが存在しない
+    移行以前の過去ログ専用のフォールバックに降格した。本クラスはこの優先順位
+    （DB イベントあり → entry["tags"]・tc["tags"] は空 /
+      DB イベントなし → entry["tags"] 空・tc["tags"] に生ログ解析結果）を確認する。
+    """
+
+    def _make_store(self, tmp_path):
+        """テスト用 SQLiteStore を生成して返すヘルパ。"""
+        from backend.repositories.sqlite.store import SQLiteStore
+        return SQLiteStore(str(tmp_path / "test.db"))
+
+    def _make_folder_with_legacy_tag(self, tmp_path, msg_id):
+        """過去ログ形式（Response ファイル内テキストタグ）の debug フォルダを作るヘルパ。"""
+        folder = _make_debug_dir(tmp_path / "debug", msg_id)
+        _write_front_input(folder, "はる@ClaudeCode", "こんにちは")
+        _write_response(
+            folder, "02_chat_Response_ClaudeCode.log",
+            "おはよう。[INSCRIBE_MEMORY:contextual|1.0|朝の挨拶をした]",
+        )
+        return folder
+
+    def test_db_events_take_priority(self, tmp_path, monkeypatch):
+        """DB にイベントがあれば entry["tags"] に表示用タグが入り、生ログ解析は行われないこと。
+
+        Response ファイルにレガシータグが書かれていても tc["tags"] は空のまま
+        （= 同じツールが二重表示されない）であることも併せて確認する。
+        """
+        store = self._make_store(tmp_path)
+        msg_id = "aaaa1111"
+        folder = self._make_folder_with_legacy_tag(tmp_path, msg_id)
+        store.add_tool_call_event(
+            tool_name="inscribe_memory",
+            arguments_json='{"content": "朝の挨拶をした", "category": "contextual", "impact": 1.0}',
+            dir_id=msg_id,
+        )
+        monkeypatch.setattr(logs_ui_config, "_store", store)
+
+        entry = _parse_entry(msg_id, folder, {})
+        assert len(entry["tags"]) == 1
+        tag = entry["tags"][0]
+        assert tag["tag_name"] == "INSCRIBE_MEMORY"
+        assert tag["fields"]["内容"] == "朝の挨拶をした"
+        assert tag["status"] == "ok"
+        # 生ログ解析（フォールバック）は走らず tc["tags"] は空
+        for tc in entry["tool_calls"]:
+            assert tc["tags"] == []
+
+    def test_no_db_events_falls_back_to_file_parse(self, tmp_path, monkeypatch):
+        """DB にイベントが無い（過去ログ）場合、従来の生ログ解析で tc["tags"] が埋まること。"""
+        store = self._make_store(tmp_path)
+        msg_id = "bbbb2222"
+        folder = self._make_folder_with_legacy_tag(tmp_path, msg_id)
+        monkeypatch.setattr(logs_ui_config, "_store", store)
+
+        entry = _parse_entry(msg_id, folder, {})
+        assert entry["tags"] == []
+        response_tc = [tc for tc in entry["tool_calls"] if tc["response_file"]]
+        assert len(response_tc) == 1
+        assert response_tc[0]["tags"][0]["tag_name"] == "INSCRIBE_MEMORY"
+        assert response_tc[0]["tags"][0]["fields"]["内容"] == "朝の挨拶をした"
+
+    def test_no_store_falls_back_to_file_parse(self, tmp_path, monkeypatch):
+        """DB 未接続（テスト・起動直後）でも生ログ解析フォールバックで表示できること。"""
+        msg_id = "cccc3333"
+        folder = self._make_folder_with_legacy_tag(tmp_path, msg_id)
+        monkeypatch.setattr(logs_ui_config, "_store", None)
+
+        entry = _parse_entry(msg_id, folder, {})
+        assert entry["tags"] == []
+        response_tc = [tc for tc in entry["tool_calls"] if tc["response_file"]]
+        assert response_tc[0]["tags"][0]["tag_name"] == "INSCRIBE_MEMORY"
+
+    def test_error_event_carries_status_and_message(self, tmp_path, monkeypatch):
+        """status=error のイベントがタグ辞書に status / error_message を載せること。
+
+        実行成否は生ログ解析では得られなかった、イベント記録方式で初めて
+        表示可能になった情報であることに対応する。
+        """
+        store = self._make_store(tmp_path)
+        msg_id = "dddd4444"
+        folder = _make_debug_dir(tmp_path / "debug", msg_id)
+        _write_front_input(folder, "はる@ClaudeCode", "覚えてて")
+        store.add_tool_call_event(
+            tool_name="inscribe_memory",
+            arguments_json='{"content": "x"}',
+            status="error",
+            error_message="[inscribe_memory error: embedding接続エラー]",
+            dir_id=msg_id,
+        )
+        monkeypatch.setattr(logs_ui_config, "_store", store)
+
+        entry = _parse_entry(msg_id, folder, {})
+        tag = entry["tags"][0]
+        assert tag["status"] == "error"
+        assert "embedding接続エラー" in tag["error_message"]

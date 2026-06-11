@@ -394,6 +394,37 @@ class LlmUsageEvent(Base):
     total_cost_usd = Column(Float, nullable=True)   # claude_cli の result イベント由来（参考値）
 
 
+class ToolCallEvent(Base):
+    """ツール実行イベント — キャラクターのツール使用1回 = 1行の実行時記録。
+
+    Logs 画面のツール使用表示は、かつて debug/ の生ログ（JSON / stream-json /
+    テキストタグの5形式）を表示時に逆解析していたが、プロバイダーやログ書式の
+    変更のたびに壊れる構造だった。本テーブルは「実行時に確定した事実」を
+    tool_event_recorder（backend/lib/tool_event_recorder.py）経由でその場で記録し、
+    表示時の解析を不要にする（llm_usage_events と同じ思想）。
+
+    記録経路:
+        - tool-use 方式:  ToolExecutor.execute()（全プロバイダー・MCP プロキシ・バッチ共通の関門）
+        - タグ方式:       inscriber / carver / switcher の *_from_text と
+                          ChatService の power_recall 実行箇所
+        - 予想タグ:       ANTICIPATE_RESPONSE の採用箇所（保存・次ターン注入される値のみ）
+    """
+
+    __tablename__ = "tool_call_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(), index=True)
+    request_id = Column(String, nullable=True, index=True)  # debug_log_entries.request_id と同じ8桁hex（再生成で共有）
+    dir_id = Column(String, nullable=True, index=True)      # debug フォルダ名と同じ8桁hex（試行ごとに fresh）
+    target = Column(String, nullable=True)                  # キャラ名/シナリオ名/バッチ対象名（log_context 由来）
+    feature = Column(String, nullable=True)                 # chat / scenario / chronicle / forget 等
+    source = Column(String, nullable=False, default="tool_use")  # tool_use / tag / anticipation（記録経路の区別）
+    tool_name = Column(String, nullable=False)              # inscribe_memory / carve_narrative / anticipate_response 等
+    arguments_json = Column(Text, nullable=True)            # ツール引数 dict の JSON（表示は tool_tags が担う）
+    status = Column(String, nullable=False, default="ok")   # ok / error
+    error_message = Column(Text, nullable=True)             # status=error 時の詳細（結果文字列 or 例外メッセージ）
+
+
 class ScenarioTurn(Base):
     """シナリオセッションの発話ターン — ユーザ・Narrator・NPC・(将来)既存キャラを多態で格納する。"""
 

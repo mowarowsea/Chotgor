@@ -17,6 +17,12 @@ import shutil
 import subprocess
 import tempfile
 
+from backend.lib.log_context import (
+    current_log_dir_id,
+    current_log_feature,
+    current_log_target,
+    current_message_id,
+)
 from backend.lib.stream_json import iter_stream_json_events
 from backend.providers.base import BaseLLMProvider
 
@@ -375,6 +381,21 @@ class ClaudeCliProvider(BaseLLMProvider):
             env["CHOTGOR_BATCH_CONTEXT"] = json.dumps(batch_context, ensure_ascii=False)
         if default_origin and default_origin != "real":
             env["CHOTGOR_DEFAULT_ORIGIN"] = default_origin
+        # ログ文脈（request_id 等）の env→HTTP リレー:
+        # Claude CLI が叩く MCP サーバー（mcp_server.py）は別プロセスのため、
+        # backend 側 ContextVar（current_message_id 等）は届かない。ツール実行イベント
+        # （tool_call_events）を元リクエストに紐付けるため、ここで env に積み、
+        # mcp_server.py → /api/mcp/tools/call → ContextVar 復元の経路で伝搬する
+        # （batch_context / default_origin と同じリレー思想）。
+        env["CHOTGOR_LOG_CONTEXT"] = json.dumps(
+            {
+                "request_id": current_message_id.get(),
+                "dir_id": current_log_dir_id.get(),
+                "feature": current_log_feature.get(),
+                "target": current_log_target.get() or "",
+            },
+            ensure_ascii=False,
+        )
         return env
 
     async def generate_with_tools(
@@ -419,9 +440,13 @@ class ClaudeCliProvider(BaseLLMProvider):
         switch_info = _extract_switch_angle_from_stream_json(raw)
         if switch_info is not None and tool_executor is not None:
             preset_name, self_instruction = switch_info
+            # record=False: switch_angle 自体は MCP プロキシ（api/mcp_tools.py）経由で
+            # 既に実行・イベント記録済み。ここは switch_request の状態を in-process の
+            # tool_executor へ転写するだけの再実行のため、二重記録を防ぐ。
             tool_executor.execute(
                 "switch_angle",
                 {"preset_name": preset_name, "self_instruction": self_instruction},
+                record=False,
             )
         return text, thinking
 

@@ -21,6 +21,7 @@ Claude CLI 等 SUPPORTS_TOOLS=False のプロバイダーが [SWITCH_ANGLE:...] 
 import logging
 
 from backend.lib.tag_parser import parse_tags
+from backend.lib.tool_event_recorder import record_tool_event
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,13 @@ class Switcher:
             logger.info(
                 "タグ方式 preset=%s instruction=%.50s",
                 preset_name, self_instruction,
+            )
+            # switch_request への格納がこのツールの実効作用（再ディスパッチは service.py）。
+            # 引数はツール呼び出し方式（SWITCH_ANGLE_SCHEMA）と同じキー名で記録する。
+            record_tool_event(
+                "switch_angle",
+                {"preset_name": preset_name, "self_instruction": self_instruction},
+                source="tag",
             )
         return clean
 

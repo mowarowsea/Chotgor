@@ -10,6 +10,7 @@ Inscriber クラスと関連定数を一元管理する。
 import logging
 
 from backend.lib.tag_parser import parse_tags
+from backend.lib.tool_event_recorder import record_tool_event
 from backend.services.memory.manager import InscribedMemoryManager
 
 logger = logging.getLogger(__name__)
@@ -182,10 +183,18 @@ class Inscriber:
         clean, memories = _extract(text)
         for category, impact_str, content in memories:
             impact = float(impact_str) if impact_str else 1.0
+            # 引数はツール呼び出し方式（INSCRIBE_MEMORY_SCHEMA）と同じキー名で記録し、
+            # Logs 画面の表示変換（tool_tags.tool_call_to_structured_tag）を共用する。
+            event_args = {"content": content, "category": category, "impact": impact}
             try:
                 self.inscribe_memory(content, category, impact, source_preset_id=source_preset_id, origin=origin)
-            except Exception:
+                record_tool_event("inscribe_memory", event_args, source="tag")
+            except Exception as e:
                 logger.exception("記憶の書き込みに失敗: category=%s content=%.50s...", category, content)
+                record_tool_event(
+                    "inscribe_memory", event_args,
+                    status="error", error_message=f"{type(e).__name__}: {e}", source="tag",
+                )
         return clean
 
     def inscribe_memory(

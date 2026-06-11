@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from backend.services.memory.manager import InscribedMemoryManager
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
+from backend.lib.tool_event_recorder import record_tool_event, result_looks_like_error
 from backend.repositories.lance.store import EmbeddingError
 from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
 from backend.character_actions.switcher import Switcher, SWITCH_ANGLE_SCHEMA, SWITCH_ANGLE_TOOL_DESCRIPTION
@@ -190,15 +191,47 @@ class ToolExecutor:
         """switch_angle が呼ばれた場合の切り替えリクエスト。generate_with_tools() ループが検知して即中断する。"""
         return self._switcher.switch_request
 
-    def execute(self, tool_name: str, tool_input: dict) -> str:
+    def execute(self, tool_name: str, tool_input: dict, *, record: bool = True) -> str:
         """ツール名と入力を受け取り実行して結果テキストを返す。
+
+        全プロバイダーの tool-use ループ・MCP プロキシ（api/mcp_tools.py）・バッチ処理が
+        共通して通る唯一の関門のため、ここでツール実行イベントを tool_call_events に記録する
+        （Logs 画面のツール使用表示の source of truth。tool_event_recorder を参照）。
 
         Args:
             tool_name: ツール名（"inscribe_memory" / "post_working_memory_thread" / "open_working_memory_thread" / "carve_narrative" / "switch_angle" / "power_recall"）。
             tool_input: ツールの入力パラメータ dict。
+            record: False の場合、実行イベントを記録しない。MCP 経由で既に実行・記録済みの
+                switch_angle を in-process の tool_executor へ転写する claude_cli_provider の
+                経路でのみ False を渡す（二重記録防止）。
 
         Returns:
             ツールの実行結果を表すテキスト。
+        """
+        try:
+            result = self._dispatch(tool_name, tool_input)
+        except Exception as e:
+            # 各ツール実装は例外を握り潰す設計だが、引数の型変換（float() 等）が
+            # ディスパッチ段で送出する可能性があるため、失敗の事実だけ記録して再送出する。
+            if record:
+                record_tool_event(
+                    tool_name, tool_input,
+                    status="error", error_message=f"{type(e).__name__}: {e}",
+                )
+            raise
+        if record:
+            is_error = result_looks_like_error(result)
+            record_tool_event(
+                tool_name, tool_input,
+                status="error" if is_error else "ok",
+                error_message=result if is_error else None,
+            )
+        return result
+
+    def _dispatch(self, tool_name: str, tool_input: dict) -> str:
+        """ツール名に応じて各ツール実装へ振り分ける内部メソッド。
+
+        実行イベントの記録は execute() が担うため、ここでは記録しない。
         """
         self.logger.debug("ツール呼び出し name=%s", tool_name)
         if tool_name == "inscribe_memory":

@@ -1,3 +1,32 @@
+{#
+  ツールタグ1件の表示マクロ。
+  新方式（実行イベント由来の a.tags / e.tags）と過去ログ互換（tc.tags、
+  生ログ解析由来）の両方で共用する。tag.status はイベント由来のタグにのみ
+  存在し、"error" のとき実行失敗マーカーを表示する（生ログ解析では
+  実行成否が分からなかったため、過去ログのタグには付かない）。
+#}
+{% macro tag_item(tag) %}
+<div class="log-tag-item">
+    <span class="ch-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
+    {% if tag.status == "error" %}
+    <span class="log-tag-meta log-warn-reason">(実行失敗)</span>
+    {% endif %}
+    {% if tag.tag_name == "INSCRIBE_MEMORY" %}
+    <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
+    {% elif tag.tag_name == "CARVE_NARRATIVE" %}
+    <span class="log-tag-meta">{{ tag.fields.モード }}</span>
+    {% elif tag.tag_name == "SWITCH_ANGLE" %}
+    <span class="log-tag-meta">→ {{ tag.fields.プリセット }}</span>
+    {% endif %}
+    {% if tag.preview %}
+    <div class="log-tag-preview">{{ tag.preview[:200] }}{% if tag.preview|length > 200 %}…{% endif %}</div>
+    {% endif %}
+    {% if tag.error_message %}
+    <div class="log-tag-preview log-warn-reason">{{ tag.error_message[:200] }}{% if tag.error_message|length > 200 %}…{% endif %}</div>
+    {% endif %}
+</div>
+{% endmacro %}
+
 {% if e.attempts %}
 <!-- ─── 試行履歴（メイン行が1件でも同じ構造で表示）─── -->
 <div class="log-row log-row-attempts">
@@ -81,27 +110,26 @@
                             {% if tc.response_file %}
                             <div class="log-inline-body" data-filename="{{ tc.response_file }}" style="display:none"></div>
                             {% endif %}
+                            {# 過去ログ互換: 生ログ解析由来のタグ（Responseファイル単位）。
+                               イベント記録方式（2026-06-11〜）のログでは空で、
+                               代わりに下の「ツール」行（a.tags）に表示される。 #}
                             {% if tc.tags %}
                             <div class="log-tag-list">
-                                {% for tag in tc.tags %}
-                                <div class="log-tag-item">
-                                    <span class="ch-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
-                                    {% if tag.tag_name == "INSCRIBE_MEMORY" %}
-                                    <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
-                                    {% elif tag.tag_name == "CARVE_NARRATIVE" %}
-                                    <span class="log-tag-meta">{{ tag.fields.モード }}</span>
-                                    {% elif tag.tag_name == "SWITCH_ANGLE" %}
-                                    <span class="log-tag-meta">→ {{ tag.fields.プリセット }}</span>
-                                    {% endif %}
-                                    {% if tag.preview %}
-                                    <div class="log-tag-preview">{{ tag.preview[:200] }}{% if tag.preview|length > 200 %}…{% endif %}</div>
-                                    {% endif %}
-                                </div>
-                                {% endfor %}
+                                {% for tag in tc.tags %}{{ tag_item(tag) }}{% endfor %}
                             </div>
                             {% endif %}
                         </div>
                         {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- ツール使用（実行イベント由来・試行単位） -->
+                {% if a.tags %}
+                <div class="log-row">
+                    <span class="ch-eyebrow">ツール</span>
+                    <div class="log-tag-list">
+                        {% for tag in a.tags %}{{ tag_item(tag) }}{% endfor %}
                     </div>
                 </div>
                 {% endif %}
@@ -195,27 +223,26 @@
             {% if tc.response_file %}
             <div class="log-inline-body" data-filename="{{ tc.response_file }}" style="display:none"></div>
             {% endif %}
+            {# 過去ログ互換: 生ログ解析由来のタグ（Responseファイル単位）。
+               イベント記録方式（2026-06-11〜）のログでは空で、
+               代わりに下の「ツール」行（e.tags）に表示される。 #}
             {% if tc.tags %}
             <div class="log-tag-list">
-                {% for tag in tc.tags %}
-                <div class="log-tag-item">
-                    <span class="ch-badge {{ tag.meta.cls }}">{{ tag.meta.label }}</span>
-                    {% if tag.tag_name == "INSCRIBE_MEMORY" %}
-                    <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
-                    {% elif tag.tag_name == "CARVE_NARRATIVE" %}
-                    <span class="log-tag-meta">{{ tag.fields.モード }}</span>
-                    {% elif tag.tag_name == "SWITCH_ANGLE" %}
-                    <span class="log-tag-meta">→ {{ tag.fields.プリセット }}</span>
-                    {% endif %}
-                    {% if tag.preview %}
-                    <div class="log-tag-preview">{{ tag.preview[:200] }}{% if tag.preview|length > 200 %}…{% endif %}</div>
-                    {% endif %}
-                </div>
-                {% endfor %}
+                {% for tag in tc.tags %}{{ tag_item(tag) }}{% endfor %}
             </div>
             {% endif %}
         </div>
         {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- ツール使用（実行イベント由来・バッチ処理用） -->
+{% if e.tags %}
+<div class="log-row">
+    <span class="ch-eyebrow">ツール</span>
+    <div class="log-tag-list">
+        {% for tag in e.tags %}{{ tag_item(tag) }}{% endfor %}
     </div>
 </div>
 {% endif %}

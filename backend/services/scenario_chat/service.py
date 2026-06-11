@@ -22,6 +22,7 @@ from typing import Any, AsyncGenerator
 
 from backend.character_actions.anticipator import extract_anticipation
 from backend.lib.log_context import current_log_feature
+from backend.lib.tool_event_recorder import record_tool_event
 from backend.services.scenario_chat.engine import (
     EngineResult,
     EnsembleEngine,
@@ -439,6 +440,12 @@ async def _run_gm_turn(
             raw_response = item.raw_response
 
     _, turn_anticipation = extract_anticipation(raw_response)
+    # GM の予想はここで採用が確定する（最終ターンの anticipation カラムへ保存され、
+    # 次ターンの GM プロンプトに注入される）ため、この地点で実行イベントとして記録する。
+    if turn_anticipation:
+        record_tool_event(
+            "anticipate_response", {"content": turn_anticipation}, source="anticipation",
+        )
     last_index = len(turn_records_pending) - 1
     for i, rec in enumerate(turn_records_pending):
         rec_content, _ = extract_anticipation(rec.content)

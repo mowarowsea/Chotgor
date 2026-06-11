@@ -122,6 +122,13 @@ def tool_call_to_structured_tag(tool_name: str, args: dict) -> dict:
         }
         return _make_tag(tag_name, fields, fields["クエリ"])
 
+    if tag_name == "ANTICIPATE_RESPONSE":
+        # ANTICIPATE_RESPONSE はテキストタグだが、ツール実行イベント
+        # （tool_call_events、tool_name="anticipate_response"）として記録されるため、
+        # タグ方式の表示（logs_ui._parse_tag_body）と同じ fields 形式で変換する。
+        fields = {"予想": str(args.get("content", ""))}
+        return _make_tag(tag_name, fields, fields["予想"])
+
     # 未知ツール: 引数の key/value をそのまま fields に並べる
     fields = {k: str(v) for k, v in args.items()}
     preview = " / ".join(f"{k}={v}" for k, v in fields.items())

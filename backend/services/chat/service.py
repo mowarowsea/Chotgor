@@ -40,6 +40,7 @@ from backend.providers.base import LLMApiError
 from backend.providers.registry import create_provider
 from backend.services.chat.request_builder import build_system_prompt
 from backend.lib.tag_parser import StreamingTagStripper
+from backend.lib.tool_event_recorder import record_tool_event
 from backend.character_actions.executor import ToolExecutor
 from backend.lib.web_fetch import fetch_urls, find_urls
 from backend.services.chat.models import ChatRequest, Message
@@ -574,9 +575,18 @@ class ChatService:
                         query,
                         top_k,
                     )
+                    # タグ方式の power_recall はここが実際の実行箇所のため、
+                    # （Recaller はタグ検出のみ）実行成否ごとここで記録する。
+                    record_tool_event(
+                        "power_recall", {"query": query, "top_k": top_k}, source="tag",
+                    )
                 except Exception as e:
                     logger.log_warning("PowerRecall", f"検索失敗 character={request.character_id}: {e}")
                     power_recalled = {}
+                    record_tool_event(
+                        "power_recall", {"query": query, "top_k": top_k},
+                        status="error", error_message=f"{type(e).__name__}: {e}", source="tag",
+                    )
 
                 # キャラクターのターン終了 → Chotgor からの新ターンとして再呼び出しする。
                 # assistant: pre_recall_text（キャラクターの発話途中）
@@ -626,6 +636,13 @@ class ChatService:
         # tool-use 方式・タグ方式どちらの clean_text からも、この共通地点で1回だけ取り出す。
         # （switch_angle / power_recall の再帰時は再帰先で抽出済みのため、ここには到達しない）
         clean_text, anticipation = extract_anticipation(clean_text)
+        # 予想はここで採用（末尾で yield → API 層が保存・次ターン注入）されるため、
+        # 採用が確定したこの地点でツール実行イベントとして記録する。
+        # 抽出だけして捨てる経路（非ストリーミング execute() 等）では記録しない。
+        if anticipation:
+            record_tool_event(
+                "anticipate_response", {"content": anticipation}, source="anticipation",
+            )
 
         # FrontOutput は reflector タスク起動より前にログする。
         # asyncio.create_task はコンテキストをコピーするため、

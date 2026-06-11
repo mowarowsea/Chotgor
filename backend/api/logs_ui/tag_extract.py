@@ -1,7 +1,21 @@
-"""ログファイルからのタグ／ツール呼び出し抽出。
+"""ログファイルからのタグ／ツール呼び出し抽出【過去ログ互換のレガシー解析】。
 
 debug_logger が生成した JSON / stream-json / テキストタグ形式のログを解析し、
 ログ閲覧UIで表示する構造化タグ辞書を組み立てる。
+
+【経緯 — 2026-06-11 に実行時イベント記録方式へ移行】
+かつてはこのモジュールが Logs 画面のツール使用表示の唯一の経路であり、
+プロバイダーごとの5形式（Gemini JSON / Anthropic JSON / OpenAI JSON /
+Claude CLI stream-json / テキストタグ）の判別、debug_logger の \\n 展開で
+壊れた JSON の復元、stream-json の text/result 重複の排除（_dedupe_tags）を
+表示のたびに行っていた。生ログの書式変更やプロバイダー追加のたびに壊れる
+構造だったため、ツール実行時に tool_event_recorder が tool_call_events へ
+確定事実を記録する方式へ移行した（backend/lib/tool_event_recorder.py 参照）。
+
+現在このモジュールは、イベント記録が存在しない移行以前の過去ログを表示する
+ためのフォールバックとしてのみ entries.py から呼ばれる。過去ログの表示が
+不要になった時点で、テスト（test_logs_ui_tag_extract.py）ごと削除してよい。
+新しいツール・プロバイダー対応をここに追加してはならない。
 """
 
 import json

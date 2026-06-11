@@ -12,6 +12,7 @@ from pathlib import Path
 
 from backend.api.logs_ui import config
 from backend.api.logs_ui.tag_extract import _extract_tags_from_file, _parse_json_safely
+from backend.character_actions import tool_tags
 
 # chotgor.log から char= を抽出するパターン
 # 例: "... [a25e00da] ... char=はる@ClaudeCode ..."
@@ -48,6 +49,41 @@ def _build_char_index() -> dict[str, str]:
     return index
 
 
+def _load_db_tags(dir_id: str) -> list[dict]:
+    """dir_id のツール実行イベントを DB から読み、表示用構造化タグに変換して返す。
+
+    ツール実行イベント（tool_call_events）は、実行時に tool_event_recorder が
+    記録した「どのツールがどの引数で呼ばれ、成功/失敗したか」の確定事実。
+    表示変換は tool-use 方式と同じ tool_tags.tool_call_to_structured_tag() を共用し、
+    実行結果（status）と失敗詳細（error_message）をタグ辞書に付加する。
+
+    Args:
+        dir_id: debug フォルダ名と同じ8桁hex（試行ごとに fresh）。
+
+    Returns:
+        構造化タグ辞書のリスト（実行順）。DB 未接続・イベントなしなら空リスト。
+    """
+    sqlite = config.get_sqlite_store()
+    if sqlite is None:
+        return []
+    try:
+        events = sqlite.get_tool_call_events_by_dir_ids([dir_id]).get(dir_id, [])
+    except Exception:
+        return []
+    tags: list[dict] = []
+    for ev in events:
+        tag = tool_tags.tool_call_to_structured_tag(
+            ev["tool_name"], ev.get("arguments") or {}
+        )
+        # 実行成否はイベント記録方式で初めて表示可能になった情報
+        # （生ログ解析では「呼ぼうとした」ことしか分からなかった）。
+        tag["status"] = ev.get("status", "ok")
+        if tag["status"] == "error" and ev.get("error_message"):
+            tag["error_message"] = ev["error_message"]
+        tags.append(tag)
+    return tags
+
+
 def _tc_label(tc: dict) -> str:
     """tool_call を人間可読なラベル（feature/preset）に整形する。
 
@@ -80,7 +116,7 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
         ログエントリ辞書。以下のキーを含む:
             message_id, dt, dt_str, character, preset, model_id,
             source, user_message, character_response, reasoning_text,
-            tool_calls, warnings, files, has_error, warn_reason
+            tool_calls, tags, warnings, notices, files, has_error, warn_reason
     """
     try:
         dt = datetime.fromtimestamp(folder.stat().st_mtime)
@@ -169,10 +205,25 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
                 tool_calls.append({"feature": feature, "preset": preset_name,
                                    "request_file": None, "response_file": f.name, "tags": []})
 
-    # Response ファイルからタグを抽出して tool_calls に追加
-    for tc in tool_calls:
-        if tc["response_file"]:
-            tc["tags"] = _extract_tags_from_file(folder / tc["response_file"])
+    # --- ツール使用（tags）を組み立てる ---
+    # 【新方式（2026-06-11〜）】実行時に記録されたツール実行イベント（tool_call_events）
+    # から表示を組み立てる。フォルダ名（msg_id）= 記録時の dir_id で対応付く。
+    # イベントはエントリ（試行）単位の事実のため、個別の Response ファイルではなく
+    # エントリレベルの "tags" として返す（tc["tags"] は空のまま）。
+    tags = _load_db_tags(msg_id)
+
+    if not tags:
+        # 【過去ログ互換フォールバック】
+        # イベント記録方式の導入（2026-06-11）以前のログには tool_call_events が
+        # 存在しないため、従来どおり Response ファイルの生ログを逆解析して
+        # タグを抽出する（tag_extract.py。JSON / stream-json / テキストタグの
+        # 形式判別・壊れJSON復元・重複排除を含む旧来の解析ロジック）。
+        # 旧方式ではタグは Response ファイルごとに tc["tags"] へ紐付く。
+        # 過去ログを表示する必要がなくなったら、この分岐と tag_extract.py の
+        # 解析ロジックは削除してよい。
+        for tc in tool_calls:
+            if tc["response_file"]:
+                tc["tags"] = _extract_tags_from_file(folder / tc["response_file"])
 
     # --- Warning ファイルを収集 ---
     # log_warning() が書き出した {NN}_Warning_{tag}.log を読み込む。
@@ -239,6 +290,9 @@ def _parse_entry(msg_id: str, folder: Path, char_index: dict[str, str]) -> dict:
         "character_response": character_response,
         "reasoning_text": reasoning_text,
         "tool_calls": tool_calls,
+        # 実行イベント由来のツール使用（新方式）。過去ログでは空リストで、
+        # 代わりに tool_calls[].tags（生ログ解析）に値が入る。
+        "tags": tags,
         "warnings": warnings,
         "notices": notices,
         "files": file_names,
@@ -266,6 +320,7 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
     raw_dir = r.get("raw_dir") or ""
     dir_id = Path(raw_dir).name if raw_dir else ""
     tool_calls: list[dict] = []
+    tags: list[dict] = []
     warnings: list[dict] = []
     notices: list[dict] = []
     file_names: list[str] = []
@@ -277,6 +332,7 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
         if raw_path.exists():
             parsed = _parse_entry(dir_id, raw_path, char_index)
             tool_calls = parsed.get("tool_calls", [])
+            tags = parsed.get("tags", [])
             warnings_parsed = parsed.get("warnings", [])
             if warnings_parsed:
                 warnings = warnings_parsed
@@ -286,6 +342,10 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
             if not warn_reason:
                 warn_reason = parsed.get("warn_reason", "")
             file_names = sorted(p.name for p in raw_path.iterdir() if p.is_file())
+        elif dir_id:
+            # 生ファイルフォルダが既に掃除されていても、ツール実行イベントは
+            # DB に残っているため表示できる（イベント記録方式の利点）。
+            tags = _load_db_tags(dir_id)
 
     return {
         "index": index + 1,
@@ -296,6 +356,9 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
         "has_error": has_error,
         "warn_reason": warn_reason,
         "tool_calls": tool_calls,
+        # 実行イベント由来のツール使用（新方式）。過去ログ（2026-06-11 以前）では
+        # 空リストで、代わりに tool_calls[].tags（生ログ解析）に値が入る。
+        "tags": tags,
         "warnings": warnings,
         "notices": notices,
         "files": file_names,
@@ -372,6 +435,7 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
 
     # 非メイン行（chronicle/forget 等）向けの top-level tool_calls（旧来互換）
     top_tool_calls: list[dict] = []
+    top_tags: list[dict] = []
     top_warnings: list[dict] = []
     top_notices: list[dict] = []
     top_file_names: list[str] = []
@@ -384,6 +448,7 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
             if raw_path.exists():
                 parsed = _parse_entry(dir_id, raw_path, char_index)
                 top_tool_calls = parsed.get("tool_calls", [])
+                top_tags = parsed.get("tags", [])
                 top_warnings = parsed.get("warnings", [])
                 top_notices = parsed.get("notices", [])
                 if not has_error:
@@ -393,6 +458,9 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
                 top_file_names = sorted(
                     p.name for p in raw_path.iterdir() if p.is_file()
                 )
+            else:
+                # 生ファイルフォルダが掃除済みでもツール実行イベントは DB に残る
+                top_tags = _load_db_tags(dir_id)
 
     # top-level の dir_id（旧来の ID/Files 表示と JSON API 用）
     top_raw_dir = latest_main.get("raw_dir") or main_row.get("raw_dir") or ""
@@ -414,6 +482,9 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
         "reasoning_text": latest_main.get("reasoning") or "",
         # 非メイン行エントリ向け（attempts が空の場合のみ HTML で使う）
         "tool_calls": top_tool_calls,
+        # 実行イベント由来のツール使用（新方式・非メイン行用）。
+        # 過去ログでは空で、代わりに tool_calls[].tags（生ログ解析）に値が入る。
+        "tags": top_tags,
         "warnings": top_warnings,
         # 降格お知らせ（DB由来・一覧でも有効）＋ ファイル由来お知らせ
         "notices": demoted_notices + top_notices,
