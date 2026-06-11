@@ -12,6 +12,11 @@ export interface LogTag {
   meta: LogTagMeta;
   fields: Record<string, string>;
   preview: string;
+  /** 実行結果（"ok" / "error"）。実行イベント由来のタグにのみ存在する
+   *  （生ログ解析由来の過去ログタグでは実行成否が分からないため undefined）。 */
+  status?: string;
+  /** status="error" 時の失敗詳細。 */
+  error_message?: string;
 }
 
 /** ツール呼び出し（LLMプロバイダーへの1回のRequest/Responseペア）。 */
@@ -40,6 +45,9 @@ export interface LogAttempt {
   has_error: boolean;
   warn_reason: string;
   tool_calls: LogToolCall[];
+  /** 実行イベント（tool_call_events）由来のツール使用（2026-06-11〜の新方式）。
+   *  過去ログでは空で、代わりに tool_calls[].tags（生ログ解析）に値が入る。 */
+  tags?: LogTag[];
   warnings: LogWarning[];
   files: string[];
   dir_id: string;
@@ -52,8 +60,11 @@ export interface LogAttempt {
  * メイン行が無いエントリ）の旧来互換フィールド。
  */
 export interface LogEntry {
-  /** debug フォルダ名（8桁 hex）。 */
+  /** リクエストID（8桁 hex）。シナリオの再生成では複数試行で共有される。 */
   message_id: string;
+  /** 生ログフォルダ名（8桁 hex）。最新メイン行の raw_dir 由来で、再生成があると
+   *  message_id（request_id）とは別の値になる。Raw ファイル取得にはこちらを使う。 */
+  dir_id?: string;
   dt_str: string;
   character: string;
   preset: string;
@@ -64,6 +75,8 @@ export interface LogEntry {
   /** 思考ブロック・想起記憶テキスト。CHOTGOR_DEBUG=1 かつ Thinking 有効時のみ存在する。 */
   reasoning_text?: string;
   tool_calls: LogToolCall[];
+  /** 実行イベント由来のツール使用（非メイン行エントリ用、LogAttempt.tags と同様）。 */
+  tags?: LogTag[];
   warnings: LogWarning[];
   files: string[];
   has_error: boolean;

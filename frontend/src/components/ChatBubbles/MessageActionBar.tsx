@@ -6,7 +6,7 @@ import { useState } from "react";
 import { fetchLogEntry } from "../../api";
 import type { LogEntry } from "../../api";
 import { CopyButton, DiscardButton, RegenerateButton } from "./buttons";
-import { RawLogModal, TAG_COLORS, ToolCallRow } from "./logViewer";
+import { RawLogModal, TAG_COLORS, ToolCallRow, ToolTagRow } from "./logViewer";
 
 /**
  * 経過時間（ミリ秒）を人間向けの短い文字列にフォーマットする。
@@ -99,10 +99,27 @@ export function MessageActionBar({
     ? latestAttempt.warnings
     : (entry?.warnings ?? []);
 
+  /** 実行イベント（tool_call_events）由来のツールタグ（2026-06-11〜の新方式）。
+   *  過去ログでは空で、代わりに tool_calls[].tags（生ログ解析）に値が入る。 */
+  const eventTags = latestAttempt
+    ? (latestAttempt.tags ?? [])
+    : (entry?.tags ?? []);
+
+  /** バッジ表示用の全タグ（実行イベント由来＋過去ログ互換の両経路を合流）。 */
+  const allTags = [...eventTags, ...toolCalls.flatMap((tc) => tc.tags)];
+
   /** ユニークなタグ cls を収集してバッジ用リストを返す。 */
-  const allTagCls = entry
-    ? [...new Set(toolCalls.flatMap((tc) => tc.tags.map((t) => t.meta.cls)))]
-    : [];
+  const allTagCls = entry ? [...new Set(allTags.map((t) => t.meta.cls))] : [];
+
+  /** Raw ログファイル（Request/Response）の取得先フォルダID。
+   *
+   * `logMessageId` は request_id であり、シナリオの再生成では旧 request_id を
+   * 引き継いで複数試行が1エントリにまとまる。一方、生ログフォルダ（debug/<8hex>/）は
+   * 試行ごとに別の dir_id で作られるため、request_id でファイルを引くと
+   * 「最新試行の tool_calls に、初回試行フォルダの同名ファイル」を開いてしまう。
+   * 表示対象（= 最新試行）の dir_id を優先し、無ければ entry の dir_id →
+   * request_id の順でフォールバックする（1on1・再生成なしでは全部同じ値）。 */
+  const rawDirId = latestAttempt?.dir_id || entry?.dir_id || logMessageId;
 
   return (
     <>
@@ -130,7 +147,7 @@ export function MessageActionBar({
             )}
             {!loading && allTagCls.map((cls, i) => (
               <span key={i} className={`px-1 py-0.5 rounded text-[9px] ${TAG_COLORS[cls] ?? TAG_COLORS["tag-unknown"]}`}>
-                {toolCalls.flatMap((tc) => tc.tags).find((t) => t.meta.cls === cls)?.meta.label ?? cls}
+                {allTags.find((t) => t.meta.cls === cls)?.meta.label ?? cls}
               </span>
             ))}
           </button>
@@ -165,12 +182,14 @@ export function MessageActionBar({
                     <ToolCallRow
                       key={i}
                       tc={tc}
-                      logMessageId={logMessageId}
                       onOpenRaw={(filename) => setRawModal(filename)}
                     />
                   ))}
                 </div>
               )}
+
+              {/* 実行イベント由来のツールタグ（新方式） */}
+              {eventTags.length > 0 && <ToolTagRow tags={eventTags} />}
 
               {/* warnings（attempts 統合済み） */}
               {warnings.length > 0 && (
@@ -184,8 +203,8 @@ export function MessageActionBar({
                 </div>
               )}
 
-              {/* tool_callsもwarningsもない場合 */}
-              {toolCalls.length === 0 && warnings.length === 0 && (
+              {/* tool_calls・実行イベントタグ・warnings がいずれもない場合 */}
+              {toolCalls.length === 0 && eventTags.length === 0 && warnings.length === 0 && (
                 <div className="text-ch-t4 text-[11px] px-1">ツール呼び出しなし</div>
               )}
             </>
@@ -193,10 +212,10 @@ export function MessageActionBar({
         </div>
       )}
 
-      {/* Raw ログモーダル */}
-      {rawModal && logMessageId && (
+      {/* Raw ログモーダル。ファイルは試行ごとのフォルダ（rawDirId）から取得する */}
+      {rawModal && rawDirId && (
         <RawLogModal
-          messageId={logMessageId}
+          messageId={rawDirId}
           filename={rawModal}
           onClose={() => setRawModal(null)}
         />

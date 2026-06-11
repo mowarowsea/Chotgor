@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { fetchRawLog } from "../../api";
-import type { LogToolCall } from "../../api";
+import type { LogTag, LogToolCall } from "../../api";
 
 /** タグ種別 cls → Tailwindクラスのマッピング。 */
 export const TAG_COLORS: Record<string, string> = {
@@ -21,15 +21,75 @@ export const TAG_COLORS: Record<string, string> = {
 };
 
 /**
+ * タグ1件の詳細表示（展開時の中身）。
+ * ToolCallRow（過去ログ互換）と ToolTagRow（実行イベント由来）で共用する。
+ * 実行イベント由来のタグは実行失敗時に error_message を併せて表示する。
+ */
+function TagDetail({ tag }: { tag: LogTag }) {
+  return (
+    <div className="rounded px-2 py-1 text-[10px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
+      <div className="text-ch-t3 font-mono mb-0.5">
+        {tag.tag_name}
+        {tag.status === "error" && <span className="text-red-400 ml-1.5">実行失敗</span>}
+      </div>
+      {Object.entries(tag.fields).map(([k, v]) => (
+        <div key={k} className="flex gap-1.5 text-ch-t3">
+          <span className="text-ch-t4 shrink-0">{k}:</span>
+          <span className="text-ch-t2 break-all whitespace-pre-wrap">{v}</span>
+        </div>
+      ))}
+      {tag.error_message && (
+        <div className="text-red-400/80 break-all whitespace-pre-wrap mt-0.5">{tag.error_message}</div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 実行イベント（tool_call_events）由来のツールタグ一覧の表示。
+ * 2026-06-11 のイベント記録方式移行後のログで使用する。
+ * 過去ログ互換の ToolCallRow と異なり Request/Response ファイルを持たず、
+ * タグバッジと展開詳細のみを表示する。
+ */
+export function ToolTagRow({ tags }: { tags: LogTag[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded px-2 py-1.5 text-[11px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
+      <div className="flex items-center gap-1 flex-wrap">
+        {tags.map((tag, i) => (
+          <button
+            key={i}
+            onClick={() => setExpanded((e) => !e)}
+            className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-opacity hover:opacity-80 ${TAG_COLORS[tag.meta.cls] ?? TAG_COLORS["tag-unknown"]}`}
+          >
+            {tag.meta.label}
+            {tag.status === "error" && <span className="text-red-400 ml-0.5">⚠</span>}
+          </button>
+        ))}
+      </div>
+      {expanded && (
+        <div className="mt-1.5 space-y-1">
+          {tags.map((tag, i) => (
+            <TagDetail key={i} tag={tag} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * ToolCall 1件の表示。Request/Response ファイルリンクとタグバッジを表示する。
+ *
+ * ファイルの実取得は親（MessageActionBar）の RawLogModal が試行ごとの
+ * フォルダID（dir_id）で行うため、本コンポーネントはファイル名だけを通知する。
  */
 export function ToolCallRow({
   tc,
-  logMessageId,
   onOpenRaw,
 }: {
   tc: LogToolCall;
-  logMessageId: string;
   onOpenRaw: (filename: string) => void;
 }) {
   const [tagExpanded, setTagExpanded] = useState(false);
@@ -85,15 +145,7 @@ export function ToolCallRow({
       {tagExpanded && tc.tags.length > 0 && (
         <div className="mt-1.5 space-y-1">
           {tc.tags.map((tag, i) => (
-            <div key={i} className="rounded px-2 py-1 text-[10px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
-              <div className="text-ch-t3 font-mono mb-0.5">{tag.tag_name}</div>
-              {Object.entries(tag.fields).map(([k, v]) => (
-                <div key={k} className="flex gap-1.5 text-ch-t3">
-                  <span className="text-ch-t4 shrink-0">{k}:</span>
-                  <span className="text-ch-t2 break-all whitespace-pre-wrap">{v}</span>
-                </div>
-              ))}
-            </div>
+            <TagDetail key={i} tag={tag} />
           ))}
         </div>
       )}
