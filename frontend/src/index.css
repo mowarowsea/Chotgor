@@ -90,14 +90,22 @@ body {
   transition: background-color 0.2s, color 0.2s;
 }
 
-/* カスタムスクロールバー（PC のみ） */
-@media (hover: hover) {
-  ::-webkit-scrollbar       { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--ch-sep2); border-radius: 999px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--ch-sep2); }
-  ::-webkit-scrollbar-corner { background: transparent; }
+/* カスタムスクロールバー — バックエンドUI（chotgor.css）と同じ見た目に統一。
+   8px・丸サム・テーマ色（--ch-sep2）、ホバーで強調（--ch-t4）。
+   旧実装は @media (hover: hover) で囲っていたが、タッチ主体の環境では条件が
+   偽になり一切スタイルされず OS のクラシックなスクロールバーに落ちていた。
+   バックエンドはガード無しで常時適用なので、フロントも同条件に揃える
+   （iOS はそもそも ::-webkit-scrollbar を無視するため実害なし）。
+   注意: Chrome 121+ は scrollbar-width/color 設定要素で ::-webkit-scrollbar を
+   無効化するため、標準プロパティは非対応ブラウザ（Firefox）専用に隔離する。 */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--ch-sep2) transparent; }
 }
+::-webkit-scrollbar       { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ch-sep2); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--ch-t4)); }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* react-syntax-highlighter のコードブロックスタイル上書き */
 .markdown-code pre {
