@@ -216,14 +216,28 @@ body.ch-root {
 .ch-root strong { font-weight: 600; color: var(--ch-t); }
 
 /* スクロールバー */
-.ch-root,
-.ch-scroll { scrollbar-width: thin; scrollbar-color: var(--ch-sep2) transparent; }
+/* ページ全体（ビューポート）のスクロールバーは html 要素が生成するため、
+   .ch-root（= body）配下にスコープした旧定義では当たらず、デフォルトの
+   クラシックなスクロールバーに戻ってしまっていた。バックエンドUIは全ページが
+   body.ch-root のため、html への直接指定で安全（デザイントークンは :root 定義）。
+   注意: Chrome 121+ は標準プロパティ（scrollbar-width / scrollbar-color）が
+   設定された要素で ::-webkit-scrollbar 擬似要素を無効化する。丸み付きの
+   webkit スタイルを活かすため、標準プロパティは ::-webkit-scrollbar 非対応
+   ブラウザ（Firefox）へのフォールバックとしてのみ当てる。 */
+@supports not selector(::-webkit-scrollbar) {
+  html,
+  .ch-scroll { scrollbar-width: thin; scrollbar-color: var(--ch-sep2) transparent; }
+}
+html::-webkit-scrollbar,
 .ch-root ::-webkit-scrollbar,
 .ch-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+html::-webkit-scrollbar-thumb,
 .ch-root ::-webkit-scrollbar-thumb,
 .ch-scroll::-webkit-scrollbar-thumb { background: var(--ch-sep2); border-radius: var(--ch-radius-full); }
+html::-webkit-scrollbar-thumb:hover,
 .ch-root ::-webkit-scrollbar-thumb:hover,
 .ch-scroll::-webkit-scrollbar-thumb:hover { background: var(--ch-t4); }
+html::-webkit-scrollbar-track,
 .ch-root ::-webkit-scrollbar-track,
 .ch-scroll::-webkit-scrollbar-track { background: transparent; }
 

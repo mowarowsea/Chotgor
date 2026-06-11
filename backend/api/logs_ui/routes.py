@@ -154,6 +154,11 @@ async def log_view_file(message_id: str, filename: str):
   h1 {{ font-size: 0.85rem; color: #8b949e; margin: 0; padding: 0.6rem 1.6rem; border-bottom: 1px solid #30363d; background: #161b22; }}
   .jk {{ color: #79c0ff; }}
   mark.jv {{ background: #2d3a1e; color: #a5d6a7; border-radius: 3px; padding: 0 2px; }}
+  /* 独立ページのため chotgor.css が読まれない。スクロールバーだけ同じ見た目を再現する */
+  ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+  ::-webkit-scrollbar-thumb {{ background: #30363d; border-radius: 999px; }}
+  ::-webkit-scrollbar-thumb:hover {{ background: #8b949e; }}
+  ::-webkit-scrollbar-track {{ background: transparent; }}
 </style>
 </head>
 <body>
