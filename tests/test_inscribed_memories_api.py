@@ -1,12 +1,14 @@
 """backend.api.inscribed_memories の Chronicle / Forget エンドポイントのユニットテスト。
 
 対象エンドポイント:
-    POST /api/inscribed_memories/{character_id}/chronicle  — Chronicle 手動実行
-    POST /api/inscribed_memories/{character_id}/forget     — Forget 手動実行
+    POST /api/inscribed_memories/{character_id}/chronicle  — 個別キャラ Chronicle 手動実行
+    POST /api/inscribed_memories/{character_id}/forget     — 個別キャラ Forget 手動実行
+    POST /api/inscribed_memories/batch/chronicle           — 全キャラ Chronicle 一括実行
+    POST /api/inscribed_memories/batch/forget              — 全キャラ Forget 一括実行
 
 テスト方針:
     - FastAPI TestClient を使って HTTP レイヤーから検証する。
-    - LLM を呼び出す run_chronicle / run_forget_process は AsyncMock でパッチし、
+    - LLM を呼び出す run_chronicle / run_forget_process / run_pending_* は AsyncMock でパッチし、
       外部サービスへの依存を排除する。
     - SQLite は実 DB（tmp_path）を使い、キャラクター存在チェックを正確に再現する。
     - キャラクターが存在しない場合の 404 応答も確認する。
@@ -151,3 +153,67 @@ class TestTriggerForget:
             client.post(f"/api/inscribed_memories/{char_id}/forget?threshold=0.5")
         call_kwargs = mock_fn.call_args.kwargs
         assert call_kwargs["threshold"] == pytest.approx(0.5)
+
+
+# ─── /batch/chronicle エンドポイント ──────────────────────────────────────────
+
+
+class TestBatchChronicle:
+    """POST /api/inscribed_memories/batch/chronicle の動作を検証するテストクラス。
+
+    全キャラクター一括 Chronicle 処理を実行するエンドポイント。
+    run_pending_chronicles が呼び出され、200 {"status": "ok"} が返ることを確認する。
+    """
+
+    def test_returns_200_ok(self, client):
+        """一括 Chronicle が正常完了したとき 200 {"status": "ok"} が返ること。"""
+        with patch(
+            "backend.api.inscribed_memories.run_pending_chronicles",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            resp = client.post("/api/inscribed_memories/batch/chronicle")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_run_pending_chronicles_called_once(self, client):
+        """run_pending_chronicles が1回だけ呼び出されること。"""
+        with patch(
+            "backend.api.inscribed_memories.run_pending_chronicles",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_fn:
+            client.post("/api/inscribed_memories/batch/chronicle")
+        mock_fn.assert_called_once()
+
+
+# ─── /batch/forget エンドポイント ─────────────────────────────────────────────
+
+
+class TestBatchForget:
+    """POST /api/inscribed_memories/batch/forget の動作を検証するテストクラス。
+
+    全キャラクター一括 Forget 処理を実行するエンドポイント。
+    run_pending_forget が呼び出され、200 {"status": "ok"} が返ることを確認する。
+    """
+
+    def test_returns_200_ok(self, client):
+        """一括 Forget が正常完了したとき 200 {"status": "ok"} が返ること。"""
+        with patch(
+            "backend.api.inscribed_memories.run_pending_forget",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            resp = client.post("/api/inscribed_memories/batch/forget")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_run_pending_forget_called_once(self, client):
+        """run_pending_forget が1回だけ呼び出されること。"""
+        with patch(
+            "backend.api.inscribed_memories.run_pending_forget",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_fn:
+            client.post("/api/inscribed_memories/batch/forget")
+        mock_fn.assert_called_once()

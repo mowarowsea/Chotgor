@@ -23,7 +23,13 @@
             <span class="ch-filter" data-filter="active">active<span class="ch-filter__count">{{ active_count }}</span></span>
             <span class="ch-filter" data-filter="estranged">estranged<span class="ch-filter__count">{{ estranged_count }}</span></span>
         </div>
-        <a href="/ui/characters/new" class="ch-btn ch-btn--primary">+ 新規</a>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+            <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                    onclick="runAllBatch(this, 'chronicle')">全Chronicle</button>
+            <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                    onclick="runAllBatch(this, 'forget')">全Forget</button>
+            <a href="/ui/characters/new" class="ch-btn ch-btn--primary">+ 新規</a>
+        </div>
     </div>
 
     {# ── キャラクター一覧 ───────────────────────────────── #}
@@ -50,12 +56,6 @@
                 {% else %}
                 <p class="ch-row__excerpt">まだ輪郭が定まっていない。名前を選び、人格と物語を書く。</p>
                 {% endif %}
-            </div>
-            <div class="ch-row__actions" data-stop>
-                <button type="button" class="ch-btn ch-btn--xs ch-btn--ghost"
-                        onclick="runBatch(this, '{{ char.id }}', 'chronicle')">Chronicle</button>
-                <button type="button" class="ch-btn ch-btn--xs ch-btn--ghost"
-                        onclick="runBatch(this, '{{ char.id }}', 'forget')">Forget</button>
             </div>
         </div>
         {% endfor %}
@@ -98,27 +98,24 @@
   })();
 
   /**
-   * Chronicle / Forget バッチを手動実行する。
+   * 全キャラクターに対して Chronicle / Forget バッチを一括実行する。
    * @param {HTMLElement} btn - クリックされたボタン要素。
-   * @param {string} characterId - キャラクターID。
    * @param {'chronicle'|'forget'} type - バッチ種別。
    */
-  async function runBatch(btn, characterId, type) {
-    const label = type === 'chronicle' ? 'Chronicle' : 'Forget';
+  async function runAllBatch(btn, type) {
+    const label = type === 'chronicle' ? '全Chronicle' : '全Forget';
     const prev = btn.textContent;
     btn.textContent = '…';
     btn.disabled = true;
     try {
-      const res = await fetch(`/api/inscribed_memories/${characterId}/${type}`, { method: 'POST' });
+      const res = await fetch(`/api/inscribed_memories/batch/${type}`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         alert(`${label} 失敗: ${data.detail || res.status}`);
       } else {
-        const status = data.status || 'done';
-        const msg = status === 'skipped' ? `${label}: 対象なし` : `${label}: 完了 (${status})`;
         btn.textContent = '✓';
         setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
-        console.info(msg, data);
+        console.info(`${label}: 完了`, data);
         return;
       }
     } catch (e) {

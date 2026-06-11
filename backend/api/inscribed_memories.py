@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from backend.batch.chronicle_job import run_chronicle
-from backend.batch.forget_job import run_forget_process
+from backend.batch.chronicle_job import run_chronicle, run_pending_chronicles
+from backend.batch.forget_job import run_forget_process, run_pending_forget
 from backend.lib.log_context import new_message_id
 
 router = APIRouter(prefix="/api/inscribed_memories", tags=["inscribed_memories"])
@@ -47,6 +47,38 @@ async def restore_memory(request: Request, character_id: str, memory_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="InscribedMemory not found")
     return {"status": "restored"}
+
+
+# 静的パス（/batch/...）は動的パス（/{character_id}/...）より先に定義してルーティング衝突を防ぐ。
+
+@router.post("/batch/chronicle", status_code=200)
+async def trigger_batch_chronicle(request: Request):
+    """全キャラクターを対象に chronicle 処理を一括実行する。
+
+    スケジューラーと同じ run_pending_chronicles を呼び出す。
+    各キャラクターの未処理メッセージをすべて対象とする。
+    """
+    await run_pending_chronicles(
+        sqlite=request.app.state.sqlite,
+        vector_store=request.app.state.vector_store,
+        memory_manager=request.app.state.memory_manager,
+        working_memory_manager=request.app.state.working_memory_manager,
+    )
+    return {"status": "ok"}
+
+
+@router.post("/batch/forget", status_code=200)
+async def trigger_batch_forget(request: Request):
+    """全キャラクターを対象に forget 処理を一括実行する。
+
+    スケジューラーと同じ run_pending_forget を呼び出す。
+    ghost_model 未設定のキャラクターはスキップされる。
+    """
+    await run_pending_forget(
+        sqlite=request.app.state.sqlite,
+        memory_manager=request.app.state.memory_manager,
+    )
+    return {"status": "ok"}
 
 
 @router.post("/{character_id}/chronicle", status_code=200)
