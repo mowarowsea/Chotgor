@@ -187,6 +187,8 @@ class EnsembleEngine:
         dice_pool: str = "",
         suppress_names: set[str] | None = None,
         user_speaker_name: str = "プレイヤー",
+        time_context: str = "",
+        gm_ooc_appendix: str = "",
     ) -> AsyncIterator[Any]:
         """1 ターンの発話列をストリーミング生成する。
 
@@ -236,6 +238,8 @@ class EnsembleEngine:
             pc_summary=pc_summary,
             dice_pool=dice_pool,
             user_speaker_name=user_speaker_name,
+            time_context=time_context,
+            gm_ooc_appendix=gm_ooc_appendix,
         )
 
         # 3. プロバイダ生成

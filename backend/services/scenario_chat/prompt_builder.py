@@ -67,6 +67,8 @@ def build_gm_system_prompt(
     pc_summary: str = "",
     dice_pool: str = "",
     user_speaker_name: str = "プレイヤー",
+    time_context: str = "",
+    gm_ooc_appendix: str = "",
 ) -> str:
     """GM 用の system prompt を組み立てる。
 
@@ -144,16 +146,25 @@ def build_gm_system_prompt(
         pc_summary=pc_summary,
         dice_pool=dice_pool,
         user_speaker_name=user_speaker_name,
+        time_context=time_context,
     )
     # ensemble_pc 経路用フォールバック：custom_system_prompt が {pc_summary} / {dice_pool}
     # タグを含まないテンプレ（既存シナリオを ensemble_pc にした場合など）でも、
     # PC配役とダイスプールがプロンプト中に確実に登場するよう末尾に append する。
     # 既にタグ置換で本文に取り込まれている場合は append しない（重複防止）。
     appendix_parts: list[str] = []
+    # うつつ（Usual Days）の時間文脈。テンプレに {time_context} が無ければ末尾に補う
+    # （pc_summary / dice_pool と同じフォールバック思想）。
+    if time_context and "{time_context}" not in template_to_use and time_context.strip() not in prompt_with_tags_replaced:
+        appendix_parts.append("# 現在の状況（時間・季節）\n" + time_context.strip())
     if pc_summary and "{pc_summary}" not in template_to_use and pc_summary.strip() not in prompt_with_tags_replaced:
         appendix_parts.append("# PC配役（プレイヤーキャラクター）\n" + pc_summary.strip())
     if dice_pool and "{dice_pool}" not in template_to_use and dice_pool.strip() not in prompt_with_tags_replaced:
         appendix_parts.append(dice_pool.strip())
+    # うつつの偶発イベント指示・ソフト収束ヒント（OOC）。常に末尾へ append する
+    # （プレースホルダは設けず、毎ターン動的に変わる指示として渡す）。
+    if gm_ooc_appendix and gm_ooc_appendix.strip():
+        appendix_parts.append(gm_ooc_appendix.strip())
     if appendix_parts:
         prompt_with_tags_replaced = prompt_with_tags_replaced.rstrip() + "\n\n" + "\n\n".join(appendix_parts)
     # 空のセクション見出しを削除（内容がないセクションのタイトルは表示しない）
@@ -233,10 +244,12 @@ def _replace_template_tags(
     pc_summary: str = "",
     dice_pool: str = "",
     user_speaker_name: str = "プレイヤー",
+    time_context: str = "",
 ) -> str:
     """プロンプトテンプレート内のタグを実際の値に置き換える。
 
     サポートされるタグ:
+        {time_context}     - 現在の日付・曜日・時間帯・季節（うつつ専用、通常は空）
         {user_alias}       - プレイヤーの @タグ用呼称
         {narrator_name}    - ナレーターの名前
         {scenario}         - 世界・シナリオテキスト
@@ -280,6 +293,7 @@ def _replace_template_tags(
         "{history_block}": (history_text or "").strip(),
         "{pc_summary}": (pc_summary or "").strip(),
         "{dice_pool}": (dice_pool or "").strip(),
+        "{time_context}": (time_context or "").strip(),
     }
 
     for tag, value in replacements.items():
