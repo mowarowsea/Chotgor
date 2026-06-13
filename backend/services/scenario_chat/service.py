@@ -202,6 +202,7 @@ async def run_scenario_turn(
     auto_advance: bool = False,
     chat_service=None,
     headless: bool = False,
+    extra_first_gm_ooc: str = "",
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザ発話を受け取り、シナリオ 1 ターン分の SSE イベントを順次 yield する。
 
@@ -344,12 +345,14 @@ async def run_scenario_turn(
                 # GM ターン実行
                 gm_last_raw, gm_last_name = "", None
                 # うつつ: 時間文脈（外的フレーム）と OOC（偶発イベント・ソフト収束）を GM へ注入。
-                gm_ooc = (
-                    _build_usual_gm_appendix(
+                gm_ooc = ""
+                if is_headless:
+                    gm_ooc = _build_usual_gm_appendix(
                         scenario, fired_turns, max_turns, is_first_gm=(fired_turns == 0),
                     )
-                    if is_headless else ""
-                )
+                    # シーン冒頭のみ、スケジューラからの経過時間メモ（「前回から N 時間後」等）を先頭に添える。
+                    if fired_turns == 0 and extra_first_gm_ooc.strip():
+                        gm_ooc = (extra_first_gm_ooc.strip() + "\n" + gm_ooc).strip()
                 async for ev, _meta in _run_gm_turn(
                     engine=engine,
                     scenario=scenario,
@@ -544,6 +547,7 @@ async def run_usual_days_scene(
     settings: dict,
     chat_service,
     engine: SceneEngine | None = None,
+    extra_first_gm_ooc: str = "",
 ) -> dict:
     """うつつ（Usual Days）の 1 シーンを無人で回し、結果サマリを返す薄いトリガー。
 
@@ -557,6 +561,7 @@ async def run_usual_days_scene(
         settings: グローバル設定辞書。
         chat_service: PC ターン実行に必須の ChatService。
         engine: GM エンジン。None なら既定エンジンを使う。
+        extra_first_gm_ooc: シーン冒頭の GM へ添える経過時間メモ等（「前回から N 時間後」）。
 
     Returns:
         {"saved_turn_ids": [...], "fired_turns": int, "scene_closed": bool,
@@ -574,6 +579,7 @@ async def run_usual_days_scene(
         auto_advance=True,
         chat_service=chat_service,
         headless=True,
+        extra_first_gm_ooc=extra_first_gm_ooc,
     ):
         if ev_type == "turn_complete":
             saved_turn_ids = list(payload.get("turn_ids", []))
@@ -590,6 +596,100 @@ async def run_usual_days_scene(
         "scene_closed": scene_closed,
         "error": error,
     }
+
+
+def ensure_usual_session(sqlite, scenario):
+    """うつつ世界の永続セッション（engine_type="usual_days"）を find-or-create して返す。
+
+    1 キャラ 1 世界・セッション永続1本の前提（plan §2）。既存の active な usual_days
+    セッションがあればそれを返し、無ければ usual_config の GM/PC プリセットと owner キャラで
+    新規起動する。起動に必要な情報（GM プリセット・owner・PC枠）が欠ければ None を返す。
+
+    Args:
+        sqlite: SQLiteStore。
+        scenario: owner_character_id / usual_config / pc_slots を持つうつつシナリオ。
+
+    Returns:
+        ScenarioSession（既存または新規）。起動不能なら None。
+    """
+    import uuid
+
+    from backend.services.scenario_chat.mention import normalize_pc_slots
+
+    # 既存の active な usual_days セッションを優先（永続1本）。
+    for s in sqlite.list_scenario_sessions_by_scenario(scenario.id):
+        if getattr(s, "engine_type", "") == "usual_days" and getattr(s, "status", "") == "active":
+            return s
+
+    cfg = getattr(scenario, "usual_config", None) or {}
+    gm_pid = (cfg.get("gm_preset_id") or "").strip()
+    pc_pid = (cfg.get("pc_preset_id") or gm_pid).strip()
+    owner_id = getattr(scenario, "owner_character_id", None)
+    pc_slots = normalize_pc_slots(getattr(scenario, "pc_slots", None))
+    if not gm_pid or not owner_id or not pc_slots:
+        logger.warning(
+            "うつつ: セッション起動に必要な情報が不足 owner=%s gm_preset=%s slots=%d",
+            owner_id, gm_pid, len(pc_slots),
+        )
+        return None
+
+    slot_id = pc_slots[0].slot_id
+    session_id = str(uuid.uuid4())
+    return sqlite.create_scenario_session(
+        session_id=session_id,
+        scenario_id=scenario.id,
+        title=f"{getattr(scenario, 'title', 'うつつ')}（うつつ）",
+        gm_preset_id=gm_pid,
+        synopsis_preset_id=gm_pid,
+        engine_type="usual_days",
+        pc_assignments=[{
+            "slot_id": slot_id,
+            "player_type": "character",
+            "character_id": owner_id,
+            "preset_id": pc_pid,
+        }],
+    )
+
+
+def usual_elapsed_note(sqlite, session_id: str, now=None) -> str:
+    """前回シーン（最新ターン）からの経過時間を GM 向けの一文にして返す。
+
+    うつつは間欠的に進むため、GM へ「前回からどれだけ時間が空いたか」を伝える。
+    履歴が無い／時刻が取れない場合は空文字列。
+
+    Args:
+        sqlite: SQLiteStore。
+        session_id: うつつセッション ID。
+        now: 基準時刻。省略時は datetime.now()。
+
+    Returns:
+        "[OOC] 前回の場面から約N時間が経過した。…" の一文。算出不能なら空文字列。
+    """
+    from datetime import datetime as _dt
+
+    from backend.lib.utils import format_time_delta
+
+    if now is None:
+        now = _dt.now()
+    turns = sqlite.list_scenario_turns(session_id)
+    last_at = None
+    for turn in reversed(turns):
+        created = getattr(turn, "created_at", None)
+        if created is not None:
+            last_at = created
+            break
+    if last_at is None:
+        return ""
+    try:
+        delta_str = format_time_delta(now - last_at)
+    except Exception:
+        return ""
+    if not delta_str:
+        return ""
+    return (
+        f"[OOC] 前回の場面から{delta_str}が経過した。"
+        f"その間の出来事は地の文で自然に補ってよい（時間の飛びを意識すること）。"
+    )
 
 
 async def _run_gm_turn(

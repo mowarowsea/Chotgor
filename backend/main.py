@@ -116,6 +116,7 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_chronicle_scheduler(app))
     asyncio.create_task(_forget_scheduler(app))
+    asyncio.create_task(_usual_days_scheduler(app))
 
     yield
 
@@ -150,6 +151,103 @@ async def _chronicle_scheduler(app: FastAPI) -> None:
                 )
             except Exception:
                 _log.exception("chronicle スケジューラー 実行エラー")
+
+
+def _parse_slot_time(now: datetime, slot: str) -> datetime | None:
+    """"HH:MM" 形式のスロット文字列を、今日のその時刻の datetime に変換する。
+
+    パースできなければ None。うつつスケジューラのスロット到来判定に使う。
+    """
+    try:
+        h, m = map(int, str(slot).strip().split(":"))
+    except Exception:
+        return None
+    if not (0 <= h < 24 and 0 <= m < 60):
+        return None
+    return now.replace(hour=h, minute=m, second=0, microsecond=0)
+
+
+async def _run_due_usual_scenes(app: FastAPI) -> None:
+    """到来済みのうつつスロットを 1 回ずつ無人進行させる（冪等キー＝日付+スロット）。
+
+    - 有効（usual_config.enabled）なうつつ世界ごとに、今日すでに到来したスロットを処理。
+    - 冪等キー ``usual_days_last_run_{owner}_{slot}`` に当日日付を立てて二重起動を防ぐ。
+    - 日次コストガード ``usual_days_daily_cap``（既定 24）を超えたら以降は当日スキップ。
+    - セッションは永続1本（ensure_usual_session が find-or-create）。
+    - GM へ前回シーンからの経過時間メモを添える。
+    """
+    from backend.services.scenario_chat.service import (
+        ensure_usual_session,
+        run_usual_days_scene,
+        usual_elapsed_note,
+    )
+
+    _log = logging.getLogger(__name__)
+    sqlite = app.state.sqlite
+    now = datetime.now()
+    today_str = now.date().isoformat()
+
+    daily_cap = int(sqlite.get_setting("usual_days_daily_cap", "24") or 24)
+    count_key = f"usual_days_scene_count_{today_str}"
+    ran_today = int(sqlite.get_setting(count_key, "0") or 0)
+
+    for scenario in sqlite.list_usual_scenarios():
+        cfg = getattr(scenario, "usual_config", None) or {}
+        if not cfg.get("enabled"):
+            continue
+        owner_id = getattr(scenario, "owner_character_id", None)
+        slots = cfg.get("slots") or []
+        for slot in slots:
+            scheduled = _parse_slot_time(now, slot)
+            if scheduled is None or now < scheduled:
+                continue  # まだ到来していない / 不正スロット
+            key = f"usual_days_last_run_{owner_id}_{slot}"
+            if sqlite.get_setting(key, "") == today_str:
+                continue  # 当日このスロットは実行済み
+            if ran_today >= daily_cap:
+                _log.warning(
+                    "うつつ: 日次上限 %d 到達。当日は以降スキップ owner=%s slot=%s",
+                    daily_cap, owner_id, slot,
+                )
+                return
+            session = ensure_usual_session(sqlite, scenario)
+            # 冪等キーは「実行を試みた」時点で立てる（設定不備でも毎分叩かない）。
+            sqlite.set_setting(key, today_str)
+            if session is None:
+                _log.error("うつつ: セッション未解決のためスキップ owner=%s", owner_id)
+                continue
+            elapsed_note = usual_elapsed_note(sqlite, session.id, now)
+            _log.info(
+                "うつつ: シーン起動 owner=%s slot=%s session=%s",
+                owner_id, slot, session.id,
+            )
+            try:
+                await run_usual_days_scene(
+                    session_id=session.id,
+                    sqlite=sqlite,
+                    settings=sqlite.get_all_settings(),
+                    chat_service=app.state.chat_service,
+                    extra_first_gm_ooc=elapsed_note,
+                )
+                ran_today += 1
+                sqlite.set_setting(count_key, str(ran_today))
+            except Exception:
+                _log.exception("うつつ: シーン実行エラー owner=%s slot=%s", owner_id, slot)
+
+
+async def _usual_days_scheduler(app: FastAPI) -> None:
+    """Background task: 有効なうつつ世界を各スロット時刻に1シーンずつ無人進行させる。
+
+    _chronicle_scheduler と同型（while True: sleep(60)）。冪等キーを日付+スロットにして
+    1日複数スロットへ対応する。SSE 配信は不要なので run_usual_days_scene を await 回収する。
+    """
+    _log = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await _run_due_usual_scenes(app)
+        except Exception:
+            _log.exception("うつつスケジューラー 実行エラー")
 
 
 async def _forget_scheduler(app: FastAPI) -> None:
