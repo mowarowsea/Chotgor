@@ -59,18 +59,18 @@
             <div class="ch-card">
                 <div class="ch-card__head"><span class="ch-card__title">今日</span></div>
                 <div class="ch-card__meta">
-                    リクエスト <strong>{{ usage_today.requests }}</strong> 回<br>
-                    In <strong>{{ "{:,}".format(usage_today.input_tokens) }}</strong> tok ／
-                    Out <strong>{{ "{:,}".format(usage_today.output_tokens) }}</strong> tok
+                    リクエスト {{ usage_today.requests }} 回<br>
+                    In {{ "{:,}".format(usage_today.input_tokens) }} tok ／
+                    Out {{ "{:,}".format(usage_today.output_tokens) }} tok
                     {% if usage_today.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_today.cost_usd) }}{% endif %}
                 </div>
             </div>
             <div class="ch-card">
                 <div class="ch-card__head"><span class="ch-card__title">今週（月曜起点）</span></div>
                 <div class="ch-card__meta">
-                    リクエスト <strong>{{ usage_week.requests }}</strong> 回<br>
-                    In <strong>{{ "{:,}".format(usage_week.input_tokens) }}</strong> tok ／
-                    Out <strong>{{ "{:,}".format(usage_week.output_tokens) }}</strong> tok
+                    リクエスト {{ usage_week.requests }} 回<br>
+                    In {{ "{:,}".format(usage_week.input_tokens) }} tok ／
+                    Out {{ "{:,}".format(usage_week.output_tokens) }} tok
                     {% if usage_week.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_week.cost_usd) }}{% endif %}
                 </div>
             </div>

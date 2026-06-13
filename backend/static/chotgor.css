@@ -801,6 +801,7 @@ html::-webkit-scrollbar-track,
   border-bottom: 1px solid var(--ch-sep);
   color: var(--ch-t);
   vertical-align: middle;
+  font-family: var(--ch-fm);
 }
 .ch-table tbody tr:last-child td { border-bottom: none; }
 .ch-table tbody tr:hover { background: var(--ch-sep); }
