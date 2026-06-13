@@ -35,6 +35,8 @@ class ScenarioChatStoreMixin:
         dice_pool_spec: dict | None = None,
         pc_slots: list[dict] | None = None,
         banner_data: str | None = None,
+        owner_character_id: str | None = None,
+        usual_config: dict | None = None,
     ):
         """シナリオテンプレートを新規作成する。
 
@@ -49,6 +51,10 @@ class ScenarioChatStoreMixin:
                          シナリオ側で人物像・知っていることを含めて記述する。
                          セッション開始時に各枠を「ユーザが演じる/AIキャラが演じる」と割り振る。
         banner_data はシナリオのバナー画像（base64 data URI）。一覧・編集画面の見栄え用。
+        owner_character_id はうつつ（Usual Days）所有者キャラ ID。値ありなら、そのキャラの
+                         「生活世界」専用シナリオとして汎用一覧から除外される。NULL=汎用シナリオ。
+        usual_config はうつつ運用設定（有効化トグル・スロット時刻・時間グリッド等）の dict。
+                         owner_character_id が NULL のときは未使用。
 
         旧 user_alias は廃止。ユーザPCも pc_slots の 1 枠として定義する
         （セッション開始時に player_type="user" を割り当てる）。
@@ -73,6 +79,8 @@ class ScenarioChatStoreMixin:
                 dice_pool_spec=dice_pool_spec,
                 pc_slots=pc_slots,
                 banner_data=banner_data,
+                owner_character_id=owner_character_id,
+                usual_config=usual_config,
             )
             session.add(obj)
             session.commit()
@@ -85,14 +93,51 @@ class ScenarioChatStoreMixin:
             from backend.repositories.sqlite.store import Scenario
             return session.get(Scenario, scenario_id)
 
-    def list_scenarios(self, limit: int = 100) -> list:
-        """シナリオテンプレート一覧を更新日時の新しい順で返す。"""
+    def list_scenarios(self, limit: int = 100, include_usual: bool = False) -> list:
+        """シナリオテンプレート一覧を更新日時の新しい順で返す。
+
+        既定では汎用シナリオのみ（``owner_character_id IS NULL``）を返し、
+        うつつ（Usual Days）専用シナリオは除外する。うつつ世界は「キャラ固有の生活世界」で
+        汎用シナリオ一覧には並べない方針（1 キャラ 1 世界）。
+        ``include_usual=True`` のときだけ、うつつ専用シナリオも含めて返す。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import Scenario
+            query = session.query(Scenario)
+            if not include_usual:
+                query = query.filter(Scenario.owner_character_id.is_(None))
+            return (
+                query
+                .order_by(Scenario.updated_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+    def get_usual_scenario(self, owner_character_id: str):
+        """指定キャラのうつつ（生活世界）シナリオを返す（無ければ None）。
+
+        1 キャラ 1 世界の前提で、``owner_character_id`` 一致の最初の 1 件を返す。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Scenario
             return (
                 session.query(Scenario)
+                .filter(Scenario.owner_character_id == owner_character_id)
                 .order_by(Scenario.updated_at.desc())
-                .limit(limit)
+                .first()
+            )
+
+    def list_usual_scenarios(self) -> list:
+        """全うつつ（生活世界）シナリオを返す（``owner_character_id IS NOT NULL``）。
+
+        スケジューラ（_usual_days_scheduler）が有効なうつつ世界を走査するために使う。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import Scenario
+            return (
+                session.query(Scenario)
+                .filter(Scenario.owner_character_id.isnot(None))
+                .order_by(Scenario.updated_at.desc())
                 .all()
             )
 

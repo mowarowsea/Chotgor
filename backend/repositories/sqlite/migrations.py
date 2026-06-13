@@ -575,3 +575,39 @@ class SQLiteMigrationsMixin:
                     (DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE,),
                 )
 
+    def _migrate_add_usual_days(self) -> None:
+        """うつつ（Usual Days）用カラムを `scenarios` に追加する。
+
+        - `scenarios.owner_character_id` (String, NULL可): うつつ世界の所有者キャラ ID。
+          NULL=汎用シナリオ、値あり=そのキャラのうつつ世界（汎用一覧から除外する判定キー）。
+        - `scenarios.usual_config` (JSON, NULL可): うつつ運用設定（有効化トグル・スロット時刻・
+          時間グリッド・偶発イベントカテゴリ・発生率・1シーン上限ターン・GM/PCプリセット）。
+
+        SQLite の JSON 型は TEXT として保存される。
+        既存DBに列がなければ ALTER TABLE で追加する。新規DBは ORM 定義で作成済みのため
+        列が既にあり何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "scenarios" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenarios)"
+                ).fetchall()
+            }
+            if "owner_character_id" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenarios ADD COLUMN owner_character_id TEXT"
+                )
+            if "usual_config" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenarios ADD COLUMN usual_config TEXT"
+                )
+

@@ -258,6 +258,18 @@ class Scenario(Base):
     # NULL/空配列なら ensemble_pc を使えない（API バリデーションで弾く）。
     pc_slots = Column(JSON, nullable=True)
     banner_data = Column(Text, nullable=True)              # バナー画像 (base64 data URI)。一覧・編集画面の見栄え用
+    # うつつ（Usual Days）所有者キャラ ID。
+    #   NULL  = 通常の汎用シナリオ（汎用シナリオ一覧に出る）。
+    #   値あり = そのキャラの「うつつ（生活世界）」専用シナリオ。汎用一覧からは除外し、
+    #            1 キャラ 1 世界として扱う。除外判定のキーになる。
+    owner_character_id = Column(String, nullable=True)
+    # うつつ運用設定（JSON, NULL可）。owner_character_id が NULL のときは未使用。
+    #   {"enabled": bool, "slots": ["10:00","13:00","17:00"],
+    #    "time_grid": {曜日×時間帯→ラベル}, "event_categories": {...},
+    #    "event_probability": float, "max_turns_per_scene": int,
+    #    "gm_preset_id": str, "pc_preset_id": str}
+    # SQLite では TEXT として保存される。
+    usual_config = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -305,7 +317,9 @@ class ScenarioSession(Base):
     id = Column(String, primary_key=True)                  # UUID
     scenario_id = Column(String, ForeignKey("scenarios.id"), nullable=False)
     title = Column(String, nullable=False)                 # 起動時はテンプレ title からコピー（編集可）
-    engine_type = Column(String, nullable=False, default="ensemble")  # P1 では 'ensemble' 固定
+    # 実行エンジン種別。'ensemble'（GMのみ）/ 'ensemble_pc'（PC配役あり）/
+    # 'usual_days'（うつつ無人ループ。GM部分は ensemble_pc と共有し、無人ループ制御だけ service 側で分岐）。
+    engine_type = Column(String, nullable=False, default="ensemble")
     status = Column(String, nullable=False, default="active")  # active / ended
     # GM が使う LLM プリセット ID（LLMModelPreset.id）。
     # FK 制約は付けない: preset 削除時もセッション履歴は残したいため。
