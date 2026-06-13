@@ -184,7 +184,7 @@
             <table class="ch-table">
                 <thead>
                     <tr>
-                        <th>時刻</th><th>対象</th><th>feature</th><th>モデル</th>
+                        <th>時刻</th><th>対象</th><th>feature</th>
                         <th style="text-align:right">In</th>
                         <th style="text-align:right">Out</th>
                         <th style="text-align:right">コスト</th>
@@ -196,7 +196,6 @@
                         <td style="white-space:nowrap">{{ e.created_at.strftime("%m-%d %H:%M") if e.created_at else "" }}</td>
                         <td>{{ e.target }}{% if e.preset_name %}<span class="ch-hint">@{{ e.preset_name }}</span>{% endif %}</td>
                         <td>{{ e.feature }}</td>
-                        <td>{{ e.model or e.provider }}</td>
                         <td style="text-align:right">{{ "{:,}".format(e.input_tokens) }}</td>
                         <td style="text-align:right">{{ "{:,}".format(e.output_tokens) }}</td>
                         <td style="text-align:right">{% if e.total_cost_usd %}${{ "%.4f"|format(e.total_cost_usd) }}{% else %}–{% endif %}</td>
