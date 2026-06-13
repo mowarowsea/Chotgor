@@ -187,7 +187,7 @@ class WorkingMemoryManager:
             importance: 重要度 0.0-1.0。
             relation_target: relation 型のときの相手識別子。
             content: 指定時は作成直後に最初のポストとして追加する。
-            origin: スレッドのソース識別。"real"=日常、"interlude"=シナリオPCモードの幕間。
+            origin: スレッドのソース識別（3値）。"real"=日常、"usual"=うつつ（ユーザ未共有の自分の生活体験）、"interlude"=シナリオPCモードの幕間。
 
         Returns:
             作成したスレッドの dict。

@@ -151,8 +151,9 @@ class InscribedMemory(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(DateTime, nullable=True)  # content/importance変更時のみ更新
     deleted_at = Column(DateTime, nullable=True)  # ソフト削除
-    # 記憶のソース識別。"real"=日常体験、"interlude"=シナリオPCモードで演じた幕間体験。
-    # 検索時のフィルタやキャラ本人の文脈把握に使う。
+    # 記憶のソース識別（3値）。"real"=日常体験（ユーザと共有）、
+    # "usual"=うつつ（ユーザ未共有の自分の生活体験）、"interlude"=シナリオPCモードで演じた幕間体験。
+    # 検索時のフィルタやキャラ本人の文脈把握に使う（由来タグであり、想起・蒸留・忘却では同次元に扱う）。
     origin = Column(String, nullable=False, default="real")
 
 
@@ -188,7 +189,8 @@ class WorkingMemoryThread(Base):
     # heat の時間減衰の起点。Post 追加・スレッド更新時に明示的に更新する。
     # updated_at は onupdate で勝手に動くため、decay 起点としては流用せず別カラムで管理する。
     last_touched_at = Column(DateTime, nullable=True)
-    # スレッドのソース識別。"real"=日常、"interlude"=シナリオPCモードで生じた幕間スレッド。
+    # スレッドのソース識別（3値）。"real"=日常、"usual"=うつつ（ユーザ未共有の自分の生活体験）、
+    # "interlude"=シナリオPCモードで生じた幕間スレッド。
     # InscribedMemory.origin と対。検索フィルタとキャラ本人の文脈把握に使う。
     origin = Column(String, nullable=False, default="real")
 

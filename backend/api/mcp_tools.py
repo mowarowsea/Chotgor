@@ -112,8 +112,8 @@ class ToolCallRequest(BaseModel):
     挙動差分が出てしまう（forget 蒸留物が in-place 上書きされて道連れ消失する等）。
 
     ``default_origin`` は inscribe_memory / post_working_memory_thread の保存時に
-    付与する origin ラベル（"real" / "interlude"）。シナリオ PC モードからキャラを
-    動かす経路では mcp_server.py が CHOTGOR_DEFAULT_ORIGIN env から拾って渡す。
+    付与する origin ラベル（"real" / "usual" / "interlude" の3値）。シナリオ PC モード・
+    うつつ無人経路からキャラを動かす場合は mcp_server.py が CHOTGOR_DEFAULT_ORIGIN env から拾って渡す。
     省略時は "real"。同じく env→HTTP リレーが必要な理由は batch_context と同じ。
 
     ``log_context`` は元リクエストのログ文脈（request_id / dir_id / feature / target）。

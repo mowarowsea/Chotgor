@@ -28,7 +28,7 @@ class WorkingMemoryStoreMixin:
         """ワーキングメモリスレッドを新規作成する。
 
         Args:
-            origin: 記憶のソース識別。"real"=日常、"interlude"=シナリオPCモードの幕間体験。
+            origin: 記憶のソース識別（3値）。"real"=日常、"usual"=うつつ（ユーザ未共有の自分の生活体験）、"interlude"=シナリオPCモードの幕間体験。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import WorkingMemoryThread

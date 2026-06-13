@@ -25,7 +25,7 @@ class InscribedMemoryStoreMixin:
         """保存記憶レコードを新規作成する。
 
         Args:
-            origin: 記憶のソース識別。"real"=日常体験、"interlude"=シナリオPCモードの幕間体験。
+            origin: 記憶のソース識別（3値）。"real"=日常体験、"usual"=うつつ（ユーザ未共有の自分の生活体験）、"interlude"=シナリオPCモードの幕間体験。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import InscribedMemory

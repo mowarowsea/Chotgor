@@ -368,7 +368,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                 MCP サーバー（別プロセス）が backend への HTTP リクエストに乗せて伝搬する。
                 None / 空 dict なら設定しない（通常チャットと同じ挙動）。
             default_origin: inscribe_memory / post_working_memory_thread の保存時に
-                付与する origin（"real" / "interlude"）。"real" 以外なら
+                付与する origin（"real" / "usual" / "interlude" の3値）。"real" 以外なら
                 ``CHOTGOR_DEFAULT_ORIGIN`` env として MCP サーバーへ渡す。
                 in-process プロバイダーと挙動差を出さないための経路。
         """
@@ -464,8 +464,8 @@ class ClaudeCliProvider(BaseLLMProvider):
         Args:
             batch_context: ToolExecutor の挙動切り替えフラグ。指定すると CHOTGOR_BATCH_CONTEXT
                 環境変数として MCP サーバーへ渡る（generate_with_tools 経由のみ使用）。
-            default_origin: 記憶/スレッド保存時の origin ラベル。"real" 以外なら
-                CHOTGOR_DEFAULT_ORIGIN として MCP サーバーへ伝搬される。
+            default_origin: 記憶/スレッド保存時の origin ラベル（"real" / "usual" / "interlude"）。
+                "real" 以外なら CHOTGOR_DEFAULT_ORIGIN として MCP サーバーへ伝搬される。
         """
         has_images = any(
             isinstance(item, dict) and item.get("type") == "image_url"

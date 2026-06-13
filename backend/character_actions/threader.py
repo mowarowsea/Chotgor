@@ -134,7 +134,8 @@ class Threader:
         thread_id が空なら新規作成、指定があれば既存スレッドの更新。
 
         Args:
-            origin: 新規作成時のスレッドソース識別。"real"=日常、"interlude"=シナリオPCモード幕間。
+            origin: 新規作成時のスレッドソース識別（3値）。"real"=日常、
+                "usual"=うつつ（ユーザ未共有の自分の生活体験）、"interlude"=シナリオPCモード幕間。
                 既存スレッド更新時は無視される（スレッドの origin は作成時に決まり変わらない）。
 
         Returns:

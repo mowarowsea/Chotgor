@@ -573,3 +573,49 @@ def test_delete_character_sqlite_first_then_vector_store(manager, mock_vector_st
 
     # 後始末
     manager.sqlite = original_sqlite
+
+
+# ---------------------------------------------------------------------------
+# origin = "usual"（うつつ / Usual Days）— Phase 0
+# ---------------------------------------------------------------------------
+
+
+def test_write_inscribed_memory_origin_usual(manager, sqlite_store, mock_vector_store):
+    """origin="usual"（うつつの記憶）が SQLite にそのまま永続化されることを確認する。
+
+    うつつ（Usual Days）はユーザ未共有のキャラ自身の生活体験。origin 列は
+    CHECK 制約のない由来タグであり、"real" / "usual" / "interlude" の3値を素通しで
+    受け付ける。新値 "usual" が write 経路を通って origin カラムに記録されること、
+    既定値（指定なし）が従来どおり "real" になることを検証する。
+    """
+    char_id = "char-usual"
+    mock_vector_store.find_similar_in_category.return_value = None
+
+    # 既定（origin 指定なし）は "real"
+    manager.write_inscribed_memory(char_id, "ユーザと話した内容", category="contextual")
+    # うつつ経路は origin="usual"
+    manager.write_inscribed_memory(
+        char_id, "今日は職場で同僚と昼を食べた", category="contextual", origin="usual",
+    )
+
+    mems = {m.content: m for m in sqlite_store.list_inscribed_memories(char_id)}
+    assert mems["ユーザと話した内容"].origin == "real"
+    assert mems["今日は職場で同僚と昼を食べた"].origin == "usual"
+
+
+def test_recall_treats_usual_equivalent_to_real(manager, sqlite_store, mock_vector_store):
+    """想起（list 取得）で usual 記憶が real と同次元に扱われることを確認する。
+
+    origin は由来タグであり、想起・蒸留・忘却ではフィルタに使わない（同次元）。
+    real と usual の記憶を1件ずつ書き込み、どちらも soft-delete されていない限り
+    list_inscribed_memories に等価に現れる（origin による出し分けが無い）ことを検証する。
+    """
+    char_id = "char-usual-recall"
+    mock_vector_store.find_similar_in_category.return_value = None
+
+    manager.write_inscribed_memory(char_id, "real な記憶", category="contextual", origin="real")
+    manager.write_inscribed_memory(char_id, "usual な記憶", category="contextual", origin="usual")
+
+    contents = {m.content for m in sqlite_store.list_inscribed_memories(char_id)}
+    # origin に関わらず両方とも取得対象に含まれる（出し分けされない）
+    assert contents == {"real な記憶", "usual な記憶"}

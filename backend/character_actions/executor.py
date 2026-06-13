@@ -143,8 +143,9 @@ class ToolExecutor:
             挿入する（forget 蒸留バッチ専用）。MCP ツール API は変更せず、バッチ側のみ
             この context で挙動を切り替えるための内部チャネル。
         default_origin: inscribe_memory / post_working_memory_thread の保存時に
-            付与する origin ラベル。"real"=日常、"interlude"=シナリオPCモードの幕間体験。
-            シナリオ PC モードでキャラを動かす経路では "interlude" を渡す。
+            付与する origin ラベル（3値）。"real"=日常（ユーザと共有）、
+            "usual"=うつつ（ユーザ未共有の自分の生活体験）、"interlude"=シナリオPCモードの幕間体験。
+            シナリオ PC モードでキャラを動かす経路では "interlude"、うつつ無人経路では "usual" を渡す。
             キャラクター本人はこの値を意識する必要はない（ツール引数として露出しない）。
         _inscriber: 記憶書き込みを担う Inscriber インスタンス。
         _threader: ワーキングメモリスレッド操作を担う Threader インスタンス。
@@ -172,7 +173,7 @@ class ToolExecutor:
                 ``{"force_insert_memory": True}`` を渡す。
             default_origin: inscribe_memory / post_working_memory_thread が保存する
                 記憶/スレッドに付与する origin。1on1・GroupChat 通常経路では "real"、
-                シナリオ PC モードからは "interlude" を渡す。
+                シナリオ PC モードからは "interlude"、うつつ無人経路からは "usual" を渡す。
         """
         self.character_id = character_id
         self.session_id = session_id
