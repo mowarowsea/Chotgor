@@ -142,12 +142,13 @@ async def stream_pc_response(
     settings: dict,
     chat_service: ChatService,
     scenario_session_id: str = "",
+    default_origin: str = "interlude",
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """指定 PC（Chotgor キャラ）の応答 1 ターン分をストリーミングする非同期ジェネレータ。
 
     ChatService.execute_stream を通じて 1on1 と同じ記憶想起・WM・inscribe フローを走らせ、
-    出力は SSE 用のイベントとして yield する。記憶/スレッドは ``origin='interlude'`` で
-    保存される（``default_origin`` 経由）。
+    出力は SSE 用のイベントとして yield する。記憶/スレッドは ``default_origin`` で指定された
+    origin（既定 ``"interlude"``。うつつ無人ループでは ``"usual"``）で保存される。
 
     Args:
         pc: 発話させる PC の配役情報。
@@ -160,6 +161,8 @@ async def stream_pc_response(
         sqlite: SQLiteStore。
         settings: グローバル設定辞書。
         chat_service: PC 1 ターンの LLM ディスパッチを担う ChatService インスタンス。
+        default_origin: 記憶/スレッド保存時の origin。シナリオ PC モードは "interlude"（既定）、
+            うつつ（Usual Days）無人ループでは "usual"。
 
     Yields:
         ("pc_reasoning", {"character": role_name, "content": str})  — 想起記憶・WM・思考
@@ -246,7 +249,7 @@ async def stream_pc_response(
     # PC モード用の preamble 合成と default_origin 切替は ChatRequest 構築後に直接代入する
     # （overrides に同名キーを入れると Python の重複指定エラーになるため）。
     request.provider_additional_instructions = merged_additional
-    request.default_origin = "interlude"
+    request.default_origin = default_origin
 
     full_text = ""
     memory_text = ""

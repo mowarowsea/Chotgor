@@ -82,6 +82,25 @@ def _latest_scenario_anticipation(history: list) -> str:
 # 無限連鎖防止用ガード。
 _MAX_TURNS_PER_USER_TURN = 10
 
+# うつつ（Usual Days）無人ループの 1 シーンあたり既定上限ターン数。
+# usual_config.max_turns_per_scene が無指定のときのフォールバック（ハード上限の保険）。
+_DEFAULT_USUAL_MAX_TURNS = 8
+
+# GM がシーンの幕引きを宣言するマーカー。うつつ無人ループの主たる停止条件。
+# Phase 3 で anticipator と同じ抽出機構（本文からの除去・OOC ソフト収束）に発展させるが、
+# Phase 2 では GM 生出力にこのマーカーが含まれるかどうかの検出で停止を担う。
+_SCENE_CLOSE_MARKER = "[SCENE_CLOSE]"
+
+
+def _has_scene_close(text: str | None) -> bool:
+    """GM の生出力にシーン幕引きマーカー（[SCENE_CLOSE]）が含まれるか判定する。
+
+    うつつ無人ループの主たる停止判断（判断主体は GM）。大文字小文字は区別しない。
+    """
+    if not text:
+        return False
+    return _SCENE_CLOSE_MARKER.lower() in text.lower()
+
 
 async def run_scenario_turn(
     session_id: str,
@@ -91,6 +110,7 @@ async def run_scenario_turn(
     engine: SceneEngine | None = None,
     auto_advance: bool = False,
     chat_service=None,
+    headless: bool = False,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザ発話を受け取り、シナリオ 1 ターン分の SSE イベントを順次 yield する。
 
@@ -118,6 +138,16 @@ async def run_scenario_turn(
         - user turn は保存されない
         - SSE の "user_saved" イベントも発火しない
         - GM プロンプト末尾に「プレイヤーは無言、場面を進めて」という OOC 指示が入る
+
+    headless=True（うつつ / Usual Days 無人ループ）の場合:
+        - engine_type=="usual_days" でも自動的に headless 扱いになる。
+        - ユーザ枠ゼロを許容し、ユーザの介入なしに GM↔PC を連鎖させ続ける。
+        - PC 発話末尾にメンションが無くても break せず GM ターンへ継続する
+          （無人でも場面が止まらないようにする）。
+        - 停止条件は GM 出力の `[SCENE_CLOSE]` 検出（主）か、
+          `usual_config.max_turns_per_scene`（既定 _DEFAULT_USUAL_MAX_TURNS）への到達（保険）。
+        - 記憶/スレッドは origin="usual" で保存される（stream_pc_response 経由）。
+        - 通常 auto_advance=True と併用して呼ぶ（無人なのでユーザ発話保存をしない）。
     """
     current_log_feature.set("scenario_chat")
     session = sqlite.get_scenario_session(session_id)
@@ -135,7 +165,19 @@ async def run_scenario_turn(
     npcs = sqlite.list_scenario_npcs(scenario.id)
     npc_names = {n.name for n in npcs if getattr(n, "name", None)}
     engine_type = getattr(session, "engine_type", "ensemble") or "ensemble"
-    is_pc_mode = engine_type == "ensemble_pc"
+    # うつつ無人ループ判定。明示フラグか engine_type=="usual_days" のいずれかで有効化する。
+    is_headless = headless or engine_type == "usual_days"
+    # usual_days は GM + PC ディスパッチ機構を ensemble_pc と共有するため PC モード扱いにする
+    # （無人ループ制御だけが service 側の分岐で異なる）。
+    is_pc_mode = engine_type in ("ensemble_pc", "usual_days")
+
+    # 1 シーンあたりの上限ターン数。headless は usual_config.max_turns_per_scene を優先し、
+    # 無指定なら _DEFAULT_USUAL_MAX_TURNS。通常モードは従来どおり _MAX_TURNS_PER_USER_TURN。
+    if is_headless:
+        _usual_cfg = getattr(scenario, "usual_config", None) or {}
+        max_turns = int(_usual_cfg.get("max_turns_per_scene") or _DEFAULT_USUAL_MAX_TURNS)
+    else:
+        max_turns = _MAX_TURNS_PER_USER_TURN
 
     from backend.services.scenario_chat.mention import (
         format_pc_summary,
@@ -203,7 +245,7 @@ async def run_scenario_turn(
     fired_turns = 0
 
     try:
-        while fired_turns < _MAX_TURNS_PER_USER_TURN:
+        while fired_turns < max_turns:
             if next_kind == "gm":
                 # GM ターン実行
                 gm_last_raw, gm_last_name = "", None
@@ -242,6 +284,15 @@ async def run_scenario_turn(
                 if gm_last_name:
                     last_speaker_name = gm_last_name
                 fired_turns += 1
+
+                # うつつ無人ループ: GM がシーン幕引き（[SCENE_CLOSE]）を宣言したら
+                # そこでシーン終了。停止の主たる判断主体は GM（キャラではない）。
+                if is_headless and _has_scene_close(gm_last_raw):
+                    logger.info(
+                        "うつつ: GM が SCENE_CLOSE を宣言 session=%s fired=%d",
+                        session_id, fired_turns,
+                    )
+                    break
 
                 if is_pc_mode and gm_last_raw:
                     next_kind, next_target = find_last_routing_mention(
@@ -313,6 +364,7 @@ async def run_scenario_turn(
                         settings=settings,
                         chat_service=chat_service,
                         scenario_session_id=session_id,
+                        default_origin="usual" if is_headless else "interlude",
                     ):
                         if ev_type == "pc_done":
                             full_text = payload["full_text"]
@@ -352,6 +404,12 @@ async def run_scenario_turn(
                     full_text, pcs, npc_names,
                 )
                 if next_kind == "none":
+                    # うつつ無人ループ: メンションが無くてもユーザに戻さず GM ターンへ継続し、
+                    # 場面が止まらないようにする（通常モードはユーザターンへ戻して終了）。
+                    if is_headless:
+                        next_kind = "gm"
+                        next_target = None
+                        continue
                     break
                 continue
 
@@ -362,10 +420,10 @@ async def run_scenario_turn(
         yield ("error", {"message": str(e)})
         return
 
-    if fired_turns >= _MAX_TURNS_PER_USER_TURN:
+    if fired_turns >= max_turns:
         logger.info(
-            "シナリオターン上限到達 session=%s fired=%d cap=%d",
-            session_id, fired_turns, _MAX_TURNS_PER_USER_TURN,
+            "シナリオターン上限到達 session=%s fired=%d cap=%d headless=%s",
+            session_id, fired_turns, max_turns, is_headless,
         )
 
     sqlite.update_scenario_session(session_id, status=session.status)
@@ -375,6 +433,60 @@ async def run_scenario_turn(
     progress = compute_synopsis_progress(sqlite, settings, scenario, session_id)
     if progress is not None:
         yield ("synopsis_progress", progress)
+
+
+async def run_usual_days_scene(
+    session_id: str,
+    sqlite,
+    settings: dict,
+    chat_service,
+    engine: SceneEngine | None = None,
+) -> dict:
+    """うつつ（Usual Days）の 1 シーンを無人で回し、結果サマリを返す薄いトリガー。
+
+    `run_scenario_turn(headless=True, auto_advance=True)` を内部で駆動して SSE イベントを
+    すべて drain する（うつつは SSE 配信を伴わないため、戻り値の dict だけ使う）。
+    Phase 4 のスケジューラと、デバッグ用の手動 1 シーン実行の双方から呼ぶ共通入口。
+
+    Args:
+        session_id: うつつセッション（engine_type="usual_days"）の ID。
+        sqlite: SQLiteStore。
+        settings: グローバル設定辞書。
+        chat_service: PC ターン実行に必須の ChatService。
+        engine: GM エンジン。None なら既定エンジンを使う。
+
+    Returns:
+        {"saved_turn_ids": [...], "fired_turns": int, "scene_closed": bool,
+         "error": str | None} の集計 dict。
+    """
+    saved_turn_ids: list[str] = []
+    scene_closed = False
+    error: str | None = None
+    async for ev_type, payload in run_scenario_turn(
+        session_id=session_id,
+        user_message="",
+        sqlite=sqlite,
+        settings=settings,
+        engine=engine,
+        auto_advance=True,
+        chat_service=chat_service,
+        headless=True,
+    ):
+        if ev_type == "turn_complete":
+            saved_turn_ids = list(payload.get("turn_ids", []))
+        elif ev_type == "error":
+            error = str(payload.get("message", ""))
+    # シーンが GM の [SCENE_CLOSE] で閉じたかは、最終 GM ターンの生出力から判定する。
+    for turn in reversed(sqlite.list_scenario_turns(session_id)):
+        if getattr(turn, "speaker_type", "") in {"narrator", "npc"}:
+            scene_closed = _has_scene_close(getattr(turn, "raw_response", "") or "")
+            break
+    return {
+        "saved_turn_ids": saved_turn_ids,
+        "fired_turns": len(saved_turn_ids),
+        "scene_closed": scene_closed,
+        "error": error,
+    }
 
 
 async def _run_gm_turn(

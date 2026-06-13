@@ -11,6 +11,11 @@
 owner_character_id を除外判定キーに使う設計をここで担保する。
 """
 
+import asyncio
+
+import backend.services.scenario_chat.pc_runner as pc_runner_mod
+import backend.services.scenario_chat.service as svc
+
 from tests._scenario_sqlite_helpers import _make_scenario
 
 
@@ -116,3 +121,146 @@ class TestUsualMigrationIdempotency:
             }
         assert "owner_character_id" in cols
         assert "usual_config" in cols
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — 無人ループ（headless / run_scenario_turn・run_usual_days_scene）
+# ---------------------------------------------------------------------------
+
+
+def _build_usual_session(store, max_turns: int = 8):
+    """うつつ（engine_type="usual_days"）の最小セッションを組み立てて返す。
+
+    主人公キャラ 1 体・PC枠 1 つ・ユーザ枠ゼロのうつつ世界を作る。
+    GM ターンと PC ターンの LLM 呼び出しはテスト側でモックする前提なので、
+    プリセットはダミーで構わない（ただし _resolve_pc_preset_id が実在を要求するため
+    実レコードとして作成する）。
+
+    Returns:
+        (session_id, character_id) のタプル。
+    """
+    cid = "char-haru"
+    pid = "preset-usual"
+    store.create_character(cid, "はる")
+    store.create_model_preset(pid, "うつつ用", "anthropic", "claude-x")
+    scenario = _make_scenario(
+        store,
+        title="はるの日常",
+        owner_character_id=cid,
+        pc_slots=[{"slot_id": "pc1", "name": "はる", "description": "主人公。会社員。"}],
+        usual_config={"max_turns_per_scene": max_turns},
+    )
+    sid = "sess-usual"
+    store.create_scenario_session(
+        session_id=sid,
+        scenario_id=scenario.id,
+        title="うつつ",
+        gm_preset_id=pid,
+        synopsis_preset_id=pid,
+        engine_type="usual_days",
+        pc_assignments=[{
+            "slot_id": "pc1",
+            "player_type": "character",
+            "character_id": cid,
+            "preset_id": pid,
+        }],
+    )
+    return sid, cid
+
+
+def _install_mocks(monkeypatch, gm_script: list[str], pc_calls: list[dict]):
+    """_run_gm_turn / stream_pc_response をモック差し替えするヘルパー。
+
+    - fake_gm: gm_script から 1 件ずつ取り出した文字列を Narrator ターンとして保存する
+      （raw_response に格納。ルーティングは @はる 等のメンションや [SCENE_CLOSE] で制御）。
+      script を使い切ったら無害なデフォルト文を返す。
+    - fake_pc: pc_done を 1 回 yield する。呼び出し時の kwargs（特に default_origin）を
+      pc_calls へ記録し、検証に使う。PC 本文はメンションを含めない（→ headless は GM へ継続）。
+    """
+    async def fake_gm(**kwargs):
+        text = gm_script.pop(0) if gm_script else "Narrator: しずかな時間が流れた。@はる"
+        svc._save_turn(
+            sqlite=kwargs["sqlite"],
+            session_id=kwargs["session_id"],
+            speaker_type="narrator",
+            speaker_name="Narrator",
+            content=text,
+            raw_response=text,
+        )
+        return
+        yield  # 到達しないが async generator にするためのダミー
+
+    async def fake_pc(**kwargs):
+        pc_calls.append(dict(kwargs))
+        name = kwargs["pc"].name
+        cid = kwargs["pc"].character_id
+        yield ("pc_done", {
+            "character": name,
+            "character_id": cid,
+            "full_text": "（はるは黙々と仕事を続けた）",
+            "anticipation": None,
+        })
+
+    monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+    monkeypatch.setattr(pc_runner_mod, "stream_pc_response", fake_pc)
+    # あらすじ蒸留は LLM を叩くためモックで無効化する。
+    monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+
+class TestHeadlessLoop:
+    """うつつ無人ループ（run_scenario_turn headless / run_usual_days_scene）を検証する。"""
+
+    def test_headless_runs_until_cap(self, sqlite_store, monkeypatch):
+        """メンションが続く限り GM↔PC を連鎖し、max_turns_per_scene で停止すること。
+
+        GM は毎ターン @はる を呼び、PC はメンションを返さない。headless は PC 後も
+        ユーザに戻さず GM へ継続するため、上限（4）に達するまで GM,PC,GM,PC と回る。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_turns=4)
+        pc_calls: list[dict] = []
+        # GM は常に @はる を呼ぶ（script を空にしてデフォルト文 "...@はる" を使わせる）
+        _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        turns = sqlite_store.list_scenario_turns(sid)
+        # GM2 + PC2 = 4 ターン保存され、上限で停止
+        assert len(turns) == 4
+        assert result["scene_closed"] is False
+        # PC は 2 回呼ばれている
+        assert len(pc_calls) == 2
+
+    def test_headless_stops_on_scene_close(self, sqlite_store, monkeypatch):
+        """GM が [SCENE_CLOSE] を宣言したら上限前でも停止すること。"""
+        sid, _ = _build_usual_session(sqlite_store, max_turns=20)
+        pc_calls: list[dict] = []
+        # 1回目GM=@はる呼び、2回目GM=幕引き宣言
+        gm_script = [
+            "Narrator: 朝。@はる、出勤の時間だ。",
+            "Narrator: 一日が終わり、はるは眠りについた。[SCENE_CLOSE]",
+        ]
+        _install_mocks(monkeypatch, gm_script=gm_script, pc_calls=pc_calls)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        turns = sqlite_store.list_scenario_turns(sid)
+        # GM1(@はる) → PC1 → GM2([SCENE_CLOSE]) で停止 = 3 ターン（上限20には遠い）
+        assert len(turns) == 3
+        assert result["scene_closed"] is True
+
+    def test_headless_passes_origin_usual(self, sqlite_store, monkeypatch):
+        """PC ターンに default_origin="usual" が渡されること（記憶の由来タグ）。"""
+        sid, _ = _build_usual_session(sqlite_store, max_turns=2)
+        pc_calls: list[dict] = []
+        _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        assert pc_calls, "PC ターンが 1 度も実行されていない"
+        assert all(c.get("default_origin") == "usual" for c in pc_calls)
