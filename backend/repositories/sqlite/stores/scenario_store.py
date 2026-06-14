@@ -329,12 +329,20 @@ class ScenarioChatStoreMixin:
             from backend.repositories.sqlite.store import ScenarioSession
             return session.get(ScenarioSession, session_id)
 
-    def list_scenario_sessions(self, limit: int = 100) -> list:
-        """プレイセッション一覧を更新日時の新しい順で返す。"""
+    def list_scenario_sessions(self, limit: int = 100, include_usual: bool = False) -> list:
+        """プレイセッション一覧を更新日時の新しい順で返す。
+
+        既定では うつつ（engine_type="usual_days"）の無人セッションを除外する。
+        うつつは「キャラ固有の生活世界」で通常のシナリオ一覧には並べない方針
+        （生ログは /ui/logs でのみ覗ける）。``include_usual=True`` で含める。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioSession
+            query = session.query(ScenarioSession)
+            if not include_usual:
+                query = query.filter(ScenarioSession.engine_type != "usual_days")
             return (
-                session.query(ScenarioSession)
+                query
                 .order_by(ScenarioSession.updated_at.desc())
                 .limit(limit)
                 .all()

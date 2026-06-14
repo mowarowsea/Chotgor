@@ -263,6 +263,10 @@ async def run_scenario_turn(
     # （無人ループ制御だけが service 側の分岐で異なる）。
     is_pc_mode = engine_type in ("ensemble_pc", "usual_days")
 
+    # うつつの GM ターンは /ui/logs で識別できるよう feature ラベルを "usual_days" にする。
+    if is_headless:
+        current_log_feature.set("usual_days")
+
     # 1 シーンあたりの上限ターン数。headless は usual_config.max_turns_per_scene を優先し、
     # 無指定なら _DEFAULT_USUAL_MAX_TURNS。通常モードは従来どおり _MAX_TURNS_PER_USER_TURN。
     if is_headless:

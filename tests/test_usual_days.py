@@ -20,6 +20,7 @@ import backend.main as mainmod
 import backend.services.scenario_chat.pc_runner as pc_runner_mod
 import backend.services.scenario_chat.service as svc
 from backend.api.ui.characters import _parse_usual_form
+from backend.lib.log_context import current_log_feature
 from backend.services.chat.request_builder import build_system_prompt
 from backend.lib.time_awareness import (
     format_time_context,
@@ -684,3 +685,62 @@ class TestUsualSystemPromptNotice:
         )
         assert self._MARKER not in prompt
         assert "あなたの日常について" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — 可視性（セッション一覧除外）・ログ feature ラベル
+# ---------------------------------------------------------------------------
+
+
+class TestUsualVisibility:
+    """うつつセッションが通常のセッション一覧から隠れることを検証する。"""
+
+    def test_list_scenario_sessions_excludes_usual(self, sqlite_store):
+        """list_scenario_sessions は既定で usual_days セッションを除外すること。"""
+        # 通常 ensemble シナリオ＋セッション
+        normal_scn = _make_scenario(sqlite_store, title="通常")
+        sqlite_store.create_scenario_session(
+            session_id="sess-normal", scenario_id=normal_scn.id, title="通常",
+            gm_preset_id="p", synopsis_preset_id="p", engine_type="ensemble",
+        )
+        # うつつ世界＋うつつセッション
+        scenario = _build_usual_world(sqlite_store, slots=["10:00"])
+        usual_session = svc.ensure_usual_session(sqlite_store, scenario)
+
+        default_ids = {s.id for s in sqlite_store.list_scenario_sessions()}
+        assert "sess-normal" in default_ids
+        assert usual_session.id not in default_ids  # うつつは隠れる
+
+        # include_usual=True なら含む
+        all_ids = {s.id for s in sqlite_store.list_scenario_sessions(include_usual=True)}
+        assert usual_session.id in all_ids
+
+
+class TestUsualLogFeature:
+    """うつつ無人シーンが /ui/logs 用に feature="usual_days" でログされることを検証する。"""
+
+    def test_headless_sets_feature_label(self, sqlite_store, monkeypatch):
+        """headless シーン進行中、GM ターンの feature が "usual_days" であること。
+
+        ContextVar は asyncio.run の外へ伝播しないため、GM ターン実行中の値を捕捉する。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_turns=2)
+        seen_features: list[str] = []
+
+        async def fake_gm(**kwargs):
+            seen_features.append(current_log_feature.get())
+            svc._save_turn(
+                sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                speaker_type="narrator", speaker_name="Narrator",
+                content="しずかな夜。", raw_response="しずかな夜。[SCENE_CLOSE]",
+            )
+            return
+            yield
+
+        monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+        assert seen_features == ["usual_days"]

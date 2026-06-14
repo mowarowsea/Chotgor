@@ -176,7 +176,9 @@ async def stream_pc_response(
     # log_front_input を呼んで MAIN 行を INSERT する。これがないと provider_request /
     # provider_response が紐づく先が無く、Backend/Logs に PC のターンが現れない。
     new_message_id()
-    current_log_feature.set("scenario_chat_pc")
+    # うつつ無人ループ（default_origin="usual"）の PC ターンは /ui/logs で
+    # 識別できるよう feature ラベルを "usual_days_pc" に分ける。
+    current_log_feature.set("usual_days_pc" if default_origin == "usual" else "scenario_chat_pc")
     current_log_target.set(pc.name)
     # new_message_id() で session_id も None にリセットされるので再セット。
     # これがないと debug_log_entries.session_id が NULL になり、シナリオ別の
