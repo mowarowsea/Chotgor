@@ -20,6 +20,7 @@ import backend.main as mainmod
 import backend.services.scenario_chat.pc_runner as pc_runner_mod
 import backend.services.scenario_chat.service as svc
 from backend.api.ui.characters import _parse_usual_form
+from backend.services.chat.request_builder import build_system_prompt
 from backend.lib.time_awareness import (
     format_time_context,
     japanese_season,
@@ -654,3 +655,32 @@ class TestUsualFormParsing:
         )
         assert cfg["event_probability"] == 0.0
         assert cfg["max_turns_per_scene"] == 8
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — 1on1 システムプロンプト注釈（うつつ有効時のみ）
+# ---------------------------------------------------------------------------
+
+
+class TestUsualSystemPromptNotice:
+    """うつつ有効/無効で 1on1 システムプロンプトの注釈ブロック有無が切り替わることを検証する。"""
+
+    _MARKER = "ユーザが知らない"
+
+    def test_notice_present_when_enabled(self):
+        """usual_days_enabled=True で日常生活の注釈が挿入されること。"""
+        prompt = build_system_prompt(
+            character_system_prompt="あなたは はる。",
+            usual_days_enabled=True,
+        )
+        assert self._MARKER in prompt
+        assert "あなたの日常について" in prompt
+
+    def test_notice_absent_when_disabled(self):
+        """usual_days_enabled=False（既定）では注釈が出ないこと。"""
+        prompt = build_system_prompt(
+            character_system_prompt="あなたは はる。",
+            usual_days_enabled=False,
+        )
+        assert self._MARKER not in prompt
+        assert "あなたの日常について" not in prompt

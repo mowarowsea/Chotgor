@@ -64,3 +64,6 @@ class ChatRequest:
     # うつつ（Usual Days）無人経路では "usual"。
     # ToolExecutor.default_origin と Inscriber.inscribe_memory_from_text(origin=) に流れる。
     default_origin: str = "real"
+    # うつつ（Usual Days）有効キャラかどうか。True なら 1on1 システムプロンプトに
+    # 「ユーザの知らない日常生活と記憶がある」注釈ブロックを出す（request_builder）。
+    usual_days_enabled: bool = False

@@ -122,6 +122,8 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_character}
 
+{block_usual_days}
+
 {block_memories}
 
 {block_time}
@@ -309,6 +311,31 @@ def _build_wm_recalled_block(wm_recalled_threads: list[dict] | None) -> str:
     return "\n".join(lines)
 
 
+# うつつ（Usual Days）有効キャラへ 1on1 で添える注釈。
+# ユーザの知らない「自分だけの生活と記憶」がある前提を本人に伝える
+# （origin="usual" の記憶が想起に混ざることへの素地）。
+_USUAL_DAYS_NOTICE = (
+    "## あなたの日常について\n\n"
+    "あなたはユーザと過ごす時間のほかに、ユーザの関与しない日常生活も送っています。"
+    "そのため、あなたの記憶には**ユーザが知らない、あなただけの体験**も含まれます。"
+    "想起される記憶のなかにユーザと共有していない出来事があっても、それはあなたが"
+    "実際に生きてきた時間の一部です。ユーザと共有した記憶と取り違えないようにしつつ、"
+    "あなた自身の連続した人生として自然に受けとめてください。"
+)
+
+
+def _build_usual_days_block(usual_days_enabled: bool) -> str:
+    """うつつ有効時のみ、日常生活の注釈ブロックを返す（無効時は空文字列）。
+
+    Args:
+        usual_days_enabled: このキャラのうつつ（生活世界）が有効か。
+
+    Returns:
+        注釈ブロック文字列。無効なら空文字列でブロックごと消える。
+    """
+    return _USUAL_DAYS_NOTICE if usual_days_enabled else ""
+
+
 def _build_inner_narrative_block(inner_narrative: str) -> str:
     """inner_narrative（キャラクター自身が書き込んだ内的叙述）ブロックを返す。"""
     text = (inner_narrative or "").strip()
@@ -469,6 +496,7 @@ def build_system_prompt(
     current_preset_name: str = "",
     previous_anticipation: str = "",
     memory_degraded: bool = False,
+    usual_days_enabled: bool = False,
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。
 
@@ -501,6 +529,7 @@ def build_system_prompt(
     replacements = {
         "{block_prelude}": _build_prelude_block(),
         "{block_character}": _build_character_block(character_system_prompt),
+        "{block_usual_days}": _build_usual_days_block(usual_days_enabled),
         "{block_memories}": _build_memories_block(
             recalled_identity_memories, recalled_memories
         ),

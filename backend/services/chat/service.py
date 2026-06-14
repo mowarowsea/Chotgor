@@ -396,6 +396,7 @@ class ChatService:
             current_preset_name=request.current_preset_name,
             previous_anticipation=request.previous_anticipation,
             memory_degraded=memory_degraded,
+            usual_days_enabled=request.usual_days_enabled,
         )
 
         return _Context(

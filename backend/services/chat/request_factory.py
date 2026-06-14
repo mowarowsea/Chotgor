@@ -103,6 +103,10 @@ def build_character_request(
     ta = compute_time_awareness(settings, char.id, sqlite, now)
     sqlite.set_setting(f"last_interaction_{char.id}", now.isoformat())
 
+    # うつつ（Usual Days）が有効なら、1on1 システムプロンプトに日常生活の注釈を出すフラグを立てる。
+    _usual = sqlite.get_usual_scenario(char.id)
+    usual_days_enabled = bool(_usual and (getattr(_usual, "usual_config", None) or {}).get("enabled"))
+
     return ChatRequest(
         character_id=char.id,
         character_name=char.name,
@@ -129,5 +133,6 @@ def build_character_request(
         self_reflection_mode=getattr(char, "self_reflection_mode", "disabled"),
         self_reflection_preset_id=getattr(char, "self_reflection_preset_id", None) or "",
         self_reflection_n_turns=getattr(char, "self_reflection_n_turns", 5),
+        usual_days_enabled=usual_days_enabled,
         **overrides,
     )
