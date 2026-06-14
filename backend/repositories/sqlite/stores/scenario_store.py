@@ -348,6 +348,24 @@ class ScenarioChatStoreMixin:
                 .all()
             )
 
+    def update_scenario_turn(self, turn_id: str, **kwargs):
+        """発話ターンのフィールド（content / raw_response 等）を部分更新する。
+
+        うつつの [SCENE_CLOSE] マーカーを表示用 content から取り除くなど、保存後の
+        ターン本文を整える用途で使う。存在しなければ None を返す。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioTurn
+            obj = session.get(ScenarioTurn, turn_id)
+            if not obj:
+                return None
+            for k, v in kwargs.items():
+                if hasattr(obj, k):
+                    setattr(obj, k, v)
+            session.commit()
+            session.refresh(obj)
+            return obj
+
     def list_scenario_sessions_by_scenario(self, scenario_id: str) -> list:
         """指定シナリオから起動された全プレイセッションを返す。"""
         with self.get_session() as session:

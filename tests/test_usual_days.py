@@ -136,6 +136,43 @@ class TestUsualMigrationIdempotency:
         assert "owner_character_id" in cols
         assert "usual_config" in cols
 
+    def test_migration_alters_legacy_schema(self, sqlite_store):
+        """列の無い旧スキーマ（レガシーDB）に対して ALTER TABLE が実際に走ること。
+
+        インメモリDBは ORM create_all で最初から列があるため、通常テストでは
+        ALTER 分岐が走らない。ここでは列を一旦 DROP して「旧DB」を再現し、
+        マイグレーションが列を追加し、既存行を壊さず NULL 既定で補うことを検証する。
+        ユーザの実DB（移行前）に再起動時に走るのと同じ経路。
+        """
+        # 既存シナリオを 1 件作っておく（移行で消えないことの確認用）
+        existing = _make_scenario(sqlite_store, title="移行前からある汎用シナリオ")
+
+        # 旧スキーマ再現: 新カラムを物理 DROP（SQLite 3.35+ の DROP COLUMN）
+        with sqlite_store.engine.begin() as conn:
+            conn.exec_driver_sql("ALTER TABLE scenarios DROP COLUMN owner_character_id")
+            conn.exec_driver_sql("ALTER TABLE scenarios DROP COLUMN usual_config")
+            cols_before = {
+                r[1] for r in conn.exec_driver_sql("PRAGMA table_info(scenarios)").fetchall()
+            }
+        assert "owner_character_id" not in cols_before
+        assert "usual_config" not in cols_before
+
+        # マイグレーション実行（ALTER パスが走る）
+        sqlite_store._migrate_add_usual_days()
+
+        with sqlite_store.engine.begin() as conn:
+            cols_after = {
+                r[1] for r in conn.exec_driver_sql("PRAGMA table_info(scenarios)").fetchall()
+            }
+        assert "owner_character_id" in cols_after
+        assert "usual_config" in cols_after
+
+        # 既存行は壊れず、新カラムは NULL 既定で補われている
+        migrated = sqlite_store.get_scenario(existing.id)
+        assert migrated.title == "移行前からある汎用シナリオ"
+        assert migrated.owner_character_id is None
+        assert migrated.usual_config is None
+
 
 # ---------------------------------------------------------------------------
 # Phase 2 — 無人ループ（headless / run_scenario_turn・run_usual_days_scene）
@@ -265,6 +302,10 @@ class TestHeadlessLoop:
         # GM1(@はる) → PC1 → GM2([SCENE_CLOSE]) で停止 = 3 ターン（上限20には遠い）
         assert len(turns) == 3
         assert result["scene_closed"] is True
+        # マーカーは表示用 content から除去されている（raw_response には残る）
+        last_gm = [t for t in turns if t.speaker_type == "narrator"][-1]
+        assert "[SCENE_CLOSE]" not in (last_gm.content or "")
+        assert "[SCENE_CLOSE]" in (last_gm.raw_response or "")
 
     def test_headless_passes_origin_usual(self, sqlite_store, monkeypatch):
         """PC ターンに default_origin="usual" が渡されること（記憶の由来タグ）。"""
@@ -366,19 +407,35 @@ class TestSceneCloseAndSoftHint:
         assert svc._has_scene_close("つづく……") is False
         assert svc._has_scene_close("...[scene_close]") is True
 
-    def test_soft_hint_only_near_end(self):
-        """残りターンが閾値以下になって初めてソフト収束ヒントが出ること。"""
+    def test_standing_framing_always_present(self):
+        """毎ターン、うつつの常設フレーミング（無人・GMは外的フレーム・[SCENE_CLOSE]）が入ること。
+
+        これが無いと GM は普通の TRPG と誤認し主たる停止機構が働かないため、
+        中盤の GM ターンでも必ず含まれることを担保する。
+        """
 
         class _Scn:
-            usual_config = {"event_probability": 0.0}  # イベントは出さない
+            usual_config = {"event_probability": 0.0}
 
         scn = _Scn()
-        # 残り多数（fired=0, max=8 → 残り8）→ ヒントなし
+        mid = svc._build_usual_gm_appendix(scn, fired_turns=2, max_turns=8, is_first_gm=False)
+        assert "うつつ" in mid
+        assert "[SCENE_CLOSE]" in mid  # 中盤でもマーカーの存在を GM に伝える
+        assert "プレイヤーはいません" in mid
+
+    def test_soft_hint_only_near_end(self):
+        """終盤の念押し（ソフト収束ヒント）は残りターンが閾値以下のときだけ加わること。"""
+
+        class _Scn:
+            usual_config = {"event_probability": 0.0}
+
+        scn = _Scn()
+        # 残り多数 → 常設フレーミングはあるが「畳む頃合い」の念押しは無い
         early = svc._build_usual_gm_appendix(scn, fired_turns=0, max_turns=8, is_first_gm=False)
-        assert early == ""
-        # 残り僅少（fired=7, max=8 → 残り1）→ ソフト収束ヒストあり
+        assert "畳む頃合い" not in early
+        # 残り僅少 → 念押しが加わる
         late = svc._build_usual_gm_appendix(scn, fired_turns=7, max_turns=8, is_first_gm=False)
-        assert "[SCENE_CLOSE]" in late
+        assert "畳む頃合い" in late
 
     def test_event_hint_only_on_first_gm(self):
         """偶発イベントはシーン最初の GM ターンでのみ抽選されること。"""
@@ -392,11 +449,23 @@ class TestSceneCloseAndSoftHint:
             scn, fired_turns=0, max_turns=8, is_first_gm=True, rng=random.Random(1),
         )
         assert "来客" in first
-        # is_first_gm=False（残りも多い）→ 何も出ない
+        # is_first_gm=False（残りも多い）→ 常設フレーミングはあるがイベントは出ない
         mid = svc._build_usual_gm_appendix(
             scn, fired_turns=2, max_turns=8, is_first_gm=False, rng=random.Random(1),
         )
-        assert mid == ""
+        assert "来客" not in mid
+
+    def test_extract_scene_close(self):
+        """[SCENE_CLOSE] を本文から除去しつつ検出フラグを返すこと（揺れ対応）。"""
+        clean, found = svc.extract_scene_close("一日が終わった。\n[SCENE_CLOSE]")
+        assert found is True
+        assert "[SCENE_CLOSE]" not in clean
+        assert "一日が終わった。" in clean
+        # 区切り・大小の揺れ
+        _c, f2 = svc.extract_scene_close("はるは眠った。 [ scene close ]")
+        assert f2 is True
+        # マーカー無しは素通し
+        assert svc.extract_scene_close("つづく") == ("つづく", False)
 
 
 class TestGmPromptWiring:
