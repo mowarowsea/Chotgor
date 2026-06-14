@@ -222,7 +222,7 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                 owner_id, slot, session.id,
             )
             try:
-                await run_usual_days_scene(
+                result = await run_usual_days_scene(
                     session_id=session.id,
                     sqlite=sqlite,
                     settings=sqlite.get_all_settings(),
@@ -231,6 +231,17 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                 )
                 ran_today += 1
                 sqlite.set_setting(count_key, str(ran_today))
+                # 無人運転なので結果を必ずログに残す（GM/PC のエラーは観測できるように）。
+                if result.get("error"):
+                    _log.warning(
+                        "うつつ: シーンがエラーで中断 owner=%s slot=%s turns=%d error=%s",
+                        owner_id, slot, result.get("fired_turns", 0), result["error"],
+                    )
+                else:
+                    _log.info(
+                        "うつつ: シーン完了 owner=%s slot=%s turns=%d scene_closed=%s",
+                        owner_id, slot, result.get("fired_turns", 0), result.get("scene_closed"),
+                    )
             except Exception:
                 _log.exception("うつつ: シーン実行エラー owner=%s slot=%s", owner_id, slot)
 

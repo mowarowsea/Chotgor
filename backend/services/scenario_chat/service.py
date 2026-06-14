@@ -644,7 +644,13 @@ async def run_usual_days_scene(
         if ev_type == "turn_complete":
             saved_turn_ids = list(payload.get("turn_ids", []))
         elif ev_type == "error":
+            # GM ターン等の致命的エラー（多くは例外送出）。シーンはここで打ち切られる。
             error = str(payload.get("message", ""))
+        elif ev_type == "pc_error":
+            # PC（キャラ）応答のエラー。ループは break され、それまでのターンは保存される。
+            # 無人運転なので観測できるよう error に畳む（最初の1件を記録）。
+            if error is None:
+                error = f"PC応答エラー（{payload.get('character', '?')}）: {payload.get('message', '')}"
     # シーンが GM の [SCENE_CLOSE] で閉じたかは、最終 GM ターンの生出力から判定する。
     for turn in reversed(sqlite.list_scenario_turns(session_id)):
         if getattr(turn, "speaker_type", "") in {"narrator", "npc"}:

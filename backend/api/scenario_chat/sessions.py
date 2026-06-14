@@ -195,9 +195,19 @@ async def start_session(request: Request, body: SessionStart):
 
 @router.get("/sessions")
 async def list_sessions(request: Request, limit: int = 100):
-    """プレイセッション一覧を新しい順で返す。"""
+    """プレイセッション一覧を新しい順で返す。
+
+    うつつ（engine_type="usual_days"）の無人セッションは通常は隠すが、
+    バックエンドがデバッグモード（CHOTGOR_DEBUG=1）のときは動作監視のため一覧に含める。
+    """
+    from backend.lib.debug_logger import logger as debug_logger
+
     sqlite = request.app.state.sqlite
-    return [scenario_session_to_dict(s) for s in sqlite.list_scenario_sessions(limit=limit)]
+    include_usual = debug_logger.is_debug_enabled()
+    return [
+        scenario_session_to_dict(s)
+        for s in sqlite.list_scenario_sessions(limit=limit, include_usual=include_usual)
+    ]
 
 
 @router.get("/sessions/{session_id}")

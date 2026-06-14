@@ -338,7 +338,7 @@
 
     {# ── うつつ（生活世界）── 既存キャラのみ。owner 付きシナリオを別フォームで保存する。 #}
     {% if character %}
-    <form method="post" action="/ui/characters/{{ character.id }}/usual" class="ch-shell__form" style="margin-top:24px">
+    <form method="post" action="/ui/characters/{{ character.id }}/usual" class="ch-shell__form" style="margin-top:24px" data-autosave>
         <section class="ch-section">
             <div class="ch-section__head">
                 <h3 class="ch-section-title">うつつ <small>・ 生活世界（Usual Days）</small></h3>
@@ -348,6 +348,7 @@
                 世界（時間・場・出来事）は GM が与え、何を経験し選ぶかはキャラが決める。
                 ここで得た体験は origin="usual" の記憶として残る。
             </p>
+            <p class="ch-autosave-note" style="margin:0 0 12px">変更は自動的に保存される（保存ボタンは要らない）。</p>
 
             <div class="ch-field">
                 <label class="ch-switch-row" style="border:none;padding:0">
@@ -452,9 +453,6 @@
                     placeholder='{"平日朝": "通勤", "休日昼": "自由時間"}'>{% if usual_config.get("time_grid") %}{{ usual_config.get("time_grid") | tojson }}{% endif %}</textarea>
             </div>
 
-            <div class="ch-field" style="margin-bottom:0">
-                <button type="submit" class="ch-btn ch-btn--primary ch-btn--sm">うつつを保存</button>
-            </div>
         </section>
     </form>
     {% endif %}

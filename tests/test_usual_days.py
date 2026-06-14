@@ -813,3 +813,130 @@ class TestUsualLogFeature:
             session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
         ))
         assert seen_features == ["usual_days"]
+
+
+# ---------------------------------------------------------------------------
+# 追加対応 — フロント可視化（デバッグ時）・ダイス抑止・エラー時の挙動
+# ---------------------------------------------------------------------------
+
+
+class TestSessionListDebugGate:
+    """/api/scenario_chat/sessions がデバッグモード時のみ うつつ を含めることを検証する。"""
+
+    def _setup(self, sqlite_store):
+        """通常セッション1件＋うつつセッション1件を用意する。"""
+        normal = _make_scenario(sqlite_store, title="通常")
+        sqlite_store.create_scenario_session(
+            session_id="sess-normal", scenario_id=normal.id, title="通常",
+            gm_preset_id="p", synopsis_preset_id="p", engine_type="ensemble",
+        )
+        scenario = _build_usual_world(sqlite_store, slots=["10:00"])
+        usual = svc.ensure_usual_session(sqlite_store, scenario)
+        return usual.id
+
+    def test_hidden_when_not_debug(self, sqlite_store, monkeypatch):
+        """非デバッグ時は うつつ セッションが一覧に出ないこと。"""
+        from fastapi.testclient import TestClient
+
+        import backend.lib.debug_logger as dbg
+        from tests._scenario_api_helpers import _build_app
+
+        usual_id = self._setup(sqlite_store)
+        monkeypatch.setattr(dbg.logger, "is_debug_enabled", lambda: False)
+        client = TestClient(_build_app(sqlite_store))
+        ids = {s["id"] for s in client.get("/api/scenario_chat/sessions").json()}
+        assert "sess-normal" in ids
+        assert usual_id not in ids
+
+    def test_shown_when_debug(self, sqlite_store, monkeypatch):
+        """デバッグ時は うつつ セッションも一覧に含まれること（動作監視のため）。"""
+        from fastapi.testclient import TestClient
+
+        import backend.lib.debug_logger as dbg
+        from tests._scenario_api_helpers import _build_app
+
+        usual_id = self._setup(sqlite_store)
+        monkeypatch.setattr(dbg.logger, "is_debug_enabled", lambda: True)
+        client = TestClient(_build_app(sqlite_store))
+        sessions = client.get("/api/scenario_chat/sessions").json()
+        ids = {s["id"] for s in sessions}
+        assert usual_id in ids
+        # フロントが識別できるよう engine_type が含まれること
+        usual = next(s for s in sessions if s["id"] == usual_id)
+        assert usual["engine_type"] == "usual_days"
+
+
+class TestHeadlessDiceSuppressed:
+    """うつつ（headless）では GM にダイスプールを渡さないことを検証する。"""
+
+    def test_no_dice_pool_in_headless(self, sqlite_store, monkeypatch):
+        """日常シーンに TRPG 用ダイスが注入されないこと（dice_pool が空文字）。"""
+        sid, _ = _build_usual_session(sqlite_store, max_turns=2)
+        seen_dice: list[str] = []
+
+        async def fake_gm(**kwargs):
+            seen_dice.append(kwargs.get("dice_pool", "<absent>"))
+            svc._save_turn(
+                sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                speaker_type="narrator", speaker_name="Narrator",
+                content="朝。", raw_response="朝。[SCENE_CLOSE]",
+            )
+            return
+            yield
+
+        monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+        assert seen_dice == [""]  # headless はダイスを渡さない
+
+
+class TestUsualErrorHandling:
+    """GM／PC のエラー時に無人シーンがどう振る舞うかを検証する。"""
+
+    def test_pc_error_surfaced_in_result(self, sqlite_store, monkeypatch):
+        """PC（キャラ）応答が例外を投げたら、シーンは打ち切られ result.error に畳まれること。"""
+        sid, _ = _build_usual_session(sqlite_store, max_turns=8)
+
+        async def fake_gm(**kwargs):
+            svc._save_turn(
+                sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                speaker_type="narrator", speaker_name="Narrator",
+                content="朝。@はる", raw_response="朝。@はる",
+            )
+            return
+            yield
+
+        async def boom_pc(**kwargs):
+            raise RuntimeError("provider down")
+            yield  # 到達しないが async generator にする
+
+        monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+        monkeypatch.setattr(pc_runner_mod, "stream_pc_response", boom_pc)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+        # GM ターンは保存され、PC エラーで打ち切り。error に PC エラーが畳まれている
+        assert result["error"] is not None
+        assert "PC応答エラー" in result["error"]
+
+    def test_gm_exception_surfaced_in_result(self, sqlite_store, monkeypatch):
+        """GM ターンが例外を投げたら、シーンは中断し result.error に記録されること。"""
+        sid, _ = _build_usual_session(sqlite_store, max_turns=8)
+
+        async def boom_gm(**kwargs):
+            raise RuntimeError("gm provider down")
+            yield
+
+        monkeypatch.setattr(svc, "_run_gm_turn", boom_gm)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+        assert result["error"] is not None
+        assert "gm provider down" in result["error"]
