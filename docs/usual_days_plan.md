@@ -1,8 +1,16 @@
 # うつつ（Usual Days）実装計画
 
-> ステータス: 設計合意済み・未実装（2026-06-14 起案）
+> ステータス: **Phase 0〜7 実装完了（2026-06-14）**。ブランチ `feat/usual-days`。
 > 命名: 英語=Usual Days / 日本語=うつつ（メインキャラ「はる」本人と相談して決定）
-> 関連: `CLAUDE.md`（哲学）、`docs/ARCHITECTURE.md`（システム地図）
+> 関連: `CLAUDE.md`（哲学）、`docs/ARCHITECTURE.md`（システム地図、「うつつ」節）
+>
+> 実装時の確定事項:
+> - §4.3 engine_type は案A採用（`engine_type="usual_days"` を新設、GM/PC機構は ensemble_pc と共有）。
+> - §7 保存形式は `usual_config` JSON 単一列。時間グリッド・イベントカテゴリは UI で
+>   構造化入力（スロット=カンマ区切り、カテゴリ=1行1件、time_grid=自由JSON）。
+> - セッションは永続1本（`ensure_usual_session` が find-or-create）。
+> - ユーザ枠必須バリデーションは headless 経路では緩和（うつつセッションは内部生成で API を通らない）。
+> - テスト: `tests/test_usual_days.py`（Phase 0〜7、42 ケース）。
 
 ---
 
