@@ -429,7 +429,8 @@
                     <span class="ch-hint">曜日×時間帯→ラベルの自由 JSON。空でよい</span>
                 </label>
                 <textarea id="usual_time_grid" name="usual_time_grid" class="ch-textarea ch-textarea--mono" rows="3"
-                    placeholder='{"平日朝": "通勤", "休日昼": "自由時間"}'>{% if usual_config.get("time_grid") %}{{ usual_config.get("time_grid") | tojson }}{% endif %}</textarea>
+                    oninput="validateTimeGrid(this)"
+                    placeholder='{"平日朝": "通勤", "休日昼": "自由時間"}'>{{ usual_time_grid_text }}</textarea>
             </div>
         </section>
 
@@ -480,6 +481,33 @@
 
 {% block scripts %}
 <script>
+    /**
+     * 時間グリッド欄の中身が正しい JSON（オブジェクト）かを検証する。
+     * 空欄は許容。不正なら setCustomValidity でフォーム送信・自動保存を止め、
+     * aria-invalid で枠を赤くする（autosave 側がこのメッセージをトーストで通知する）。
+     * @param {HTMLTextAreaElement} el 時間グリッドのテキストエリア
+     */
+    function validateTimeGrid(el) {
+        const raw = (el.value || '').trim();
+        let msg = '';
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    msg = '時間グリッドは {…} 形式のJSONで入力してください';
+                }
+            } catch (e) {
+                msg = '時間グリッドが正しいJSON形式ではありません';
+            }
+        }
+        el.setCustomValidity(msg);
+        if (msg) {
+            el.setAttribute('aria-invalid', 'true');
+        } else {
+            el.removeAttribute('aria-invalid');
+        }
+    }
+
     /** 自己参照ループのオプション表示を切り替える。 */
     function toggleSelfReflectionOptions(mode) {
         var opts = document.getElementById('self_reflection_options');
@@ -619,6 +647,9 @@
         }
         document.querySelectorAll('#model-accordion input[name="ghost_model"]')
             .forEach(attachGhostRadio);
+        // 時間グリッドの初期値も検証しておく（不正なまま開いた場合に枠を赤くする）。
+        const tg = document.getElementById('usual_time_grid');
+        if (tg) validateTimeGrid(tg);
     });
 
     // ── アイコントリミング (Cropper.js) ──────────────

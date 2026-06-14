@@ -513,6 +513,10 @@ html::-webkit-scrollbar-track,
 .ch-input:focus,
 .ch-textarea:focus,
 .ch-select:focus { border-color: var(--ch-a); }
+/* 不正入力の汎用表示（JS が aria-invalid を立てたフォーム部品を赤枠にする） */
+.ch-input[aria-invalid="true"],
+.ch-textarea[aria-invalid="true"],
+.ch-select[aria-invalid="true"] { border-color: var(--ch-danger); }
 .ch-input::placeholder,
 .ch-textarea::placeholder { color: var(--ch-t4); }
 

@@ -63,9 +63,12 @@
         pending = true;
         return;
       }
-      // 必須項目が未入力なら保存しない（ブラウザの required を流用）。
+      // 不正な入力なら保存しない（ブラウザの検証 + setCustomValidity を流用）。
+      // 最初の不正フィールドの validationMessage を出す（無ければ既定文言）。
       if (typeof form.checkValidity === "function" && !form.checkValidity()) {
-        showStatus("必須項目が未入力です", "invalid");
+        var invalid = form.querySelector(":invalid");
+        var msg = (invalid && invalid.validationMessage) || "必須項目が未入力です";
+        showStatus(msg, "invalid");
         return;
       }
       saving = true;

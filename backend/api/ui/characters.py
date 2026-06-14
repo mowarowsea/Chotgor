@@ -74,6 +74,25 @@ def _build_enabled_providers(form) -> dict:
     return enabled_providers
 
 
+def _usual_time_grid_text(usual_config: dict) -> str:
+    """うつつの time_grid を、日本語が読める JSON 文字列に整形する（テキストエリア表示用）。
+
+    Jinja の ``| tojson`` フィルタは ``ensure_ascii=True`` で日本語を ``\\uXXXX`` に
+    エスケープしてしまい、編集画面のテキストエリアで内容が読めなくなる。
+    そのためビュー側で ``ensure_ascii=False`` の JSON 文字列へ変換して渡す。
+
+    Args:
+        usual_config: うつつ運用設定 dict（None / 空可）。
+
+    Returns:
+        time_grid を表す JSON 文字列。空なら空文字列。
+    """
+    time_grid = (usual_config or {}).get("time_grid") or {}
+    if not time_grid:
+        return ""
+    return json.dumps(time_grid, ensure_ascii=False)
+
+
 # --- Characters ---
 
 @router.get("/characters", response_class=HTMLResponse)
@@ -99,6 +118,7 @@ async def new_character_form(request: Request):
             # 新規作成時はまだ うつつ 世界が存在しない（空の既定値でフォームを描画する）
             "usual_scenario": None,
             "usual_config": {},
+            "usual_time_grid_text": "",
         },
     )
 
@@ -148,6 +168,7 @@ async def edit_character_form(request: Request, character_id: str):
     model_presets = request.app.state.sqlite.list_model_presets()
     # うつつ（Usual Days）世界の現在設定。未作成なら None。
     usual_scenario = request.app.state.sqlite.get_usual_scenario(character_id)
+    usual_config = (getattr(usual_scenario, "usual_config", None) or {}) if usual_scenario else {}
     return get_templates().TemplateResponse(
         "character_edit.html",
         {
@@ -157,7 +178,8 @@ async def edit_character_form(request: Request, character_id: str):
             "model_presets": model_presets,
             "provider_labels": PROVIDER_LABELS,
             "usual_scenario": usual_scenario,
-            "usual_config": (getattr(usual_scenario, "usual_config", None) or {}) if usual_scenario else {},
+            "usual_config": usual_config,
+            "usual_time_grid_text": _usual_time_grid_text(usual_config),
         },
     )
 
