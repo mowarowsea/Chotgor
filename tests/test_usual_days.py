@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 import backend.main as mainmod
 import backend.services.scenario_chat.pc_runner as pc_runner_mod
 import backend.services.scenario_chat.service as svc
+from backend.api.ui.characters import _parse_usual_form
 from backend.lib.time_awareness import (
     format_time_context,
     japanese_season,
@@ -588,3 +589,68 @@ class TestUsualScheduler:
         # 23:59 が現在より未来ならスキップ（テスト実行が 23:59 以降だと発火しうるが稀）
         if datetime.now() < datetime.now().replace(hour=23, minute=59, second=0, microsecond=0):
             assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — 管理UI（うつつ設定フォームのパース）
+# ---------------------------------------------------------------------------
+
+
+class TestUsualFormParsing:
+    """キャラ編集UIの「うつつ」フォーム解釈（_parse_usual_form）を検証する。"""
+
+    def test_full_form(self):
+        """各フィールドが usual_config / scenario_kwargs に正しく変換されること。"""
+        form = {
+            "usual_enabled": "1",
+            "usual_world": "都内の制作会社。",
+            "usual_pc_description": "3年目デザイナー。",
+            "usual_slots": "10:00, 13:00\n17:00",
+            "usual_gm_preset_id": "gm-p",
+            "usual_pc_preset_id": "pc-p",
+            "usual_event_categories": "来客\n残業\n\n雑談",
+            "usual_event_probability": "0.3",
+            "usual_max_turns": "6",
+            "usual_time_grid": '{"平日朝": "通勤"}',
+        }
+        scn_kwargs, cfg = _parse_usual_form(form, "はる")
+
+        assert cfg["enabled"] is True
+        # スロットはカンマ・改行どちらの区切りも配列化
+        assert cfg["slots"] == ["10:00", "13:00", "17:00"]
+        # 空行は除去
+        assert cfg["event_categories"] == ["来客", "残業", "雑談"]
+        assert cfg["event_probability"] == 0.3
+        assert cfg["max_turns_per_scene"] == 6
+        assert cfg["gm_preset_id"] == "gm-p"
+        assert cfg["pc_preset_id"] == "pc-p"
+        assert cfg["time_grid"] == {"平日朝": "通勤"}
+        # 主人公 PC 枠はキャラ名で 1 枠
+        assert scn_kwargs["pc_slots"][0]["name"] == "はる"
+        assert scn_kwargs["pc_slots"][0]["description"] == "3年目デザイナー。"
+        assert scn_kwargs["scenario"] == "都内の制作会社。"
+        assert scn_kwargs["usual_config"] is cfg
+
+    def test_disabled_and_empty_defaults(self):
+        """未チェック・空欄では enabled=False と安全な既定値になること。"""
+        scn_kwargs, cfg = _parse_usual_form({}, "X")
+        assert cfg["enabled"] is False
+        assert cfg["slots"] == []
+        assert cfg["event_categories"] == []
+        assert cfg["event_probability"] == 0.0
+        assert cfg["max_turns_per_scene"] == 8
+        assert cfg["time_grid"] == {}
+        assert scn_kwargs["scenario"] is None
+
+    def test_invalid_time_grid_json_ignored(self):
+        """time_grid の JSON が不正なら空 dict にフォールバックすること。"""
+        _scn, cfg = _parse_usual_form({"usual_time_grid": "{壊れた"}, "X")
+        assert cfg["time_grid"] == {}
+
+    def test_invalid_numbers_fallback(self):
+        """確率・上限ターンが不正値なら既定値にフォールバックすること。"""
+        _scn, cfg = _parse_usual_form(
+            {"usual_event_probability": "abc", "usual_max_turns": ""}, "X",
+        )
+        assert cfg["event_probability"] == 0.0
+        assert cfg["max_turns_per_scene"] == 8

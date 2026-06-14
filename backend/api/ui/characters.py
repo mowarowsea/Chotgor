@@ -4,6 +4,7 @@
 フォーム解釈ヘルパーを提供する。
 """
 
+import json
 import uuid
 
 from fastapi import APIRouter, Request
@@ -140,6 +141,8 @@ async def edit_character_form(request: Request, character_id: str):
     if not char:
         return RedirectResponse(url="/ui/characters", status_code=303)
     model_presets = request.app.state.sqlite.list_model_presets()
+    # うつつ（Usual Days）世界の現在設定。未作成なら None。
+    usual_scenario = request.app.state.sqlite.get_usual_scenario(character_id)
     return get_templates().TemplateResponse(
         "character_edit.html",
         {
@@ -148,6 +151,8 @@ async def edit_character_form(request: Request, character_id: str):
             "action": f"/ui/characters/{character_id}",
             "model_presets": model_presets,
             "provider_labels": PROVIDER_LABELS,
+            "usual_scenario": usual_scenario,
+            "usual_config": (getattr(usual_scenario, "usual_config", None) or {}) if usual_scenario else {},
         },
     )
 
@@ -188,6 +193,98 @@ async def update_character(request: Request, character_id: str):
 
     request.app.state.sqlite.update_character(character_id, **update_kwargs)
     return _save_response(request, "/ui/characters")
+
+
+def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
+    """うつつ（生活世界）フォームを scenario 更新用 dict と usual_config dict に変換する。
+
+    Args:
+        form: FastAPI のフォームデータ。
+        character_name: 主人公 PC 枠の名前に使うキャラ名。
+
+    Returns:
+        (scenario_kwargs, usual_config) のタプル。
+        scenario_kwargs は create_scenario / update_scenario に渡すフィールド群。
+    """
+    # スロット時刻: カンマ/改行区切りの "HH:MM" を配列化
+    slots_raw = (form.get("usual_slots") or "").replace("\n", ",")
+    slots = [s.strip() for s in slots_raw.split(",") if s.strip()]
+
+    # 偶発イベントカテゴリ: 1 行 1 カテゴリ
+    cats = [c.strip() for c in (form.get("usual_event_categories") or "").splitlines() if c.strip()]
+
+    # 時間グリッド: 自由 JSON（空・不正なら無視）
+    time_grid = {}
+    tg_raw = (form.get("usual_time_grid") or "").strip()
+    if tg_raw:
+        try:
+            parsed = json.loads(tg_raw)
+            if isinstance(parsed, dict):
+                time_grid = parsed
+        except json.JSONDecodeError:
+            pass
+
+    def _num(key: str, default):
+        """フォーム値を数値化（空・不正なら default）。"""
+        raw = (form.get(key) or "").strip()
+        if not raw:
+            return default
+        try:
+            return type(default)(raw)
+        except (TypeError, ValueError):
+            return default
+
+    usual_config = {
+        "enabled": bool(form.get("usual_enabled")),
+        "slots": slots,
+        "time_grid": time_grid,
+        "event_categories": cats,
+        "event_probability": _num("usual_event_probability", 0.0),
+        "max_turns_per_scene": _num("usual_max_turns", 8),
+        "gm_preset_id": (form.get("usual_gm_preset_id") or "").strip(),
+        "pc_preset_id": (form.get("usual_pc_preset_id") or "").strip(),
+    }
+
+    # 主人公 PC 枠（1 枠固定）。description はこの世界での人物像・知っていること。
+    pc_slots = [{
+        "slot_id": "pc1",
+        "name": character_name,
+        "description": (form.get("usual_pc_description") or "").strip(),
+    }]
+    scenario_kwargs = {
+        "scenario": (form.get("usual_world") or "").strip() or None,
+        "pc_slots": pc_slots,
+        "usual_config": usual_config,
+    }
+    return scenario_kwargs, usual_config
+
+
+@router.post("/characters/{character_id}/usual")
+async def save_usual_world(request: Request, character_id: str):
+    """キャラクターのうつつ（生活世界）設定を保存する。
+
+    owner_character_id 付きのうつつシナリオを find-or-create で作成・更新する。
+    1 キャラ 1 世界（plan §2）。汎用シナリオ一覧には出ない（owner 付き除外）。
+    """
+    sqlite = request.app.state.sqlite
+    char = sqlite.get_character(character_id)
+    if not char:
+        return RedirectResponse(url="/ui/characters", status_code=303)
+
+    form = await request.form()
+    scenario_kwargs, _cfg = _parse_usual_form(form, char.name)
+
+    existing = sqlite.get_usual_scenario(character_id)
+    if existing:
+        sqlite.update_scenario(existing.id, **scenario_kwargs)
+    else:
+        sqlite.create_scenario(
+            scenario_id=str(uuid.uuid4()),
+            title=f"{char.name} のうつつ",
+            owner_character_id=character_id,
+            **scenario_kwargs,
+        )
+    return _save_response(request, f"/ui/characters/{character_id}")
 
 
 @router.post("/characters/{character_id}/delete")
