@@ -312,43 +312,22 @@
             </div>
         </section>
 
-        {# ── 下部アクションバー ── #}
-        <div class="ch-actionbar">
-            {% if not character %}
-            <button type="submit" class="ch-btn ch-btn--primary">キャラクターを作成</button>
-            <a href="/ui/characters" class="ch-btn ch-btn--ghost">キャンセル</a>
-            {% else %}
-            <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
-            <span class="ch-spacer"></span>
-            <span class="ch-meta">自動保存</span>
-            {# キャラクターと全記憶を削除する。autosave フォームを流用するため formaction で削除エンドポイントへ送る #}
-            <button type="submit" formmethod="post"
-                    formaction="/ui/characters/{{ character.id }}/delete"
-                    formnovalidate
-                    class="ch-btn ch-btn--danger ch-btn--sm"
-                    onclick="return confirm('「{{ character.name }}」と、その全ての記憶を削除します。\nこの操作は元に戻せません。本当に削除しますか？')">削除</button>
-            {% endif %}
+        {# ════════════ CHAPTER 3 — うつつ ════════════ #}
+        <div class="ch-chapter">
+            <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 3</span></div>
+            <h2 class="ch-chapter__title">うつつ <small>— 生活世界（Usual Days）</small></h2>
         </div>
 
-        {% if character %}
-        {# キャラクターUUID（DBを見に行かずに参照できるよう小さく表示） #}
-        <p style="margin-top:10px;font-family:var(--ch-fm);font-size:10px;color:var(--ch-t4);user-select:all">uuid: {{ character.id }}</p>
-        {% endif %}
-    </form>
-
-    {# ── うつつ（生活世界）── 既存キャラのみ。owner 付きシナリオを別フォームで保存する。 #}
-    {% if character %}
-    <form method="post" action="/ui/characters/{{ character.id }}/usual" class="ch-shell__form" style="margin-top:24px" data-autosave>
+        {# ── 生活世界（Usual Days）── 主人公（このキャラ）の無人生活モード。owner 付きシナリオとして保存される ── #}
         <section class="ch-section">
-            <div class="ch-section__head">
-                <h3 class="ch-section-title">うつつ <small>・ 生活世界（Usual Days）</small></h3>
-            </div>
             <p class="ch-hint" style="margin:0 0 12px">
                 ユーザ不在のあいだ、このキャラが自律的に「生活」し続ける裏の世界。
                 世界（時間・場・出来事）は GM が与え、何を経験し選ぶかはキャラが決める。
                 ここで得た体験は origin="usual" の記憶として残る。
             </p>
+            {% if character %}
             <p class="ch-autosave-note" style="margin:0 0 12px">変更は自動的に保存される（保存ボタンは要らない）。</p>
+            {% endif %}
 
             <div class="ch-field">
                 <label class="ch-switch-row" style="border:none;padding:0">
@@ -445,17 +424,38 @@
                     value="{{ usual_config.get('max_turns_per_scene', 8) }}">
             </div>
 
-            <div class="ch-field">
+            <div class="ch-field" style="margin-bottom:0">
                 <label class="ch-label" for="usual_time_grid">時間グリッド（任意・JSON）
                     <span class="ch-hint">曜日×時間帯→ラベルの自由 JSON。空でよい</span>
                 </label>
                 <textarea id="usual_time_grid" name="usual_time_grid" class="ch-textarea ch-textarea--mono" rows="3"
                     placeholder='{"平日朝": "通勤", "休日昼": "自由時間"}'>{% if usual_config.get("time_grid") %}{{ usual_config.get("time_grid") | tojson }}{% endif %}</textarea>
             </div>
-
         </section>
+
+        {# ── 下部アクションバー ── #}
+        <div class="ch-actionbar">
+            {% if not character %}
+            <button type="submit" class="ch-btn ch-btn--primary">キャラクターを作成</button>
+            <a href="/ui/characters" class="ch-btn ch-btn--ghost">キャンセル</a>
+            {% else %}
+            <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
+            <span class="ch-spacer"></span>
+            <span class="ch-meta">自動保存</span>
+            {# キャラクターと全記憶を削除する。autosave フォームを流用するため formaction で削除エンドポイントへ送る #}
+            <button type="submit" formmethod="post"
+                    formaction="/ui/characters/{{ character.id }}/delete"
+                    formnovalidate
+                    class="ch-btn ch-btn--danger ch-btn--sm"
+                    onclick="return confirm('「{{ character.name }}」と、その全ての記憶を削除します。\nこの操作は元に戻せません。本当に削除しますか？')">削除</button>
+            {% endif %}
+        </div>
+
+        {% if character %}
+        {# キャラクターUUID（DBを見に行かずに参照できるよう小さく表示） #}
+        <p style="margin-top:10px;font-family:var(--ch-fm);font-size:10px;color:var(--ch-t4);user-select:all">uuid: {{ character.id }}</p>
+        {% endif %}
     </form>
-    {% endif %}
 
     {# クロップモーダル #}
     <div id="crop-modal" class="crop-modal-overlay" style="display:none">

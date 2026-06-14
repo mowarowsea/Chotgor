@@ -96,6 +96,9 @@ async def new_character_form(request: Request):
             "action": "/ui/characters/new",
             "model_presets": model_presets,
             "provider_labels": PROVIDER_LABELS,
+            # 新規作成時はまだ うつつ 世界が存在しない（空の既定値でフォームを描画する）
+            "usual_scenario": None,
+            "usual_config": {},
         },
     )
 
@@ -132,6 +135,8 @@ async def create_character(request: Request):
         self_reflection_n_turns=self_reflection_n_turns,
         allowed_tools=allowed_tools,
     )
+    # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
+    _persist_usual_world(request.app.state.sqlite, char_id, name, form)
     return RedirectResponse(url="/ui/characters", status_code=303)
 
 
@@ -192,6 +197,11 @@ async def update_character(request: Request, character_id: str):
         update_kwargs["image_data"] = None
 
     request.app.state.sqlite.update_character(character_id, **update_kwargs)
+    # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
+    # PC 枠の名前には更新後の最新キャラ名を使う。
+    char = request.app.state.sqlite.get_character(character_id)
+    if char:
+        _persist_usual_world(request.app.state.sqlite, character_id, char.name, form)
     return _save_response(request, "/ui/characters")
 
 
@@ -259,32 +269,56 @@ def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
     return scenario_kwargs, usual_config
 
 
-@router.post("/characters/{character_id}/usual")
-async def save_usual_world(request: Request, character_id: str):
-    """キャラクターのうつつ（生活世界）設定を保存する。
+def _usual_has_content(scenario_kwargs: dict, usual_config: dict) -> bool:
+    """うつつフォームに保存すべき実体があるかを判定する。
 
-    owner_character_id 付きのうつつシナリオを find-or-create で作成・更新する。
-    1 キャラ 1 世界（plan §2）。汎用シナリオ一覧には出ない（owner 付き除外）。
+    キャラ作成・編集のたびに空のうつつシナリオが量産されるのを防ぐためのガード。
+    有効化トグル・世界設定・スロット・イベント種・主人公像のいずれかが入力されていれば
+    実体ありとみなす。
+
+    Args:
+        scenario_kwargs: _parse_usual_form が返す scenario 更新用フィールド群。
+        usual_config: _parse_usual_form が返す usual_config dict。
+
+    Returns:
+        保存すべき内容があれば True。
     """
-    sqlite = request.app.state.sqlite
-    char = sqlite.get_character(character_id)
-    if not char:
-        return RedirectResponse(url="/ui/characters", status_code=303)
+    pc_slots = scenario_kwargs.get("pc_slots") or []
+    pc_description = pc_slots[0].get("description") if pc_slots else ""
+    return bool(
+        usual_config.get("enabled")
+        or scenario_kwargs.get("scenario")
+        or usual_config.get("slots")
+        or usual_config.get("event_categories")
+        or pc_description
+    )
 
-    form = await request.form()
-    scenario_kwargs, _cfg = _parse_usual_form(form, char.name)
 
+def _persist_usual_world(sqlite, character_id: str, character_name: str, form) -> None:
+    """うつつ（生活世界）設定を find-or-create で保存する。
+
+    キャラクター作成・更新フォームに同梱された うつつ フィールドを解釈し、
+    owner_character_id 付きのうつつシナリオを作成・更新する（1 キャラ 1 世界、plan §2）。
+    汎用シナリオ一覧には出ない（owner 付き除外）。既存シナリオがあれば常に更新し、
+    無ければ実体がある場合のみ作成する（未設定キャラの編集で空シナリオを作らないため）。
+
+    Args:
+        sqlite: SQLite ストア。
+        character_id: オーナーキャラクターID。
+        character_name: 主人公 PC 枠の名前に使うキャラ名。
+        form: await request.form() の結果。
+    """
+    scenario_kwargs, usual_config = _parse_usual_form(form, character_name)
     existing = sqlite.get_usual_scenario(character_id)
     if existing:
         sqlite.update_scenario(existing.id, **scenario_kwargs)
-    else:
+    elif _usual_has_content(scenario_kwargs, usual_config):
         sqlite.create_scenario(
             scenario_id=str(uuid.uuid4()),
-            title=f"{char.name} のうつつ",
+            title=f"{character_name} のうつつ",
             owner_character_id=character_id,
             **scenario_kwargs,
         )
-    return _save_response(request, f"/ui/characters/{character_id}")
 
 
 @router.post("/characters/{character_id}/delete")
