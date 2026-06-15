@@ -336,14 +336,22 @@ async def run_scenario_turn(
     pcs = normalize_pc_assignments(
         getattr(session, "pc_assignments", None), pc_slots, sqlite,
     )
-    # PCロスター（ユーザPC含む全PC）。GM へ「全PCを代弁するな」と均一に提示する。
+    # PCロスター（不在ユーザPC含む全PC）。GM へ「全PCを代弁するな」と均一に提示する。
     pc_summary_text = format_pc_summary(pcs)
 
-    # ユーザの @タグ名: player_type="user" のスロット name。無ければフォールバック。
-    user_pc = next((p for p in pcs if p.is_user), None)
-    user_speaker_name = user_pc.name if user_pc else "プレイヤー"
+    # うつつ（headless）はユーザにターンを回さない（ユーザは不在の人物）。ルーティングの
+    # 候補からユーザPCを除外する。pc_summary / suppress_names は全PC（不在ユーザ含む）のまま
+    # GM に渡し、GM の「PC を代弁しない」保護を不在ユーザにも効かせる。
+    routing_pcs = [p for p in pcs if not p.is_user] if is_headless else pcs
 
-    # GM が代弁してはならない名前: 全 PC枠名 + 全 AI キャラ本名（ユーザPCも含む）。
+    # ユーザの @タグ名: player_type="user" のスロット name。無ければフォールバック。
+    # うつつ（headless）では無言進行 OOC で使う総称を既定の「プレイヤー」のままにする
+    # （ユーザPC名を user_alias に出すと _USUAL_GM_STANDING の「プレイヤー＝この人物自身」と
+    #  齟齬が出るため。不在ユーザの呼称は pc_summary / suppress_names 側で扱う）。
+    user_pc = next((p for p in pcs if p.is_user), None)
+    user_speaker_name = "プレイヤー" if is_headless else (user_pc.name if user_pc else "プレイヤー")
+
+    # GM が代弁してはならない名前: 全 PC枠名 + 全 AI キャラ本名（不在ユーザPCも含む）。
     suppress_names: set[str] = {user_speaker_name}
     for pc in pcs:
         suppress_names.add(pc.name)
@@ -378,7 +386,7 @@ async def run_scenario_turn(
     next_target: str | None = None
     if is_pc_mode and not auto_advance:
         next_kind, next_target = find_last_routing_mention(
-            user_message, pcs, npc_names,
+            user_message, routing_pcs, npc_names,
         )
         if next_kind == "none":
             next_kind = "gm"
@@ -462,7 +470,7 @@ async def run_scenario_turn(
 
                 if is_pc_mode and gm_last_raw:
                     next_kind, next_target = find_last_routing_mention(
-                        gm_last_raw, pcs, npc_names,
+                        gm_last_raw, routing_pcs, npc_names,
                     )
                     # GM 直後の特例: 明示的に @<PC> / @ALL のいずれかが
                     # 指定されていない限り、必ず @ALL にフォールバックする。
@@ -471,7 +479,7 @@ async def run_scenario_turn(
                     # 防ぐため、ここでは pc/all 以外を ALL に格上げする。
                     # PC が 1 人もいなければ ALL は無意味なので従来どおり終了。
                     if next_kind not in {"pc", "all"}:
-                        if pcs:
+                        if routing_pcs:
                             next_kind = "all"
                             next_target = None
                             continue
@@ -481,7 +489,7 @@ async def run_scenario_turn(
                 break
 
             if next_kind == "all":
-                pc = pick_at_all_target(pcs, last_speaker_name=last_speaker_name)
+                pc = pick_at_all_target(routing_pcs, last_speaker_name=last_speaker_name)
                 if pc is None or pc.is_user:
                     break
                 next_kind = "pc"
@@ -489,7 +497,7 @@ async def run_scenario_turn(
                 # フォールスルー: 同じイテレーションで PC 実行へ
 
             if next_kind == "pc":
-                pc = next((p for p in pcs if p.name == next_target), None)
+                pc = next((p for p in routing_pcs if p.name == next_target), None)
                 if pc is None:
                     break
                 if pc.is_user:
@@ -567,7 +575,7 @@ async def run_scenario_turn(
 
                 # PC 発話末尾のメンションで次話者を決める
                 next_kind, next_target = find_last_routing_mention(
-                    full_text, pcs, npc_names,
+                    full_text, routing_pcs, npc_names,
                 )
                 if next_kind == "none":
                     # うつつ無人ループ: メンションが無くてもユーザに戻さず GM ターンへ継続し、
@@ -694,6 +702,60 @@ async def run_usual_days_scene(
     }
 
 
+def _build_usual_pc_assignments(pc_slots, owner_id: str, pc_pid: str) -> list[dict]:
+    """うつつセッションの pc_assignments を組み立てる。
+
+    主人公（owner キャラ）の character 割当に加え、ユーザPC枠（slot_id="user"）が
+    定義されていれば「不在のユーザPC」割当（player_type="user"）を足す。ユーザPCは
+    無人ループ中ターンを取らない（run_scenario_turn の routing から除外される）が、
+    GM の pc_summary には不在の PC として並び、GM の「PC を代弁しない」保護を効かせる。
+
+    Args:
+        pc_slots: normalize_pc_slots 済みの PC枠リスト。
+        owner_id: 主人公キャラの ID。
+        pc_pid: 主人公 PC を動かすプリセット ID。
+
+    Returns:
+        create_scenario_session に渡す pc_assignments のリスト。
+    """
+    char_slot = next((s for s in pc_slots if s.slot_id != "user"), pc_slots[0])
+    assignments = [{
+        "slot_id": char_slot.slot_id,
+        "player_type": "character",
+        "character_id": owner_id,
+        "preset_id": pc_pid,
+    }]
+    if any(s.slot_id == "user" for s in pc_slots):
+        assignments.append({"slot_id": "user", "player_type": "user"})
+    return assignments
+
+
+def _attach_usual_user_assignment(sqlite, session, pc_slots) -> None:
+    """既存うつつセッションに、後から定義されたユーザPC枠の割当を冪等に補う。
+
+    ユーザPC（不在の人物）設定は本機能の途中から追加されたため、それ以前に作られた
+    セッションには user 割当が無い。シナリオに user 枠が定義済みで、セッションの
+    pc_assignments に user 割当が無ければ、ここで足して永続化する（再呼び出しでは no-op）。
+
+    Args:
+        sqlite: SQLiteStore。
+        session: 既存の usual_days セッション（ORM オブジェクト）。
+        pc_slots: normalize_pc_slots 済みの PC枠リスト。
+    """
+    if not any(s.slot_id == "user" for s in pc_slots):
+        return
+    raw = list(getattr(session, "pc_assignments", None) or [])
+    if any(isinstance(e, dict) and e.get("player_type") == "user" for e in raw):
+        return
+    raw.append({"slot_id": "user", "player_type": "user"})
+    sqlite.update_scenario_session(session.id, pc_assignments=raw)
+    # 呼び出し側が直後に使う in-memory オブジェクトにも反映する。
+    try:
+        session.pc_assignments = raw
+    except Exception:
+        pass
+
+
 def ensure_usual_session(sqlite, scenario):
     """うつつ世界の永続セッション（engine_type="usual_days"）を find-or-create して返す。
 
@@ -712,9 +774,13 @@ def ensure_usual_session(sqlite, scenario):
 
     from backend.services.scenario_chat.mention import normalize_pc_slots
 
+    pc_slots = normalize_pc_slots(getattr(scenario, "pc_slots", None))
+
     # 既存の active な usual_days セッションを優先（永続1本）。
+    # ユーザPC枠（不在の人物）が後から設定された場合は、既存セッションにも割当を補う。
     for s in sqlite.list_scenario_sessions_by_scenario(scenario.id):
         if getattr(s, "engine_type", "") == "usual_days" and getattr(s, "status", "") == "active":
+            _attach_usual_user_assignment(sqlite, s, pc_slots)
             return s
 
     cfg = getattr(scenario, "usual_config", None) or {}
@@ -729,7 +795,6 @@ def ensure_usual_session(sqlite, scenario):
     owner_char = sqlite.get_character(owner_id) if owner_id else None
     owner_ghost = (getattr(owner_char, "ghost_model", None) or "") if owner_char else ""
     pc_pid = ((cfg.get("pc_preset_id") or "").strip() or owner_ghost.strip() or gm_pid)
-    pc_slots = normalize_pc_slots(getattr(scenario, "pc_slots", None))
     if not gm_pid or not owner_id or not pc_slots:
         logger.warning(
             "うつつ: セッション起動に必要な情報が不足 owner=%s gm_preset=%s slots=%d",
@@ -737,7 +802,6 @@ def ensure_usual_session(sqlite, scenario):
         )
         return None
 
-    slot_id = pc_slots[0].slot_id
     session_id = str(uuid.uuid4())
     return sqlite.create_scenario_session(
         session_id=session_id,
@@ -746,12 +810,7 @@ def ensure_usual_session(sqlite, scenario):
         gm_preset_id=gm_pid,
         synopsis_preset_id=gm_pid,
         engine_type="usual_days",
-        pc_assignments=[{
-            "slot_id": slot_id,
-            "player_type": "character",
-            "character_id": owner_id,
-            "preset_id": pc_pid,
-        }],
+        pc_assignments=_build_usual_pc_assignments(pc_slots, owner_id, pc_pid),
     )
 
 

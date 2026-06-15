@@ -119,6 +119,8 @@ async def new_character_form(request: Request):
             "usual_scenario": None,
             "usual_config": {},
             "usual_time_grid_text": "",
+            "usual_user_label": "",
+            "usual_user_position": "",
         },
     )
 
@@ -169,6 +171,8 @@ async def edit_character_form(request: Request, character_id: str):
     # うつつ（Usual Days）世界の現在設定。未作成なら None。
     usual_scenario = request.app.state.sqlite.get_usual_scenario(character_id)
     usual_config = (getattr(usual_scenario, "usual_config", None) or {}) if usual_scenario else {}
+    # ユーザPC枠（不在の人物）の呼称・位置づけを、不在マーカーを除いた形でフォームへ戻す。
+    usual_user_label, usual_user_position = _extract_usual_user_fields(usual_scenario)
     return get_templates().TemplateResponse(
         "character_edit.html",
         {
@@ -180,6 +184,8 @@ async def edit_character_form(request: Request, character_id: str):
             "usual_scenario": usual_scenario,
             "usual_config": usual_config,
             "usual_time_grid_text": _usual_time_grid_text(usual_config),
+            "usual_user_label": usual_user_label,
+            "usual_user_position": usual_user_position,
         },
     )
 
@@ -225,6 +231,61 @@ async def update_character(request: Request, character_id: str):
     if char:
         _persist_usual_world(request.app.state.sqlite, character_id, char.name, form)
     return _save_response(request, "/ui/characters")
+
+
+# ユーザPC枠（不在の人物）の description 先頭に必ず付ける不在マーカー。
+# うつつ＝ユーザがそばにいない時間なので、ユーザは「ターンを取らない不在の PC」として
+# GM に提示する。format_pc_summary が description を 80 文字で切り詰めるため、最重要の
+# 「不在・描かない」を先頭に置き、後続の位置づけ（役職・関係）が切れても指示が残るようにする。
+_USUAL_USER_ABSENT_PREFIX = "【この場面に不在・姿/言動を描かない】"
+
+
+def _compose_usual_user_description(position: str) -> str:
+    """ユーザPC枠（不在の人物）の description を「不在マーカー＋位置づけ」で組み立てる。
+
+    Args:
+        position: ユーザの位置づけ（役職・関係・接触の仕方などの短い識別情報）。
+            別名（例: 太郎＝主任）で呼ばれても GM が同一人物と分かるための手がかり。
+
+    Returns:
+        不在マーカーを先頭に、位置づけを後続させた説明文。
+    """
+    position = (position or "").strip()
+    return f"{_USUAL_USER_ABSENT_PREFIX}{position}" if position else _USUAL_USER_ABSENT_PREFIX
+
+
+def _split_usual_user_description(description: str) -> str:
+    """ユーザPC枠の description から不在マーカーを除いた「位置づけ」だけを返す（編集画面の再描画用）。
+
+    Args:
+        description: 保存済みの description（通常は不在マーカー＋位置づけ）。
+
+    Returns:
+        不在マーカーを取り除いた位置づけ文字列。
+    """
+    text = (description or "").strip()
+    if text.startswith(_USUAL_USER_ABSENT_PREFIX):
+        return text[len(_USUAL_USER_ABSENT_PREFIX):].strip()
+    return text
+
+
+def _extract_usual_user_fields(usual_scenario) -> tuple[str, str]:
+    """うつつシナリオの pc_slots から、ユーザPC枠（slot_id="user"）の呼称・位置づけを取り出す。
+
+    Args:
+        usual_scenario: get_usual_scenario の戻り（None 可）。
+
+    Returns:
+        (呼称, 位置づけ) のタプル。ユーザ枠が無ければ ("", "")。
+    """
+    slots = (getattr(usual_scenario, "pc_slots", None) or []) if usual_scenario else []
+    for slot in slots:
+        if isinstance(slot, dict) and slot.get("slot_id") == "user":
+            return (
+                (slot.get("name") or "").strip(),
+                _split_usual_user_description(slot.get("description", "")),
+            )
+    return "", ""
 
 
 def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
@@ -297,6 +358,16 @@ def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
         "name": character_name,
         "description": (form.get("usual_pc_description") or "").strip(),
     }]
+    # ユーザ PC 枠（不在の人物）。うつつ＝ユーザがそばにいない時間なので、ユーザは
+    # 「ターンを取らない不在の PC」として GM に提示し、GM の「PC を代弁しない」保護を効かせる。
+    # 呼称が空ならユーザ枠は作らない（任意設定）。位置づけは別名識別のための手がかり。
+    user_label = (form.get("usual_user_label") or "").strip()
+    if user_label:
+        pc_slots.append({
+            "slot_id": "user",
+            "name": user_label,
+            "description": _compose_usual_user_description(form.get("usual_user_position") or ""),
+        })
     # 履歴上限（あらすじ起稿タイミングの実質的なノブ）。
     # うつつは無人ゆえユーザがプリセットを選んで蒸留を起動できないため、
     # シーン完走ごとに閾値（上限 × SYNOPSIS_AUTO_TRIGGER_RATIO）判定で自動蒸留する。
@@ -328,12 +399,15 @@ def _usual_has_content(scenario_kwargs: dict, usual_config: dict) -> bool:
     """
     pc_slots = scenario_kwargs.get("pc_slots") or []
     pc_description = pc_slots[0].get("description") if pc_slots else ""
+    # ユーザPC枠（不在の人物）だけが入力された場合も保存対象とみなす。
+    has_user_slot = any(s.get("slot_id") == "user" for s in pc_slots)
     return bool(
         usual_config.get("enabled")
         or scenario_kwargs.get("scenario")
         or usual_config.get("slots")
         or usual_config.get("event_categories")
         or pc_description
+        or has_user_slot
     )
 
 

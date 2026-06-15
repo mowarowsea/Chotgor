@@ -180,10 +180,12 @@ class TestUsualMigrationIdempotency:
 # ---------------------------------------------------------------------------
 
 
-def _build_usual_session(store, max_turns: int = 8):
+def _build_usual_session(store, max_turns: int = 8, user_label: str | None = None):
     """うつつ（engine_type="usual_days"）の最小セッションを組み立てて返す。
 
-    主人公キャラ 1 体・PC枠 1 つ・ユーザ枠ゼロのうつつ世界を作る。
+    主人公キャラ 1 体・PC枠 1 つのうつつ世界を作る。``user_label`` を渡すと、
+    「不在のユーザPC」枠（slot_id="user"）とその割当（player_type="user"）も併せて作る
+    （ユーザがターンを取らないことの検証用）。
     GM ターンと PC ターンの LLM 呼び出しはテスト側でモックする前提なので、
     プリセットはダミーで構わない（ただし _resolve_pc_preset_id が実在を要求するため
     実レコードとして作成する）。
@@ -195,11 +197,25 @@ def _build_usual_session(store, max_turns: int = 8):
     pid = "preset-usual"
     store.create_character(cid, "はる")
     store.create_model_preset(pid, "うつつ用", "anthropic", "claude-x")
+    pc_slots = [{"slot_id": "pc1", "name": "はる", "description": "主人公。会社員。"}]
+    pc_assignments = [{
+        "slot_id": "pc1",
+        "player_type": "character",
+        "character_id": cid,
+        "preset_id": pid,
+    }]
+    if user_label:
+        pc_slots.append({
+            "slot_id": "user",
+            "name": user_label,
+            "description": "【この場面に不在・姿/言動を描かない】主任。はるの直属の上司。",
+        })
+        pc_assignments.append({"slot_id": "user", "player_type": "user"})
     scenario = _make_scenario(
         store,
         title="はるの日常",
         owner_character_id=cid,
-        pc_slots=[{"slot_id": "pc1", "name": "はる", "description": "主人公。会社員。"}],
+        pc_slots=pc_slots,
         usual_config={"max_turns_per_scene": max_turns},
     )
     sid = "sess-usual"
@@ -210,12 +226,7 @@ def _build_usual_session(store, max_turns: int = 8):
         gm_preset_id=pid,
         synopsis_preset_id=pid,
         engine_type="usual_days",
-        pc_assignments=[{
-            "slot_id": "pc1",
-            "player_type": "character",
-            "character_id": cid,
-            "preset_id": pid,
-        }],
+        pc_assignments=pc_assignments,
     )
     return sid, cid
 
@@ -359,6 +370,142 @@ class TestHeadlessLoop:
         assert synopsis_calls[0]["session_id"] == sid
         # _build_usual_session は synopsis_preset_id="preset-usual" を記録している
         assert synopsis_calls[0]["synopsis_preset_id"] == "preset-usual"
+
+
+class TestUsualUserPc:
+    """うつつの「不在のユーザPC」枠を検証する。
+
+    うつつ＝ユーザがそばにいない時間。ユーザは「ターンを取らない不在の PC」として
+    GM の pc_summary に並べ、GM の「PC を代弁しない」保護を効かせる一方、無人ループでは
+    ルーティング候補から除外してユーザにターンが回らないようにする。
+    """
+
+    def test_parse_form_builds_absent_user_slot(self):
+        """フォームに呼称が入っていれば、不在マーカー付きのユーザPC枠が組み立てられること。"""
+        from backend.api.ui import characters as ui_chars
+
+        form = {"usual_user_label": "太郎", "usual_user_position": "主任。直属の上司。"}
+        scenario_kwargs, _ = ui_chars._parse_usual_form(form, "はる")
+        slots = scenario_kwargs["pc_slots"]
+        user_slot = next(s for s in slots if s["slot_id"] == "user")
+        assert user_slot["name"] == "太郎"
+        # 最重要の「不在・描かない」が先頭に来る（format_pc_summary の 80 字切り詰め対策）。
+        assert user_slot["description"].startswith(ui_chars._USUAL_USER_ABSENT_PREFIX)
+        assert "主任" in user_slot["description"]
+        # 不在マーカーを除けば位置づけが復元できる（編集画面の再描画用）。
+        assert ui_chars._split_usual_user_description(user_slot["description"]) == "主任。直属の上司。"
+
+    def test_parse_form_omits_user_slot_when_label_blank(self):
+        """呼称が空ならユーザPC枠は作らない（任意設定）。"""
+        from backend.api.ui import characters as ui_chars
+
+        scenario_kwargs, _ = ui_chars._parse_usual_form({}, "はる")
+        assert all(s["slot_id"] != "user" for s in scenario_kwargs["pc_slots"])
+
+    def test_ensure_session_adds_user_assignment(self, sqlite_store):
+        """ユーザPC枠が定義されたシナリオから、user 割当付きセッションが作られること。"""
+        cid, pid = "char-haru", "preset-usual"
+        sqlite_store.create_character(cid, "はる")
+        sqlite_store.create_model_preset(pid, "うつつ用", "anthropic", "claude-x")
+        scenario = _make_scenario(
+            sqlite_store,
+            title="はるの日常",
+            owner_character_id=cid,
+            pc_slots=[
+                {"slot_id": "pc1", "name": "はる", "description": "主人公。"},
+                {"slot_id": "user", "name": "太郎",
+                 "description": "【この場面に不在・姿/言動を描かない】主任。"},
+            ],
+            usual_config={"gm_preset_id": pid, "max_turns_per_scene": 4},
+        )
+        session = svc.ensure_usual_session(sqlite_store, scenario)
+        assert session is not None
+        ptypes = [a.get("player_type") for a in session.pc_assignments]
+        assert "character" in ptypes
+        assert "user" in ptypes
+
+    def test_ensure_session_reconciles_existing(self, sqlite_store):
+        """ユーザ枠が後から定義された既存セッションに、user 割当が冪等に補われること。"""
+        cid, pid = "char-haru", "preset-usual"
+        sqlite_store.create_character(cid, "はる")
+        sqlite_store.create_model_preset(pid, "うつつ用", "anthropic", "claude-x")
+        # 先に user 枠なしで作る
+        scenario = _make_scenario(
+            sqlite_store, title="はるの日常", owner_character_id=cid,
+            pc_slots=[{"slot_id": "pc1", "name": "はる", "description": "主人公。"}],
+            usual_config={"gm_preset_id": pid},
+        )
+        s1 = svc.ensure_usual_session(sqlite_store, scenario)
+        assert all(a.get("player_type") != "user" for a in s1.pc_assignments)
+
+        # 後から user 枠を足す
+        sqlite_store.update_scenario(scenario.id, pc_slots=[
+            {"slot_id": "pc1", "name": "はる", "description": "主人公。"},
+            {"slot_id": "user", "name": "太郎",
+             "description": "【この場面に不在・姿/言動を描かない】主任。"},
+        ])
+        s2 = svc.ensure_usual_session(sqlite_store, sqlite_store.get_scenario(scenario.id))
+        assert s2.id == s1.id  # 永続1本（同一セッション）
+        assert "user" in [a.get("player_type") for a in s2.pc_assignments]
+        # 冪等: もう一度呼んでも user 割当は1つだけ
+        s3 = svc.ensure_usual_session(sqlite_store, sqlite_store.get_scenario(scenario.id))
+        user_count = sum(1 for a in s3.pc_assignments if a.get("player_type") == "user")
+        assert user_count == 1
+
+    def test_user_pc_never_takes_turn(self, sqlite_store, monkeypatch):
+        """GM が毎ターン @ユーザ を呼んでも、ユーザPCにはターンが回らないこと。
+
+        ルーティング候補からユーザPCを除外するため、@太郎（ユーザ）指名は GM へ巻き戻り、
+        GM↔キャラPC（はる）で回り続ける（早期 break もしない）。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_turns=4, user_label="太郎")
+        pc_calls: list[dict] = []
+        gm_script = [
+            "Narrator: 朝。@太郎 はもう出かけた。",
+            "Narrator: 昼下がり、静かなオフィス。@太郎",
+        ]
+        _install_mocks(monkeypatch, gm_script=gm_script, pc_calls=pc_calls)
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        turns = sqlite_store.list_scenario_turns(sid)
+        # GM2 + PC2 = 4 ターン（上限4で停止）。@太郎 指名で早期終了していない。
+        assert len(turns) == 4
+        # PC ターンは 2 回ともキャラ（はる）。ユーザ（太郎）は 1 度も実行されない。
+        assert len(pc_calls) == 2
+        assert all(c["pc"].name == "はる" for c in pc_calls)
+        assert all(not c["pc"].is_user for c in pc_calls)
+
+    def test_gm_sees_absent_user_in_pc_summary(self, sqlite_store, monkeypatch):
+        """GM の pc_summary に、不在ユーザPCが「不在」表記付きで載ること。"""
+        sid, _ = _build_usual_session(sqlite_store, max_turns=2, user_label="太郎")
+        _install_mocks(monkeypatch, gm_script=[], pc_calls=[])
+
+        # _install_mocks の fake_gm を、pc_summary を記録する版に差し替える。
+        gm_kwargs: list[dict] = []
+
+        async def rec_gm(**kwargs):
+            gm_kwargs.append(kwargs)
+            svc._save_turn(
+                sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                speaker_type="narrator", speaker_name="Narrator",
+                content="Narrator: 静かな朝。@はる", raw_response="Narrator: 静かな朝。@はる",
+            )
+            return
+            yield
+
+        monkeypatch.setattr(svc, "_run_gm_turn", rec_gm)
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        assert gm_kwargs, "GM ターンが実行されていない"
+        summary = gm_kwargs[0]["pc_summary"]
+        assert "太郎" in summary       # 不在ユーザが PC ロスターに載る
+        assert "不在" in summary       # 不在マーカーが GM へ届いている
 
 
 # ---------------------------------------------------------------------------

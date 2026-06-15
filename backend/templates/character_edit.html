@@ -360,6 +360,23 @@
             </div>
 
             <div class="ch-field">
+                <label class="ch-label" for="usual_user_label">あなた（ユーザ）の呼称
+                    <span class="ch-hint">うつつには登場しない人物。このキャラがあなたを何と呼ぶか</span>
+                </label>
+                <input type="text" id="usual_user_label" name="usual_user_label" class="ch-input"
+                    value="{{ usual_user_label }}"
+                    placeholder="例: 太郎">
+            </div>
+
+            <div class="ch-field">
+                <label class="ch-label" for="usual_user_position">あなた（ユーザ）の位置づけ
+                    <span class="ch-hint">役職・関係・接触の仕方など。別名（太郎＝主任）でも GM が同一人物と分かる手がかり。短く</span>
+                </label>
+                <textarea id="usual_user_position" name="usual_user_position" class="ch-textarea" rows="2"
+                    placeholder="例: 職場の主任で直属の上司。普段は別の場所におり、たまに来訪・SNSで連絡">{{ usual_user_position }}</textarea>
+            </div>
+
+            <div class="ch-field">
                 <label class="ch-label" for="usual_slots">スロット時刻
                     <span class="ch-hint">カンマ区切りの "HH:MM"。各時刻に1シーン進む</span>
                 </label>
