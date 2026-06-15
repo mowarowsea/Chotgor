@@ -393,6 +393,9 @@ async def run_scenario_turn(
 
     last_speaker_name: str | None = user_speaker_name if not auto_advance else None
     fired_turns = 0
+    # うつつ無人ループで、このシーン中に主人公（キャラ PC）が実際に発話した回数。
+    # GM の早すぎる [SCENE_CLOSE]（キャラが一度も応答しないうちの幕引き）を抑止する判定に使う。
+    pc_turns = 0
 
     try:
         while fired_turns < max_turns:
@@ -462,11 +465,26 @@ async def run_scenario_turn(
                     if gm_last_turn is not None:
                         cleaned, _ = extract_scene_close(getattr(gm_last_turn, "content", "") or "")
                         sqlite.update_scenario_turn(gm_last_turn.id, content=cleaned)
-                    logger.info(
-                        "うつつ: GM が SCENE_CLOSE を宣言 session=%s fired=%d",
-                        session_id, fired_turns,
-                    )
-                    break
+                    # 早すぎる幕引きの抑止: このシーンで主人公（キャラ PC）がまだ一度も
+                    # 発話していないのに GM が初手で場面を畳もうとした場合、キャラの応答を
+                    # 待たずにシーンを終わらせない。マーカーは上で content から除去済みなので、
+                    # この break を飛ばして下の通常ルーティング（GM 出力にメンションが
+                    # 無ければ @ALL フォールバック）へ委ね、主人公へ一度ターンを回す。
+                    # GM は次の自ターンで改めて [SCENE_CLOSE] を宣言してよい（その時は
+                    # pc_turns>0 なので幕引きが成立する）。うつつは「キャラが生きる」ことが
+                    # 目的であり、本人が一言も発さず終わるシーンは無意味なため。
+                    if pc_turns == 0 and routing_pcs:
+                        logger.info(
+                            "うつつ: GM の早すぎる SCENE_CLOSE を抑止（主人公が未発話）"
+                            " session=%s fired=%d",
+                            session_id, fired_turns,
+                        )
+                    else:
+                        logger.info(
+                            "うつつ: GM が SCENE_CLOSE を宣言 session=%s fired=%d",
+                            session_id, fired_turns,
+                        )
+                        break
 
                 if is_pc_mode and gm_last_raw:
                     next_kind, next_target = find_last_routing_mention(
@@ -572,6 +590,9 @@ async def run_scenario_turn(
 
                 last_speaker_name = pc.name
                 fired_turns += 1
+                # 主人公（キャラ PC）が実際に発話した。以降は GM の [SCENE_CLOSE] を
+                # 正規の幕引きとして受理してよい（早すぎる幕引き抑止の解除）。
+                pc_turns += 1
 
                 # PC 発話末尾のメンションで次話者を決める
                 next_kind, next_target = find_last_routing_mention(

@@ -327,6 +327,44 @@ class TestHeadlessLoop:
         assert "[SCENE_CLOSE]" not in (last_gm.content or "")
         assert "[SCENE_CLOSE]" in (last_gm.raw_response or "")
 
+    def test_headless_suppresses_early_scene_close(self, sqlite_store, monkeypatch):
+        """GM が初手で [SCENE_CLOSE] を出しても、主人公が未発話なら幕引きを抑止すること。
+
+        うつつは「キャラが生きる」のが目的なので、本人が一言も発さないまま GM だけで
+        シーンが終わるのは不具合。GM が 1 ターン目から場面を畳もうとしても、主人公
+        （キャラ PC）へ一度ターンを回し、その後の GM ターンで改めて幕引きを成立させる。
+
+        台本: GM1=即幕引き → (抑止) → PC1(主人公) → GM2=幕引き → (受理・停止)。
+        期待: GM, PC, GM の 3 ターン。PC は最低 1 回呼ばれる。最初の GM の幕引きでは
+        終わらない。表示用 content からはマーカーが除去される。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_turns=20)
+        pc_calls: list[dict] = []
+        gm_script = [
+            # 1ターン目からいきなり完結した小景を書いて幕引き（主人公はまだ未発話）。
+            "Narrator: 朝が来て、一日が静かに終わった。[SCENE_CLOSE]",
+            # 主人公が一度発話した後の幕引きは正規に受理される。
+            "Narrator: そうして夜は更けていった。[SCENE_CLOSE]",
+        ]
+        _install_mocks(monkeypatch, gm_script=gm_script, pc_calls=pc_calls)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        turns = sqlite_store.list_scenario_turns(sid)
+        # GM1(抑止) → PC1 → GM2(受理) = 3 ターン。GM だけの 1 ターンで終わっていない。
+        assert len(turns) == 3
+        assert turns[0].speaker_type == "narrator"
+        assert turns[1].speaker_type == "pc"
+        assert turns[2].speaker_type == "narrator"
+        # 主人公（キャラ PC）が最低 1 回ターンを取っている。
+        assert len(pc_calls) == 1
+        # 最終的には 2 度目の GM 幕引きでシーンは閉じる。
+        assert result["scene_closed"] is True
+        # 抑止された 1 ターン目の GM 発話も、表示用 content からマーカーが除去されている。
+        assert "[SCENE_CLOSE]" not in (turns[0].content or "")
+
     def test_headless_passes_origin_usual(self, sqlite_store, monkeypatch):
         """PC ターンに default_origin="usual" が渡されること（記憶の由来タグ）。"""
         sid, _ = _build_usual_session(sqlite_store, max_turns=2)
