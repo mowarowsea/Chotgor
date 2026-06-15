@@ -385,10 +385,10 @@
 
             <div class="ch-field">
                 <label class="ch-label" for="usual_pc_preset_id">PC プリセット
-                    <span class="ch-hint">主人公（このキャラ）を動かす LLM。未選択なら GM と同じ</span>
+                    <span class="ch-hint">主人公（このキャラ）を動かす LLM。未選択ならこのキャラの Ghost Model</span>
                 </label>
                 <select id="usual_pc_preset_id" name="usual_pc_preset_id" class="ch-select">
-                    <option value="">— GM と同じ —</option>
+                    <option value="">— このキャラの Ghost Model —</option>
                     {% for preset in model_presets %}
                     <option value="{{ preset.id }}"
                         {% if usual_config.get("pc_preset_id") == preset.id %}selected{% endif %}>
@@ -422,6 +422,28 @@
                 <input type="number" id="usual_max_turns" name="usual_max_turns" class="ch-input"
                     min="2" max="30" step="1"
                     value="{{ usual_config.get('max_turns_per_scene', 8) }}">
+            </div>
+
+            {# あらすじ起稿タイミングのノブ＝履歴上限（シナリオ編集と同形）。
+               うつつは無人ゆえ、シーン完走ごとに「未蒸留ターンが上限の半分に達したら」
+               あらすじを自動起稿する。上限を縮めるほど早く・頻繁に起稿される。空欄は設定既定。 #}
+            <div class="ch-formgrid">
+                <div class="ch-field">
+                    <label class="ch-label" for="usual_history_max_turns">履歴上限ターン
+                        <span class="ch-hint">GM に渡す履歴のターン上限。半分溜まるとあらすじ起稿（空欄: 設定既定）</span>
+                    </label>
+                    <input type="number" id="usual_history_max_turns" name="usual_history_max_turns" class="ch-input"
+                        min="0" step="1" placeholder="100"
+                        value="{% if usual_scenario and usual_scenario.history_max_turns %}{{ usual_scenario.history_max_turns }}{% endif %}">
+                </div>
+                <div class="ch-field">
+                    <label class="ch-label" for="usual_history_max_chars">履歴上限文字数
+                        <span class="ch-hint">GM に渡す履歴の文字数上限（空欄: 設定既定）</span>
+                    </label>
+                    <input type="number" id="usual_history_max_chars" name="usual_history_max_chars" class="ch-input"
+                        min="0" step="1000" placeholder="80000"
+                        value="{% if usual_scenario and usual_scenario.history_max_chars %}{{ usual_scenario.history_max_chars }}{% endif %}">
+                </div>
             </div>
 
             <div class="ch-field" style="margin-bottom:0">

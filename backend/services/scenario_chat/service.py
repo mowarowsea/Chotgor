@@ -656,6 +656,36 @@ async def run_usual_days_scene(
         if getattr(turn, "speaker_type", "") in {"narrator", "npc"}:
             scene_closed = _has_scene_close(getattr(turn, "raw_response", "") or "")
             break
+
+    # あらすじ蒸留（うつつ専用の発火点）。
+    # 通常シナリオはフロントが進捗バーを見てユーザがプリセットを選び regenerate API を
+    # 叩くが、うつつは無人ゆえ介入者がいない。そこで「1 シーン完走」を蒸留の
+    # チェックポイントにし、ここで best-effort に蒸留する。force=False なので毎シーン
+    # 必ず LLM を叩くわけではなく、前回蒸留以降の未蒸留ターンが history 上限の
+    # SYNOPSIS_AUTO_TRIGGER_RATIO に達したときだけ実走する。これにより
+    # スライディングウィンドウから古いターンが押し出される前にあらすじが先回りして
+    # カバーし、GM が過去を忘れる事故を防ぐ。プリセットはセッションの
+    # synopsis_preset_id（ensure_usual_session で GM プリセットと共通に記録済み）を使う。
+    session = sqlite.get_scenario_session(session_id)
+    scenario = sqlite.get_scenario(session.scenario_id) if session else None
+    if session is not None and scenario is not None:
+        # 蒸留の debug ログを "usual_days"（シーン進行）と取り違えないよう、
+        # regenerate API と同じく feature を "synopsis" に切り替えてから呼ぶ。
+        current_log_feature.set("synopsis")
+        await maybe_update_auto_synopsis(
+            sqlite=sqlite,
+            settings=settings,
+            scenario=scenario,
+            history=sqlite.list_scenario_turns(session_id),
+            session_id=session_id,
+            synopsis_preset_id=(
+                getattr(session, "synopsis_preset_id", "")
+                or getattr(session, "gm_preset_id", "")
+                or ""
+            ),
+            force=False,
+        )
+
     return {
         "saved_turn_ids": saved_turn_ids,
         "fired_turns": len(saved_turn_ids),
@@ -689,8 +719,16 @@ def ensure_usual_session(sqlite, scenario):
 
     cfg = getattr(scenario, "usual_config", None) or {}
     gm_pid = (cfg.get("gm_preset_id") or "").strip()
-    pc_pid = (cfg.get("pc_preset_id") or gm_pid).strip()
     owner_id = getattr(scenario, "owner_character_id", None)
+    # PC（主人公）を動かすプリセットの決定順:
+    #   1. usual_config.pc_preset_id（明示指定があれば最優先）
+    #   2. owner キャラの Ghost Model（このキャラの内省・自己処理に使う既定モデル）
+    #   3. GM プリセット（いずれも無いときの最終フォールバック）
+    # 「指定が無ければ、そのキャラ本来の Ghost Model でそのキャラを動かす」のが自然なため、
+    # GM への素通しより Ghost Model を優先する。
+    owner_char = sqlite.get_character(owner_id) if owner_id else None
+    owner_ghost = (getattr(owner_char, "ghost_model", None) or "") if owner_char else ""
+    pc_pid = ((cfg.get("pc_preset_id") or "").strip() or owner_ghost.strip() or gm_pid)
     pc_slots = normalize_pc_slots(getattr(scenario, "pc_slots", None))
     if not gm_pid or not owner_id or not pc_slots:
         logger.warning(

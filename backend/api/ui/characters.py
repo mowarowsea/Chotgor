@@ -266,6 +266,20 @@ def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
         except (TypeError, ValueError):
             return default
 
+    def _int_or_none(key: str):
+        """フォーム値を int 化（空・不正なら None）。
+
+        履歴上限のように「空欄 = 設定既定に委ねる（NULL 保存）」を表したい列で使う。
+        既定値を型として持てない _num（type(None) が使えない）と用途が異なる。
+        """
+        raw = (form.get(key) or "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
     usual_config = {
         "enabled": bool(form.get("usual_enabled")),
         "slots": slots,
@@ -283,10 +297,17 @@ def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
         "name": character_name,
         "description": (form.get("usual_pc_description") or "").strip(),
     }]
+    # 履歴上限（あらすじ起稿タイミングの実質的なノブ）。
+    # うつつは無人ゆえユーザがプリセットを選んで蒸留を起動できないため、
+    # シーン完走ごとに閾値（上限 × SYNOPSIS_AUTO_TRIGGER_RATIO）判定で自動蒸留する。
+    # この上限を縮めるほど早く・頻繁にあらすじが起稿される。空欄なら設定既定に委ねる
+    # （resolve_history_limits が None を既定値へフォールバック）。
     scenario_kwargs = {
         "scenario": (form.get("usual_world") or "").strip() or None,
         "pc_slots": pc_slots,
         "usual_config": usual_config,
+        "history_max_turns": _int_or_none("usual_history_max_turns"),
+        "history_max_chars": _int_or_none("usual_history_max_chars"),
     }
     return scenario_kwargs, usual_config
 

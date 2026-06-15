@@ -258,6 +258,14 @@ def _install_mocks(monkeypatch, gm_script: list[str], pc_calls: list[dict]):
     # あらすじ蒸留は LLM を叩くためモックで無効化する。
     monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
 
+    # run_usual_days_scene はシーン完走後にあらすじ自動蒸留を呼ぶ。蒸留本体は
+    # プリセット読込・プロバイダー呼び出しを伴うため、ここでは no-op に差し替える
+    # （蒸留が「正しい引数で呼ばれるか」は専用テストで別途検証する）。
+    async def fake_synopsis(*a, **k):
+        return None
+
+    monkeypatch.setattr(svc, "maybe_update_auto_synopsis", fake_synopsis)
+
 
 class TestHeadlessLoop:
     """うつつ無人ループ（run_scenario_turn headless / run_usual_days_scene）を検証する。"""
@@ -320,6 +328,37 @@ class TestHeadlessLoop:
 
         assert pc_calls, "PC ターンが 1 度も実行されていない"
         assert all(c.get("default_origin") == "usual" for c in pc_calls)
+
+    def test_scene_completion_triggers_synopsis(self, sqlite_store, monkeypatch):
+        """シーン完走後に、あらすじ自動蒸留が force=False・セッションのプリセットで呼ばれること。
+
+        うつつは無人ゆえフロントから蒸留を起動できない。代わりに run_usual_days_scene が
+        シーン完走を蒸留のチェックポイントにして maybe_update_auto_synopsis を呼ぶ。
+        ここでは「正しい引数（force=False、session の synopsis_preset_id）で 1 度だけ
+        呼ばれること」を検証する（蒸留本体の中身は別ユニットの責務）。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_turns=4)
+        pc_calls: list[dict] = []
+        _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
+
+        # _install_mocks の no-op を、引数を記録する版へ差し替える。
+        synopsis_calls: list[dict] = []
+
+        async def rec_synopsis(**kwargs):
+            synopsis_calls.append(kwargs)
+            return None
+
+        monkeypatch.setattr(svc, "maybe_update_auto_synopsis", rec_synopsis)
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        assert len(synopsis_calls) == 1
+        assert synopsis_calls[0]["force"] is False
+        assert synopsis_calls[0]["session_id"] == sid
+        # _build_usual_session は synopsis_preset_id="preset-usual" を記録している
+        assert synopsis_calls[0]["synopsis_preset_id"] == "preset-usual"
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +603,59 @@ class TestEnsureUsualSession:
         )
         assert svc.ensure_usual_session(sqlite_store, scenario) is None
 
+    def _make_world_with_presets(
+        self, store, *, ghost_model=None, pc_preset_id=None,
+    ):
+        """PC プリセット解決の検証用に、owner キャラ＋各プリセット＋うつつ世界を組む。
+
+        gm/ghost/pc 各プリセットを実レコードとして作り、owner キャラの ghost_model と
+        usual_config.pc_preset_id を引数で切り替えられるようにする。
+
+        Returns:
+            (scenario, gm_pid) のタプル。
+        """
+        cid = "char-haru"
+        gm_pid = "preset-gm"
+        store.create_model_preset(gm_pid, "GM用", "anthropic", "claude-x")
+        store.create_model_preset("preset-ghost", "Ghost用", "anthropic", "claude-haiku")
+        store.create_model_preset("preset-pc", "PC用", "anthropic", "claude-y")
+        store.create_character(cid, "はる", ghost_model=ghost_model)
+        cfg = {"enabled": True, "slots": ["10:00"], "gm_preset_id": gm_pid}
+        if pc_preset_id is not None:
+            cfg["pc_preset_id"] = pc_preset_id
+        scenario = _make_scenario(
+            store,
+            owner_character_id=cid,
+            pc_slots=[{"slot_id": "pc1", "name": "はる", "description": ""}],
+            usual_config=cfg,
+        )
+        return scenario, gm_pid
+
+    def test_pc_preset_defaults_to_ghost_model(self, sqlite_store):
+        """PC プリセット未指定なら owner キャラの Ghost Model が PC 配役に使われること。"""
+        scenario, _ = self._make_world_with_presets(
+            sqlite_store, ghost_model="preset-ghost", pc_preset_id=None,
+        )
+        session = svc.ensure_usual_session(sqlite_store, scenario)
+        assert session is not None
+        assert session.pc_assignments[0]["preset_id"] == "preset-ghost"
+
+    def test_explicit_pc_preset_overrides_ghost_model(self, sqlite_store):
+        """PC プリセットが明示指定されていれば Ghost Model より優先されること。"""
+        scenario, _ = self._make_world_with_presets(
+            sqlite_store, ghost_model="preset-ghost", pc_preset_id="preset-pc",
+        )
+        session = svc.ensure_usual_session(sqlite_store, scenario)
+        assert session.pc_assignments[0]["preset_id"] == "preset-pc"
+
+    def test_pc_preset_falls_back_to_gm_without_ghost_model(self, sqlite_store):
+        """PC プリセットも Ghost Model も無ければ GM プリセットにフォールバックすること。"""
+        scenario, gm_pid = self._make_world_with_presets(
+            sqlite_store, ghost_model=None, pc_preset_id=None,
+        )
+        session = svc.ensure_usual_session(sqlite_store, scenario)
+        assert session.pc_assignments[0]["preset_id"] == gm_pid
+
 
 class TestUsualElapsedNote:
     """前回シーンからの経過時間メモを検証する。"""
@@ -683,6 +775,8 @@ class TestUsualFormParsing:
             "usual_event_categories": "来客\n残業\n\n雑談",
             "usual_event_probability": "0.3",
             "usual_max_turns": "6",
+            "usual_history_max_turns": "40",
+            "usual_history_max_chars": "30000",
             "usual_time_grid": '{"平日朝": "通勤"}',
         }
         scn_kwargs, cfg = _parse_usual_form(form, "はる")
@@ -697,6 +791,9 @@ class TestUsualFormParsing:
         assert cfg["gm_preset_id"] == "gm-p"
         assert cfg["pc_preset_id"] == "pc-p"
         assert cfg["time_grid"] == {"平日朝": "通勤"}
+        # 履歴上限（あらすじ起稿タイミングのノブ）は scenario 列へ保存される
+        assert scn_kwargs["history_max_turns"] == 40
+        assert scn_kwargs["history_max_chars"] == 30000
         # 主人公 PC 枠はキャラ名で 1 枠
         assert scn_kwargs["pc_slots"][0]["name"] == "はる"
         assert scn_kwargs["pc_slots"][0]["description"] == "3年目デザイナー。"
@@ -713,6 +810,9 @@ class TestUsualFormParsing:
         assert cfg["max_turns_per_scene"] == 8
         assert cfg["time_grid"] == {}
         assert scn_kwargs["scenario"] is None
+        # 履歴上限は空欄 → None（設定既定に委ねる）で保存される
+        assert scn_kwargs["history_max_turns"] is None
+        assert scn_kwargs["history_max_chars"] is None
 
     def test_invalid_time_grid_json_ignored(self):
         """time_grid の JSON が不正なら空 dict にフォールバックすること。"""
