@@ -633,10 +633,14 @@ class TestSceneCloseAndSoftHint:
         assert svc._has_scene_close("...[scene_close]") is True
 
     def test_standing_framing_always_present(self):
-        """毎ターン、うつつの常設フレーミング（無人・GMは外的フレーム・[SCENE_CLOSE]）が入ること。
+        """毎ターン、うつつの常設フレーミング（本人の日常・GMは外的フレーム・[SCENE_CLOSE]）が入ること。
 
         これが無いと GM は普通の TRPG と誤認し主たる停止機構が働かないため、
         中盤の GM ターンでも必ず含まれることを担保する。
+
+        Chotgor 哲学に沿い、メタ的な「ユーザ不在」「人間のプレイヤーがいない」表現は
+        使わず、その人物の日常そのものを描く前提を GM に渡している点も検証する
+        （文言を変えるたびに哲学が逆戻りしないようガードする目的）。
         """
 
         class _Scn:
@@ -644,9 +648,17 @@ class TestSceneCloseAndSoftHint:
 
         scn = _Scn()
         mid = svc._build_usual_gm_appendix(scn, fired_turns=2, max_turns=8, is_first_gm=False)
-        assert "うつつ" in mid
-        assert "[SCENE_CLOSE]" in mid  # 中盤でもマーカーの存在を GM に伝える
-        assert "プレイヤーはいません" in mid
+        # うつつの中心概念（本人の日常をそのまま描く）が必ず含まれる
+        assert "日常" in mid
+        # 中盤でもマーカーの存在を GM に伝える（主たる停止機構）
+        assert "[SCENE_CLOSE]" in mid
+        # GM の役回り（外的フレームのみ、内心は代弁しない）が明示されている
+        assert "外的な状況" in mid
+        # AI 扱い・メタ表現が混入していないこと（哲学ガード）。
+        # 本文中で「誰かを演じるための時間ではない」のように「演じる」を否定的に
+        # 引用するのは許容するため、ここでは「演じる」自体の含有はチェックしない。
+        assert "プレイヤーはいません" not in mid
+        assert "ユーザ不在" not in mid
 
     def test_soft_hint_only_near_end(self):
         """終盤の念押し（ソフト収束ヒント）は残りターンが閾値以下のときだけ加わること。"""

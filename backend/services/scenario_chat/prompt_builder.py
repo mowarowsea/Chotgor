@@ -155,8 +155,16 @@ def build_gm_system_prompt(
     appendix_parts: list[str] = []
     # うつつ（Usual Days）の時間文脈。テンプレに {time_context} が無ければ末尾に補う
     # （pc_summary / dice_pool と同じフォールバック思想）。
+    # 単なる現在時刻のアナウンスとして読み流されないよう、見出しと補足で
+    # 「いまのシーンはこの時間帯・季節として描いてほしい」という指示として届ける。
     if time_context and "{time_context}" not in template_to_use and time_context.strip() not in prompt_with_tags_replaced:
-        appendix_parts.append("# 現在の状況（時間・季節）\n" + time_context.strip())
+        appendix_parts.append(
+            "# 描くべき時間帯\n"
+            f"{time_context.strip()}\n"
+            "このシーンは、上の日付・曜日・時間帯・季節を前提として描いてください。"
+            "光の色・空気の温度・人の動き・聞こえてくる音など、その時間ならではの手触りを"
+            "地の文に滲ませて構いません（ただし無理に説明的に列挙はしない）。"
+        )
     if pc_summary and "{pc_summary}" not in template_to_use and pc_summary.strip() not in prompt_with_tags_replaced:
         appendix_parts.append("# PC配役（プレイヤーキャラクター）\n" + pc_summary.strip())
     if dice_pool and "{dice_pool}" not in template_to_use and dice_pool.strip() not in prompt_with_tags_replaced:

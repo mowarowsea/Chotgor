@@ -189,9 +189,17 @@ class DebugLogStoreMixin:
 
         # タイプ別 source_type セット定義。
         # scenario_chat_pc は TRPG モード（ensemble_pc）の PC ターンログ。
-        # synopsis はシナリオあらすじ蒸留ログ。いずれもシナリオ進行の一部なので Scenario タブに含める。
+        # synopsis はシナリオあらすじ蒸留ログ。
+        # usual_days / usual_days_pc は うつつ（Usual Days）無人ループの GM ターン・
+        # PC ターン。いずれもシナリオ進行の一部なので Scenario タブに含める
+        # （Batch タブに落ちないこと。うつつはバッチ処理ではなく、ユーザ不在時に走る
+        # 場面進行であり、性質としては Scenario と同類）。
         _CHAT_TYPES = ("chat", "group_chat", "farewell", "trigger")
-        _SCENARIO_TYPES = ("scenario", "scenario_chat", "scenario_chat_pc", "synopsis")
+        _SCENARIO_TYPES = (
+            "scenario", "scenario_chat", "scenario_chat_pc",
+            "usual_days", "usual_days_pc",
+            "synopsis",
+        )
         _ALL_TYPED = _CHAT_TYPES + _SCENARIO_TYPES
 
         with self.get_session() as sess:
