@@ -15,9 +15,9 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 async def model_presets_list(request: Request):
     presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
+        request,
         "model_presets.html",
         {
-            "request": request,
             "presets": presets,
             "provider_labels": PROVIDER_LABELS,
             "provider_order": PROVIDER_ORDER,

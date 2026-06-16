@@ -47,7 +47,6 @@ async def logs_list(request: Request, page: int = 1, type: str = "chat", partial
     debug_enabled = config.DEBUG_BASE.exists()
 
     context = {
-        "request": request,
         "entries": entries,
         "total": total,
         "page": page,
@@ -57,7 +56,7 @@ async def logs_list(request: Request, page: int = 1, type: str = "chat", partial
     }
 
     template = "logs_fragment.html" if partial else "logs.html"
-    return config.get_templates().TemplateResponse(template, context)
+    return config.get_templates().TemplateResponse(request, template, context)
 
 
 @router.get("/{message_id}/detail", response_class=HTMLResponse)
@@ -83,8 +82,9 @@ async def log_entry_detail(request: Request, message_id: str):
 
     entry = _build_entry_from_db_rows(rows, skip_files=False)
     return config.get_templates().TemplateResponse(
+        request,
         "logs_entry_detail.html",
-        {"request": request, "e": entry},
+        {"e": entry},
     )
 
 

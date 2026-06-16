@@ -19,9 +19,9 @@ async def settings_form(request: Request):
     settings = request.app.state.sqlite.get_all_settings()
     model_presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
+        request,
         "settings.html",
         {
-            "request": request,
             "settings": settings,
             "has_google_key": bool(settings.get("google_api_key")),
             "model_presets": model_presets,

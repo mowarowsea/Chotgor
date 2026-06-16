@@ -100,17 +100,18 @@ async def characters_list(request: Request):
     """キャラクター一覧ページ（旧 index。index はダッシュボードに譲った）。"""
     chars = request.app.state.sqlite.list_characters()
     return get_templates().TemplateResponse(
+        request,
         "characters.html",
-        {"request": request, "characters": chars},
+        {"characters": chars},
     )
 
 @router.get("/characters/new", response_class=HTMLResponse)
 async def new_character_form(request: Request):
     model_presets = request.app.state.sqlite.list_model_presets()
     return get_templates().TemplateResponse(
+        request,
         "character_edit.html",
         {
-            "request": request,
             "character": None,
             "action": "/ui/characters/new",
             "model_presets": model_presets,
@@ -174,9 +175,9 @@ async def edit_character_form(request: Request, character_id: str):
     # ユーザPC枠（不在の人物）の呼称・位置づけを、不在マーカーを除いた形でフォームへ戻す。
     usual_user_label, usual_user_position = _extract_usual_user_fields(usual_scenario)
     return get_templates().TemplateResponse(
+        request,
         "character_edit.html",
         {
-            "request": request,
             "character": char,
             "action": f"/ui/characters/{character_id}",
             "model_presets": model_presets,

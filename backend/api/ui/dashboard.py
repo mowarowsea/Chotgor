@@ -68,9 +68,9 @@ async def dashboard(request: Request):
     scenarios = sqlite.list_scenarios()
 
     return get_templates().TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "usage_today": usage_today,
             "usage_week": usage_week,
             "daily": daily,

@@ -35,9 +35,9 @@ async def memories_view(
 
     categories = ["identity", "user", "semantic", "contextual"]
     return get_templates().TemplateResponse(
+        request,
         "memories.html",
         {
-            "request": request,
             "character": char,
             "memories": memories,
             "categories": categories,
@@ -78,9 +78,9 @@ async def working_memory_view(
     )
     types = ["emotion", "body", "task", "topic", "relation"]
     return get_templates().TemplateResponse(
+        request,
         "working_memory.html",
         {
-            "request": request,
             "character": char,
             "threads": threads,
             "types": types,
@@ -103,9 +103,9 @@ async def working_memory_thread_view(request: Request, character_id: str, thread
         return RedirectResponse(url=f"/ui/working-memory/{character_id}", status_code=303)
 
     return get_templates().TemplateResponse(
+        request,
         "working_memory_thread.html",
         {
-            "request": request,
             "character": char,
             "thread": thread,
         },

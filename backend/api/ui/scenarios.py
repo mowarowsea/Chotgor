@@ -96,8 +96,9 @@ async def scenarios_list(request: Request):
     """シナリオテンプレート一覧ページ。"""
     scenarios = request.app.state.sqlite.list_scenarios()
     return get_templates().TemplateResponse(
+        request,
         "scenarios.html",
-        {"request": request, "scenarios": scenarios},
+        {"scenarios": scenarios},
     )
 
 
@@ -105,9 +106,9 @@ async def scenarios_list(request: Request):
 async def new_scenario_form(request: Request):
     """シナリオテンプレート新規作成フォーム。"""
     return get_templates().TemplateResponse(
+        request,
         "scenario_edit.html",
         {
-            "request": request,
             "scenario": None,
             "npcs": [],
             "action": "/ui/scenarios/new",
@@ -152,9 +153,9 @@ async def edit_scenario_form(request: Request, scenario_id: str):
         return RedirectResponse(url="/ui/scenarios", status_code=303)
     npcs = sqlite.list_scenario_npcs(scenario_id)
     return get_templates().TemplateResponse(
+        request,
         "scenario_edit.html",
         {
-            "request": request,
             "scenario": scenario,
             "npcs": npcs,
             "action": f"/ui/scenarios/{scenario_id}/edit",
