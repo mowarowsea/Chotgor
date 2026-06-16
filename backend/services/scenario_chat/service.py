@@ -23,7 +23,7 @@ import re
 from typing import Any, AsyncGenerator
 
 from backend.character_actions.anticipator import extract_anticipation
-from backend.lib.log_context import current_log_feature
+from backend.lib.log_context import current_log_feature, current_log_session_id, new_message_id
 from backend.lib.time_awareness import format_time_context
 from backend.lib.tool_event_recorder import record_tool_event
 from backend.services.scenario_chat.engine import (
@@ -306,9 +306,16 @@ async def run_scenario_turn(
     # （無人ループ制御だけが service 側の分岐で異なる）。
     is_pc_mode = engine_type in ("ensemble_pc", "usual_days")
 
-    # うつつの GM ターンは /ui/logs で識別できるよう feature ラベルを "usual_days" にする。
+    # うつつの GM ターンは PC ターン（pc_runner）と同様、独立した MAIN ログ行として扱う。
+    # new_message_id() で log_dir_id を fresh にしないと、既定値 "--------" の旧ログ溜めへ
+    # GM の debug ログが書かれ、数ヶ月前の旧エラー（旧 OpenRouter 402 等）と混在して
+    # /ui/logs が誤検出する。feature ラベルは /ui/logs で識別できるよう "usual_days" にする。
     if is_headless:
+        new_message_id()
         current_log_feature.set("usual_days")
+        # new_message_id() で session_id も None にリセットされるので再セット（pc_runner と同様、
+        # debug_log_entries.session_id が NULL だとシナリオ別フィルタが効かなくなる）。
+        current_log_session_id.set(session_id)
 
     # 1 シーンあたりの上限ターン数。headless は usual_config.max_turns_per_scene を優先し、
     # 無指定なら _DEFAULT_USUAL_MAX_TURNS。通常モードは従来どおり _MAX_TURNS_PER_USER_TURN。
