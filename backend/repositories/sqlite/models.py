@@ -458,6 +458,10 @@ class ScenarioTurn(Base):
     # ANTICIPATE_RESPONSE: GM がターン末尾に書いた「次の展開への予想（期待）」。
     # ターンに1つ。次ターンの GM システムプロンプトに「前回の予想」として注入される。
     anticipation = Column(Text, nullable=True)
+    # クロニクル処理日時: NULL=未処理、タイムスタンプあり=処理済み。
+    # うつつ（usual_days）のやり取りを Chronicle 対象に合流させるための列
+    # （ChatMessage.chronicled_at と同じ役割）。通常シナリオのターンでは使われない。
+    chronicled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 

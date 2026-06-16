@@ -407,6 +407,25 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE scenario_turns ADD COLUMN anticipation TEXT"
                 )
 
+    def _migrate_add_scenario_turn_chronicled_at(self) -> None:
+        """`scenario_turns` に `chronicled_at` 列を追加する。
+
+        うつつ（usual_days）のやり取りを Chronicle 対象へ合流させるための列。
+        ChatMessage.chronicled_at と同じく「NULL=未処理 / タイムスタンプ=処理済み」を表す。
+        既存 DB には列がないため ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenario_turns)"
+                ).fetchall()
+            }
+            if "chronicled_at" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_turns ADD COLUMN chronicled_at DATETIME"
+                )
+
     def _migrate_add_scenario_banner_data(self) -> None:
         """`scenarios` に `banner_data` 列を追加する。
 

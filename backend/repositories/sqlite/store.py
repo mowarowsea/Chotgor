@@ -99,6 +99,7 @@ class SQLiteStore(
         self._migrate_drop_afterglow_columns()
         self._migrate_add_chat_message_anticipation()
         self._migrate_add_scenario_turn_anticipation()
+        self._migrate_add_scenario_turn_chronicled_at()
         self._migrate_add_scenario_banner_data()
         self._migrate_add_memory_origin()
         self._migrate_add_scenario_pc_mode()

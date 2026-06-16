@@ -528,6 +528,91 @@ class ScenarioChatStoreMixin:
                 .all()
             )
 
+    def get_unchronicled_usual_turns_for_character(self, character_id: str) -> list:
+        """chronicle 用: 対象キャラのうつつ世界の未処理ターンを時系列で返す（スケジューラ用）。
+
+        ``owner_character_id`` 一致のうつつシナリオ → ``engine_type="usual_days"`` セッション群の
+        ScenarioTurn のうち ``chronicled_at IS NULL`` を ``created_at`` 昇順で返す。
+        ChatMessage 側の ``get_unchronicled_messages_for_character`` のうつつ版に相当する。
+        うつつ世界を持たないキャラは空リストになる。
+
+        Args:
+            character_id: キャラクターの UUID（うつつシナリオの owner_character_id）。
+
+        Returns:
+            未処理ターン一覧（時系列昇順）。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import (
+                Scenario, ScenarioSession, ScenarioTurn,
+            )
+            return (
+                session.query(ScenarioTurn)
+                .join(ScenarioSession, ScenarioTurn.session_id == ScenarioSession.id)
+                .join(Scenario, ScenarioSession.scenario_id == Scenario.id)
+                .filter(
+                    Scenario.owner_character_id == character_id,
+                    ScenarioSession.engine_type == "usual_days",
+                    ScenarioTurn.chronicled_at == None,  # noqa: E711
+                )
+                .order_by(ScenarioTurn.created_at.asc())
+                .all()
+            )
+
+    def get_usual_turns_for_character_on_date(
+        self, character_id: str, date_start: datetime, date_end: datetime
+    ) -> list:
+        """chronicle 用（target_date 経路）: 指定日のうつつターンを時系列で返す。
+
+        ``get_messages_for_character_on_date`` のうつつ版。``chronicled_at`` の有無に
+        関わらず ``created_at`` が指定日の範囲内のターンを返す（再蒸留を許す）。
+
+        Args:
+            character_id: キャラクターの UUID（うつつシナリオの owner_character_id）。
+            date_start: 対象日の開始 datetime（inclusive）。
+            date_end: 対象日の終了 datetime（exclusive）。
+
+        Returns:
+            当日のうつつターン一覧（時系列昇順）。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import (
+                Scenario, ScenarioSession, ScenarioTurn,
+            )
+            return (
+                session.query(ScenarioTurn)
+                .join(ScenarioSession, ScenarioTurn.session_id == ScenarioSession.id)
+                .join(Scenario, ScenarioSession.scenario_id == Scenario.id)
+                .filter(
+                    Scenario.owner_character_id == character_id,
+                    ScenarioSession.engine_type == "usual_days",
+                    ScenarioTurn.created_at >= date_start,
+                    ScenarioTurn.created_at < date_end,
+                )
+                .order_by(ScenarioTurn.created_at.asc())
+                .all()
+            )
+
+    def mark_scenario_turns_as_chronicled(self, turn_ids: list[str]) -> None:
+        """指定 ScenarioTurn の chronicled_at を現在日時にセットする。
+
+        ChatMessage 側の ``mark_messages_as_chronicled`` のうつつ版。Chronicle で
+        当日会話へ合流させたうつつターンを「処理済み」にして二重処理を防ぐ。
+
+        Args:
+            turn_ids: 処理済みにする ScenarioTurn ID のリスト。
+        """
+        if not turn_ids:
+            return
+        from datetime import datetime as dt
+        now = dt.utcnow()
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioTurn
+            session.query(ScenarioTurn).filter(
+                ScenarioTurn.id.in_(turn_ids)
+            ).update({"chronicled_at": now}, synchronize_session=False)
+            session.commit()
+
     def delete_scenario_turns_from(self, session_id: str, turn_id: str) -> bool:
         """指定 turn_id 以降（自身を含む）のターンをまとめて削除する。
 

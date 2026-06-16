@@ -147,6 +147,43 @@ def _format_conversation(messages: list) -> str:
     return "\n".join(lines)
 
 
+class _UsualTurnView:
+    """うつつ（usual_days）の ScenarioTurn を _format_conversation 互換に見せる薄いアダプタ。
+
+    ScenarioTurn は ChatMessage と属性名が異なる（role/character_name ではなく
+    speaker_type/speaker_name）。Chronicle の当日会話整形は ChatMessage 前提なので、
+    id/role/character_name/content/created_at を持つビューに正規化する。
+    うつつ無人ループにユーザ発話は無いが、念のため speaker_type=="user" のみ role="user"
+    とし、それ以外（narrator/npc/character/pc）は speaker_name 表示へ倒す。
+    """
+
+    def __init__(self, turn) -> None:
+        """ScenarioTurn を受け取り、ChatMessage 互換の属性へ写し替える。"""
+        self.id = turn.id
+        self.role = "user" if getattr(turn, "speaker_type", "") == "user" else "character"
+        self.character_name = getattr(turn, "speaker_name", "") or "キャラクター"
+        self.content = getattr(turn, "content", "") or ""
+        self.created_at = getattr(turn, "created_at", None)
+
+
+def _merge_conversation(messages: list, usual_turns: list) -> list:
+    """1on1/グループの ChatMessage とうつつ ScenarioTurn を時系列で1本に合流する。
+
+    うつつターンは _UsualTurnView で ChatMessage 互換に正規化してから created_at で
+    マージソートする。created_at が None のものは先頭側へ寄せる（実運用では発生しない）。
+
+    Args:
+        messages: ChatMessage のリスト（時系列昇順）。
+        usual_turns: うつつ ScenarioTurn のリスト（時系列昇順）。
+
+    Returns:
+        created_at 昇順に並べた、_format_conversation へ渡せるビューのリスト。
+    """
+    items = list(messages) + [_UsualTurnView(t) for t in usual_turns]
+    items.sort(key=lambda m: getattr(m, "created_at", None) or datetime.min)
+    return items
+
+
 # 棚卸しプロンプトに載せる Close 済みスレッドの最大件数（updated_at 降順で新しい順）。
 _CLOSED_THREADS_LIMIT = 30
 
@@ -422,10 +459,25 @@ async def run_chronicle(
         date_start = target_dt.replace(hour=0, minute=0, second=0, microsecond=0)
         date_end = date_start + timedelta(days=1)
         messages = sqlite.get_messages_for_character_on_date(char.name, date_start, date_end)
+        usual_turns = sqlite.get_usual_turns_for_character_on_date(character_id, date_start, date_end)
     else:
         messages = sqlite.get_unchronicled_messages_for_character(char.name)
+        usual_turns = sqlite.get_unchronicled_usual_turns_for_character(character_id)
 
-    conversation_text = _format_conversation(messages)
+    # 1on1/グループの会話と、うつつ（usual_days）世界の出来事を時系列で1本に合流する。
+    # うつつのやり取りは ScenarioTurn 別経路に保存されるため、合流しないと当日会話から漏れる。
+    conversation_text = _format_conversation(_merge_conversation(messages, usual_turns))
+
+    def _mark_chronicled() -> None:
+        """当日会話として読んだ ChatMessage とうつつ ScenarioTurn を処理済みにする。
+
+        chronicled_at をセットして二重処理（同じやり取りを翌日も当日会話に含める）を防ぐ。
+        ChatMessage 側とうつつ ScenarioTurn 側の双方を同じタイミングでマークする。
+        """
+        if messages:
+            sqlite.mark_messages_as_chronicled([m.id for m in messages])
+        if usual_turns:
+            sqlite.mark_scenario_turns_as_chronicled([t.id for t in usual_turns])
 
     # Open スレッドは棚卸しの操作対象。Close 済みは参照用（再燃時の再オープン判断・merges 判断）。
     open_threads = working_memory_manager.list_threads_by_type(character_id, is_open=True)
@@ -482,8 +534,7 @@ async def run_chronicle(
     if parsed is None:
         # null 応答 = 変更なし
         logger.info("変更なし（null応答） char=%s", char_label)
-        if messages:
-            sqlite.mark_messages_as_chronicled([m.id for m in messages])
+        _mark_chronicled()
         return {"status": "success", "counts": {}}
     if not parsed:
         logger.warning("JSONパース失敗 char=%s raw=%.100s", char_label, response_text)
@@ -499,8 +550,7 @@ async def run_chronicle(
     if isinstance(fc_value, dict) and fc_value:
         sqlite.update_character(character_id, farewell_config=fc_value)
 
-    if messages:
-        sqlite.mark_messages_as_chronicled([m.id for m in messages])
+    _mark_chronicled()
 
     # farewell_config が設定されていれば疎遠化判定を行う
     updated_char = sqlite.get_character(character_id)
