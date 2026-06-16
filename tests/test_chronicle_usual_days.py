@@ -15,7 +15,7 @@
 
 import uuid
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,7 @@ from backend.batch.chronicle_job import run_chronicle
 
 from tests._ghost_model_helpers import (  # noqa: F401
     _NO_UPDATE_RESPONSE,
+    memory_manager,
     working_memory_manager,
 )
 
@@ -356,3 +357,140 @@ class TestChronicledAtMigration:
         turns = sqlite_store.list_scenario_turns(session_id)
         assert len(turns) == 1
         assert turns[0].chronicled_at is None
+
+
+# ---------------------------------------------------------------------------
+# origin 帰属: うつつ由来の記憶が origin="usual" として保存されることのテスト
+# ---------------------------------------------------------------------------
+
+
+# origin="usual" の new_thread を1本だけ作らせる chronicle 応答。
+_USUAL_THREAD_RESPONSE = (
+    '{"thread_updates": [], '
+    '"new_threads": [{"type": "topic", "summary": "うつつでの出来事の振り返り", '
+    '"atmosphere_tag": "静か", "importance": 0.6, "post": "会社で一日を過ごした", '
+    '"relation_target": null, "origin": "usual"}], '
+    '"merges": [], "inscribe": [], "farewell_config": null}'
+)
+
+# origin フィールドを省いた new_thread（後方互換で "real" になるべき）。
+_NO_ORIGIN_THREAD_RESPONSE = (
+    '{"thread_updates": [], '
+    '"new_threads": [{"type": "topic", "summary": "ユーザと話したこと", '
+    '"atmosphere_tag": "", "importance": 0.5, "post": "今日の会話", "relation_target": null}], '
+    '"merges": [], "inscribe": [], "farewell_config": null}'
+)
+
+# origin="usual" の inscribe を1件だけ作らせる chronicle 応答。
+_USUAL_INSCRIBE_RESPONSE = (
+    '{"thread_updates": [], "new_threads": [], "merges": [], '
+    '"inscribe": [{"content": "私は今日、会社で静かに過ごした", "category": "contextual", '
+    '"impact": 1.0, "origin": "usual"}], "farewell_config": null}'
+)
+
+
+class TestUsualOriginAttribution:
+    """うつつ由来の記憶が origin="usual" として帰属・保存されることの検証。
+
+    Aフル実装の核心:
+        - 当日会話プロンプトにうつつターンが「うつつ｜」＋凡例で明示されること
+          （キャラ本人が源泉を判断する手がかり）
+        - キャラが new_thread/inscribe で選んだ origin が WM スレッド/長期記憶へ反映されること
+        - origin 未指定は後方互換で "real" にフォールバックすること
+    LLM 呼び出しはモックし、保存後の DB の origin 値を直接検証する。
+    """
+
+    @pytest.mark.asyncio
+    async def test_usual_turns_labeled_in_prompt(self, sqlite_store, working_memory_manager):
+        """うつつターンが当日会話に「うつつ｜」付き＋凡例で現れることを確認する。"""
+        char_id, _, _, _ = _setup_usual_world(sqlite_store, n_turns=2)
+
+        captured: list[str] = []
+
+        async def fake_generate(sys_prompt, messages):
+            captured.append(messages[0]["content"])
+            return _NO_UPDATE_RESPONSE
+
+        mock_provider = AsyncMock()
+        mock_provider.generate = fake_generate
+
+        with patch("backend.services.character_query.create_provider", return_value=mock_provider):
+            await run_chronicle(
+                character_id=char_id, sqlite=sqlite_store,
+                working_memory_manager=working_memory_manager,
+            )
+
+        assert "うつつ｜" in captured[0]
+        assert "ユーザはこれらを知りません" in captured[0]
+
+    @pytest.mark.asyncio
+    async def test_new_thread_origin_usual_is_stored(self, sqlite_store, working_memory_manager):
+        """origin="usual" の new_thread が WM に origin="usual" で保存されることを確認する。"""
+        char_id, _, _, _ = _setup_usual_world(sqlite_store, n_turns=1)
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(return_value=_USUAL_THREAD_RESPONSE)
+
+        with patch("backend.services.character_query.create_provider", return_value=mock_provider):
+            result = await run_chronicle(
+                character_id=char_id, sqlite=sqlite_store,
+                working_memory_manager=working_memory_manager,
+            )
+
+        assert result["status"] == "success"
+        with sqlite_store.engine.begin() as conn:
+            rows = conn.exec_driver_sql(
+                "SELECT origin FROM working_memory_threads "
+                "WHERE character_id=? AND summary=?",
+                (char_id, "うつつでの出来事の振り返り"),
+            ).fetchall()
+        assert rows and all(r[0] == "usual" for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_new_thread_without_origin_defaults_real(self, sqlite_store, working_memory_manager):
+        """origin 未指定の new_thread は "real" にフォールバックすることを確認する（後方互換）。"""
+        char_id, _, _, _ = _setup_usual_world(sqlite_store, n_turns=1)
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(return_value=_NO_ORIGIN_THREAD_RESPONSE)
+
+        with patch("backend.services.character_query.create_provider", return_value=mock_provider):
+            await run_chronicle(
+                character_id=char_id, sqlite=sqlite_store,
+                working_memory_manager=working_memory_manager,
+            )
+
+        with sqlite_store.engine.begin() as conn:
+            rows = conn.exec_driver_sql(
+                "SELECT origin FROM working_memory_threads "
+                "WHERE character_id=? AND summary=?",
+                (char_id, "ユーザと話したこと"),
+            ).fetchall()
+        assert rows and all(r[0] == "real" for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_inscribe_passes_usual_origin(
+        self, sqlite_store, working_memory_manager, memory_manager,
+    ):
+        """origin="usual" の inscribe が Inscriber.inscribe_memory へ origin="usual" で渡ることを確認する。
+
+        長期記憶の実書き込み（embedding 経路）は検証対象外なので Inscriber をモックし、
+        Chronicle が _normalize_origin 経由で origin を正しく伝搬することだけを検証する。
+        """
+        char_id, _, _, _ = _setup_usual_world(sqlite_store, n_turns=1)
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(return_value=_USUAL_INSCRIBE_RESPONSE)
+        mock_inscriber = MagicMock()
+
+        with patch(
+            "backend.services.character_query.create_provider", return_value=mock_provider,
+        ), patch(
+            "backend.batch.chronicle_job.Inscriber", return_value=mock_inscriber,
+        ):
+            result = await run_chronicle(
+                character_id=char_id, sqlite=sqlite_store,
+                working_memory_manager=working_memory_manager,
+                memory_manager=memory_manager,
+            )
+
+        assert result["status"] == "success"
+        mock_inscriber.inscribe_memory.assert_called_once()
+        assert mock_inscriber.inscribe_memory.call_args.kwargs.get("origin") == "usual"
