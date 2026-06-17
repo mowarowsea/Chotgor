@@ -358,3 +358,129 @@ class TestBuildEntryFromDbRowsSkipFiles:
         assert entry["attempt_count"] == 3
         for attempt in entry["attempts"]:
             assert attempt["tool_calls"] == []
+
+
+# ─── _build_entry_from_db_rows: scenario 見出しのセッション名統一 ──────────────
+
+
+class TestBuildEntryScenarioSessionTitle:
+    """scenario 系エントリの見出しをセッション名+プリセットに統一する挙動を検証するテストクラス。
+
+    背景:
+        従来は source_type ごとに target が「GMターン=シナリオ名 / PCターン=PC名 /
+        うつつGM=None / synopsis自動=継承で不定」とバラついており、Logs 画面の見出しが
+        同じシナリオセッション内でも何種類にも分散していた。
+        本テストは、scenario 系エントリでは session_title_map から解決した
+        セッション名（scenario_sessions.title）が常に見出しに使われ、PC 名・None・
+        プリセット単独の見出しに分散しないことを検証する。
+    """
+
+    def _make_row(self, **kwargs):
+        """テスト用の DB 行辞書を生成するヘルパ（scenario 系のデフォルト値入り）。"""
+        from datetime import datetime
+        defaults = {
+            "request_id": "abc12345",
+            "source_type": "scenario",
+            "session_id": "sess-001",
+            "created_at": datetime(2026, 5, 1, 12, 0, 0),
+            "target": "シナリオA",  # 元シナリオ名（通常はセッション名と同じ初期値）
+            "preset": "GMpreset",
+            "user_message": "",
+            "response": "GM 応答",
+            "reasoning": "",
+            "has_error": False,
+            "warn_reason": "",
+            "raw_dir": None,
+        }
+        defaults.update(kwargs)
+        return defaults
+
+    def test_gm_turn_uses_session_title(self):
+        """ユーザ→GM ターン（source_type=scenario）はセッション名が見出しになる。"""
+        rows = [self._make_row(target="元シナリオ名")]
+        entry = _build_entry_from_db_rows(
+            rows, session_title_map={"sess-001": "編集後セッション名"},
+        )
+        assert entry["character"] == "編集後セッション名"
+        assert entry["preset"] == "GMpreset"
+        assert entry["model_id"] == "編集後セッション名@GMpreset"
+
+    def test_pc_turn_target_overridden_to_session_title(self):
+        """PC ターン（source_type=scenario_chat_pc）の見出しはセッション名に統一される。
+
+        従来は target=PC名 が表示されていたが、本修正でセッション名へ統一される。
+        """
+        rows = [self._make_row(
+            source_type="scenario_chat_pc",
+            target="アリス",  # PC 配役名
+        )]
+        entry = _build_entry_from_db_rows(
+            rows, session_title_map={"sess-001": "セッションX"},
+        )
+        assert entry["character"] == "セッションX"
+        assert entry["model_id"] == "セッションX@GMpreset"
+
+    def test_usual_days_gm_with_null_target_gets_session_title(self):
+        """うつつ GM ターン（target=None）でもセッション名が見出しになる。
+
+        従来は target=None で見出しが「@プリセット」のみになり、どのセッションか
+        判別できなかった。本修正で必ずセッション名が頭に出る。
+        """
+        rows = [self._make_row(
+            source_type="usual_days",
+            target=None,
+            preset="UsualGM",
+        )]
+        entry = _build_entry_from_db_rows(
+            rows, session_title_map={"sess-001": "うつつ・はる"},
+        )
+        assert entry["character"] == "うつつ・はる"
+        assert entry["model_id"] == "うつつ・はる@UsualGM"
+
+    def test_synopsis_entry_uses_session_title(self):
+        """あらすじ蒸留（source_type=synopsis）もセッション名へ寄せる。"""
+        rows = [self._make_row(
+            source_type="synopsis",
+            target=None,
+            preset="SynopsisModel",
+        )]
+        entry = _build_entry_from_db_rows(
+            rows, session_title_map={"sess-001": "ある一日"},
+        )
+        assert entry["character"] == "ある一日"
+        assert entry["model_id"] == "ある一日@SynopsisModel"
+
+    def test_chat_source_type_is_unaffected(self):
+        """通常の 1on1 chat 行（source_type=chat）にはセッション名適用は走らない。"""
+        from datetime import datetime
+        rows = [{
+            "request_id": "abc12345",
+            "source_type": "chat",
+            "session_id": "sess-001",  # 同じ session_id が誤って渡されても上書きしない
+            "created_at": datetime(2026, 5, 1, 12, 0, 0),
+            "target": "はる",
+            "preset": "ClaudeCode",
+            "user_message": "やあ",
+            "response": "うん",
+            "reasoning": "",
+            "has_error": False,
+            "warn_reason": "",
+            "raw_dir": None,
+        }]
+        entry = _build_entry_from_db_rows(
+            rows, session_title_map={"sess-001": "シナリオ"},
+        )
+        assert entry["character"] == "はる"
+        assert entry["model_id"] == "はる@ClaudeCode"
+
+    def test_falls_back_to_target_when_session_id_missing(self):
+        """session_id が無い scenario 系行は従来どおり target を見出しに使う。"""
+        rows = [self._make_row(session_id=None)]
+        entry = _build_entry_from_db_rows(rows, session_title_map={})
+        assert entry["character"] == "シナリオA"
+
+    def test_falls_back_to_target_when_title_map_lookup_miss(self):
+        """session_title_map にヒットしない（孤児セッション等）ときも従来 target を残す。"""
+        rows = [self._make_row()]
+        entry = _build_entry_from_db_rows(rows, session_title_map={})
+        assert entry["character"] == "シナリオA"

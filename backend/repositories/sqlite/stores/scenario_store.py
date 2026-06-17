@@ -377,6 +377,31 @@ class ScenarioChatStoreMixin:
                 .all()
             )
 
+    def get_scenario_session_titles_by_ids(
+        self, session_ids: list[str]
+    ) -> dict[str, str]:
+        """複数の session_id に対応するタイトルを IN 句で一括取得して返す。
+
+        ログ一覧の見出し統一（セッション名+プリセット表示）で利用する。
+        該当が無い ID はキー自体を返さない。
+
+        Args:
+            session_ids: scenario_sessions.id のリスト。
+
+        Returns:
+            {session_id: title} の辞書。
+        """
+        if not session_ids:
+            return {}
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioSession
+            rows = (
+                session.query(ScenarioSession.id, ScenarioSession.title)
+                .filter(ScenarioSession.id.in_(session_ids))
+                .all()
+            )
+            return {sid: title for sid, title in rows}
+
     def update_scenario_session(self, session_id: str, **kwargs):
         """プレイセッションのフィールド（title / status 等）を更新する。"""
         with self.get_session() as session:

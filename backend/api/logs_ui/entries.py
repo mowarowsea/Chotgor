@@ -14,6 +14,15 @@ from backend.api.logs_ui import config
 from backend.api.logs_ui.tag_extract import _extract_tags_from_file, _parse_json_safely
 from backend.character_actions import tool_tags
 
+# ログ見出しでセッション名へ統一表示する scenario 系 source_type。
+# GM/PC/あらすじ/うつつ いずれもシナリオセッションを単位として表示するため、
+# 個別の target（PC名・None 等）よりセッション名（scenario_sessions.title）を優先する。
+_SCENARIO_SOURCE_TYPES = frozenset({
+    "scenario", "scenario_chat", "scenario_chat_pc",
+    "usual_days", "usual_days_pc",
+    "synopsis",
+})
+
 # chotgor.log から char= を抽出するパターン
 # 例: "... [a25e00da] ... char=はる@ClaudeCode ..."
 _LOG_CHAR_RE = re.compile(r"\[([0-9a-f]{8})\].*?\bchar=(\S+)")
@@ -366,7 +375,40 @@ def _build_attempt_detail(r: dict, index: int, char_index: dict, skip_files: boo
     }
 
 
-def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict:
+def _resolve_scenario_session_titles(rows_iter) -> dict[str, str]:
+    """scenario 系 source_type を含む行から session_id を集めてタイトルを一括取得する。
+
+    ログ見出しを「セッション名+プリセット」で統一表示するための補助関数。
+    SQLiteStore が未注入（テスト等）の場合や該当行がない場合は空辞書を返す。
+
+    Args:
+        rows_iter: debug_log_entries の dict 行を返すイテラブル。
+
+    Returns:
+        {session_id: scenario_sessions.title} の辞書。
+    """
+    sqlite = config.get_sqlite_store()
+    if sqlite is None:
+        return {}
+    sid_set: set[str] = set()
+    for r in rows_iter:
+        if r.get("source_type") in _SCENARIO_SOURCE_TYPES:
+            sid = r.get("session_id")
+            if sid:
+                sid_set.add(sid)
+    if not sid_set:
+        return {}
+    try:
+        return sqlite.get_scenario_session_titles_by_ids(list(sid_set))
+    except Exception:
+        return {}
+
+
+def _build_entry_from_db_rows(
+    rows: list[dict],
+    skip_files: bool = True,
+    session_title_map: dict[str, str] | None = None,
+) -> dict:
     """同一 request_id の DB 行リストからログ一覧表示用エントリを組み立てる。
 
     メイン行（chat/scenario 等）は試行ごとに1行存在し、`attempts` リストに
@@ -376,6 +418,9 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
     Args:
         rows: get_debug_log_entries_by_request_id() が返すエントリ辞書のリスト（昇順）。
         skip_files: True のときファイルI/Oをスキップする（一覧高速表示用）。
+        session_title_map: {session_id: scenario_sessions.title} の事前解決マップ。
+            scenario 系エントリの見出しをセッション名へ統一するために使う。None の
+            ときは内部で都度ルックアップする（単発詳細表示用）。
 
     Returns:
         ログ一覧 UI が期待するエントリ辞書。
@@ -419,7 +464,30 @@ def _build_entry_from_db_rows(rows: list[dict], skip_files: bool = True) -> dict
         for r in rows
         if r.get("warn_reason") and _is_demoted(r["warn_reason"])
     ]
-    target = main_row.get("target") or latest_main.get("target") or ""
+    # scenario 系の見出しはセッション名（scenario_sessions.title）で統一する。
+    # 元の target は GM ターン=シナリオ名、PC ターン=PC名、うつつ GM=None、
+    # synopsis（自動）=継承で不定、と source_type ごとにバラついていた。これだと
+    # 同じシナリオセッションのログが見出しごとに分散して見える。セッション名へ
+    # 寄せることで「どのセッションの一連の処理か」が一行で読めるようになる。
+    is_scenario = source_type in _SCENARIO_SOURCE_TYPES or any(
+        r["source_type"] in _SCENARIO_SOURCE_TYPES for r in rows
+    )
+    scenario_session_title = ""
+    if is_scenario:
+        sid = (
+            main_row.get("session_id")
+            or latest_main.get("session_id")
+            or next((r.get("session_id") for r in rows if r.get("session_id")), None)
+        )
+        if sid:
+            if session_title_map is not None:
+                scenario_session_title = session_title_map.get(sid, "") or ""
+            else:
+                scenario_session_title = _resolve_scenario_session_titles(rows).get(sid, "")
+    if scenario_session_title:
+        target = scenario_session_title
+    else:
+        target = main_row.get("target") or latest_main.get("target") or ""
     preset = latest_main.get("preset") or main_row.get("preset") or ""
     model_id = f"{target}@{preset}" if target and preset else target or preset
 
@@ -541,12 +609,18 @@ def _load_entries_from_db(
     )
     # IN 句で一括取得（N+1 解消）
     rows_map = sqlite.get_debug_log_entries_by_request_ids(request_ids)
+    # scenario 系見出しのセッション名解決用に、表示対象の全行を流して session_id を集める。
+    # 一覧 50 件ごとに 1 回の IN 句クエリで済み、行ごとのルックアップにはならない。
+    all_rows = [r for req_id in request_ids for r in rows_map.get(req_id, [])]
+    session_title_map = _resolve_scenario_session_titles(all_rows)
     entries = []
     for req_id in request_ids:
         rows = rows_map.get(req_id, [])
         if rows:
             # 一覧ではファイルI/Oをスキップして高速化
-            entries.append(_build_entry_from_db_rows(rows, skip_files=True))
+            entries.append(_build_entry_from_db_rows(
+                rows, skip_files=True, session_title_map=session_title_map,
+            ))
     return entries, total
 
 
