@@ -839,7 +839,7 @@ def ensure_usual_session(sqlite, scenario):
     return sqlite.create_scenario_session(
         session_id=session_id,
         scenario_id=scenario.id,
-        title=f"{getattr(scenario, 'title', 'うつつ')}（うつつ）",
+        title=getattr(scenario, 'title', 'うつつ'),
         gm_preset_id=gm_pid,
         synopsis_preset_id=gm_pid,
         engine_type="usual_days",
