@@ -127,6 +127,35 @@
             {% endif %}
         </section>
 
+        {# ── user ・ 相手の人物像 ── #}
+        {# 1on1・全バッチ処理（chronicle/forget/self_reflection/うつつ headless）すべてで、
+           キャラのシステムプロンプトに「あなたが対話する相手」ブロックとして注入される。
+           うつつでは pc_slots[user] にも同期保存され GM プロンプトにも反映される。 #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">user <small>・ 対話する相手</small></h3>
+            </div>
+            <p class="ch-hint" style="margin:0 0 12px">
+                このキャラから見たユーザの人物像。1on1・うつつ・全バッチ処理（記憶想起・棚卸し等）
+                のシステムプロンプトに共通で注入される。
+            </p>
+            <div class="ch-field">
+                <label class="ch-label" for="user_label">ユーザの呼称
+                    <span class="ch-hint">未入力なら Settings の user_name を使う</span>
+                </label>
+                <input type="text" id="user_label" name="user_label" class="ch-input"
+                    value="{% if character %}{{ character.user_label }}{% endif %}"
+                    placeholder="例: 太郎">
+            </div>
+            <div class="ch-field" style="margin-bottom:0">
+                <label class="ch-label" for="user_position">ユーザの位置づけ
+                    <span class="ch-hint">役職・関係・接触の仕方など。別名（太郎＝主任）でも同一人物と分かる手がかり。短く</span>
+                </label>
+                <textarea id="user_position" name="user_position" class="ch-textarea" rows="2"
+                    placeholder="例: 職場の主任で直属の上司">{% if character %}{{ character.user_position }}{% endif %}</textarea>
+            </div>
+        </section>
+
         {# ════════════ CHAPTER 2 — engine ════════════ #}
         <div class="ch-chapter">
             <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 2</span></div>
@@ -359,22 +388,8 @@
                     placeholder="例: 入社3年目のデザイナー。締め切りに追われがち。">{% if usual_scenario and usual_scenario.pc_slots %}{{ usual_scenario.pc_slots[0].get("description", "") }}{% endif %}</textarea>
             </div>
 
-            <div class="ch-field">
-                <label class="ch-label" for="usual_user_label">あなた（ユーザ）の呼称
-                    <span class="ch-hint">うつつには登場しない人物。このキャラがあなたを何と呼ぶか</span>
-                </label>
-                <input type="text" id="usual_user_label" name="usual_user_label" class="ch-input"
-                    value="{{ usual_user_label }}"
-                    placeholder="例: 太郎">
-            </div>
-
-            <div class="ch-field">
-                <label class="ch-label" for="usual_user_position">あなた（ユーザ）の位置づけ
-                    <span class="ch-hint">役職・関係・接触の仕方など。別名（太郎＝主任）でも GM が同一人物と分かる手がかり。短く</span>
-                </label>
-                <textarea id="usual_user_position" name="usual_user_position" class="ch-textarea" rows="2"
-                    placeholder="例: 職場の主任で直属の上司。普段は別の場所におり、たまに来訪・SNSで連絡">{{ usual_user_position }}</textarea>
-            </div>
+            {# ユーザの呼称・位置づけは Chapter 1 の「user」セクションへ移動した。
+               うつつ GM プロンプトには Chapter 1 の値が pc_slots[user] として自動同期される。 #}
 
             <div class="ch-field">
                 <label class="ch-label" for="usual_slots">スロット時刻

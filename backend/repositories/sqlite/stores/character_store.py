@@ -24,6 +24,8 @@ class CharacterStoreMixin:
         farewell_config: dict | None = None,
         relationship_status: str = "active",
         allowed_tools: dict | None = None,
+        user_label: str = "",
+        user_position: str = "",
     ):
         """キャラクターを新規作成する。
 
@@ -36,6 +38,8 @@ class CharacterStoreMixin:
             farewell_config: chronicle で更新される感情閾値・退席設定JSON。
             relationship_status: 関係ステータス。"active" または "estranged"。
             allowed_tools: 外部ツール許可設定。{google_calendar, gmail, google_drive} の bool dict。
+            user_label: このキャラがユーザを呼ぶ呼称。空なら Settings の user_name フォールバック。
+            user_position: このキャラから見たユーザの位置づけ（役職・関係など短文）。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Character
@@ -57,6 +61,8 @@ class CharacterStoreMixin:
                 farewell_config=farewell_config,
                 relationship_status=relationship_status,
                 allowed_tools=allowed_tools or {},
+                user_label=user_label,
+                user_position=user_position,
             )
             session.add(char)
             session.commit()

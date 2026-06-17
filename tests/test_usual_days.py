@@ -419,19 +419,23 @@ class TestUsualUserPc:
     """
 
     def test_parse_form_builds_absent_user_slot(self):
-        """フォームに呼称が入っていれば、不在マーカー付きのユーザPC枠が組み立てられること。"""
+        """characters の user_label/user_position から不在マーカー付きのユーザPC枠が組み立てられること。
+
+        ユーザ呼称・位置づけは Chapter 1（characters テーブル）が source of truth。
+        うつつ pc_slots[user] は派生情報で、_parse_usual_form がキーワード引数で受け取った値から
+        毎回再構築する。
+        """
         from backend.api.ui import characters as ui_chars
 
-        form = {"usual_user_label": "太郎", "usual_user_position": "主任。直属の上司。"}
-        scenario_kwargs, _ = ui_chars._parse_usual_form(form, "はる")
+        scenario_kwargs, _ = ui_chars._parse_usual_form(
+            {}, "はる", user_label="太郎", user_position="主任。直属の上司。",
+        )
         slots = scenario_kwargs["pc_slots"]
         user_slot = next(s for s in slots if s["slot_id"] == "user")
         assert user_slot["name"] == "太郎"
         # 最重要の「不在・描かない」が先頭に来る（format_pc_summary の 80 字切り詰め対策）。
         assert user_slot["description"].startswith(ui_chars._USUAL_USER_ABSENT_PREFIX)
         assert "主任" in user_slot["description"]
-        # 不在マーカーを除けば位置づけが復元できる（編集画面の再描画用）。
-        assert ui_chars._split_usual_user_description(user_slot["description"]) == "主任。直属の上司。"
 
     def test_parse_form_omits_user_slot_when_label_blank(self):
         """呼称が空ならユーザPC枠は作らない（任意設定）。"""

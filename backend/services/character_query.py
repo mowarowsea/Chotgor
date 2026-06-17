@@ -33,6 +33,31 @@ if TYPE_CHECKING:
     from backend.repositories.sqlite.store import SQLiteStore
 
 
+def _resolve_user_info(char, settings: dict) -> tuple[str, str]:
+    """システムプロンプトに注入する「相手（ユーザ）」情報を解決する。
+
+    優先順位: キャラ別 user_label > Settings の user_name > 空。
+    user_position はキャラ別の値のみ採用（Settings には対応する位置づけは存在しない）。
+    1on1 チャットと全バッチ処理（chronicle/forget/self_reflection/うつつ headless）で
+    共通の解決ロジックを使うためのヘルパー。
+
+    Args:
+        char: SQLite から取得した Character オブジェクト（None 可）。
+        settings: グローバル設定 dict（get_all_settings() の結果）。
+
+    Returns:
+        (user_label, user_position) のタプル。両方とも空文字列の場合あり。
+    """
+    label = ""
+    position = ""
+    if char is not None:
+        label = (getattr(char, "user_label", "") or "").strip()
+        position = (getattr(char, "user_position", "") or "").strip()
+    if not label:
+        label = (settings.get("user_name") or "").strip()
+    return label, position
+
+
 def _collect_wm_blocks(
     working_memory_manager: "WorkingMemoryManager | None",
     character_id: str,
@@ -152,6 +177,7 @@ async def ask_character(
     wm_all_threads, wm_fixed_threads, wm_recalled_threads = _collect_wm_blocks(
         working_memory_manager, character_id, recall_query
     )
+    user_label, user_position = _resolve_user_info(char, settings)
 
     system_prompt = build_system_prompt(
         character_system_prompt=char.system_prompt_block1 or "",
@@ -161,6 +187,8 @@ async def ask_character(
         wm_all_threads=wm_all_threads,
         wm_fixed_threads=wm_fixed_threads,
         wm_recalled_threads=wm_recalled_threads,
+        user_label=user_label,
+        user_position=user_position,
     )
 
     try:
@@ -271,6 +299,7 @@ async def ask_character_with_tools(
     wm_all_threads, wm_fixed_threads, wm_recalled_threads = _collect_wm_blocks(
         wm, character_id, recall_query
     )
+    user_label, user_position = _resolve_user_info(char, settings)
 
     system_prompt = build_system_prompt(
         character_system_prompt=char.system_prompt_block1 or "",
@@ -281,6 +310,8 @@ async def ask_character_with_tools(
         wm_fixed_threads=wm_fixed_threads,
         wm_recalled_threads=wm_recalled_threads,
         use_tools=True,
+        user_label=user_label,
+        user_position=user_position,
     )
 
     tool_executor = ToolExecutor(

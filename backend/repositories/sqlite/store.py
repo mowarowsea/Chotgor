@@ -106,6 +106,7 @@ class SQLiteStore(
         self._migrate_drop_session_drifts()
         self._migrate_unify_user_alias_to_pc_slot()
         self._migrate_add_usual_days()
+        self._migrate_extract_user_fields_to_character()
 
     def get_session(self) -> Session:
         """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""

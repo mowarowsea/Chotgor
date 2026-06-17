@@ -120,8 +120,6 @@ async def new_character_form(request: Request):
             "usual_scenario": None,
             "usual_config": {},
             "usual_time_grid_text": "",
-            "usual_user_label": "",
-            "usual_user_position": "",
         },
     )
 
@@ -157,6 +155,8 @@ async def create_character(request: Request):
         self_reflection_preset_id=self_reflection_preset_id,
         self_reflection_n_turns=self_reflection_n_turns,
         allowed_tools=allowed_tools,
+        user_label=(form.get("user_label") or "").strip(),
+        user_position=(form.get("user_position") or "").strip(),
     )
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     _persist_usual_world(request.app.state.sqlite, char_id, name, form)
@@ -172,8 +172,6 @@ async def edit_character_form(request: Request, character_id: str):
     # うつつ（Usual Days）世界の現在設定。未作成なら None。
     usual_scenario = request.app.state.sqlite.get_usual_scenario(character_id)
     usual_config = (getattr(usual_scenario, "usual_config", None) or {}) if usual_scenario else {}
-    # ユーザPC枠（不在の人物）の呼称・位置づけを、不在マーカーを除いた形でフォームへ戻す。
-    usual_user_label, usual_user_position = _extract_usual_user_fields(usual_scenario)
     return get_templates().TemplateResponse(
         request,
         "character_edit.html",
@@ -185,8 +183,6 @@ async def edit_character_form(request: Request, character_id: str):
             "usual_scenario": usual_scenario,
             "usual_config": usual_config,
             "usual_time_grid_text": _usual_time_grid_text(usual_config),
-            "usual_user_label": usual_user_label,
-            "usual_user_position": usual_user_position,
         },
     )
 
@@ -213,6 +209,8 @@ async def update_character(request: Request, character_id: str):
         self_reflection_preset_id=self_reflection_preset_id,
         self_reflection_n_turns=self_reflection_n_turns,
         allowed_tools=allowed_tools,
+        user_label=(form.get("user_label") or "").strip(),
+        user_position=(form.get("user_position") or "").strip(),
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()
@@ -255,46 +253,19 @@ def _compose_usual_user_description(position: str) -> str:
     return f"{_USUAL_USER_ABSENT_PREFIX}{position}" if position else _USUAL_USER_ABSENT_PREFIX
 
 
-def _split_usual_user_description(description: str) -> str:
-    """ユーザPC枠の description から不在マーカーを除いた「位置づけ」だけを返す（編集画面の再描画用）。
-
-    Args:
-        description: 保存済みの description（通常は不在マーカー＋位置づけ）。
-
-    Returns:
-        不在マーカーを取り除いた位置づけ文字列。
-    """
-    text = (description or "").strip()
-    if text.startswith(_USUAL_USER_ABSENT_PREFIX):
-        return text[len(_USUAL_USER_ABSENT_PREFIX):].strip()
-    return text
-
-
-def _extract_usual_user_fields(usual_scenario) -> tuple[str, str]:
-    """うつつシナリオの pc_slots から、ユーザPC枠（slot_id="user"）の呼称・位置づけを取り出す。
-
-    Args:
-        usual_scenario: get_usual_scenario の戻り（None 可）。
-
-    Returns:
-        (呼称, 位置づけ) のタプル。ユーザ枠が無ければ ("", "")。
-    """
-    slots = (getattr(usual_scenario, "pc_slots", None) or []) if usual_scenario else []
-    for slot in slots:
-        if isinstance(slot, dict) and slot.get("slot_id") == "user":
-            return (
-                (slot.get("name") or "").strip(),
-                _split_usual_user_description(slot.get("description", "")),
-            )
-    return "", ""
-
-
-def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
+def _parse_usual_form(
+    form,
+    character_name: str,
+    user_label: str = "",
+    user_position: str = "",
+) -> tuple[dict, dict]:
     """うつつ（生活世界）フォームを scenario 更新用 dict と usual_config dict に変換する。
 
     Args:
         form: FastAPI のフォームデータ。
         character_name: 主人公 PC 枠の名前に使うキャラ名。
+        user_label: ユーザの呼称（characters.user_label）。空ならユーザ PC 枠を作らない。
+        user_position: ユーザの位置づけ（characters.user_position）。空でも呼称があれば user 枠は作る。
 
     Returns:
         (scenario_kwargs, usual_config) のタプル。
@@ -361,13 +332,14 @@ def _parse_usual_form(form, character_name: str) -> tuple[dict, dict]:
     }]
     # ユーザ PC 枠（不在の人物）。うつつ＝ユーザがそばにいない時間なので、ユーザは
     # 「ターンを取らない不在の PC」として GM に提示し、GM の「PC を代弁しない」保護を効かせる。
-    # 呼称が空ならユーザ枠は作らない（任意設定）。位置づけは別名識別のための手がかり。
-    user_label = (form.get("usual_user_label") or "").strip()
-    if user_label:
+    # 呼称（characters.user_label）が空ならユーザ枠は作らない。位置づけ
+    # （characters.user_position）は別名識別のための手がかり。
+    user_label_clean = (user_label or "").strip()
+    if user_label_clean:
         pc_slots.append({
             "slot_id": "user",
-            "name": user_label,
-            "description": _compose_usual_user_description(form.get("usual_user_position") or ""),
+            "name": user_label_clean,
+            "description": _compose_usual_user_description(user_position or ""),
         })
     # 履歴上限（あらすじ起稿タイミングの実質的なノブ）。
     # うつつは無人ゆえユーザがプリセットを選んで蒸留を起動できないため、
@@ -420,13 +392,24 @@ def _persist_usual_world(sqlite, character_id: str, character_name: str, form) -
     汎用シナリオ一覧には出ない（owner 付き除外）。既存シナリオがあれば常に更新し、
     無ければ実体がある場合のみ作成する（未設定キャラの編集で空シナリオを作らないため）。
 
+    ユーザ PC 枠（不在の人物）は Chapter 1 の characters.user_label/user_position が
+    source of truth。この関数は呼び出し時点の characters の値から pc_slots[user] を
+    毎回再構築する（form からは読まない）。Chapter 1 を編集したら pc_slots[user] が
+    自動同期する。
+
     Args:
         sqlite: SQLite ストア。
         character_id: オーナーキャラクターID。
         character_name: 主人公 PC 枠の名前に使うキャラ名。
         form: await request.form() の結果。
     """
-    scenario_kwargs, usual_config = _parse_usual_form(form, character_name)
+    # Chapter 1 の characters.user_label/user_position を pc_slots[user] の素材として使う。
+    char = sqlite.get_character(character_id)
+    user_label = (getattr(char, "user_label", "") or "") if char else ""
+    user_position = (getattr(char, "user_position", "") or "") if char else ""
+    scenario_kwargs, usual_config = _parse_usual_form(
+        form, character_name, user_label=user_label, user_position=user_position,
+    )
     existing = sqlite.get_usual_scenario(character_id)
     if existing:
         sqlite.update_scenario(existing.id, **scenario_kwargs)

@@ -67,3 +67,9 @@ class ChatRequest:
     # うつつ（Usual Days）有効キャラかどうか。True なら 1on1 システムプロンプトに
     # 「ユーザの知らない日常生活と記憶がある」注釈ブロックを出す（request_builder）。
     usual_days_enabled: bool = False
+    # このキャラがユーザを呼ぶ呼称（character_query._resolve_user_info で解決済み）。
+    # キャラ別 user_label > Settings の user_name > 空 の優先順位を request_factory で適用。
+    # request_builder が「あなたが対話する相手」ブロックを構築するのに使う。
+    user_label: str = ""
+    # ユーザの位置づけ短文（キャラ別の characters.user_position のみ）。空なら呼称のみ注入。
+    user_position: str = ""

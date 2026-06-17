@@ -117,6 +117,14 @@ class Character(Base):
     # キャラクターごとの外部ツール許可設定 (google_calendar/gmail/google_drive)。
     # 旧 web_search キーは廃止（外部情報取得は Chotgor MCP の web_search ツールに一本化）。
     allowed_tools = Column(JSON, nullable=False, default=dict)
+    # このキャラが対話する「ユーザ」の人物像。1on1 チャット・全バッチ処理（chronicle/forget/
+    # self_reflection/うつつ headless）すべてのシステムプロンプトに「あなたが対話する相手」
+    # ブロックとして注入される。
+    # - user_label: キャラがユーザを呼ぶ呼称。空なら Settings の user_name にフォールバック。
+    # - user_position: ユーザの位置づけ（役職・関係・接触の仕方など短文）。空なら呼称のみ注入。
+    # うつつでは pc_slots[slot_id="user"] にもこの値が同期保存され、GM の「不在 PC を代弁しない」保護に使われる。
+    user_label = Column(String, nullable=False, default="")
+    user_position = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,

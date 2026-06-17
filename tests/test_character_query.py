@@ -479,3 +479,122 @@ class TestAskCharacterWithTools:
                 memory_manager=MagicMock(),
             )
         assert result is False
+
+
+# ─── ユーザ情報（user_label / user_position）の解決と注入 ───────────────────────
+
+
+class TestResolveUserInfo:
+    """_resolve_user_info() の優先順位ルールを検証する。
+
+    キャラ別 user_label > Settings の user_name > 空 の順で解決される。
+    user_position はキャラ別の値のみ採用される（Settings には対応する位置づけは無い）。
+    """
+
+    def test_character_value_takes_precedence(self):
+        """キャラ別 user_label がある場合、Settings の user_name より優先されること。"""
+        from backend.services.character_query import _resolve_user_info
+
+        char = MagicMock(user_label="太郎", user_position="主任")
+        label, position = _resolve_user_info(char, {"user_name": "ユーザ"})
+        assert label == "太郎"
+        assert position == "主任"
+
+    def test_falls_back_to_settings_user_name(self):
+        """キャラ別 user_label が空なら Settings の user_name にフォールバックすること。"""
+        from backend.services.character_query import _resolve_user_info
+
+        char = MagicMock(user_label="", user_position="")
+        label, position = _resolve_user_info(char, {"user_name": "ユーザ"})
+        assert label == "ユーザ"
+        assert position == ""
+
+    def test_both_empty_returns_empty(self):
+        """キャラ別も Settings も空なら両方空文字列を返すこと。"""
+        from backend.services.character_query import _resolve_user_info
+
+        char = MagicMock(user_label="", user_position="")
+        label, position = _resolve_user_info(char, {})
+        assert label == ""
+        assert position == ""
+
+    def test_none_char_uses_settings_only(self):
+        """char が None でも Settings の user_name は解決されること。"""
+        from backend.services.character_query import _resolve_user_info
+
+        label, position = _resolve_user_info(None, {"user_name": "ユーザ"})
+        assert label == "ユーザ"
+        assert position == ""
+
+
+class TestAskCharacterInjectsUserBlock:
+    """ask_character() がシステムプロンプトに「相手（ユーザ）」ブロックを注入することを検証する。
+
+    1on1 経路だけでなく、バッチ処理（chronicle/forget/self_reflection 等）でも同じ
+    character_query 経由なので、ここを通せば全経路で注入される確認になる。
+    """
+
+    @pytest.mark.asyncio
+    async def test_character_user_label_injected_into_system_prompt(
+        self, sqlite_store, preset_id
+    ):
+        """characters.user_label/user_position がシステムプロンプトに現れること。"""
+        cid = str(uuid.uuid4())
+        sqlite_store.create_character(
+            character_id=cid,
+            name="テスト",
+            system_prompt_block1="テスト用設定",
+            user_label="太郎",
+            user_position="職場の主任",
+        )
+        provider = _mock_provider("ok")
+        with patch("backend.services.character_query.create_provider", return_value=provider):
+            await ask_character(
+                character_id=cid,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+            )
+        system_prompt, _ = provider.generate.call_args[0]
+        assert "太郎" in system_prompt
+        assert "職場の主任" in system_prompt
+        assert "あなたが対話する相手" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_settings_user_name_fallback_injected(self, sqlite_store, preset_id):
+        """キャラ別 user_label が空なら Settings の user_name がシステムプロンプトに入ること。"""
+        cid = str(uuid.uuid4())
+        sqlite_store.create_character(
+            character_id=cid, name="テスト", system_prompt_block1="テスト用設定",
+        )
+        provider = _mock_provider("ok")
+        with patch("backend.services.character_query.create_provider", return_value=provider):
+            await ask_character(
+                character_id=cid,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={"user_name": "グローバルユーザ"},
+            )
+        system_prompt, _ = provider.generate.call_args[0]
+        assert "グローバルユーザ" in system_prompt
+
+    @pytest.mark.asyncio
+    async def test_no_user_info_omits_block(self, sqlite_store, preset_id):
+        """キャラ別も Settings も空なら user ブロックは注入されないこと。"""
+        cid = str(uuid.uuid4())
+        sqlite_store.create_character(
+            character_id=cid, name="テスト", system_prompt_block1="テスト用設定",
+        )
+        provider = _mock_provider("ok")
+        with patch("backend.services.character_query.create_provider", return_value=provider):
+            await ask_character(
+                character_id=cid,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+            )
+        system_prompt, _ = provider.generate.call_args[0]
+        assert "あなたが対話する相手" not in system_prompt

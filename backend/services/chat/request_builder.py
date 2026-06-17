@@ -5,6 +5,7 @@
 
 ブロック構成（テンプレ上の差し込み順）:
   Block 1:  キャラクター設定（何者かを確立 — 前提 + character_system_prompt）
+  Block 1b: 相手（ユーザ）の人物像（呼称・位置づけ）
   Block 2:  想起された記憶（長期記憶・コンテキスト把握）
   Block 3:  時刻コンテキスト（薄い補足情報）
   Block 4:  フェッチしたWebコンテンツ（コンテキスト強め）
@@ -122,6 +123,8 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_character}
 
+{block_user}
+
 {block_usual_days}
 
 {block_memories}
@@ -212,6 +215,32 @@ def _build_prelude_block() -> str:
 def _build_character_block(character_system_prompt: str) -> str:
     """キャラクター設定ブロック（見出しなしの本文をそのまま返す）。"""
     return (character_system_prompt or "").strip()
+
+
+def _build_user_block(user_label: str, user_position: str) -> str:
+    """相手（ユーザ）の人物像ブロックを返す（呼称・位置づけ）。
+
+    キャラから見た「ユーザは誰か」を伝えるブロック。1on1 チャットと全バッチ処理
+    （chronicle/forget/self_reflection/うつつ headless）すべてのシステムプロンプトで
+    共通して使われる。呼び出し側は character_query._resolve_user_info で
+    キャラ別 user_label > Settings user_name > 空 の優先順位を解決済みの値を渡す。
+
+    Args:
+        user_label: ユーザの呼称（解決済み）。空ならブロックごと非表示。
+        user_position: ユーザの位置づけ短文（任意）。空なら呼称のみ注入。
+
+    Returns:
+        整形済みブロック文字列。user_label が空なら空文字列。
+    """
+    label = (user_label or "").strip()
+    if not label:
+        return ""
+    position = (user_position or "").strip()
+    lines = ["## あなたが対話する相手（ユーザ）について\n"]
+    lines.append(f"- 呼称: **{label}**")
+    if position:
+        lines.append(f"- 位置づけ: {position}")
+    return "\n".join(lines)
 
 
 def _build_memories_block(
@@ -497,6 +526,8 @@ def build_system_prompt(
     previous_anticipation: str = "",
     memory_degraded: bool = False,
     usual_days_enabled: bool = False,
+    user_label: str = "",
+    user_position: str = "",
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。
 
@@ -529,6 +560,7 @@ def build_system_prompt(
     replacements = {
         "{block_prelude}": _build_prelude_block(),
         "{block_character}": _build_character_block(character_system_prompt),
+        "{block_user}": _build_user_block(user_label, user_position),
         "{block_usual_days}": _build_usual_days_block(usual_days_enabled),
         "{block_memories}": _build_memories_block(
             recalled_identity_memories, recalled_memories

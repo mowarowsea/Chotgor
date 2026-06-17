@@ -107,6 +107,11 @@ def build_character_request(
     _usual = sqlite.get_usual_scenario(char.id)
     usual_days_enabled = bool(_usual and (getattr(_usual, "usual_config", None) or {}).get("enabled"))
 
+    # 相手（ユーザ）の呼称・位置づけを character_query と同じ優先順位で解決する。
+    # キャラ別 user_label > Settings の user_name > 空。position はキャラ別のみ。
+    from backend.services.character_query import _resolve_user_info
+    user_label, user_position = _resolve_user_info(char, settings)
+
     return ChatRequest(
         character_id=char.id,
         character_name=char.name,
@@ -134,5 +139,7 @@ def build_character_request(
         self_reflection_preset_id=getattr(char, "self_reflection_preset_id", None) or "",
         self_reflection_n_turns=getattr(char, "self_reflection_n_turns", 5),
         usual_days_enabled=usual_days_enabled,
+        user_label=user_label,
+        user_position=user_position,
         **overrides,
     )

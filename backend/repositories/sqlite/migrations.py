@@ -594,6 +594,117 @@ class SQLiteMigrationsMixin:
                     (DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE,),
                 )
 
+    def _migrate_extract_user_fields_to_character(self) -> None:
+        """`characters` に `user_label` `user_position` 列を追加し、既存うつつから引き上げる。
+
+        旧設計: ユーザの呼称・位置づけはうつつシナリオの `pc_slots[slot_id="user"]` だけにあり、
+            うつつ以外（1on1・全バッチ処理）にはキャラへ届かなかった。
+        新設計: `characters` テーブルを source of truth とし、1on1・全バッチ処理のシステム
+            プロンプトに「あなたが対話する相手」ブロックとして注入する。うつつの pc_slots[user]
+            は、`_persist_usual_world` で characters の値から毎回再構築される派生情報になる。
+
+        移行手順（冪等）:
+            1. characters に user_label / user_position 列が無ければ ADD COLUMN（NOT NULL DEFAULT ''）
+            2. owner_character_id 付きうつつシナリオを走査し、pc_slots[slot_id="user"] の
+               name → characters.user_label、description（不在マーカーを除去）→ characters.user_position
+               を埋める。既に characters 側に値があるキャラは触らない（上書き回避）。
+            3. pc_slots[user] はそのまま残す（うつつ GM 側のコードが従来通り参照できるため）。
+
+        新規 DB（既に新スキーマ）では 1 で列が既存と判定されスキップ。冪等。
+        """
+        import json
+
+        # _persist_usual_world と同じ不在マーカー。直接 import すると循環や API 層依存に
+        # なるため、ここでは文字列リテラルとして同期する（変更時は両方更新）。
+        absent_prefix = "【この場面に不在・姿/言動を描かない】"
+
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            char_cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            added = False
+            if "user_label" not in char_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters "
+                    "ADD COLUMN user_label TEXT NOT NULL DEFAULT ''"
+                )
+                added = True
+            if "user_position" not in char_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters "
+                    "ADD COLUMN user_position TEXT NOT NULL DEFAULT ''"
+                )
+                added = True
+            if not added:
+                return  # 既に移行済み
+
+            # うつつシナリオから引き上げ（characters 側が空のキャラのみ）。
+            if "scenarios" not in tables:
+                return
+            scen_cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenarios)"
+                ).fetchall()
+            }
+            if "owner_character_id" not in scen_cols or "pc_slots" not in scen_cols:
+                return
+            rows = conn.exec_driver_sql(
+                "SELECT owner_character_id, pc_slots FROM scenarios "
+                "WHERE owner_character_id IS NOT NULL"
+            ).fetchall()
+            for owner_id, pc_slots_raw in rows:
+                if not owner_id:
+                    continue
+                try:
+                    pc_slots = json.loads(pc_slots_raw) if pc_slots_raw else []
+                    if not isinstance(pc_slots, list):
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                user_slot = next(
+                    (
+                        s for s in pc_slots
+                        if isinstance(s, dict) and s.get("slot_id") == "user"
+                    ),
+                    None,
+                )
+                if user_slot is None:
+                    continue
+                label = (str(user_slot.get("name") or "")).strip()
+                desc = str(user_slot.get("description") or "")
+                if desc.startswith(absent_prefix):
+                    desc = desc[len(absent_prefix):].strip()
+                position = desc.strip()
+                if not (label or position):
+                    continue
+                # キャラ側の既存値が空のときだけ上書き（手動で別の値を入れた可能性を尊重）。
+                existing = conn.exec_driver_sql(
+                    "SELECT user_label, user_position FROM characters WHERE id = ?",
+                    (owner_id,),
+                ).fetchone()
+                if existing is None:
+                    continue
+                ex_label, ex_pos = existing
+                if (ex_label or "").strip() or (ex_pos or "").strip():
+                    continue
+                conn.exec_driver_sql(
+                    "UPDATE characters SET user_label = ?, user_position = ? "
+                    "WHERE id = ?",
+                    (label, position, owner_id),
+                )
+
     def _migrate_add_usual_days(self) -> None:
         """うつつ（Usual Days）用カラムを `scenarios` に追加する。
 
