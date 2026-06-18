@@ -783,6 +783,67 @@ def _build_usual_pc_assignments(pc_slots, owner_id: str, pc_pid: str) -> list[di
     return assignments
 
 
+def sync_usual_session_presets(sqlite, scenario) -> int:
+    """うつつシナリオの ``usual_config`` を、対応する active な ``usual_days`` セッションへ追従させる。
+
+    Backend のうつつ設定 UI で ``gm_preset_id`` / ``pc_preset_id`` を更新した際、
+    既に走っている usual_days セッションの ``session.gm_preset_id`` と
+    ``pc_assignments[*].preset_id``（player_type="character" のもの）を最新値で
+    上書きする。後勝ちルール — 最後に変更された側を真とする。
+
+    PC 側プリセットの解決順は :func:`ensure_usual_session` と同一：
+    ``usual_config.pc_preset_id`` → owner.ghost_model → ``usual_config.gm_preset_id``。
+
+    Args:
+        sqlite: SQLiteStore。
+        scenario: 最新化済みの ``Scenario``（``owner_character_id`` / ``usual_config`` 必須）。
+
+    Returns:
+        反映を行ったセッションの数。同期不要（差分なし／対象なし）なら 0。
+    """
+    cfg = getattr(scenario, "usual_config", None) or {}
+    gm_pid = (cfg.get("gm_preset_id") or "").strip()
+    owner_id = getattr(scenario, "owner_character_id", None)
+    if not gm_pid or not owner_id:
+        return 0
+
+    owner_char = sqlite.get_character(owner_id)
+    owner_ghost = (getattr(owner_char, "ghost_model", None) or "") if owner_char else ""
+    pc_pid = ((cfg.get("pc_preset_id") or "").strip() or owner_ghost.strip() or gm_pid)
+
+    updated = 0
+    for s in sqlite.list_scenario_sessions_by_scenario(scenario.id):
+        if getattr(s, "engine_type", "") != "usual_days":
+            continue
+        if getattr(s, "status", "") != "active":
+            continue
+
+        updates: dict = {}
+        if (getattr(s, "gm_preset_id", "") or "") != gm_pid:
+            updates["gm_preset_id"] = gm_pid
+
+        raw = list(getattr(s, "pc_assignments", None) or [])
+        new_assignments: list[dict] = []
+        changed_pc = False
+        for entry in raw:
+            if not isinstance(entry, dict):
+                new_assignments.append(entry)
+                continue
+            if entry.get("player_type") == "character":
+                if (entry.get("preset_id") or "") != pc_pid:
+                    entry = {**entry, "preset_id": pc_pid}
+                    changed_pc = True
+            new_assignments.append(entry)
+        if changed_pc:
+            updates["pc_assignments"] = new_assignments
+
+        if updates:
+            sqlite.update_scenario_session(s.id, **updates)
+            updated += 1
+
+    return updated
+
+
 def _attach_usual_user_assignment(sqlite, session, pc_slots) -> None:
     """既存うつつセッションに、後から定義されたユーザPC枠の割当を冪等に補う。
 

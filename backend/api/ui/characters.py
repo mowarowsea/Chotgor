@@ -415,6 +415,12 @@ def _persist_usual_world(sqlite, character_id: str, character_name: str, form) -
     existing = sqlite.get_usual_scenario(character_id)
     if existing:
         sqlite.update_scenario(existing.id, **scenario_kwargs)
+        # うつつ設定の GM/PC プリセットを既存 active セッションへ追従（後勝ちルール）。
+        # 本来 FrontUI からは触れない建付けなので Backend 保存が常に最新値となる。
+        from backend.services.scenario_chat.service import sync_usual_session_presets
+        refreshed = sqlite.get_scenario(existing.id)
+        if refreshed is not None:
+            sync_usual_session_presets(sqlite, refreshed)
     elif _usual_has_content(scenario_kwargs, usual_config):
         sqlite.create_scenario(
             scenario_id=str(uuid.uuid4()),

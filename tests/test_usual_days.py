@@ -858,6 +858,130 @@ class TestEnsureUsualSession:
         assert session.pc_assignments[0]["preset_id"] == gm_pid
 
 
+class TestSyncUsualSessionPresets:
+    """Backend のうつつ設定変更を既存 active セッションへ追従させる ``sync_usual_session_presets``
+    の動作を検証する。後勝ちルール — 最後に変更された側を真として上書きする。
+
+    観点:
+        - GM プリセット変更が ``session.gm_preset_id`` に反映されること
+        - PC プリセット変更が ``pc_assignments[*].preset_id`` に反映されること（character 配役のみ）
+        - ``pc_preset_id`` を空にすると owner.ghost_model へフォールバックして反映されること
+        - ``status="ended"`` のセッションは対象外
+        - 差分が無ければ ``update_scenario_session`` を呼ばず、戻り値 0
+    """
+
+    def _build_world(self, store, *, gm_pid: str, pc_pid: str | None = None,
+                     ghost_model: str | None = None):
+        """テスト用のうつつ世界＋セッションを組む。
+
+        owner キャラ・GM/PC/Ghost の各プリセットレコードを作成し、usual_config を
+        与えて ``ensure_usual_session`` で永続セッションを起こす。返り値は
+        (scenario, session) のタプル。
+        """
+        cid = "char-haru"
+        store.create_character(cid, "はる", ghost_model=ghost_model)
+        store.create_model_preset(gm_pid, "GM用", "anthropic", "claude-x")
+        # 追従先候補となる別プリセットも事前に登録（preset 検証で弾かれないため）。
+        for extra in ("preset-gm2", "preset-pc1", "preset-pc2", "preset-ghost"):
+            store.create_model_preset(extra, extra, "anthropic", "claude-y")
+        cfg = {"enabled": True, "slots": ["10:00"], "gm_preset_id": gm_pid}
+        if pc_pid is not None:
+            cfg["pc_preset_id"] = pc_pid
+        scenario = _make_scenario(
+            store,
+            owner_character_id=cid,
+            pc_slots=[{"slot_id": "pc1", "name": "はる", "description": ""}],
+            usual_config=cfg,
+        )
+        session = svc.ensure_usual_session(store, scenario)
+        assert session is not None
+        return scenario, session
+
+    def test_gm_preset_change_propagates(self, sqlite_store):
+        """usual_config.gm_preset_id を更新すると、既存セッションの gm_preset_id も更新されること。"""
+        scenario, session = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                              pc_pid="preset-pc1")
+        assert session.gm_preset_id == "preset-gm1"
+
+        sqlite_store.update_scenario(scenario.id, usual_config={
+            "enabled": True, "slots": ["10:00"],
+            "gm_preset_id": "preset-gm2", "pc_preset_id": "preset-pc1",
+        })
+        refreshed = sqlite_store.get_scenario(scenario.id)
+        count = svc.sync_usual_session_presets(sqlite_store, refreshed)
+        assert count == 1
+
+        after = sqlite_store.get_scenario_session(session.id)
+        assert after.gm_preset_id == "preset-gm2"
+        # PC 側は据え置きなので変化なし。
+        char_entries = [a for a in after.pc_assignments if a.get("player_type") == "character"]
+        assert char_entries[0]["preset_id"] == "preset-pc1"
+
+    def test_pc_preset_change_propagates(self, sqlite_store):
+        """usual_config.pc_preset_id を更新すると、character 配役の preset_id が上書きされること。"""
+        scenario, session = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                              pc_pid="preset-pc1")
+        sqlite_store.update_scenario(scenario.id, usual_config={
+            "enabled": True, "slots": ["10:00"],
+            "gm_preset_id": "preset-gm1", "pc_preset_id": "preset-pc2",
+        })
+        refreshed = sqlite_store.get_scenario(scenario.id)
+        count = svc.sync_usual_session_presets(sqlite_store, refreshed)
+        assert count == 1
+
+        after = sqlite_store.get_scenario_session(session.id)
+        char_entries = [a for a in after.pc_assignments if a.get("player_type") == "character"]
+        assert char_entries[0]["preset_id"] == "preset-pc2"
+
+    def test_pc_preset_falls_back_to_ghost_when_cleared(self, sqlite_store):
+        """pc_preset_id を空にすると、owner.ghost_model にフォールバックして反映されること。"""
+        scenario, session = self._build_world(
+            sqlite_store, gm_pid="preset-gm1", pc_pid="preset-pc1",
+            ghost_model="preset-ghost",
+        )
+        sqlite_store.update_scenario(scenario.id, usual_config={
+            "enabled": True, "slots": ["10:00"],
+            "gm_preset_id": "preset-gm1",  # pc_preset_id を意図的に外す
+        })
+        refreshed = sqlite_store.get_scenario(scenario.id)
+        count = svc.sync_usual_session_presets(sqlite_store, refreshed)
+        assert count == 1
+
+        after = sqlite_store.get_scenario_session(session.id)
+        char_entries = [a for a in after.pc_assignments if a.get("player_type") == "character"]
+        assert char_entries[0]["preset_id"] == "preset-ghost"
+
+    def test_ended_session_is_not_updated(self, sqlite_store):
+        """status="ended" のセッションは追従対象外。次回起動時に新規セッションが usual_config を拾う前提。"""
+        scenario, session = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                              pc_pid="preset-pc1")
+        sqlite_store.update_scenario_session(session.id, status="ended")
+        sqlite_store.update_scenario(scenario.id, usual_config={
+            "enabled": True, "slots": ["10:00"],
+            "gm_preset_id": "preset-gm2", "pc_preset_id": "preset-pc1",
+        })
+        refreshed = sqlite_store.get_scenario(scenario.id)
+        count = svc.sync_usual_session_presets(sqlite_store, refreshed)
+        assert count == 0
+
+        after = sqlite_store.get_scenario_session(session.id)
+        # ended セッションは触られないので元のまま。
+        assert after.gm_preset_id == "preset-gm1"
+
+    def test_no_diff_returns_zero(self, sqlite_store):
+        """usual_config に変化が無ければ反映カウント 0（無駄な書き込みをしない）。"""
+        scenario, _ = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                        pc_pid="preset-pc1")
+        # usual_config は同じ内容のまま再保存
+        sqlite_store.update_scenario(scenario.id, usual_config={
+            "enabled": True, "slots": ["10:00"],
+            "gm_preset_id": "preset-gm1", "pc_preset_id": "preset-pc1",
+        })
+        refreshed = sqlite_store.get_scenario(scenario.id)
+        count = svc.sync_usual_session_presets(sqlite_store, refreshed)
+        assert count == 0
+
+
 class TestUsualElapsedNote:
     """前回シーンからの経過時間メモを検証する。"""
 
