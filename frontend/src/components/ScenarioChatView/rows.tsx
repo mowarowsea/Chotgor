@@ -141,7 +141,7 @@ interface GMBubbleRowProps {
   content: string;
   avatarSrc: string | null;
   /**
-   * 自分が属する GM グループ（= 同一 raw_response の連続 GM バブル列）の最後尾なら true。
+   * 自分が属する GM レスポンス（= 同一 raw_response の連続 GM バブル列 = 1 LLM 呼出ぶん）の最後尾なら true。
    * グループ末尾だけが MessageActionBar（コピー + ログ + 必要なら再生成）を持つ。
    */
   isGroupTail: boolean;
@@ -155,9 +155,9 @@ interface GMBubbleRowProps {
    * 自グループ全バブルを `@名前: 本文` 形式で連結した文字列を渡すこと。
    */
   copyText?: string;
-  /** 1ターンまるごと再生成（最終 user 以降を全削除して再ストリーム）。 */
+  /** 1 レスポンスまるごと再生成（最終 user 以降を全削除して再ストリーム）。 */
   onRegenerate?: () => void;
-  /** 末尾 GM ターンを破棄してユーザ入力待ちに戻す（再ストリームしない）。 */
+  /** 末尾 GM レスポンスを破棄してユーザ入力待ちに戻す（再ストリームしない）。 */
   onDiscard?: () => void;
   /** アバタークリック時のコールバック。既知 NPC のみ渡される（押下可能になる）。 */
   onAvatarClick?: () => void;
@@ -170,7 +170,7 @@ interface GMBubbleRowProps {
 /**
  * GM 側（Narrator / NPC / character）の発話バブル。1on1 の CharacterBubble に合わせて
  *   - 内容下に Copy ボタン
- *   - ターン末尾なら 1on1 と同じ ↺ アイコンで再生成（ホバー時に出現）
+ *   - レスポンス末尾なら 1on1 と同じ ↺ アイコンで再生成（ホバー時に出現）
  * を配置する。
  *
  * パフォーマンス: 末尾の `React.memo` でラップされる（同名定数を後段で再代入）。
@@ -201,7 +201,7 @@ function GMBubbleRowImpl({
     <MessageActionBar
       copyText={copyText ?? content}
       onRegenerate={isLastGM ? onRegenerate : undefined}
-      regenerateTitle="このターンを再生成"
+      regenerateTitle="このレスポンスを再生成"
       onDiscard={isLastGM ? onDiscard : undefined}
       discardTitle="この応答を破棄してユーザ入力に戻す"
       elapsedMs={elapsedMs}

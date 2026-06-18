@@ -319,7 +319,9 @@ def _parse_usual_form(
         "time_grid": time_grid,
         "event_categories": cats,
         "event_probability": _num("usual_event_probability", 0.0),
-        "max_turns_per_scene": _num("usual_max_turns", 8),
+        # キー名は「レスポンス」軸（= LLM 呼出回数の上限）。話者ブロック単位の「ターン」とは別軸。
+        # 旧キー max_turns_per_scene は service 側の読み出しで後方互換フォールバック。
+        "max_responses_per_scene": _num("usual_max_responses", 8),
         "gm_preset_id": (form.get("usual_gm_preset_id") or "").strip(),
         "pc_preset_id": (form.get("usual_pc_preset_id") or "").strip(),
     }
@@ -331,7 +333,7 @@ def _parse_usual_form(
         "description": (form.get("usual_pc_description") or "").strip(),
     }]
     # ユーザ PC 枠（不在の人物）。うつつ＝ユーザがそばにいない時間なので、ユーザは
-    # 「ターンを取らない不在の PC」として GM に提示し、GM の「PC を代弁しない」保護を効かせる。
+    # 「レスポンス順を取らない不在の PC」として GM に提示し、GM の「PC を代弁しない」保護を効かせる。
     # 呼称（characters.user_label）が空ならユーザ枠は作らない。位置づけ
     # （characters.user_position）は別名識別のための手がかり。
     user_label_clean = (user_label or "").strip()

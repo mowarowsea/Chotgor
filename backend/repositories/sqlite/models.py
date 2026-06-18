@@ -274,9 +274,10 @@ class Scenario(Base):
     # うつつ運用設定（JSON, NULL可）。owner_character_id が NULL のときは未使用。
     #   {"enabled": bool, "slots": ["10:00","13:00","17:00"],
     #    "time_grid": {曜日×時間帯→ラベル}, "event_categories": {...},
-    #    "event_probability": float, "max_turns_per_scene": int,
+    #    "event_probability": float, "max_responses_per_scene": int,
     #    "gm_preset_id": str, "pc_preset_id": str}
     # SQLite では TEXT として保存される。
+    # 後方互換: 旧キー "max_turns_per_scene" は service 側の読み出しでフォールバック。
     usual_config = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(

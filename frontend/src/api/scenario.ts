@@ -130,7 +130,7 @@ export interface ScenarioSynopsis {
 /**
  * あらすじ作成バー用の進捗情報。
  *
- * 前回あらすじ蒸留以降に積み上がった「ターン数 / 文字数」とそれぞれの history 上限。
+ * 前回あらすじ蒸留以降に積み上がった「ターン数（=話者ブロック数） / 文字数」とそれぞれの history 上限。
  * フロントは max(turns/max_turns, chars/max_chars) の比率でバーの表示可否（>50%）と
  * 色（>80% で赤）を決める。turn_complete 時とあらすじ作成（regenerate）時に更新される。
  */
@@ -159,14 +159,14 @@ export type ScenarioStreamEvent =
     }
   | { type: "content_delta"; text: string }
   | { type: "speaker_end"; turn: ScenarioTurn }
-  // ── ensemble_pc 専用イベント（PC ターン関連） ─────────────────────────────
-  // GM ターン完了後、メンションで指名された PC（Chotgor キャラ）を順次呼び出す際に発火する。
+  // ── ensemble_pc 専用イベント（PC レスポンス関連） ─────────────────────────────
+  // GM レスポンス完了後、メンションで指名された PC（Chotgor キャラ）を順次呼び出す際に発火する。
   | { type: "pc_start"; character: string; character_id: string }
-  // PC ターン中の応答テキストチャンク。`character` は配役名（role_name）。
+  // PC レスポンス中の応答テキストチャンク。`character` は配役名（role_name）。
   | { type: "pc_chunk"; character: string; content: string }
-  // PC ターン中の想起記憶・WM スレッド・思考ブロック等（フロントの reasoning 欄相当）。
+  // PC レスポンス中の想起記憶・WM スレッド・思考ブロック等（フロントの reasoning 欄相当）。
   | { type: "pc_reasoning"; character: string; content: string }
-  // PC ターン完了通知。full_text は最終応答、anticipation は ANTICIPATE_RESPONSE 抽出値。
+  // PC レスポンス完了通知。full_text は最終応答、anticipation は ANTICIPATE_RESPONSE 抽出値。
   | {
       type: "pc_done";
       character: string;
@@ -184,8 +184,10 @@ export type ScenarioStreamEvent =
       preset_id: string;
       preset_name: string;
     }
-  | { type: "turn_complete"; turn_ids: string[] }
-  // ターン完了直後のあらすじ進捗（ターン数・文字数と上限）。
+  // ユーザターン完了（GM/PC のレスポンス連鎖が終わり、ユーザ入力待ちへ戻った）。
+  // turn_ids は保存された話者ブロック ID、fired_responses は LLM 呼出回数（GM + PC）。
+  | { type: "turn_complete"; turn_ids: string[]; fired_responses?: number }
+  // ユーザターン完了直後のあらすじ進捗（ターン数=話者ブロック数・文字数と上限）。
   // フロントはこれでバーの表示/色と作成モーダルの自動表示を判定する。
   | {
       type: "synopsis_progress";

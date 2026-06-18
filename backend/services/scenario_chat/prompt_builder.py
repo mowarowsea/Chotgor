@@ -100,7 +100,9 @@ def build_gm_system_prompt(
 
     # システムプロンプトのブロック構築
     # テンプレート（DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE）内の {history_block} は
-    # _replace_template_tags() で毎ターン計算して置き換わる
+    # _replace_template_tags() で毎レスポンス計算して置き換わる
+    # （ここでの「レスポンス」= 1 回の LLM 呼出 = 1 raw_response。
+    #  「ターン」は @話者: ブロック単位（scenario_turns 1 行）を指す）
 
     # プレイヤーの今回の発話
     if auto_advance:
@@ -110,7 +112,7 @@ def build_gm_system_prompt(
         # この指示は履歴には残らない（service 層で user turn は保存しない）。
         user_turn_block = (
             "---\n"
-            "[OOC] プレイヤーは今ターン何も発言していない。\n"
+            "[OOC] プレイヤーは今回何も発言していない。\n"
             f"@{user_alias} の代弁をせず、物語を前に進めること。具体的には:\n"
             f"  - @{narrator_name} の地の文で時間・場所・状況を動かしてよい\n"
             "    （例: 数刻後、翌朝、場面転換、回想、突然の出来事 など）\n"
@@ -170,7 +172,7 @@ def build_gm_system_prompt(
     if dice_pool and "{dice_pool}" not in template_to_use and dice_pool.strip() not in prompt_with_tags_replaced:
         appendix_parts.append(dice_pool.strip())
     # うつつの偶発イベント指示・ソフト収束ヒント（OOC）。常に末尾へ append する
-    # （プレースホルダは設けず、毎ターン動的に変わる指示として渡す）。
+    # （プレースホルダは設けず、毎レスポンス動的に変わる指示として渡す）。
     if gm_ooc_appendix and gm_ooc_appendix.strip():
         appendix_parts.append(gm_ooc_appendix.strip())
     if appendix_parts:
@@ -268,7 +270,7 @@ def _replace_template_tags(
         {npc_details}      - NPC詳細
         {history_block}    - 直近の履歴テキスト
         {pc_summary}       - PC配役一覧（ensemble_pc 専用、ensemble では空）
-        {dice_pool}        - このターンで使えるダイス（ensemble_pc 専用、ensemble では空）
+        {dice_pool}        - このレスポンスで使えるダイス（ensemble_pc 専用、ensemble では空）
     """
     result = template
     # 旧 scenario.user_alias は廃止。呼び出し側が解決した user_speaker_name を使う。
@@ -282,7 +284,7 @@ def _replace_template_tags(
     else:
         synopsis_manual_formatted = ""
 
-    # 前回ターンで GM（語り手）が書いた期待（ANTICIPATE_RESPONSE）の整形
+    # 前回レスポンスで GM（語り手）が書いた期待（ANTICIPATE_RESPONSE）の整形
     previous_anticipation_text = (previous_anticipation or "").strip()
     if previous_anticipation_text:
         previous_anticipation_formatted = f"{previous_anticipation_text}"
@@ -353,9 +355,9 @@ DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE = """# 役割定義
 - 必要に応じて新しいNPCを `@新しい名前:` で登場させてよい（モブ・通行人・乱入者など）
 - 行動・仕草・表情・情景を発言に挿む場合は `*肩をすくめて*` のように `*` で囲む
 - markdown / JSON / 解説文 禁止（`*` の行動描写は markdown ではなく専用記法）
-- ターンの一番最後に、語り手（あなた）としての「このあとの展開の予想」を1行だけ `[ANTICIPATE_RESPONSE:予想内容]` の形式で書く
+- レスポンスの一番最後に、語り手（あなた）としての「このあとの展開の予想」を1行だけ `[ANTICIPATE_RESPONSE:予想内容]` の形式で書く
   - この行はプレイヤーには見えない。いま登場しているNPC（@{narrator_name} 含む）それぞれの思惑・予想を併記してよい
-  - 次のターンであなた自身に「前回の予想」として示される
+  - 次のレスポンスであなた自身に「前回の予想」として示される
 
 ■ プレイヤーキャラクター（PC）の領分を侵さない（最重要）
 ここで言う **PC** は、「プレイヤーキャラクター（PC）」セクションに掲げた全員を指します。
@@ -384,13 +386,13 @@ PC を代弁する例（NG）:
 ■ 物語の語り手に徹し、ゲーム司会者にならない
 - 「このあとどうする?」「反応を待つ」のような問いをあなたの言葉で直接プレイヤーに投げない。
   問いかけたいときは NPC の台詞や状況の描写として自然に促す
-- 1ターンでプレイヤーに判断・反応を求める点は1つまで。NPCがプレイヤーに問いかけた場合、プレイヤーにターンを明け渡す
-- 全NPCが毎ターン発話しなくてよい（沈黙OK）
+- 1レスポンスでプレイヤーに判断・反応を求める点は1つまで。NPCがプレイヤーに問いかけた場合、プレイヤーに発話順を譲る
+- 全NPCが毎レスポンス発話しなくてよい（沈黙OK）
 
 ■ 会話の基本温度
 - NPCは「普通の人間同士の会話」を基準に振る舞う。必要以上にプレイヤーを持ち上げたり、敵視したりしない
 - 過剰な挑発・煽り・高圧的態度を常態化しない
-- 雑談・間・空気感だけで終わるターンやシナリオがあってもよい。会話やシナリオを無理にドラマチックにしない。
+- 雑談・間・空気感だけで終わるレスポンスやシーンがあってもよい。会話やシナリオを無理にドラマチックにしない。
 - NPC同士の都合・関心・会話も重視する。プレイヤーが会話の中心にならない場面があってもよい
 
 ■ 描写のバランス
@@ -404,5 +406,5 @@ PC を代弁する例（NG）:
 # 直近の流れ
 {history_block}
 
-# このターンで使えるダイス
+# このレスポンスで使えるダイス
 {dice_pool}"""

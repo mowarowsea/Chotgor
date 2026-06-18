@@ -43,7 +43,7 @@ class TestUsualScenarioPersistence:
             "enabled": True,
             "slots": ["10:00", "13:00", "17:00"],
             "event_probability": 0.3,
-            "max_turns_per_scene": 8,
+            "max_responses_per_scene": 8,
         }
         scenario = _make_scenario(
             sqlite_store,
@@ -180,13 +180,13 @@ class TestUsualMigrationIdempotency:
 # ---------------------------------------------------------------------------
 
 
-def _build_usual_session(store, max_turns: int = 8, user_label: str | None = None):
+def _build_usual_session(store, max_responses: int = 8, user_label: str | None = None):
     """うつつ（engine_type="usual_days"）の最小セッションを組み立てて返す。
 
     主人公キャラ 1 体・PC枠 1 つのうつつ世界を作る。``user_label`` を渡すと、
     「不在のユーザPC」枠（slot_id="user"）とその割当（player_type="user"）も併せて作る
-    （ユーザがターンを取らないことの検証用）。
-    GM ターンと PC ターンの LLM 呼び出しはテスト側でモックする前提なので、
+    （ユーザがレスポンス順を取らないことの検証用）。
+    GM レスポンスと PC レスポンスの LLM 呼び出しはテスト側でモックする前提なので、
     プリセットはダミーで構わない（ただし _resolve_pc_preset_id が実在を要求するため
     実レコードとして作成する）。
 
@@ -216,7 +216,7 @@ def _build_usual_session(store, max_turns: int = 8, user_label: str | None = Non
         title="はるの日常",
         owner_character_id=cid,
         pc_slots=pc_slots,
-        usual_config={"max_turns_per_scene": max_turns},
+        usual_config={"max_responses_per_scene": max_responses},
     )
     sid = "sess-usual"
     store.create_scenario_session(
@@ -282,12 +282,12 @@ class TestHeadlessLoop:
     """うつつ無人ループ（run_scenario_turn headless / run_usual_days_scene）を検証する。"""
 
     def test_headless_runs_until_cap(self, sqlite_store, monkeypatch):
-        """メンションが続く限り GM↔PC を連鎖し、max_turns_per_scene で停止すること。
+        """メンションが続く限り GM↔PC を連鎖し、max_responses_per_scene で停止すること。
 
-        GM は毎ターン @はる を呼び、PC はメンションを返さない。headless は PC 後も
+        GM は毎レスポンス @はる を呼び、PC はメンションを返さない。headless は PC 後も
         ユーザに戻さず GM へ継続するため、上限（4）に達するまで GM,PC,GM,PC と回る。
         """
-        sid, _ = _build_usual_session(sqlite_store, max_turns=4)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=4)
         pc_calls: list[dict] = []
         # GM は常に @はる を呼ぶ（script を空にしてデフォルト文 "...@はる" を使わせる）
         _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
@@ -305,7 +305,7 @@ class TestHeadlessLoop:
 
     def test_headless_stops_on_scene_close(self, sqlite_store, monkeypatch):
         """GM が [SCENE_CLOSE] を宣言したら上限前でも停止すること。"""
-        sid, _ = _build_usual_session(sqlite_store, max_turns=20)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=20)
         pc_calls: list[dict] = []
         # 1回目GM=@はる呼び、2回目GM=幕引き宣言
         gm_script = [
@@ -338,7 +338,7 @@ class TestHeadlessLoop:
         期待: GM, PC, GM の 3 ターン。PC は最低 1 回呼ばれる。最初の GM の幕引きでは
         終わらない。表示用 content からはマーカーが除去される。
         """
-        sid, _ = _build_usual_session(sqlite_store, max_turns=20)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=20)
         pc_calls: list[dict] = []
         gm_script = [
             # 1ターン目からいきなり完結した小景を書いて幕引き（主人公はまだ未発話）。
@@ -367,7 +367,7 @@ class TestHeadlessLoop:
 
     def test_headless_passes_origin_usual(self, sqlite_store, monkeypatch):
         """PC ターンに default_origin="usual" が渡されること（記憶の由来タグ）。"""
-        sid, _ = _build_usual_session(sqlite_store, max_turns=2)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=2)
         pc_calls: list[dict] = []
         _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
 
@@ -386,7 +386,7 @@ class TestHeadlessLoop:
         ここでは「正しい引数（force=False、session の synopsis_preset_id）で 1 度だけ
         呼ばれること」を検証する（蒸留本体の中身は別ユニットの責務）。
         """
-        sid, _ = _build_usual_session(sqlite_store, max_turns=4)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=4)
         pc_calls: list[dict] = []
         _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
 
@@ -458,7 +458,7 @@ class TestUsualUserPc:
                 {"slot_id": "user", "name": "太郎",
                  "description": "【この場面に不在・姿/言動を描かない】主任。"},
             ],
-            usual_config={"gm_preset_id": pid, "max_turns_per_scene": 4},
+            usual_config={"gm_preset_id": pid, "max_responses_per_scene": 4},
         )
         session = svc.ensure_usual_session(sqlite_store, scenario)
         assert session is not None
@@ -500,7 +500,7 @@ class TestUsualUserPc:
         ルーティング候補からユーザPCを除外するため、@太郎（ユーザ）指名は GM へ巻き戻り、
         GM↔キャラPC（はる）で回り続ける（早期 break もしない）。
         """
-        sid, _ = _build_usual_session(sqlite_store, max_turns=4, user_label="太郎")
+        sid, _ = _build_usual_session(sqlite_store, max_responses=4, user_label="太郎")
         pc_calls: list[dict] = []
         gm_script = [
             "Narrator: 朝。@太郎 はもう出かけた。",
@@ -522,7 +522,7 @@ class TestUsualUserPc:
 
     def test_gm_sees_absent_user_in_pc_summary(self, sqlite_store, monkeypatch):
         """GM の pc_summary に、不在ユーザPCが「不在」表記付きで載ること。"""
-        sid, _ = _build_usual_session(sqlite_store, max_turns=2, user_label="太郎")
+        sid, _ = _build_usual_session(sqlite_store, max_responses=2, user_label="太郎")
         _install_mocks(monkeypatch, gm_script=[], pc_calls=[])
 
         # _install_mocks の fake_gm を、pc_summary を記録する版に差し替える。
@@ -651,7 +651,7 @@ class TestSceneCloseAndSoftHint:
             usual_config = {"event_probability": 0.0}
 
         scn = _Scn()
-        mid = svc._build_usual_gm_appendix(scn, fired_turns=2, max_turns=8, is_first_gm=False)
+        mid = svc._build_usual_gm_appendix(scn, fired_responses=2, max_responses=8, is_first_gm=False)
         # うつつの中心概念（本人の日常をそのまま描く）が必ず含まれる
         assert "日常" in mid
         # 中盤でもマーカーの存在を GM に伝える（主たる停止機構）
@@ -672,10 +672,10 @@ class TestSceneCloseAndSoftHint:
 
         scn = _Scn()
         # 残り多数 → 常設フレーミングはあるが「畳む頃合い」の念押しは無い
-        early = svc._build_usual_gm_appendix(scn, fired_turns=0, max_turns=8, is_first_gm=False)
+        early = svc._build_usual_gm_appendix(scn, fired_responses=0, max_responses=8, is_first_gm=False)
         assert "畳む頃合い" not in early
         # 残り僅少 → 念押しが加わる
-        late = svc._build_usual_gm_appendix(scn, fired_turns=7, max_turns=8, is_first_gm=False)
+        late = svc._build_usual_gm_appendix(scn, fired_responses=7, max_responses=8, is_first_gm=False)
         assert "畳む頃合い" in late
 
     def test_event_hint_only_on_first_gm(self):
@@ -687,12 +687,12 @@ class TestSceneCloseAndSoftHint:
         scn = _Scn()
         # is_first_gm=True → イベント抽選される
         first = svc._build_usual_gm_appendix(
-            scn, fired_turns=0, max_turns=8, is_first_gm=True, rng=random.Random(1),
+            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
         )
         assert "来客" in first
         # is_first_gm=False（残りも多い）→ 常設フレーミングはあるがイベントは出ない
         mid = svc._build_usual_gm_appendix(
-            scn, fired_turns=2, max_turns=8, is_first_gm=False, rng=random.Random(1),
+            scn, fired_responses=2, max_responses=8, is_first_gm=False, rng=random.Random(1),
         )
         assert "来客" not in mid
 
@@ -735,7 +735,7 @@ class TestGmPromptWiring:
 # ---------------------------------------------------------------------------
 
 
-def _build_usual_world(store, slots, enabled=True, max_turns=4):
+def _build_usual_world(store, slots, enabled=True, max_responses=4):
     """セッション未作成のうつつ世界（キャラ＋プリセット＋うつつシナリオ）を組む。
 
     ensure_usual_session に session を作らせる経路を試すため、ここでは session を作らない。
@@ -754,7 +754,7 @@ def _build_usual_world(store, slots, enabled=True, max_turns=4):
         usual_config={
             "enabled": enabled,
             "slots": slots,
-            "max_turns_per_scene": max_turns,
+            "max_responses_per_scene": max_responses,
             "gm_preset_id": pid,
             "pc_preset_id": pid,
         },
@@ -975,7 +975,7 @@ class TestUsualFormParsing:
             "usual_pc_preset_id": "pc-p",
             "usual_event_categories": "来客\n残業\n\n雑談",
             "usual_event_probability": "0.3",
-            "usual_max_turns": "6",
+            "usual_max_responses": "6",
             "usual_history_max_turns": "40",
             "usual_history_max_chars": "30000",
             "usual_time_grid": '{"平日朝": "通勤"}',
@@ -988,7 +988,7 @@ class TestUsualFormParsing:
         # 空行は除去
         assert cfg["event_categories"] == ["来客", "残業", "雑談"]
         assert cfg["event_probability"] == 0.3
-        assert cfg["max_turns_per_scene"] == 6
+        assert cfg["max_responses_per_scene"] == 6
         assert cfg["gm_preset_id"] == "gm-p"
         assert cfg["pc_preset_id"] == "pc-p"
         assert cfg["time_grid"] == {"平日朝": "通勤"}
@@ -1008,7 +1008,7 @@ class TestUsualFormParsing:
         assert cfg["slots"] == []
         assert cfg["event_categories"] == []
         assert cfg["event_probability"] == 0.0
-        assert cfg["max_turns_per_scene"] == 8
+        assert cfg["max_responses_per_scene"] == 8
         assert cfg["time_grid"] == {}
         assert scn_kwargs["scenario"] is None
         # 履歴上限は空欄 → None（設定既定に委ねる）で保存される
@@ -1021,12 +1021,12 @@ class TestUsualFormParsing:
         assert cfg["time_grid"] == {}
 
     def test_invalid_numbers_fallback(self):
-        """確率・上限ターンが不正値なら既定値にフォールバックすること。"""
+        """確率・上限レスポンス数が不正値なら既定値にフォールバックすること。"""
         _scn, cfg = _parse_usual_form(
-            {"usual_event_probability": "abc", "usual_max_turns": ""}, "X",
+            {"usual_event_probability": "abc", "usual_max_responses": ""}, "X",
         )
         assert cfg["event_probability"] == 0.0
-        assert cfg["max_turns_per_scene"] == 8
+        assert cfg["max_responses_per_scene"] == 8
 
 
 class TestUsualTimeGridDisplay:
@@ -1120,7 +1120,7 @@ class TestUsualLogFeature:
 
         ContextVar は asyncio.run の外へ伝播しないため、GM ターン実行中の値を捕捉する。
         """
-        sid, _ = _build_usual_session(sqlite_store, max_turns=2)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=2)
         seen_features: list[str] = []
 
         async def fake_gm(**kwargs):
@@ -1198,7 +1198,7 @@ class TestHeadlessDiceSuppressed:
 
     def test_no_dice_pool_in_headless(self, sqlite_store, monkeypatch):
         """日常シーンに TRPG 用ダイスが注入されないこと（dice_pool が空文字）。"""
-        sid, _ = _build_usual_session(sqlite_store, max_turns=2)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=2)
         seen_dice: list[str] = []
 
         async def fake_gm(**kwargs):
@@ -1225,7 +1225,7 @@ class TestUsualErrorHandling:
 
     def test_pc_error_surfaced_in_result(self, sqlite_store, monkeypatch):
         """PC（キャラ）応答が例外を投げたら、シーンは打ち切られ result.error に畳まれること。"""
-        sid, _ = _build_usual_session(sqlite_store, max_turns=8)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=8)
 
         async def fake_gm(**kwargs):
             svc._save_turn(
@@ -1253,7 +1253,7 @@ class TestUsualErrorHandling:
 
     def test_gm_exception_surfaced_in_result(self, sqlite_store, monkeypatch):
         """GM ターンが例外を投げたら、シーンは中断し result.error に記録されること。"""
-        sid, _ = _build_usual_session(sqlite_store, max_turns=8)
+        sid, _ = _build_usual_session(sqlite_store, max_responses=8)
 
         async def boom_gm(**kwargs):
             raise RuntimeError("gm provider down")

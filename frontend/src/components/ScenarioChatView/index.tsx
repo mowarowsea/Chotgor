@@ -69,7 +69,7 @@ interface Props {
   /** 最後のユーザターン以降を削除して同内容で再ストリーム。 */
   onRegenerate: () => void;
   /**
-   * 末尾 GM ターン（同一 raw_response のバブル列）を削除する。
+   * 末尾 GM レスポンス（同一 raw_response のバブル列 = 1 LLM 呼出ぶん）を削除する。
    * 再ストリームは行わず、ユーザリクエスト待ち状態へ戻す。
    * 主な用途: auto_advance で GM が応答した後、ユーザがその応答を捨てて
    * 自分の発話を入力したくなった場合。
@@ -159,8 +159,8 @@ export default function ScenarioChatView({
   }, [turns, synopsisLastTurnIndex]);
 
   /**
-   * GM ターンを「同一モデル応答」単位にグルーピングし、各グループ末尾のバブルに
-   * 関する情報（ID と全バブル連結テキスト）を返す。
+   * GM ターン（=話者ブロック）を「同一モデル応答」単位にグルーピングし、各グループ末尾のバブルに
+   * 関する情報（ID と全バブル連結テキスト）を返す。各グループが「1 レスポンス」に対応する。
    *
    * - gmGroupTailById: グループ末尾の turn id → そのグループ全バブルを連結した
    *   コピー用テキスト。MessageActionBar（コピー/ログ/再生成）はグループ末尾のみに出す。
@@ -168,15 +168,15 @@ export default function ScenarioChatView({
    *   このバブルだけ（過去グループはコピー + ログのみ）。末尾が user / turns が空なら null。
    *
    * グルーピングは raw_response の連続性で判定する: GM の 1 回の LLM 呼出で
-   * 生成された一連の GM バブルが「同一ターン」を構成する。user ターンは境界。
+   * 生成された一連の GM 話者ブロックが「同一レスポンス」を構成する。user ターンは境界。
    */
   const { gmGroupTailById, lastGMTurnId } = useMemo(() => {
     const tailById = new Map<string, string>();
     if (turns.length === 0) {
       return { gmGroupTailById: tailById, lastGMTurnId: null as string | null };
     }
-    // 連続する同 raw_response の GM ターンを 1 グループとして畳む。末尾に達するか
-    // 次が user / raw_response 不一致になったらフラッシュする。
+    // 連続する同 raw_response の GM ターン（=話者ブロック）を 1 レスポンスグループとして畳む。
+    // 末尾に達するか次が user / raw_response 不一致になったらフラッシュする。
     const flushGroup = (start: number, end: number) => {
       const parts: string[] = [];
       for (let i = start; i <= end; i++) {
@@ -197,7 +197,7 @@ export default function ScenarioChatView({
         groupRaw = undefined;
         continue;
       }
-      // GM ターン: 既存グループと raw_response が一致しなければ新グループ
+      // GM ターン（=話者ブロック）: 既存レスポンスグループと raw_response が一致しなければ新レスポンス
       if (groupStart < 0 || t.raw_response !== groupRaw) {
         if (groupStart >= 0) flushGroup(groupStart, i - 1);
         groupStart = i;
@@ -249,7 +249,7 @@ export default function ScenarioChatView({
    *
    * 入力が空の場合は「ユーザは無言で続きを促す」モード（auto_advance）で送る。
    * user turn は保存されず履歴に痕跡が残らない一方、GM プロンプトには
-   * 「プレイヤーは今ターン何も発言していない」旨が OOC 指示として伝わる。
+   * 「プレイヤーは今回何も発言していない」旨が OOC 指示として伝わる。
    * 画像添付はシナリオでは未対応のため第2引数（files）は無視する。
    * 宛先 PC トグルが ON の場合は本文先頭に `@<target> ` を付ける。
    */

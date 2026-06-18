@@ -1,12 +1,12 @@
 """シナリオチャットサービス — API 層から呼ばれるファサード。
 
-1 ターンのストリーム実行を司る非同期ジェネレータ `run_scenario_turn` を提供する。
+1 ユーザターン分のレスポンス連鎖をストリーム実行する非同期ジェネレータ `run_scenario_turn` を提供する。
 
 責務:
     - プレイヤー発話を scenario_turns に保存
     - EnsembleEngine を駆動して話者単位の SSE イベントを生成
     - 各発話を scenario_turns に保存
-    - raw_response はそのターン内の発話レコードに共通で紐付ける
+    - raw_response はそのレスポンス内の話者ブロック群（=ターン群）に共通で紐付ける
 
 group_chat.run_group_turn と同じ思想（非同期ジェネレータで SSE 用イベントを yield）
 にすることで、API 側の StreamingResponse 実装を一貫させる。
@@ -81,13 +81,16 @@ def _latest_scenario_anticipation(history: list) -> str:
     return ""
 
 
-# 1 ユーザターンあたりの最大話者ターン数（GM + PC の合計）。
+# 1 ユーザターンあたりの最大レスポンス数（GM + PC の LLM 呼出合計）。
 # 無限連鎖防止用ガード。
-_MAX_TURNS_PER_USER_TURN = 10
+# 用語: 「レスポンス」= LLM 1 呼出 (= 1 raw_response)。
+#       「ターン」= @話者: ブロック単位 (scenario_turns 1 行)。両者は別軸。
+_MAX_RESPONSES_PER_USER_TURN = 10
 
-# うつつ（Usual Days）無人ループの 1 シーンあたり既定上限ターン数。
-# usual_config.max_turns_per_scene が無指定のときのフォールバック（ハード上限の保険）。
-_DEFAULT_USUAL_MAX_TURNS = 8
+# うつつ（Usual Days）無人ループの 1 シーンあたり既定上限レスポンス数。
+# usual_config.max_responses_per_scene が無指定のときのフォールバック（ハード上限の保険）。
+# 旧キー名 max_turns_per_scene は後方互換のため読み出し時にフォールバックする。
+_DEFAULT_USUAL_MAX_RESPONSES = 8
 
 # GM がシーンの幕引きを宣言するマーカー。うつつ無人ループの主たる停止条件。
 # 検出は raw_response に対して行い、表示用 content からは extract_scene_close で除去する
@@ -131,10 +134,10 @@ def extract_scene_close(text: str | None) -> tuple[str, bool]:
     return cleaned, True
 
 
-# シーン終盤、残りこのターン数以下になったら GM へソフト収束ヒント（OOC）を出す。
+# シーン終盤、残りこのレスポンス数以下になったら GM へソフト収束ヒント（OOC）を出す。
 _USUAL_SOFT_CLOSE_REMAINING = 2
 
-# うつつ無人ループで GM に毎ターン与える常設フレーミング。これが無いと GM は自分を
+# うつつ無人ループで GM に毎レスポンス与える常設フレーミング。これが無いと GM は自分を
 # 通常の TRPG だと誤認し（「プレイヤーは無言」等）、[SCENE_CLOSE] の存在も知らないため
 # 主たる停止機構が働かない。世界＝外的フレームを与える役、停止判断は GM、という思想を明示する。
 #
@@ -214,18 +217,18 @@ def roll_usual_event(
 
 def _build_usual_gm_appendix(
     scenario,
-    fired_turns: int,
-    max_turns: int,
+    fired_responses: int,
+    max_responses: int,
     is_first_gm: bool,
     rng: random.Random | None = None,
 ) -> str:
-    """うつつ GM ターンの OOC 追記（常設フレーミング＋偶発イベント＋ソフト収束）を組み立てる。
+    """うつつ GM レスポンスの OOC 追記（常設フレーミング＋偶発イベント＋ソフト収束）を組み立てる。
 
-    - 常設フレーミング（_USUAL_GM_STANDING）: 毎ターン必ず添える。これが [SCENE_CLOSE] の
+    - 常設フレーミング（_USUAL_GM_STANDING）: 毎レスポンス必ず添える。これが [SCENE_CLOSE] の
       存在と「無人の日常・GM は外的フレームのみ」をGMに伝える土台で、主たる停止機構の前提。
-    - 偶発イベント: シーンの最初の GM ターン（is_first_gm）でのみ抽選する
+    - 偶発イベント: シーンの最初の GM レスポンス（is_first_gm）でのみ抽選する
       （1 シーンに 1 度だけ種をまく）。
-    - ソフト収束: 残りターン数が _USUAL_SOFT_CLOSE_REMAINING 以下になったら、
+    - ソフト収束: 残りレスポンス数が _USUAL_SOFT_CLOSE_REMAINING 以下になったら、
       終盤の念押しを添える（停止判断はあくまで GM）。
 
     Returns:
@@ -236,7 +239,7 @@ def _build_usual_gm_appendix(
         event_hint = roll_usual_event(getattr(scenario, "usual_config", None), rng=rng)
         if event_hint:
             parts.append(event_hint)
-    if max_turns - fired_turns <= _USUAL_SOFT_CLOSE_REMAINING:
+    if max_responses - fired_responses <= _USUAL_SOFT_CLOSE_REMAINING:
         parts.append(_USUAL_SOFT_CLOSE_HINT)
     return "\n\n".join(parts)
 
@@ -252,25 +255,28 @@ async def run_scenario_turn(
     headless: bool = False,
     extra_first_gm_ooc: str = "",
 ) -> AsyncGenerator[tuple[str, Any], None]:
-    """ユーザ発話を受け取り、シナリオ 1 ターン分の SSE イベントを順次 yield する。
+    """ユーザ発話を受け取り、シナリオ 1 ユーザターン分の SSE イベントを順次 yield する。
+
+    用語: 「レスポンス」= LLM 1 呼出 (= 1 raw_response)。GM 1 回・PC 1 回をそれぞれ 1 レスポンスと数える。
+          「ターン」= @話者: ブロック単位 (scenario_turns 1 行)。GM の 1 レスポンス内に複数ターンが入りうる。
 
     プレイセッション（scenario_sessions）から元シナリオ（scenarios）を lookup し、
-    そのシナリオの NPC・PC枠・GM プリセット等で 1 ターンを進行させる。
+    そのシナリオの NPC・PC枠・GM プリセット等で 1 ユーザターン分のレスポンス連鎖を進行させる。
 
     動作モード:
         - engine_type == "ensemble":
-            - 従来通り GM 1 ターンのみを実行してユーザターンへ戻す。
+            - 従来通り GM 1 レスポンスのみを実行してユーザ入力待ちへ戻す。
         - engine_type == "ensemble_pc":
             - メンション主導の話者ループで動作する:
               1. ユーザ発話末尾のメンションを解析して次話者を決定。
-              2. メンション無し / @GM / @Narrator / @NPC → GM ターン。
-              3. @<PC枠名> / @<キャラ本名> → 該当 PC ターン（直接ディスパッチ）。
+              2. メンション無し / @GM / @Narrator / @NPC → GM レスポンス。
+              3. @<PC枠名> / @<キャラ本名> → 該当 PC レスポンス（直接ディスパッチ）。
               4. @ALL → 直前話者を除いた PC から random.choice。
               5. 各話者の発話末尾を再度メンション解析して次話者を決める。
               6. 次話者が「ユーザ枠」または「メンション無し」になればループ終了。
-              7. 上限 `_MAX_TURNS_PER_USER_TURN` で打ち切る（無限連鎖防止）。
+              7. 上限 `_MAX_RESPONSES_PER_USER_TURN` で打ち切る（無限連鎖防止）。
 
-    PC ターン実行のため `chat_service` を渡すこと（None だと PC 行きの分岐は
+    PC レスポンス実行のため `chat_service` を渡すこと（None だと PC 行きの分岐は
     スキップされて GM のみ進む）。
 
     auto_advance=True の場合:
@@ -282,10 +288,11 @@ async def run_scenario_turn(
     headless=True（うつつ / Usual Days 無人ループ）の場合:
         - engine_type=="usual_days" でも自動的に headless 扱いになる。
         - ユーザ枠ゼロを許容し、ユーザの介入なしに GM↔PC を連鎖させ続ける。
-        - PC 発話末尾にメンションが無くても break せず GM ターンへ継続する
+        - PC 発話末尾にメンションが無くても break せず GM レスポンスへ継続する
           （無人でも場面が止まらないようにする）。
         - 停止条件は GM 出力の `[SCENE_CLOSE]` 検出（主）か、
-          `usual_config.max_turns_per_scene`（既定 _DEFAULT_USUAL_MAX_TURNS）への到達（保険）。
+          `usual_config.max_responses_per_scene`（既定 _DEFAULT_USUAL_MAX_RESPONSES）への到達（保険）。
+          旧キー名 max_turns_per_scene は後方互換のため読み出し時にフォールバック。
         - 記憶/スレッドは origin="usual" で保存される（stream_pc_response 経由）。
         - 通常 auto_advance=True と併用して呼ぶ（無人なのでユーザ発話保存をしない）。
     """
@@ -311,7 +318,7 @@ async def run_scenario_turn(
     # （無人ループ制御だけが service 側の分岐で異なる）。
     is_pc_mode = engine_type in ("ensemble_pc", "usual_days")
 
-    # うつつの GM ターンは PC ターン（pc_runner）と同様、独立した MAIN ログ行として扱う。
+    # うつつの GM レスポンスは PC レスポンス（pc_runner）と同様、独立した MAIN ログ行として扱う。
     # new_message_id() で log_dir_id を fresh にしないと、既定値 "--------" の旧ログ溜めへ
     # GM の debug ログが書かれ、数ヶ月前の旧エラー（旧 OpenRouter 402 等）と混在して
     # /ui/logs が誤検出する。feature ラベルは /ui/logs で識別できるよう "usual_days" にする。
@@ -322,13 +329,20 @@ async def run_scenario_turn(
         # debug_log_entries.session_id が NULL だとシナリオ別フィルタが効かなくなる）。
         current_log_session_id.set(session_id)
 
-    # 1 シーンあたりの上限ターン数。headless は usual_config.max_turns_per_scene を優先し、
-    # 無指定なら _DEFAULT_USUAL_MAX_TURNS。通常モードは従来どおり _MAX_TURNS_PER_USER_TURN。
+    # 1 シーンあたりの上限レスポンス数。headless は usual_config.max_responses_per_scene を優先し、
+    # 無指定なら旧キー max_turns_per_scene → さらに無指定なら _DEFAULT_USUAL_MAX_RESPONSES。
+    # 通常モードは従来どおり _MAX_RESPONSES_PER_USER_TURN。
+    # （ここでの「レスポンス」= GM/PC それぞれ 1 LLM 呼出 = 1 raw_response。
+    #  「ターン」= @話者: ブロック単位 (scenario_turns 1 行) とは別軸。）
     if is_headless:
         _usual_cfg = getattr(scenario, "usual_config", None) or {}
-        max_turns = int(_usual_cfg.get("max_turns_per_scene") or _DEFAULT_USUAL_MAX_TURNS)
+        max_responses = int(
+            _usual_cfg.get("max_responses_per_scene")
+            or _usual_cfg.get("max_turns_per_scene")
+            or _DEFAULT_USUAL_MAX_RESPONSES
+        )
     else:
-        max_turns = _MAX_TURNS_PER_USER_TURN
+        max_responses = _MAX_RESPONSES_PER_USER_TURN
 
     # うつつの時間文脈（日付・曜日・時間帯・季節）はシーン中ほぼ不変なので 1 度だけ算出する。
     usual_time_context = format_time_context() if is_headless else ""
@@ -351,7 +365,7 @@ async def run_scenario_turn(
     # PCロスター（不在ユーザPC含む全PC）。GM へ「全PCを代弁するな」と均一に提示する。
     pc_summary_text = format_pc_summary(pcs)
 
-    # うつつ（headless）はユーザにターンを回さない（ユーザは不在の人物）。ルーティングの
+    # うつつ（headless）はユーザにレスポンス順を回さない（ユーザは不在の人物）。ルーティングの
     # 候補からユーザPCを除外する。pc_summary / suppress_names は全PC（不在ユーザ含む）のまま
     # GM に渡し、GM の「PC を代弁しない」保護を不在ユーザにも効かせる。
     routing_pcs = [p for p in pcs if not p.is_user] if is_headless else pcs
@@ -404,38 +418,38 @@ async def run_scenario_turn(
             next_kind = "gm"
 
     last_speaker_name: str | None = user_speaker_name if not auto_advance else None
-    fired_turns = 0
+    fired_responses = 0
     # うつつ無人ループで、このシーン中に主人公（キャラ PC）が実際に発話した回数。
     # GM の早すぎる [SCENE_CLOSE]（キャラが一度も応答しないうちの幕引き）を抑止する判定に使う。
-    pc_turns = 0
+    pc_responses = 0
 
     try:
-        while fired_turns < max_turns:
+        while fired_responses < max_responses:
             if next_kind == "gm":
-                # GM ターン実行
+                # GM レスポンス実行
                 gm_last_raw, gm_last_name = "", None
-                # PC ターン（pc_runner）が同一コンテキストで feature を "usual_days_pc" に
-                # 書き換えるため、GM ターンごとに "usual_days" へ戻す（ログの取違い防止）。
+                # PC レスポンス（pc_runner）が同一コンテキストで feature を "usual_days_pc" に
+                # 書き換えるため、GM レスポンスごとに "usual_days" へ戻す（ログの取違い防止）。
                 if is_headless:
                     current_log_feature.set("usual_days")
                 # うつつ: 時間文脈（外的フレーム）と OOC（偶発イベント・ソフト収束）を GM へ注入。
                 gm_ooc = ""
                 if is_headless:
                     gm_ooc = _build_usual_gm_appendix(
-                        scenario, fired_turns, max_turns, is_first_gm=(fired_turns == 0),
+                        scenario, fired_responses, max_responses, is_first_gm=(fired_responses == 0),
                     )
                     # シーン冒頭のみ、スケジューラからの経過時間メモ（「前回から N 時間後」等）を先頭に添える。
-                    if fired_turns == 0 and extra_first_gm_ooc.strip():
+                    if fired_responses == 0 and extra_first_gm_ooc.strip():
                         gm_ooc = (extra_first_gm_ooc.strip() + "\n" + gm_ooc).strip()
                 async for ev, _meta in _run_gm_turn(
                     engine=engine,
                     scenario=scenario,
                     npcs=npcs,
                     history=sqlite.list_scenario_turns(session_id),
-                    user_message=user_message if fired_turns == 0 else "",
+                    user_message=user_message if fired_responses == 0 else "",
                     settings=settings,
                     gm_preset_id=gm_preset_id,
-                    auto_advance=auto_advance if fired_turns == 0 else True,
+                    auto_advance=auto_advance if fired_responses == 0 else True,
                     synopsis_auto=current_synopsis.get("auto", ""),
                     synopsis_manual=current_synopsis.get("manual", ""),
                     previous_anticipation=previous_anticipation,
@@ -456,7 +470,7 @@ async def run_scenario_turn(
                 ):
                     yield ev
 
-                # GM の最終 raw_response を直近保存ターンから取り直す
+                # GM の最終 raw_response を直近保存ターン（=最後の話者ブロック）から取り直す
                 latest = sqlite.list_scenario_turns(session_id)
                 gm_last_turn = None
                 for t in reversed(latest):
@@ -467,7 +481,7 @@ async def run_scenario_turn(
                         break
                 if gm_last_name:
                     last_speaker_name = gm_last_name
-                fired_turns += 1
+                fired_responses += 1
 
                 # うつつ無人ループ: GM がシーン幕引き（[SCENE_CLOSE]）を宣言したら
                 # そこでシーン終了。停止の主たる判断主体は GM（キャラではない）。
@@ -481,20 +495,20 @@ async def run_scenario_turn(
                     # 発話していないのに GM が初手で場面を畳もうとした場合、キャラの応答を
                     # 待たずにシーンを終わらせない。マーカーは上で content から除去済みなので、
                     # この break を飛ばして下の通常ルーティング（GM 出力にメンションが
-                    # 無ければ @ALL フォールバック）へ委ね、主人公へ一度ターンを回す。
-                    # GM は次の自ターンで改めて [SCENE_CLOSE] を宣言してよい（その時は
-                    # pc_turns>0 なので幕引きが成立する）。うつつは「キャラが生きる」ことが
+                    # 無ければ @ALL フォールバック）へ委ね、主人公へ一度発話順を回す。
+                    # GM は次の自レスポンスで改めて [SCENE_CLOSE] を宣言してよい（その時は
+                    # pc_responses>0 なので幕引きが成立する）。うつつは「キャラが生きる」ことが
                     # 目的であり、本人が一言も発さず終わるシーンは無意味なため。
-                    if pc_turns == 0 and routing_pcs:
+                    if pc_responses == 0 and routing_pcs:
                         logger.info(
                             "うつつ: GM の早すぎる SCENE_CLOSE を抑止（主人公が未発話）"
                             " session=%s fired=%d",
-                            session_id, fired_turns,
+                            session_id, fired_responses,
                         )
                     else:
                         logger.info(
                             "うつつ: GM が SCENE_CLOSE を宣言 session=%s fired=%d",
-                            session_id, fired_turns,
+                            session_id, fired_responses,
                         )
                         break
 
@@ -531,11 +545,11 @@ async def run_scenario_turn(
                 if pc is None:
                     break
                 if pc.is_user:
-                    # ユーザ枠が指名された → ユーザターンへ
+                    # ユーザ枠が指名された → ユーザ入力待ちへ
                     break
                 if chat_service is None:
                     logger.warning(
-                        "PC ターン実行不可: chat_service が None session=%s pc=%s",
+                        "PC レスポンス実行不可: chat_service が None session=%s pc=%s",
                         session_id, pc.name,
                     )
                     break
@@ -576,7 +590,7 @@ async def run_scenario_turn(
                         yield (ev_type, payload)
                 except Exception as e:
                     logger.exception(
-                        "PC ターン実行エラー session=%s pc=%s",
+                        "PC レスポンス実行エラー session=%s pc=%s",
                         session_id, pc.name,
                     )
                     yield ("pc_error", {
@@ -601,18 +615,18 @@ async def run_scenario_turn(
                     yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
 
                 last_speaker_name = pc.name
-                fired_turns += 1
+                fired_responses += 1
                 # 主人公（キャラ PC）が実際に発話した。以降は GM の [SCENE_CLOSE] を
                 # 正規の幕引きとして受理してよい（早すぎる幕引き抑止の解除）。
-                pc_turns += 1
+                pc_responses += 1
 
                 # PC 発話末尾のメンションで次話者を決める
                 next_kind, next_target = find_last_routing_mention(
                     full_text, routing_pcs, npc_names,
                 )
                 if next_kind == "none":
-                    # うつつ無人ループ: メンションが無くてもユーザに戻さず GM ターンへ継続し、
-                    # 場面が止まらないようにする（通常モードはユーザターンへ戻して終了）。
+                    # うつつ無人ループ: メンションが無くてもユーザに戻さず GM レスポンスへ継続し、
+                    # 場面が止まらないようにする（通常モードはユーザ入力待ちへ戻して終了）。
                     if is_headless:
                         next_kind = "gm"
                         next_target = None
@@ -623,19 +637,21 @@ async def run_scenario_turn(
             # 未知の kind: 防御的に break
             break
     except Exception as e:
-        logger.exception("シナリオターン実行エラー session=%s", session_id)
+        logger.exception("シナリオレスポンス実行エラー session=%s", session_id)
         yield ("error", {"message": str(e)})
         return
 
-    if fired_turns >= max_turns:
+    if fired_responses >= max_responses:
         logger.info(
-            "シナリオターン上限到達 session=%s fired=%d cap=%d headless=%s",
-            session_id, fired_turns, max_turns, is_headless,
+            "シナリオレスポンス上限到達 session=%s fired=%d cap=%d headless=%s",
+            session_id, fired_responses, max_responses, is_headless,
         )
 
     sqlite.update_scenario_session(session_id, status=session.status)
 
-    yield ("turn_complete", {"turn_ids": saved_turn_ids})
+    # turn_ids は保存された話者ブロック ID（=ターン）、fired_responses は LLM 呼出回数（GM + PC）。
+    # 後者は run_usual_days_scene の集計ログで使う。
+    yield ("turn_complete", {"turn_ids": saved_turn_ids, "fired_responses": fired_responses})
 
     progress = compute_synopsis_progress(sqlite, settings, scenario, session_id)
     if progress is not None:
@@ -660,15 +676,17 @@ async def run_usual_days_scene(
         session_id: うつつセッション（engine_type="usual_days"）の ID。
         sqlite: SQLiteStore。
         settings: グローバル設定辞書。
-        chat_service: PC ターン実行に必須の ChatService。
+        chat_service: PC レスポンス実行に必須の ChatService。
         engine: GM エンジン。None なら既定エンジンを使う。
         extra_first_gm_ooc: シーン冒頭の GM へ添える経過時間メモ等（「前回から N 時間後」）。
 
     Returns:
-        {"saved_turn_ids": [...], "fired_turns": int, "scene_closed": bool,
-         "error": str | None} の集計 dict。
+        {"saved_turn_ids": [...], "fired_responses": int, "fired_turns": int,
+         "scene_closed": bool, "error": str | None} の集計 dict。
+        fired_responses は LLM 呼出回数（GM + PC）、fired_turns は scenario_turns 行数（=話者ブロック数）。
     """
     saved_turn_ids: list[str] = []
+    fired_responses = 0
     scene_closed = False
     error: str | None = None
     async for ev_type, payload in run_scenario_turn(
@@ -684,15 +702,16 @@ async def run_usual_days_scene(
     ):
         if ev_type == "turn_complete":
             saved_turn_ids = list(payload.get("turn_ids", []))
+            fired_responses = int(payload.get("fired_responses", 0))
         elif ev_type == "error":
-            # GM ターン等の致命的エラー（多くは例外送出）。シーンはここで打ち切られる。
+            # GM レスポンス等の致命的エラー（多くは例外送出）。シーンはここで打ち切られる。
             error = str(payload.get("message", ""))
         elif ev_type == "pc_error":
-            # PC（キャラ）応答のエラー。ループは break され、それまでのターンは保存される。
+            # PC（キャラ）応答のエラー。ループは break され、それまでのターン（話者ブロック）は保存される。
             # 無人運転なので観測できるよう error に畳む（最初の1件を記録）。
             if error is None:
                 error = f"PC応答エラー（{payload.get('character', '?')}）: {payload.get('message', '')}"
-    # シーンが GM の [SCENE_CLOSE] で閉じたかは、最終 GM ターンの生出力から判定する。
+    # シーンが GM の [SCENE_CLOSE] で閉じたかは、最終 GM ターン（話者ブロック）の生出力から判定する。
     for turn in reversed(sqlite.list_scenario_turns(session_id)):
         if getattr(turn, "speaker_type", "") in {"narrator", "npc"}:
             scene_closed = _has_scene_close(getattr(turn, "raw_response", "") or "")
@@ -729,6 +748,7 @@ async def run_usual_days_scene(
 
     return {
         "saved_turn_ids": saved_turn_ids,
+        "fired_responses": fired_responses,
         "fired_turns": len(saved_turn_ids),
         "scene_closed": scene_closed,
         "error": error,
@@ -740,7 +760,7 @@ def _build_usual_pc_assignments(pc_slots, owner_id: str, pc_pid: str) -> list[di
 
     主人公（owner キャラ）の character 割当に加え、ユーザPC枠（slot_id="user"）が
     定義されていれば「不在のユーザPC」割当（player_type="user"）を足す。ユーザPCは
-    無人ループ中ターンを取らない（run_scenario_turn の routing から除外される）が、
+    無人ループ中レスポンス順を取らない（run_scenario_turn の routing から除外される）が、
     GM の pc_summary には不在の PC として並び、GM の「PC を代弁しない」保護を効かせる。
 
     Args:
@@ -910,7 +930,7 @@ async def _run_gm_turn(
     time_context: str = "",
     gm_ooc_appendix: str = "",
 ) -> AsyncGenerator[tuple[Any, Any], None]:
-    """GM 1 ターン分を engine 経由で実行し、SSE イベントを yield しつつ
+    """GM 1 レスポンス分を engine 経由で実行し、SSE イベントを yield しつつ
     scenario_turns へ保存する内部ヘルパ。
 
     yield 値はメンション主導ループ側で扱いやすいよう (event_tuple, None) の
@@ -962,7 +982,7 @@ async def _run_gm_turn(
     if provider_error is not None:
         # プロバイダ由来エラー: scenario_turns への保存とあらすじ蒸留対象化を回避する。
         # turn_records_pending は engine 側で flush せず空のまま渡されるので、ここでは
-        # 保存をスキップし、UI に通知だけ流して終わる。次ターンの user 発話時に
+        # 保存をスキップし、UI に通知だけ流して終わる。次の user 発話時に
         # 同一の last_turn_index を維持したまま再試行できる。
         logger.warning(
             "GM プロバイダエラーで scenario turn 保存をスキップ session=%s 内容=%s",
@@ -972,8 +992,8 @@ async def _run_gm_turn(
         return
 
     _, turn_anticipation = extract_anticipation(raw_response)
-    # GM の予想はここで採用が確定する（最終ターンの anticipation カラムへ保存され、
-    # 次ターンの GM プロンプトに注入される）ため、この地点で実行イベントとして記録する。
+    # GM の予想はここで採用が確定する（最終ターン=最後の話者ブロックの anticipation カラムへ保存され、
+    # 次レスポンスの GM プロンプトに注入される）ため、この地点で実行イベントとして記録する。
     if turn_anticipation:
         record_tool_event(
             "anticipate_response", {"content": turn_anticipation}, source="anticipation",

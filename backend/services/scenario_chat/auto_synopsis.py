@@ -15,9 +15,14 @@ logger = logging.getLogger(__name__)
 # あらすじ自動更新のトリガー閾値。
 # 「未蒸留 dropped 群」のターン数または累積文字数が history 上限の半分に達したら
 # synopsis_auto を再蒸留する（OR 判定）。
-# 上限到達直後に毎ターン LLM 呼出が走るのを避けるための間引き閾値で、
+# 上限到達直後に毎レスポンス LLM 呼出が走るのを避けるための間引き閾値で、
 # シナリオごとの history_max_turns / history_max_chars に追従させる。
 # 手動 regenerate API では無視する（force=True で呼ぶ）。
+#
+# 用語: ここでの「ターン」は @話者: ブロック単位（scenario_turns 1 行）。
+#       GM の 1 レスポンス（=1 LLM 呼出）が複数の話者ブロックを生むため、
+#       1 レスポンス ≠ 1 ターンであることに注意。トリガー比は **ターン基準** で
+#       history_max_turns（こちらも話者ブロック単位）と整合している。
 SYNOPSIS_AUTO_TRIGGER_RATIO = 0.5
 
 
@@ -31,11 +36,11 @@ async def maybe_update_auto_synopsis(
     *,
     force: bool = False,
 ) -> dict | None:
-    """前回蒸留以降の新規ターン群を `synopsis_auto` へ統合し全体を再蒸留する。
+    """前回蒸留以降の新規ターン群（話者ブロック）を `synopsis_auto` へ統合し全体を再蒸留する。
 
     呼び出しタイミング:
-        - 通常チャットフロー: 各ターン直前に best-effort で呼ぶ（force=False）。
-          前回蒸留からの新規ターンが history 上限の SYNOPSIS_AUTO_TRIGGER_RATIO に
+        - 通常チャットフロー: 各レスポンス直前に best-effort で呼ぶ（force=False）。
+          前回蒸留からの新規ターン（話者ブロック）が history 上限の SYNOPSIS_AUTO_TRIGGER_RATIO に
           ターン数・文字数のどちらも届いていなければ何もしない。
         - 手動 regenerate API: force=True で呼ぶ。閾値判定をスキップする。
 

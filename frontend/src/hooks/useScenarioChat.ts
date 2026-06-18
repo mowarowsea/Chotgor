@@ -124,9 +124,9 @@ interface UseScenarioChatResult {
     autoAdvance?: boolean,
     regenerateRequestId?: string,
   ) => Promise<void>;
-  /** GM 応答を 1 ターン丸ごと再生成する。 */
+  /** GM 応答を 1 レスポンス（= 同一 raw_response 内の話者ブロック群）丸ごと再生成する。 */
   handleScenarioRegenerate: () => Promise<void>;
-  /** GM 応答を 1 ターン分破棄してユーザ入力待ちに戻す。 */
+  /** GM 応答を 1 レスポンス分破棄してユーザ入力待ちに戻す。 */
   handleScenarioDiscard: () => Promise<void>;
   /** ユーザバブルの編集確定（以降を削除して再ストリーム）。 */
   handleScenarioEditUserTurn: (turnId: string, newContent: string) => Promise<void>;
@@ -163,9 +163,9 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     "model" | "synopsis" | null
   >(null);
   /**
-   * あらすじ進捗（前回蒸留以降のターン数・文字数と上限）。
+   * あらすじ進捗（前回蒸留以降のターン（=話者ブロック）数・文字数と上限）。
    * turn_complete とあらすじ作成（regenerate）時にバックエンドから受け取って更新する。
-   * 未取得（ターン未完了 / 非シナリオ）は null。バーの表示可否・色はこの比率から導出する。
+   * 未取得（レスポンス未完了 / 非シナリオ）は null。バーの表示可否・色はこの比率から導出する。
    */
   const [synopsisProgress, setSynopsisProgress] =
     useState<SynopsisProgress | null>(null);
@@ -173,7 +173,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   const [synopsisModalOpen, setSynopsisModalOpen] = useState(false);
   /**
    * 現在の「閾値超え区間」でモーダルを一度閉じた（キャンセルした）か。
-   * true の間は後続ターンで再び閾値を超えてもモーダルを自動表示しない（うざい再ポップ防止）。
+   * true の間は後続レスポンスで再び閾値を超えてもモーダルを自動表示しない（うざい再ポップ防止）。
    * 比率が 50% 以下に戻る or あらすじ作成が走ると false へリセットする。
    */
   const [synopsisDismissed, setSynopsisDismissed] = useState(false);
@@ -304,7 +304,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
 
   /** シナリオセッションの GM プリセットを変更する。
    *
-   * 左上ヘッダーのモーダル「シナリオ用モデル」タブから呼ばれる。次ターン以降の GM 応答に
+   * 左上ヘッダーのモーダル「シナリオ用モデル」タブから呼ばれる。次レスポンス以降の GM 応答に
    * 新プリセットが反映される。あらすじ蒸留モデルとは独立。
    */
   const handleScenarioPresetChange = useCallback(
@@ -391,7 +391,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             if (newPending.length > 0) newPending.shift();
             setScenarioPending([...newPending]);
           } else if (ev.type === "pc_start") {
-            // ensemble_pc 専用: GMターン後に PC（Chotgorキャラ）が応答開始する。
+            // ensemble_pc 専用: GM レスポンス後に PC（Chotgorキャラ）が応答開始する。
             // 既存 speaker_start と同じ pendingBubble 機構に乗せる（PC は character として描画）。
             newPending.push({
               id:
@@ -414,7 +414,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
           } else if (ev.type === "pc_reasoning") {
             // 想起記憶・WM スレッド・思考ブロックは現状 UI に出さない（将来 reasoning パネルへ）
           } else if (ev.type === "pc_done") {
-            // PC ターン完了の最終通知。本文の確定は後続の speaker_end が行うため、ここは何もしない
+            // PC レスポンス完了の最終通知。本文の確定は後続の speaker_end が行うため、ここは何もしない
           } else if (ev.type === "pc_error") {
             setError(`${ev.character}: ${ev.message}`);
           } else if (ev.type === "pc_angle_switched") {
@@ -426,10 +426,11 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
               ev.preset_name,
             );
           } else if (ev.type === "turn_complete") {
-            // ターン完了。残った未確定吹き出しは捨てる（speaker_end でほぼ消えるはず）。
+            // ユーザターン完了（GM/PC のレスポンス連鎖が終わり、ユーザ入力待ちへ戻った）。
+            // 残った未確定吹き出しは捨てる（speaker_end でほぼ消えるはず）。
             newPending.length = 0;
             setScenarioPending([]);
-            // 経過時間を記録する。同一ターン内の全GMバブル（複数発話者）に同じ値を共有する。
+            // 経過時間を記録する。同一レスポンス内の全GMバブル（複数話者ブロック）に同じ値を共有する。
             const elapsed = performance.now() - turnStartedAt;
             if (ev.turn_ids.length > 0) {
               setElapsedMap((prev) => {
@@ -439,7 +440,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
               });
             }
           } else if (ev.type === "synopsis_progress") {
-            // ターン完了直後の進捗。バーの表示/色とモーダル自動表示は
+            // ユーザターン完了直後の進捗。バーの表示/色とモーダル自動表示は
             // synopsisProgress を監視する useEffect 側で判定する。
             setSynopsisProgress({
               turns: ev.turns,
@@ -487,15 +488,15 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   );
 
   /**
-   * シナリオの GM 応答を 1 ターン丸ごと再生成する。
+   * シナリオの GM 応答を 1 レスポンス（=同一 raw_response 内の話者ブロック群）丸ごと再生成する。
    *
-   * ターン境界は `raw_response` を共有する連続バブル列で判定する:
-   *   - GM の 1 回の LLM 呼出 = 同一 raw_response の GM バブル列
-   *   - その直前に user 発話があれば通常ターン → user 起点で再ストリーム
-   *   - 直前に user 発話がなければ auto_advance ターン → GM 列の先頭から
+   * レスポンス境界は `raw_response` を共有する連続バブル列で判定する:
+   *   - GM の 1 回の LLM 呼出 = 同一 raw_response の GM バブル列（複数ターン=話者ブロックを含みうる）
+   *   - その直前に user 発話があれば通常レスポンス → user 起点で再ストリーム
+   *   - 直前に user 発話がなければ auto_advance レスポンス → GM 列の先頭から
    *     auto_advance=true で再ストリーム
    *
-   * 1on1 chat の retry と同じ思想で、「ターンの開始点」より後を捨てる方式。
+   * 1on1 chat の retry と同じ思想で、「レスポンスの開始点」より後を捨てる方式。
    */
   const handleScenarioRegenerate = useCallback(async () => {
     if (!activeScenarioSession) return;
@@ -516,7 +517,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
 
     // 直前に user 発話があるかを見て、通常 / auto_advance を判別。
     const prev = lastTurnStart > 0 ? scenarioTurns[lastTurnStart - 1] : null;
-    // 再生成対象の先頭 GM ターンの log_request_id を引き継ぐ（ログをまとめるため）
+    // 再生成対象の先頭 GM ターン（=先頭話者ブロック）の log_request_id を引き継ぐ（ログをまとめるため）
     const gmLogRequestId =
       scenarioTurns[lastTurnStart]?.speaker_type !== "user"
         ? (scenarioTurns[lastTurnStart]?.log_request_id ?? undefined)
@@ -524,12 +525,12 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     let pivot: ScenarioTurn;
     let resend: () => Promise<void>;
     if (prev && prev.speaker_type === "user") {
-      // 通常ターン: user を含めて削除し、同じ発話で再ストリーム
+      // 通常レスポンス: user を含めて削除し、同じ発話で再ストリーム
       pivot = prev;
       const content = prev.content;
       resend = () => handleScenarioSend(content, false, gmLogRequestId);
     } else if (scenarioTurns[lastTurnStart].speaker_type !== "user") {
-      // auto_advance ターン: GM 列先頭から削除して auto_advance で再ストリーム
+      // auto_advance レスポンス: GM 列先頭から削除して auto_advance で再ストリーム
       pivot = scenarioTurns[lastTurnStart];
       resend = () => handleScenarioSend("", true, gmLogRequestId);
     } else {
@@ -552,7 +553,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   }, [activeScenarioSession, scenarioTurns, handleScenarioSend, setError]);
 
   /**
-   * シナリオの GM 応答を 1 ターン分破棄してユーザ入力待ちに戻す。
+   * シナリオの GM 応答を 1 レスポンス分破棄してユーザ入力待ちに戻す。
    *
    * `handleScenarioRegenerate` と異なり、削除後に再ストリームしない。
    * 主な用途: ユーザが auto_advance（無入力 Enter）で GM 続きを促した結果を

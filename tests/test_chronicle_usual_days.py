@@ -58,7 +58,7 @@ def _setup_usual_world(
         title=f"{char_name}の日常",
         owner_character_id=char_id,
         pc_slots=[{"slot_id": "pc1", "name": char_name, "description": "主人公。"}],
-        usual_config={"max_turns_per_scene": 8},
+        usual_config={"max_responses_per_scene": 8},
     )
 
     session_id = str(uuid.uuid4())

@@ -232,15 +232,20 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                 ran_today += 1
                 sqlite.set_setting(count_key, str(ran_today))
                 # 無人運転なので結果を必ずログに残す（GM/PC のエラーは観測できるように）。
+                # responses = LLM 呼出回数（GM + PC）、turns = 保存された話者ブロック数。
                 if result.get("error"):
                     _log.warning(
-                        "うつつ: シーンがエラーで中断 owner=%s slot=%s turns=%d error=%s",
-                        owner_id, slot, result.get("fired_turns", 0), result["error"],
+                        "うつつ: シーンがエラーで中断 owner=%s slot=%s responses=%d turns=%d error=%s",
+                        owner_id, slot,
+                        result.get("fired_responses", 0), result.get("fired_turns", 0),
+                        result["error"],
                     )
                 else:
                     _log.info(
-                        "うつつ: シーン完了 owner=%s slot=%s turns=%d scene_closed=%s",
-                        owner_id, slot, result.get("fired_turns", 0), result.get("scene_closed"),
+                        "うつつ: シーン完了 owner=%s slot=%s responses=%d turns=%d scene_closed=%s",
+                        owner_id, slot,
+                        result.get("fired_responses", 0), result.get("fired_turns", 0),
+                        result.get("scene_closed"),
                     )
             except Exception:
                 _log.exception("うつつ: シーン実行エラー owner=%s slot=%s", owner_id, slot)
