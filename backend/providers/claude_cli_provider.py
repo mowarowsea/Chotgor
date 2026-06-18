@@ -24,7 +24,7 @@ from backend.lib.log_context import (
     current_message_id,
 )
 from backend.lib.stream_json import iter_stream_json_events
-from backend.providers.base import BaseLLMProvider
+from backend.providers.base import BaseLLMProvider, safe_loop_call
 
 
 def _find_claude() -> str:
@@ -505,8 +505,10 @@ class ClaudeCliProvider(BaseLLMProvider):
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
                 out_msg = result.stdout.decode("utf-8", errors="replace")
+                # generate_with_tools が `raw.startswith("[Error:")` で LLMApiError へ
+                # 変換するため、プレフィクスを必ず `[Error:` に揃える。
                 err = (
-                    f"[Claude Code error (code {result.returncode})\n"
+                    f"[Error: Claude Code exited with code {result.returncode}\n"
                     f"STDERR: {err_msg[:1000]}\nSTDOUT: {out_msg[:2000]}]"
                 )
                 self._log_error(err)
@@ -597,24 +599,24 @@ class ClaudeCliProvider(BaseLLMProvider):
                         if event.get("type") == "assistant":
                             for block in event.get("message", {}).get("content", []):
                                 if block.get("type") == "text" and block["text"]:
-                                    loop.call_soon_threadsafe(queue.put_nowait, block["text"])
+                                    safe_loop_call(loop, queue.put_nowait, block["text"])
                     except json.JSONDecodeError:
                         pass
 
                 proc.wait()
                 if proc.returncode != 0:
                     err = proc.stderr.read().decode("utf-8", errors="replace")
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
+                    safe_loop_call(
+                        loop, queue.put_nowait,
                         RuntimeError(f"Claude CLI exited with code {proc.returncode}: {err[:500]}")
                     )
             except FileNotFoundError:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
+                safe_loop_call(
+                    loop, queue.put_nowait,
                     RuntimeError("claude CLI が見つかりません。Claude Code がインストール・認証済みか確認してください")
                 )
             except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+                safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
             finally:
                 # ツール呼び出しを含む全NDJSONイベント行をログに記録する。
                 # テキストのみだとtool_useブロックが欠落してログUIにバッジが表示されない。
@@ -623,7 +625,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                 # contextvars は ctx.run でコピー済みのため、このスレッドからの記録でも
                 # feature / target / request_id が正しく付く。
                 self._record_usage_from_raw(raw_joined)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
+                safe_loop_call(loop, queue.put_nowait, None)
 
         ctx = contextvars.copy_context()
         threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
@@ -643,6 +645,9 @@ class ClaudeCliProvider(BaseLLMProvider):
         stream-json 形式の assistant イベントを解析し、
         content ブロックの type ("thinking" / "text") に応じて
         ("thinking", text) または ("text", text) タプルをyieldする。
+        プロセス起動失敗・非ゼロ終了などのエラーは ("error", msg) として yield する。
+        呼び出し側は ("error", ...) を出力に積まず、状況に応じて UI 表示・蒸留スキップ
+        などの分岐を行う。
 
         Yields:
             tuple[str, str]: (type, content) 形式。
@@ -704,12 +709,12 @@ class ClaudeCliProvider(BaseLLMProvider):
                             for block in event.get("message", {}).get("content", []):
                                 btype = block.get("type")
                                 if btype == "thinking" and block.get("thinking"):
-                                    loop.call_soon_threadsafe(
-                                        queue.put_nowait, ("thinking", block["thinking"])
+                                    safe_loop_call(
+                                        loop, queue.put_nowait, ("thinking", block["thinking"])
                                     )
                                 elif btype == "text" and block.get("text"):
-                                    loop.call_soon_threadsafe(
-                                        queue.put_nowait, ("text", block["text"])
+                                    safe_loop_call(
+                                        loop, queue.put_nowait, ("text", block["text"])
                                     )
                     except json.JSONDecodeError:
                         pass
@@ -717,17 +722,17 @@ class ClaudeCliProvider(BaseLLMProvider):
                 proc.wait()
                 if proc.returncode != 0:
                     err = proc.stderr.read().decode("utf-8", errors="replace")
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
+                    safe_loop_call(
+                        loop, queue.put_nowait,
                         RuntimeError(f"Claude CLI exited with code {proc.returncode}: {err[:500]}")
                     )
             except FileNotFoundError:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
+                safe_loop_call(
+                    loop, queue.put_nowait,
                     RuntimeError("claude CLI が見つかりません。Claude Code がインストール・認証済みか確認してください")
                 )
             except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+                safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
             finally:
                 # ツール呼び出しを含む全NDJSONイベント行をログに記録する。
                 # テキストのみだとtool_useブロックが欠落してログUIにバッジが表示されない。
@@ -736,7 +741,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                 # contextvars は ctx.run でコピー済みのため、このスレッドからの記録でも
                 # feature / target / request_id が正しく付く。
                 self._record_usage_from_raw(raw_joined)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
+                safe_loop_call(loop, queue.put_nowait, None)
 
         ctx = contextvars.copy_context()
         threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
@@ -746,7 +751,9 @@ class ClaudeCliProvider(BaseLLMProvider):
             if item is None:
                 break
             if isinstance(item, RuntimeError):
-                yield ("text", f"[Claude CLI error: {item}]")
+                # CLI 非ゼロ終了・claude 不在・想定外例外を「エラー」型 chunk として通知する。
+                # synopsis 蒸留や履歴蓄積に混入させず、呼び出し側が個別に表示・記録する。
+                yield ("error", f"[Claude CLI error: {item}]")
                 break
             yield item
 

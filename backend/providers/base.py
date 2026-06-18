@@ -22,11 +22,31 @@ class LLMApiError(Exception):
     """
 
 
+def safe_loop_call(loop, callback, *args) -> None:
+    """asyncio イベントループへスレッドセーフに callback をスケジュールする防御版。
+
+    本番では asyncio ループが close されるのはプロセス終了時のみだが、pytest では
+    各テストごとに event loop が作り直されて閉じられる。ストリーミングプロバイダの
+    子スレッドが run() の finally まで生き残ると、すでに close された loop へ
+    `call_soon_threadsafe` を呼んで RuntimeError を吐き、
+    PytestUnhandledThreadExceptionWarning が出る。テスト内容としては成功している
+    にも関わらず warning だけが残るのを避けるため、close 済み loop への呼び出しは
+    黙って捨てる。
+    """
+    try:
+        loop.call_soon_threadsafe(callback, *args)
+    except RuntimeError:
+        # loop が既に閉じている（テストteardownでメインが先に終了したケース）
+        return
+
+
 def _api_guard(package: str):
     """パッケージのインポートとAPIキーの確認を行うデコレータ。
 
-    - async generator → エラーをyieldしてreturn
-    - 通常のasync関数 → エラー文字列を返す
+    - async generator → エラーを ("error", msg) でyieldしてreturn
+      （typed stream 規約。type=="error" は呼び出し側が「出力に含めない／
+        synopsis などへ書き込まない」と扱える明示シグナル）
+    - 通常のasync関数 → エラー文字列を返す（"[Error: ...]" 形式）
 
     クラス属性 `_API_SETTINGS_KEY` からAPIキーの設定名を動的に取得する。
     これによりサブクラスがクラス属性を上書きするだけで正しいキー名を使える。
@@ -39,14 +59,17 @@ def _api_guard(package: str):
                     __import__(package)
                 except ImportError:
                     yield (
-                        "text",
+                        "error",
                         f"[Error: {package} パッケージがインストールされていません。"
                         f"pip install {package} を実行してください]",
                     )
                     return
                 if hasattr(self, "api_key") and not self.api_key:
                     key = getattr(self, "_API_SETTINGS_KEY", "api_key")
-                    yield ("text", f"[Error: {key} が設定されていません。Settings ページで設定してください]")
+                    yield (
+                        "error",
+                        f"[Error: {key} が設定されていません。Settings ページで設定してください]",
+                    )
                     return
                 async for item in fn(self, *args, **kwargs):
                     yield item
@@ -184,14 +207,20 @@ class BaseLLMProvider:
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """型付きチャンクのストリーミング生成。
 
-        思考ブロック（ThinkingBlock）と通常テキストを区別してyieldする。
+        思考ブロック（ThinkingBlock）・通常テキスト・エラーを区別してyieldする。
         デフォルト実装はgenerate_stream()を ("text", chunk) 形式でラップする。
-        サブクラスでオーバーライドすることで思考ブロックも個別にyieldできる。
+        サブクラスでオーバーライドすることで思考ブロック・エラーも個別にyieldできる。
 
         Yields:
             tuple[str, str]: (type, content) 形式。
                 type == "text"    : 通常の応答テキスト。
                 type == "thinking": 思考ブロック（ThinkingBlock）のテキスト。
+                type == "error"   : プロバイダ側で発生したエラー（APIキー未設定・
+                                    パッケージ未インストール・SDK例外・サーバ側エラー応答等）。
+                                    呼び出し側はこの type を受け取ったら、それを蓄積対象
+                                    から外して状況に応じて UI 表示／永続化スキップ等の
+                                    分岐を行う（synopsis 蒸留など「失敗時に上書きしては
+                                    いけない」処理は即時中断する）。
         """
         async for chunk in self.generate_stream(system_prompt, messages):
             yield ("text", chunk)

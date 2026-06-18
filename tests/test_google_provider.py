@@ -314,7 +314,10 @@ class TestPackageUnavailable:
 
     @pytest.mark.asyncio
     async def test_generate_stream_typed_yields_error_when_unavailable(self):
-        """google-genai 未インストール時に generate_stream_typed がエラータプルをyieldすること。"""
+        """google-genai 未インストール時に generate_stream_typed が ("error", ...) をyieldすること。
+
+        "error" 型は呼び出し側が「出力に積まない／上書きしない」分岐を行うシグナル。
+        """
         provider = GoogleProvider(api_key="dummy")
 
         with patch("backend.providers.google_provider._GOOGLE_GENAI_AVAILABLE", False):
@@ -324,7 +327,7 @@ class TestPackageUnavailable:
 
         assert len(result) == 1
         t, msg = result[0]
-        assert t == "text"
+        assert t == "error"
         assert "google-genai" in msg
 
 
@@ -556,10 +559,12 @@ class TestBlockedResponseHandling:
 
     @pytest.mark.asyncio
     async def test_stream_typed_yields_error_on_blocked_missing_candidates(self):
-        """generate_stream_typed が missing_candidates ケースでブロック理由をテキストとして yield すること。
+        """generate_stream_typed が missing_candidates ケースでブロック理由を ("error", ...) で yield すること。
 
         実ログ（gemma-4-31b-it の PROHIBITED_CONTENT）と同じ構造を再現する:
         chunk.candidates が空かつ prompt_feedback.block_reason がセットされている状態。
+        safety filter ブロックは "text" ではなく "error" 型で通知される（呼び出し側が
+        蒸留対象から外す等の判定を行うため）。
         """
         chunk = _make_blocked_chunk(block_reason="PROHIBITED_CONTENT")
         chunk.text = None  # chunk.text フォールバックも発火しないこと
@@ -574,15 +579,15 @@ class TestBlockedResponseHandling:
             async for item in provider.generate_stream_typed("sys", [{"role": "user", "content": "hi"}]):
                 items.append(item)
 
-        # ("text", "[Google API blocked: PROHIBITED_CONTENT]") が含まれること
+        # ("error", "[Google API blocked: PROHIBITED_CONTENT]") が含まれること
         assert any(
-            t == "text" and "PROHIBITED_CONTENT" in msg
+            t == "error" and "PROHIBITED_CONTENT" in msg
             for t, msg in items
         ), f"ブロック理由のテキストが yield されていない: {items}"
 
     @pytest.mark.asyncio
     async def test_stream_typed_yields_error_on_blocked_missing_content(self):
-        """generate_stream_typed が candidate.content=None ケースでもブロック理由を yield すること。
+        """generate_stream_typed が candidate.content=None ケースでもブロック理由を ("error", ...) で yield すること。
 
         candidates は存在するが finish_reason=SAFETY 等で content が None になるパターン。
         """
@@ -600,6 +605,6 @@ class TestBlockedResponseHandling:
                 items.append(item)
 
         assert any(
-            t == "text" and "SAFETY" in msg
+            t == "error" and "SAFETY" in msg
             for t, msg in items
         ), f"ブロック理由のテキストが yield されていない: {items}"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from backend.character_actions.executor import ANTHROPIC_TOOLS, ToolCall, ToolTurnResult
-from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn
+from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn, safe_loop_call
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
@@ -116,9 +116,11 @@ class AnthropicProvider(BaseLLMProvider):
 
         generate_stream_typed() を呼び出し、思考ブロック ("thinking", ...) を除いた
         通常テキスト ("text", ...) のみ文字列としてyieldする。
+        エラー ("error", ...) は表示互換性のため文字列としてそのまま流す
+        （旧呼び出し側はエラーをテキスト扱いしていたため）。
         """
         async for chunk_type, text in self.generate_stream_typed(system_prompt, messages):
-            if chunk_type == "text":
+            if chunk_type in ("text", "error"):
                 yield text
 
     @_api_guard("anthropic")
@@ -128,6 +130,8 @@ class AnthropicProvider(BaseLLMProvider):
         thinking_level が "default" 以外の場合、ThinkingBlockを ("thinking", text) として
         通常テキストを ("text", text) としてyieldする。
         thinking_level == "default" のときは ("text", text) のみ。
+        SDK 例外などのエラーは ("error", msg) として yield する。呼び出し側は
+        ("error", ...) を出力に積まず、UI 表示・蒸留スキップなどの分岐を行う。
 
         Yields:
             tuple[str, str]: (type, content) 形式。
@@ -170,18 +174,18 @@ class AnthropicProvider(BaseLLMProvider):
                                 text = getattr(delta, "thinking", "")
                                 if text:
                                     accumulated.append(text)
-                                    loop.call_soon_threadsafe(queue.put_nowait, ("thinking", text))
+                                    safe_loop_call(loop, queue.put_nowait, ("thinking", text))
                             elif dtype == "text_delta":
                                 text = getattr(delta, "text", "")
                                 if text:
                                     accumulated.append(text)
-                                    loop.call_soon_threadsafe(queue.put_nowait, ("text", text))
+                                    safe_loop_call(loop, queue.put_nowait, ("text", text))
             except Exception as e:
                 accumulated.append(f"\n[Anthropic API error: {e}]")
-                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+                safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
             finally:
                 self._log_response("".join(accumulated))
-                loop.call_soon_threadsafe(queue.put_nowait, None)
+                safe_loop_call(loop, queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -190,7 +194,8 @@ class AnthropicProvider(BaseLLMProvider):
             if item is None:
                 break
             if isinstance(item, RuntimeError):
-                yield ("text", f"[Anthropic API error: {item}]")
+                # SDK 例外は「エラー」型 chunk として通知。呼び出し側は積まずに分岐する。
+                yield ("error", f"[Anthropic API error: {item}]")
                 break
             yield item
 

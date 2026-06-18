@@ -97,9 +97,14 @@ class EngineResult:
 
     raw_response はターン全体の生 LLM 出力で、`scenario_turns.raw_response` に
     保存される（同一ターン内の全発話レコードに同じ値が格納される想定）。
+    provider_error はプロバイダ由来のエラーメッセージ（APIキー未設定・SDK 例外・
+    safety filter ブロック等）。エラー発生時は raw_response が部分・空の可能性が
+    あるため、呼び出し側は provider_error の有無で SQLite 保存・スライディングウィ
+    ンドウへの混入をスキップする判断を行う。
     """
 
     raw_response: str
+    provider_error: str | None = None
 
 
 class SceneEngine(Protocol):
@@ -324,15 +329,28 @@ class EnsembleEngine:
 
         # generate_stream_typed は (type, content) を yield する。
         # text 以外（thinking 等）は無視する（GM ロールには思考可視化を出さない方針）。
+        # error はプロバイダ由来エラーで、ストリームを即時中断し EngineResult に乗せて
+        # 上位（run_scenario_turn）へ伝える。途中まで届いた raw_chunks も EngineResult
+        # 側で破棄される（部分応答を SQLite やあらすじへ混入させないため）。
+        provider_error: str | None = None
         async for chunk_type, content in provider.generate_stream_typed(
             system_prompt, messages
         ):
+            if chunk_type == "error":
+                provider_error = content or "[provider error]"
+                break
             if chunk_type != "text" or not content:
                 continue
             raw_chunks.append(content)
             deltas = parser.feed(content)
             async for item in _flush_deltas(deltas):
                 yield item
+
+        if provider_error is not None:
+            # parser flush / TurnRecord 発行はスキップ。部分テキストを TurnRecord と
+            # して保存させない（履歴に欠片を残さない）。EngineResult のみ yield する。
+            yield EngineResult(raw_response="", provider_error=provider_error)
+            return
 
         # ストリーム終端: parser flush
         deltas = parser.flush()

@@ -276,3 +276,50 @@ class TestUpdateAutoSynopsis:
             provider_factory=_factory_for(provider),
         )
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_provider_error_chunk_returns_none(self):
+        """プロバイダ由来エラー chunk("error", ...) を受けたら None を返し既存を破壊しないこと。
+
+        APIキー未設定・SDK 例外・safety filter ブロック等で typed stream に
+        ("error", ...) が流れてきたとき、それまでの text chunk が混じっていても
+        蒸留結果として採用してはいけない（混入した部分的応答であらすじを上書きすると
+        次回再試行できなくなるため）。
+        """
+        provider = FakeProvider(
+            chunks=[
+                ("text", "途中まで蒸留した文章"),
+                ("error", "[Anthropic API error: 429 rate limit]"),
+            ]
+        )
+        result = await update_auto_synopsis(
+            scenario=FakeScenario(),
+            new_turns=[
+                FakeTurn(speaker_type="user", speaker_name="P", content="A")
+            ],
+            existing_auto="守りたい既存",
+            settings={},
+            preset_loader=_loader_for(FakePreset()),
+            synopsis_preset_id="preset-001",
+            provider_factory=_factory_for(provider),
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_provider_error_chunk_first_returns_none(self):
+        """ストリーム冒頭で error chunk が来た場合も None を返すこと（APIキー未設定など）。"""
+        provider = FakeProvider(
+            chunks=[("error", "[Error: anthropic_api_key が設定されていません]")]
+        )
+        result = await update_auto_synopsis(
+            scenario=FakeScenario(),
+            new_turns=[
+                FakeTurn(speaker_type="user", speaker_name="P", content="A")
+            ],
+            existing_auto="守りたい既存",
+            settings={},
+            preset_loader=_loader_for(FakePreset()),
+            synopsis_preset_id="preset-001",
+            provider_factory=_factory_for(provider),
+        )
+        assert result is None

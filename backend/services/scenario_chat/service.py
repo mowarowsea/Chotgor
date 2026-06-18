@@ -921,6 +921,7 @@ async def _run_gm_turn(
     """
     raw_response = ""
     turn_records_pending: list[TurnRecord] = []
+    provider_error: str | None = None
 
     async for item in engine.generate_stream(
         scenario=scenario,
@@ -956,6 +957,19 @@ async def _run_gm_turn(
             turn_records_pending.append(item)
         elif isinstance(item, EngineResult):
             raw_response = item.raw_response
+            provider_error = item.provider_error
+
+    if provider_error is not None:
+        # プロバイダ由来エラー: scenario_turns への保存とあらすじ蒸留対象化を回避する。
+        # turn_records_pending は engine 側で flush せず空のまま渡されるので、ここでは
+        # 保存をスキップし、UI に通知だけ流して終わる。次ターンの user 発話時に
+        # 同一の last_turn_index を維持したまま再試行できる。
+        logger.warning(
+            "GM プロバイダエラーで scenario turn 保存をスキップ session=%s 内容=%s",
+            session_id, provider_error[:300],
+        )
+        yield (("gm_error", {"message": provider_error}), None)
+        return
 
     _, turn_anticipation = extract_anticipation(raw_response)
     # GM の予想はここで採用が確定する（最終ターンの anticipation カラムへ保存され、

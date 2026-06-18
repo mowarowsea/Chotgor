@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from backend.character_actions.executor import OPENAI_TOOLS, ToolCall, ToolTurnResult
-from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn
+from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn, safe_loop_call
 
 # thinking_level → reasoning_effort 変換テーブル
 _OPENAI_REASONING = {
@@ -109,11 +109,28 @@ class OpenAIProvider(BaseLLMProvider):
             self._log_error(err)
             return err
 
-    @_api_guard("openai")
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
         """OpenAI APIからテキストチャンクをストリーミングで取得する。
 
-        XAIProvider はこのメソッドを継承して使用する。
+        generate_stream_typed() を呼び出し、文字列としてのみ返す互換ラッパー。
+        ("text", ...) と ("error", ...) の双方を文字列として流す
+        （非 typed 経路の旧呼び出し側がエラーをテキスト扱いしていた挙動を維持）。
+        XAIProvider / OpenRouterProvider はこのメソッドを継承して使用する。
+        """
+        async for chunk_type, text in self.generate_stream_typed(system_prompt, messages):
+            if chunk_type in ("text", "error"):
+                yield text
+
+    @_api_guard("openai")
+    async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
+        """OpenAI APIから型付きチャンクをストリーミングで取得する。
+
+        通常テキストは ("text", text)、SDK 例外などのエラーは ("error", msg) として
+        yield する。呼び出し側は ("error", ...) を出力に積まず、UI 表示・蒸留スキップ
+        などの分岐を行う。XAIProvider / OpenRouterProvider はこのメソッドを継承して使用する。
+
+        Yields:
+            tuple[str, str]: (type, content) 形式。
         """
         import threading
 
@@ -142,13 +159,13 @@ class OpenAIProvider(BaseLLMProvider):
                     content = chunk.choices[0].delta.content if chunk.choices else None
                     if content:
                         accumulated.append(content)
-                        loop.call_soon_threadsafe(queue.put_nowait, content)
+                        safe_loop_call(loop, queue.put_nowait, ("text", content))
             except Exception as e:
                 accumulated.append(f"\n[OpenAI API error: {e}]")
-                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+                safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
             finally:
                 self._log_response("".join(accumulated))
-                loop.call_soon_threadsafe(queue.put_nowait, None)
+                safe_loop_call(loop, queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -157,7 +174,8 @@ class OpenAIProvider(BaseLLMProvider):
             if item is None:
                 break
             if isinstance(item, RuntimeError):
-                yield f"[OpenAI API error: {item}]"
+                # SDK 例外を「エラー」型 chunk として通知。蒸留・履歴蓄積に混入させない。
+                yield ("error", f"[OpenAI API error: {item}]")
                 break
             yield item
 

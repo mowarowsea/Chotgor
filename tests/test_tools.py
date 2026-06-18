@@ -495,7 +495,10 @@ class TestApiGuardDecorator:
         assert result == "response_ok"
 
     def test_async_generator_yields_error_on_missing_package(self):
-        """async generator にデコレートされた generate_stream() はエラーを yield してリターンする。"""
+        """async generator にデコレートされた generate_stream() は ("error", ...) を yield してリターンする。
+
+        "error" 型は呼び出し側が「出力に積まない／上書きしない」分岐を行うシグナル。
+        """
 
         class FakeProvider(BaseLLMProvider):
             """テスト用フェイクプロバイダー（ストリーミング・パッケージ不在）。"""
@@ -516,11 +519,11 @@ class TestApiGuardDecorator:
         chunks = asyncio.run(run())
         assert len(chunks) == 1
         chunk_type, chunk_msg = chunks[0]
-        assert chunk_type == "text"
+        assert chunk_type == "error"
         assert "[Error:" in chunk_msg
 
     def test_async_generator_yields_error_on_empty_api_key(self):
-        """async generator にデコレートされた generate_stream() は API key エラーを yield してリターンする。"""
+        """async generator にデコレートされた generate_stream() は API key エラーを ("error", ...) で yield してリターンする。"""
 
         class FakeProvider(BaseLLMProvider):
             """テスト用フェイクプロバイダー（ストリーミング・APIキー空）。"""
@@ -542,7 +545,7 @@ class TestApiGuardDecorator:
         chunks = asyncio.run(run())
         assert len(chunks) == 1
         chunk_type, chunk_msg = chunks[0]
-        assert chunk_type == "text"
+        assert chunk_type == "error"
         assert "my_key" in chunk_msg
 
     def test_xai_inherits_correct_settings_key(self):

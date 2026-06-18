@@ -145,9 +145,10 @@ async def test_anthropic_generate_stream_typed_text_only_when_no_thinking():
 
 @pytest.mark.asyncio
 async def test_anthropic_generate_stream_typed_missing_api_key():
-    """APIキー未設定のとき ("text", エラーメッセージ) をyieldして終了する。
+    """APIキー未設定のとき ("error", エラーメッセージ) をyieldして終了する。
 
     api_key チェックは import の前に行われるため、anthropic モジュールのモックは不要。
+    "error" 型は呼び出し側が「出力に積まず、上書きを避ける」分岐を行うシグナル。
     """
 
     provider = AnthropicProvider(api_key="", model="claude-sonnet-4-6")
@@ -162,13 +163,16 @@ async def test_anthropic_generate_stream_typed_missing_api_key():
 
     assert len(chunks) == 1
     t, msg = chunks[0]
-    assert t == "text"
+    assert t == "error"
     assert "anthropic_api_key" in msg
 
 
 @pytest.mark.asyncio
 async def test_anthropic_generate_stream_typed_sdk_error():
-    """SDKがRuntimeErrorを送出した場合、("text", エラーメッセージ) をyieldして終了する。"""
+    """SDKがRuntimeErrorを送出した場合、("error", エラーメッセージ) をyieldして終了する。
+
+    呼び出し側（synopsis 蒸留など）はこの "error" 型で「出力を上書きしない」分岐を行う。
+    """
 
     mock_stream_ctx = MagicMock()
     mock_stream_ctx.__enter__ = MagicMock(side_effect=RuntimeError("connection refused"))
@@ -186,7 +190,7 @@ async def test_anthropic_generate_stream_typed_sdk_error():
 
     assert len(chunks) == 1
     t, msg = chunks[0]
-    assert t == "text"
+    assert t == "error"
     assert "Anthropic API error" in msg
 
 
@@ -305,7 +309,10 @@ async def test_cli_generate_stream_typed_empty_thinking_skipped():
 
 @pytest.mark.asyncio
 async def test_cli_generate_stream_typed_cli_not_found():
-    """CLI が存在しない場合は ("text", エラーメッセージ) をyieldして終了する。"""
+    """CLI が存在しない場合は ("error", エラーメッセージ) をyieldして終了する。
+
+    "error" 型は呼び出し側が「出力を上書きしない／積まない」と扱うシグナル。
+    """
 
     provider = ClaudeCliProvider(model="", character_name="Dana")
 
@@ -322,13 +329,13 @@ async def test_cli_generate_stream_typed_cli_not_found():
 
     assert len(chunks) == 1
     t, msg = chunks[0]
-    assert t == "text"
+    assert t == "error"
     assert "Claude CLI error" in msg
 
 
 @pytest.mark.asyncio
 async def test_cli_generate_stream_typed_nonzero_exit():
-    """CLI が非ゼロ終了コードで終了した場合、エラーチャンクをyieldする。"""
+    """CLI が非ゼロ終了コードで終了した場合、("error", ...) エラーチャンクをyieldする。"""
 
     mock_proc = MagicMock()
     mock_proc.stdin = MagicMock()
@@ -351,7 +358,7 @@ async def test_cli_generate_stream_typed_nonzero_exit():
 
     assert len(chunks) == 1
     t, msg = chunks[0]
-    assert t == "text"
+    assert t == "error"
     assert "Claude CLI error" in msg
 
 
@@ -627,7 +634,10 @@ async def test_google_generate_stream_typed_include_thoughts_set_when_thinking()
 
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_missing_api_key():
-    """APIキー未設定のとき ("text", エラーメッセージ) をyieldして終了する。"""
+    """APIキー未設定のとき ("error", エラーメッセージ) をyieldして終了する。
+
+    "error" 型は呼び出し側が「出力に積まない／上書きしない」分岐を行うシグナル。
+    """
 
     provider = GoogleProvider(api_key="", model="gemini-2.0-flash")
 
@@ -640,13 +650,13 @@ async def test_google_generate_stream_typed_missing_api_key():
 
     assert len(result) == 1
     t, msg = result[0]
-    assert t == "text"
+    assert t == "error"
     assert "google_api_key" in msg
 
 
 @pytest.mark.asyncio
 async def test_google_generate_stream_typed_sdk_error():
-    """SDK が RuntimeError を送出した場合、("text", エラーメッセージ) をyieldして終了する。"""
+    """SDK が RuntimeError を送出した場合、("error", エラーメッセージ) をyieldして終了する。"""
 
     mock_client = MagicMock()
     mock_client.models.generate_content_stream.side_effect = RuntimeError("quota exceeded")
@@ -660,5 +670,5 @@ async def test_google_generate_stream_typed_sdk_error():
 
     assert len(result) == 1
     t, msg = result[0]
-    assert t == "text"
+    assert t == "error"
     assert "Google API error" in msg

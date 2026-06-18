@@ -593,3 +593,74 @@ class TestGenerateDicePool:
     def test_DEFAULT_DICE_POOL_SPEC_は_d6_10(self):
         """既定値が変更されてないこと（仕様凍結のスナップショット）。"""
         assert DEFAULT_DICE_POOL_SPEC == {"d6": 10}
+
+
+# ─── プロバイダエラー伝搬 ──────────────────────────────────────────────────
+
+
+class TestProviderErrorPropagation:
+    """generate_stream_typed が ("error", ...) を yield したときの engine 挙動を検証する。
+
+    プロバイダ層は API キー未設定・SDK 例外・safety filter ブロック等の不調を
+    "error" 型 chunk で通知する。engine はそれを EngineResult.provider_error に乗せて
+    上位（run_scenario_turn）へ伝え、TurnRecord は発行しない（部分応答を履歴に
+    残さない）。これにより同一ターンの再試行や蒸留スキップが可能になる。
+    """
+
+    @pytest.mark.asyncio
+    async def test_error_chunk_at_start_yields_only_engine_result_with_error(self):
+        """冒頭で error chunk が来た場合、TurnRecord は発行されず provider_error が乗ること。"""
+        chunks = [("error", "[Anthropic API error: 401 invalid key]")]
+        engine, _ = _make_engine(chunks)
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=[],
+                user_message="やぁ",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        results = [i for i in items if isinstance(i, EngineResult)]
+
+        # 部分応答が無いので TurnRecord は出ない。EngineResult のみ。
+        assert records == []
+        assert len(results) == 1
+        assert results[0].provider_error is not None
+        assert "Anthropic API error" in results[0].provider_error
+        assert results[0].raw_response == ""
+
+    @pytest.mark.asyncio
+    async def test_error_chunk_after_partial_text_discards_partial(self):
+        """途中まで text が来た後に error が来た場合、部分テキストは TurnRecord 化されないこと。
+
+        engine 側で parser.flush() / TurnRecord 発行をスキップする設計のため、
+        生ログから押し出されたターンが「途切れた発話」として履歴に残ることを防ぐ。
+        """
+        chunks = [
+            ("text", "@Narrator: 雨が降"),
+            ("error", "[Google API blocked: PROHIBITED_CONTENT]"),
+        ]
+        engine, _ = _make_engine(chunks)
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        results = [i for i in items if isinstance(i, EngineResult)]
+
+        # 部分テキストは TurnRecord に昇格しない（parser flush をスキップしているため）
+        assert records == []
+        assert len(results) == 1
+        assert results[0].provider_error is not None
+        assert "PROHIBITED_CONTENT" in results[0].provider_error

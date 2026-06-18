@@ -170,6 +170,19 @@ async def update_auto_synopsis(
         async for chunk_type, content in provider.generate_stream_typed(
             system_prompt, messages
         ):
+            if chunk_type == "error":
+                # プロバイダ側で API キー未設定・SDK 例外・safety filter ブロック等が
+                # 発生した。ここまでの chunks は破棄して即失敗とする。
+                # 失敗時に synopsis_auto を上書きしないことで、次回呼び出し時に
+                # 同じ未蒸留ターン群が残り、再試行される（呼び出し元 maybe_update_auto_synopsis
+                # が None を受けて last_turn_index を更新しないため）。
+                logger.warning(
+                    "synopsis 蒸留 skip 理由=provider error provider=%s model=%s 内容=%s",
+                    getattr(preset, "provider", None),
+                    getattr(preset, "model_id", None),
+                    (content or "")[:300],
+                )
+                return None
             if chunk_type != "text" or not content:
                 continue
             chunks.append(content)

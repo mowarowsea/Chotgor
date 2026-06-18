@@ -238,8 +238,17 @@ class OllamaProvider(BaseLLMProvider):
 
         Qwen3系の <think>...</think> がない通常モデル（qwen2.5など）では
         thinking 側が空文字となり、("text", ...) のみが流れる。
+
+        _call_and_log_raw が "[Ollama接続エラー:..." / "[Ollama エラー:..." を返した
+        場合は ("error", raw) として yield する。呼び出し側は ("error", ...) を出力に
+        積まず、UI 表示・蒸留スキップなどの分岐を行う。
         """
         raw = await self._call_and_log_raw(system_prompt, messages)
+        # エラー文字列は _call_and_log_raw の except 分岐のみで生成される（必ず "[Ollama" 始まり）。
+        # 通常応答が偶然これに当たることはない想定。
+        if raw.startswith("[Ollama接続エラー:") or raw.startswith("[Ollama エラー:"):
+            yield ("error", raw)
+            return
         thinking, clean = _split_think(raw)
         if thinking:
             yield ("thinking", thinking)

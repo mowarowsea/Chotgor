@@ -14,7 +14,7 @@ import json
 import re
 
 from backend.character_actions.executor import OPENAI_TOOLS, ToolCall, ToolTurnResult
-from backend.providers.base import BaseLLMProvider
+from backend.providers.base import BaseLLMProvider, safe_loop_call
 
 try:
     from google import genai  # type: ignore[import-untyped]
@@ -337,10 +337,11 @@ class GoogleProvider(BaseLLMProvider):
         """Google Gemini APIからテキストチャンクをストリーミングで取得する。
 
         generate_stream_typed() を呼び出し、思考ブロック ("thinking", ...) を除いた
-        通常テキスト ("text", ...) のみ文字列としてyieldする。
+        通常テキスト ("text", ...) とエラー ("error", ...) を文字列として yield する
+        （非 typed 経路の旧呼び出し側がエラーをテキスト扱いしていた挙動を維持）。
         """
         async for chunk_type, text in self.generate_stream_typed(system_prompt, messages):
-            if chunk_type == "text":
+            if chunk_type in ("text", "error"):
                 yield text
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
@@ -349,16 +350,19 @@ class GoogleProvider(BaseLLMProvider):
         thinking_level != "default" のとき include_thoughts=True を設定し、
         各チャンクの parts を走査して part.thought で思考ブロックを判別する。
         thinking_level == "default" のときは ("text", ...) のみyieldする。
+        パッケージ未インストール・APIキー未設定・SDK 例外・safety filter ブロックは
+        ("error", msg) として yield する。呼び出し側は ("error", ...) を出力に積まず、
+        UI 表示・蒸留スキップなどの分岐を行う。
 
         Yields:
             tuple[str, str]: (type, content) 形式。
         """
         if not _GOOGLE_GENAI_AVAILABLE:
-            yield ("text", "[Error: google-genai パッケージがインストールされていません]")
+            yield ("error", "[Error: google-genai パッケージがインストールされていません]")
             return
 
         if not self.api_key:
-            yield ("text", "[Error: google_api_key が設定されていません。Settings ページで設定してください]")
+            yield ("error", "[Error: google_api_key が設定されていません。Settings ページで設定してください]")
             return
 
         import threading
@@ -400,10 +404,11 @@ class GoogleProvider(BaseLLMProvider):
                         if block:
                             err_msg = f"[Google API blocked: {block}]"
                             accumulated.append(err_msg)
-                            loop.call_soon_threadsafe(queue.put_nowait, ("text", err_msg))
+                            # safety filter ブロックは応答失敗扱い（蒸留に積まない）。
+                            safe_loop_call(loop, queue.put_nowait, ("error", err_msg))
                         elif getattr(chunk, "text", None):
                             accumulated.append(chunk.text)
-                            loop.call_soon_threadsafe(queue.put_nowait, ("text", chunk.text))
+                            safe_loop_call(loop, queue.put_nowait, ("text", chunk.text))
                         continue
 
                     try:
@@ -414,10 +419,11 @@ class GoogleProvider(BaseLLMProvider):
                             if block:
                                 err_msg = f"[Google API blocked: {block}]"
                                 accumulated.append(err_msg)
-                                loop.call_soon_threadsafe(queue.put_nowait, ("text", err_msg))
+                                # safety filter ブロックは応答失敗扱い（蒸留に積まない）。
+                                safe_loop_call(loop, queue.put_nowait, ("error", err_msg))
                             elif getattr(chunk, "text", None):
                                 accumulated.append(chunk.text)
-                                loop.call_soon_threadsafe(queue.put_nowait, ("text", chunk.text))
+                                safe_loop_call(loop, queue.put_nowait, ("text", chunk.text))
                             continue
                         parts = content.parts or []
                     except (AttributeError, IndexError):
@@ -425,7 +431,7 @@ class GoogleProvider(BaseLLMProvider):
                         accumulated.append(_chunk_diagnostic(chunk, "parts_fallback"))
                         if chunk.text:
                             accumulated.append(chunk.text)
-                            loop.call_soon_threadsafe(queue.put_nowait, ("text", chunk.text))
+                            safe_loop_call(loop, queue.put_nowait, ("text", chunk.text))
                         continue
 
                     for part in parts:
@@ -435,19 +441,19 @@ class GoogleProvider(BaseLLMProvider):
                         # thought=True が思考ブロック（Gemma4/Gemini共通）
                         # thought=null/None/False はいずれも通常テキスト
                         if getattr(part, "thought", None) is True:
-                            loop.call_soon_threadsafe(queue.put_nowait, ("thinking", part.text))
+                            safe_loop_call(loop, queue.put_nowait, ("thinking", part.text))
                         else:
-                            loop.call_soon_threadsafe(queue.put_nowait, ("text", part.text))
+                            safe_loop_call(loop, queue.put_nowait, ("text", part.text))
 
             except Exception as e:
                 # エラー文字列を accumulated に追加しておくことで、
                 # finally の _log_response でエラー内容も Response ファイルに記録される
                 accumulated.append(f"\n[Google API error: {e}]")
-                loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+                safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
             finally:
                 # 累積テキストを asyncio 側に渡す（None の前にセットされることが保証される）
                 result_holder.append("".join(accumulated))
-                loop.call_soon_threadsafe(queue.put_nowait, None)
+                safe_loop_call(loop, queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -468,7 +474,8 @@ class GoogleProvider(BaseLLMProvider):
         self._record_usage_from_metadata(usage_holder[0] if usage_holder else None)
 
         if error_item is not None:
-            yield ("text", f"[Google API error: {error_item}]")
+            # SDK 例外を「エラー」型 chunk として通知。呼び出し側は積まずに分岐する。
+            yield ("error", f"[Google API error: {error_item}]")
 
     async def _tool_turn(self, system_prompt: str, messages: list) -> ToolTurnResult:
         """Google Gemini APIを1ターン呼び出し、テキストと正規化ツール呼び出しを返す。
