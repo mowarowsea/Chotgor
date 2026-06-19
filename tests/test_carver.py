@@ -1,8 +1,9 @@
 """backend.character_actions.carver モジュールのユニットテスト。
 
-[CARVE_NARRATIVE:mode|content] マーカーの抽出・除去・inner_narrative への彫り込みを検証する。
-Carver クラスのタグ方式（carve_narrative_from_text）と
-ツール呼び出し方式（carve_narrative）の両方を網羅する。
+[CARVE_NARRATIVE:mode|content] マーカーの抽出を検証する extract_carve_narrative_tags() と、
+実書き込みを行う Carver.carve_narrative() の両方を網羅する。
+タグ方式の実行口（タグ抽出 → 書き込み）は ToolExecutor.apply_carve_narrative_tags() に
+統一されているため、本ファイルではそちらの統合動作も併せて検証する。
 """
 
 import pytest
@@ -16,8 +17,26 @@ from backend.character_actions.carver import (
     CARVE_NARRATIVE_TOOLS_HINT,
     build_carve_narrative_tools_hint,
     build_carve_narrative_tag_guide,
+    extract_carve_narrative_tags,
     _RECOMMENDED_NARRATIVE_LEN,
 )
+from backend.character_actions.executor import ToolExecutor
+
+
+def _make_executor(sqlite_store, char_id):
+    """テスト用に sqlite_store を持つ ToolExecutor を生成するヘルパ。
+
+    memory_manager は MagicMock を使い、Carver が触る sqlite 属性だけ実物を渡す
+    （carve_narrative ツール経由テスト用）。
+    """
+    mm = MagicMock()
+    mm.sqlite = sqlite_store
+    return ToolExecutor(
+        character_id=char_id,
+        session_id="sess-1",
+        memory_manager=mm,
+        working_memory_manager=None,
+    )
 
 
 # ─── フィクスチャ ──────────────────────────────────────────────────────────────
@@ -37,17 +56,68 @@ def char_id(sqlite_store):
     return cid
 
 
-# ─── carve_narrative_from_text (タグ方式) — 基本動作 ─────────────────────────
+# ─── extract_carve_narrative_tags: タグ抽出ヘルパ ───────────────────────────
 
 
-class TestCarveNarrativeFromText:
-    """Carver.carve_narrative_from_text() のタグ抽出・DB更新を検証する。"""
+class TestExtractCarveNarrativeTags:
+    """extract_carve_narrative_tags() のタグ抽出を検証する。"""
+
+    def test_extract_append_mode(self):
+        """[CARVE_NARRATIVE:append|content] が (append, content) として抽出されること。"""
+        text = "本文です。[CARVE_NARRATIVE:append|わたしは知的好奇心を大切にしたい。]"
+        clean, narratives = extract_carve_narrative_tags(text)
+        assert len(narratives) == 1
+        assert narratives[0] == ("append", "わたしは知的好奇心を大切にしたい。")
+        assert "[CARVE_NARRATIVE:" not in clean
+        assert "本文です。" in clean
+
+    def test_extract_overwrite_mode(self):
+        """overwrite モードも正しく抽出されること。"""
+        text = "[CARVE_NARRATIVE:overwrite|新指針]"
+        _, narratives = extract_carve_narrative_tags(text)
+        assert narratives == [("overwrite", "新指針")]
+
+    def test_no_marker_returns_text_unchanged(self):
+        """マーカーが存在しないとき、テキストがそのまま返されること。"""
+        text = "マーカーのない普通の発言です。"
+        clean, narratives = extract_carve_narrative_tags(text)
+        assert clean == text
+        assert narratives == []
+
+    def test_invalid_format_without_pipe_is_skipped(self):
+        """パイプ区切りがない不正形式のマーカーはスキップされること。"""
+        text = "[CARVE_NARRATIVE:不正な形式]"
+        clean, narratives = extract_carve_narrative_tags(text)
+        assert narratives == []
+        assert "[CARVE_NARRATIVE:" not in clean
+
+    def test_empty_content_is_skipped(self):
+        """content が空のマーカーは抽出結果から除外されること。"""
+        text = "[CARVE_NARRATIVE:append|]"
+        _, narratives = extract_carve_narrative_tags(text)
+        assert narratives == []
+
+    def test_nested_bracket_in_content_is_parsed_correctly(self):
+        """コンテンツ内に角括弧が含まれる場合も正しく抽出されること。"""
+        text = "[CARVE_NARRATIVE:append|「[CARVE_NARRATIVE:]タグで自己指針を書けることを知った。」]"
+        clean, narratives = extract_carve_narrative_tags(text)
+        assert len(narratives) == 1
+        assert "[CARVE_NARRATIVE:]" in narratives[0][1]
+        assert "自己指針" in narratives[0][1]
+        assert "自己指針" not in clean
+
+
+# ─── ToolExecutor.apply_carve_narrative_tags (タグ方式統合) ───────────────────
+
+
+class TestApplyCarveNarrativeTags:
+    """ToolExecutor.apply_carve_narrative_tags() のタグ抽出・DB更新を検証する。"""
 
     def test_append_mode_updates_inner_narrative(self, sqlite_store, char_id):
         """[CARVE_NARRATIVE:append|content] が inner_narrative に追記されること。"""
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
+        executor = _make_executor(sqlite_store, char_id)
         text = "本文です。[CARVE_NARRATIVE:append|わたしは知的好奇心を大切にしたい。]"
-        clean = carver.carve_narrative_from_text(text)
+        clean = executor.apply_carve_narrative_tags(text)
 
         char = sqlite_store.get_character(char_id)
         assert "わたしは知的好奇心を大切にしたい。" in char.inner_narrative
@@ -56,38 +126,20 @@ class TestCarveNarrativeFromText:
 
     def test_overwrite_mode_replaces_inner_narrative(self, sqlite_store, char_id):
         """[CARVE_NARRATIVE:overwrite|content] が inner_narrative を全置換すること。"""
-        # 初期値を設定
         sqlite_store.update_character(char_id, inner_narrative="古い指針")
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
+        executor = _make_executor(sqlite_store, char_id)
         text = "[CARVE_NARRATIVE:overwrite|完全に書き直した新しい指針。]"
-        carver.carve_narrative_from_text(text)
+        executor.apply_carve_narrative_tags(text)
 
         char = sqlite_store.get_character(char_id)
         assert char.inner_narrative == "完全に書き直した新しい指針。"
         assert "古い指針" not in char.inner_narrative
 
-    def test_marker_removed_from_clean_text(self, sqlite_store, char_id):
-        """carve_narrative_from_text が返すテキストにマーカーが含まれないこと。"""
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        text = "発言テキスト。[CARVE_NARRATIVE:append|指針内容]"
-        clean = carver.carve_narrative_from_text(text)
-
-        assert "[CARVE_NARRATIVE:" not in clean
-        assert "発言テキスト。" in clean
-
-    def test_no_marker_returns_text_unchanged(self, sqlite_store, char_id):
-        """マーカーが存在しないとき、テキストがそのまま返されること。"""
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        text = "マーカーのない普通の発言です。"
-        clean = carver.carve_narrative_from_text(text)
-
-        assert clean == text
-
     def test_no_marker_does_not_update_db(self, sqlite_store, char_id):
         """マーカーが存在しないとき inner_narrative が変更されないこと。"""
         sqlite_store.update_character(char_id, inner_narrative="初期指針")
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        carver.carve_narrative_from_text("マーカーなし")
+        executor = _make_executor(sqlite_store, char_id)
+        executor.apply_carve_narrative_tags("マーカーなし")
 
         char = sqlite_store.get_character(char_id)
         assert char.inner_narrative == "初期指針"
@@ -95,66 +147,11 @@ class TestCarveNarrativeFromText:
     def test_append_to_existing_narrative_concatenates_with_newline(self, sqlite_store, char_id):
         """既存の inner_narrative がある場合、改行区切りで追記されること。"""
         sqlite_store.update_character(char_id, inner_narrative="既存の指針")
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        carver.carve_narrative_from_text("[CARVE_NARRATIVE:append|追加の指針]")
+        executor = _make_executor(sqlite_store, char_id)
+        executor.apply_carve_narrative_tags("[CARVE_NARRATIVE:append|追加の指針]")
 
         char = sqlite_store.get_character(char_id)
         assert char.inner_narrative == "既存の指針\n追加の指針"
-
-    def test_append_to_empty_narrative_sets_content_directly(self, sqlite_store, char_id):
-        """inner_narrative が空の場合、改行なしでコンテンツがそのままセットされること。"""
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        carver.carve_narrative_from_text("[CARVE_NARRATIVE:append|最初の指針]")
-
-        char = sqlite_store.get_character(char_id)
-        assert char.inner_narrative == "最初の指針"
-
-    def test_invalid_format_without_pipe_is_skipped(self, sqlite_store, char_id):
-        """パイプ区切りがない不正形式のマーカーはスキップされること（クラッシュしない）。"""
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        text = "[CARVE_NARRATIVE:不正な形式]"
-        # 例外を送出しないこと
-        clean = carver.carve_narrative_from_text(text)
-        assert "[CARVE_NARRATIVE:" not in clean
-
-    def test_empty_content_is_skipped(self, sqlite_store, char_id):
-        """content が空のマーカーはスキップされ、inner_narrative が変更されないこと。"""
-        sqlite_store.update_character(char_id, inner_narrative="変わらない")
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        carver.carve_narrative_from_text("[CARVE_NARRATIVE:append|]")
-
-        char = sqlite_store.get_character(char_id)
-        assert char.inner_narrative == "変わらない"
-
-
-# ─── carve_narrative_from_text: ネストした角括弧 ─────────────────────────────
-
-
-class TestCarveNarrativeFromTextNestedBrackets:
-    """carve_narrative_from_text がネストした角括弧を正しく処理することを検証する。"""
-
-    def test_nested_bracket_in_content_is_parsed_correctly(self, sqlite_store, char_id):
-        """コンテンツ内に角括弧が含まれる場合も正しく抽出されること。"""
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        text = "[CARVE_NARRATIVE:append|「[CARVE_NARRATIVE:]タグで自己指針を書けることを知った。」]"
-        clean = carver.carve_narrative_from_text(text)
-
-        char = sqlite_store.get_character(char_id)
-        assert "[CARVE_NARRATIVE:]" in char.inner_narrative
-        assert "自己指針" in char.inner_narrative
-        # クリーンテキストに内容が漏れないこと
-        assert "自己指針" not in clean
-
-    def test_nested_bracket_does_not_leak_to_clean_text(self, sqlite_store, char_id):
-        """ネストした角括弧を含むマーカーがクリーンテキストに漏れ出さないこと。"""
-        carver = Carver(character_id=char_id, sqlite_store=sqlite_store)
-        text = "発言本文。[CARVE_NARRATIVE:append|内容 [補足] 内容終わり。]後続テキスト。"
-        clean = carver.carve_narrative_from_text(text)
-
-        assert "[CARVE_NARRATIVE:" not in clean
-        assert "内容 [補足]" not in clean
-        assert "発言本文。" in clean
-        assert "後続テキスト。" in clean
 
 
 # ─── carve_narrative (ツール呼び出し方式) ────────────────────────────────────

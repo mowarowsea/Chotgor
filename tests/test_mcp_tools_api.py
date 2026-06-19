@@ -57,8 +57,9 @@ class TestListTools:
         """公開されるツール一覧が想定どおり全種返ること。
 
         現状の MCP 公開ツールは inscribe_memory / post_working_memory_thread /
-        open_working_memory_thread / carve_narrative / power_recall / switch_angle /
-        web_search の 7 種。並びと数が変わったらこのテストが知らせる。
+        read_working_memory_thread / close_working_memory_thread /
+        reopen_working_memory_thread / merge_working_memory_threads / carve_narrative /
+        power_recall / switch_angle / web_search の 10 種。並びと数が変わったらこのテストが知らせる。
         """
         res = client_local.get("/api/mcp/tools")
         assert res.status_code == 200
@@ -67,7 +68,10 @@ class TestListTools:
         assert names == [
             "inscribe_memory",
             "post_working_memory_thread",
-            "open_working_memory_thread",
+            "read_working_memory_thread",
+            "close_working_memory_thread",
+            "reopen_working_memory_thread",
+            "merge_working_memory_threads",
             "carve_narrative",
             "power_recall",
             "switch_angle",

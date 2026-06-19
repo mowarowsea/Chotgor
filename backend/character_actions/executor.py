@@ -7,7 +7,7 @@ LLM の tool-use（function calling）で保存記憶・ワーキングメモリ
 各ツールのスキーマ・説明文は対応モジュールに定義する:
 - inscribe_memory: inscriber.py
 - carve_narrative: carver.py
-- post_working_memory_thread / open_working_memory_thread: threader.py
+- post / read / close / reopen / merge _working_memory_thread(s): threader.py
 """
 
 from __future__ import annotations
@@ -23,15 +23,36 @@ if TYPE_CHECKING:
 from backend.lib.tool_event_recorder import record_tool_event, result_looks_like_error
 from backend.repositories.lance.store import EmbeddingError
 from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
-from backend.character_actions.switcher import Switcher, SWITCH_ANGLE_SCHEMA, SWITCH_ANGLE_TOOL_DESCRIPTION
-from backend.character_actions.carver import Carver, CARVE_NARRATIVE_SCHEMA, CARVE_NARRATIVE_TOOL_DESCRIPTION
-from backend.character_actions.inscriber import Inscriber, INSCRIBE_MEMORY_SCHEMA, INSCRIBE_MEMORY_TOOL_DESCRIPTION
+from backend.character_actions.switcher import (
+    Switcher,
+    SWITCH_ANGLE_SCHEMA,
+    SWITCH_ANGLE_TOOL_DESCRIPTION,
+    extract_switch_angle_tags,
+)
+from backend.character_actions.carver import (
+    Carver,
+    CARVE_NARRATIVE_SCHEMA,
+    CARVE_NARRATIVE_TOOL_DESCRIPTION,
+    extract_carve_narrative_tags,
+)
+from backend.character_actions.inscriber import (
+    Inscriber,
+    INSCRIBE_MEMORY_SCHEMA,
+    INSCRIBE_MEMORY_TOOL_DESCRIPTION,
+    extract_inscribe_memory_tags,
+)
 from backend.character_actions.threader import (
     Threader,
     POST_WORKING_MEMORY_THREAD_SCHEMA,
     POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    OPEN_WORKING_MEMORY_THREAD_SCHEMA,
-    OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    READ_WORKING_MEMORY_THREAD_SCHEMA,
+    READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
+    CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
+    REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    MERGE_WORKING_MEMORY_THREADS_SCHEMA,
+    MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
 )
 from backend.character_actions.web_searcher import (
     WebSearcher,
@@ -52,9 +73,24 @@ ANTHROPIC_TOOLS: list[dict] = [
         "input_schema": POST_WORKING_MEMORY_THREAD_SCHEMA,
     },
     {
-        "name": "open_working_memory_thread",
-        "description": OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-        "input_schema": OPEN_WORKING_MEMORY_THREAD_SCHEMA,
+        "name": "read_working_memory_thread",
+        "description": READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+        "input_schema": READ_WORKING_MEMORY_THREAD_SCHEMA,
+    },
+    {
+        "name": "close_working_memory_thread",
+        "description": CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+        "input_schema": CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
+    },
+    {
+        "name": "reopen_working_memory_thread",
+        "description": REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+        "input_schema": REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
+    },
+    {
+        "name": "merge_working_memory_threads",
+        "description": MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
+        "input_schema": MERGE_WORKING_MEMORY_THREADS_SCHEMA,
     },
     {
         "name": "carve_narrative",
@@ -98,7 +134,7 @@ class ToolCall:
 
     Attributes:
         id: プロバイダーが発行するツール呼び出しID。
-        name: ツール名（inscribe_memory / post_working_memory_thread / open_working_memory_thread / carve_narrative / switch_angle / power_recall）。
+        name: ツール名（inscribe_memory / post_working_memory_thread / read_working_memory_thread / close_working_memory_thread / reopen_working_memory_thread / merge_working_memory_threads / carve_narrative / switch_angle / power_recall）。
         input: ツールに渡す引数 dict。
     """
 
@@ -130,8 +166,10 @@ class ToolTurnResult:
 class ToolExecutor:
     """LLMからのツール呼び出しを実際に実行するクラス。
 
-    inscribe_memory / post_working_memory_thread / open_working_memory_thread / carve_narrative / switch_angle / power_recall の
-    各ツールを受け取り、Inscriber / Threader / Carver / Switcher を通じてDBへ反映する。
+    inscribe_memory / post_working_memory_thread / read_working_memory_thread /
+    close_working_memory_thread / reopen_working_memory_thread / merge_working_memory_threads /
+    carve_narrative / switch_angle / power_recall の各ツールを受け取り、
+    Inscriber / Threader / Carver / Switcher を通じてDBへ反映する。
 
     Attributes:
         character_id: 操作対象のキャラクターID。
@@ -164,6 +202,7 @@ class ToolExecutor:
         working_memory_manager: WorkingMemoryManager | None,
         batch_context: dict | None = None,
         default_origin: str = "real",
+        source_preset_id: str = "",
     ) -> None:
         """ToolExecutorを初期化する。
 
@@ -174,6 +213,9 @@ class ToolExecutor:
             default_origin: inscribe_memory / post_working_memory_thread が保存する
                 記憶/スレッドに付与する origin。1on1・GroupChat 通常経路では "real"、
                 シナリオ PC モードからは "interlude"、うつつ無人経路からは "usual" を渡す。
+            source_preset_id: 記憶/スレッド作成時に「どのプリセットで生まれたか」として記録される
+                プリセット ID。ツール引数としては露出させず、Executor のインスタンス属性として持つ。
+                空文字列なら NULL 保存（プリセット情報を残さない）。
         """
         self.character_id = character_id
         self.session_id = session_id
@@ -181,53 +223,177 @@ class ToolExecutor:
         self.working_memory_manager = working_memory_manager
         self.batch_context: dict = batch_context or {}
         self.default_origin = default_origin
+        self.source_preset_id = source_preset_id
+        # memory_manager / working_memory_manager は呼び出し元から None で渡される
+        # ケースがある（Chronicle が memory_manager 無しで close/reopen/merge だけ使う等）。
+        # Inscriber / Carver / WebSearcher は実行時に NoneType エラーになるが、対応するツールを
+        # 呼ばなければ問題ない（fail-fast を実行時に倒すための妥協）。
+        _sqlite = memory_manager.sqlite if memory_manager is not None else None
         self._inscriber = Inscriber(character_id, memory_manager)
         self._threader = Threader(character_id, working_memory_manager)
-        self._carver = Carver(character_id, memory_manager.sqlite)
+        self._carver = Carver(character_id, _sqlite)
         self._switcher = Switcher()
-        self._web_searcher = WebSearcher(memory_manager.sqlite)
+        self._web_searcher = WebSearcher(_sqlite)
 
     @property
     def switch_request(self) -> tuple[str, str] | None:
         """switch_angle が呼ばれた場合の切り替えリクエスト。generate_with_tools() ループが検知して即中断する。"""
         return self._switcher.switch_request
 
-    def execute(self, tool_name: str, tool_input: dict, *, record: bool = True) -> str:
+    def execute(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        *,
+        record: bool = True,
+        source: str = "tool_use",
+        origin: str | None = None,
+    ) -> str:
         """ツール名と入力を受け取り実行して結果テキストを返す。
 
-        全プロバイダーの tool-use ループ・MCP プロキシ（api/mcp_tools.py）・バッチ処理が
-        共通して通る唯一の関門のため、ここでツール実行イベントを tool_call_events に記録する
-        （Logs 画面のツール使用表示の source of truth。tool_event_recorder を参照）。
+        ツール実行の唯一の関門。MCP tool-use・テキストタグ方式（inscriber/carver/switcher/
+        recaller の *_from_text）・Chronicle の JSON 棚卸し結果反映 — どの入口から来た
+        ツール呼び出しもここを通る。フォーマット解析は呼び出し側、実行と記録はここ、
+        という分業にしてある。これにより Logs 画面のツール使用表示（tool_call_events 経由）が
+        入口の違いに関係なく一貫して埋まる（source of truth。tool_event_recorder を参照）。
 
         Args:
-            tool_name: ツール名（"inscribe_memory" / "post_working_memory_thread" / "open_working_memory_thread" / "carve_narrative" / "switch_angle" / "power_recall"）。
+            tool_name: ツール名（"inscribe_memory" / "post_working_memory_thread" / "read_working_memory_thread" / "close_working_memory_thread" / "reopen_working_memory_thread" / "merge_working_memory_threads" / "carve_narrative" / "switch_angle" / "power_recall"）。
             tool_input: ツールの入力パラメータ dict。
             record: False の場合、実行イベントを記録しない。MCP 経由で既に実行・記録済みの
                 switch_angle を in-process の tool_executor へ転写する claude_cli_provider の
                 経路でのみ False を渡す（二重記録防止）。
+            source: 入口の識別（記録時の source 列に保存される）。"tool_use"=tool-use 方式、
+                "tag"=テキストタグ方式（inscriber/carver/switcher/recaller）、
+                "chronicle"=Chronicle 棚卸し結果反映。Logs UI のフィルタ・分析用。
+            origin: この1回の呼び出しに限り default_origin を上書きする（指定時のみ）。
+                Chronicle が item ごとに異なる origin を渡すための口。インスタンス状態は
+                呼び出し後に元へ戻すため、executor を跨いだ origin の漏れを防ぐ。
 
         Returns:
             ツールの実行結果を表すテキスト。
         """
+        # origin 指定時のみ、このディスパッチの間だけ default_origin を差し替える。
+        # 終了時に必ず元へ戻し、次の呼び出しへ stale な origin を残さない（漏れ防止）。
+        prev_origin = self.default_origin
+        if origin is not None:
+            self.default_origin = origin
         try:
             result = self._dispatch(tool_name, tool_input)
         except Exception as e:
             # 各ツール実装は例外を握り潰す設計だが、引数の型変換（float() 等）が
             # ディスパッチ段で送出する可能性があるため、失敗の事実だけ記録して再送出する。
+            self.default_origin = prev_origin
             if record:
                 record_tool_event(
                     tool_name, tool_input,
                     status="error", error_message=f"{type(e).__name__}: {e}",
+                    source=source,
                 )
             raise
+        self.default_origin = prev_origin
         if record:
             is_error = result_looks_like_error(result)
             record_tool_event(
                 tool_name, tool_input,
                 status="error" if is_error else "ok",
                 error_message=result if is_error else None,
+                source=source,
             )
         return result
+
+    # ------------------------------------------------------------------
+    # タグ方式の入口統合: テキスト → 抽出 → execute() 経由実行
+    # ------------------------------------------------------------------
+    # SUPPORTS_TOOLS=False のプロバイダー（Claude CLI / Ollama 等）が応答テキストに
+    # 埋め込んでくる [INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] / [SWITCH_ANGLE:...] を、
+    # tool-use 方式と同じ self.execute(source="tag") 経由で実行する。タグ方式と tool-use 方式で
+    # 記録経路（tool_call_events）と実装経路（_dispatch）を統一するための仕組み。
+
+    def _execute_tag(self, tool_name: str, args: dict) -> None:
+        """タグ方式で抽出した1件を execute(source="tag") 経由で実行する共通処理。
+
+        3種の apply_*_tags が共有する「実行＋例外ログ」の骨格。例外は握り潰して
+        WARNING ログのみ残す（タグ方式は1件失敗しても LLM 応答本文の整形に影響させない。
+        実行イベントの記録自体は execute() が成否込みで行う）。
+
+        Args:
+            tool_name: 実行するツール名。
+            args: ツール引数 dict（tool-use 方式と同じキー名）。
+        """
+        try:
+            self.execute(tool_name, args, source="tag")
+        except Exception:
+            self.logger.exception(
+                "タグ方式 %s 失敗 char=%s args=%r", tool_name, self.character_id, args,
+            )
+
+    def apply_inscribe_memory_tags(self, text: str) -> str:
+        """LLM応答テキストから [INSCRIBE_MEMORY:...] タグを抽出し、execute() 経由で実行する。
+
+        impact が数値に変換できない不正タグは、黙って 1.0 に丸めず error イベントとして
+        記録し（Logs 画面で可視化）、その1件のみスキップする。
+
+        Args:
+            text: LLM応答テキスト。
+
+        Returns:
+            タグマーカーを除去したクリーンなテキスト。
+        """
+        clean, memories = extract_inscribe_memory_tags(text)
+        for category, impact_str, content in memories:
+            try:
+                impact = float(impact_str) if impact_str else 1.0
+            except (TypeError, ValueError):
+                # 不正な impact 値は黙って既定値に丸めず、失敗として記録して可視化する。
+                record_tool_event(
+                    "inscribe_memory",
+                    {"content": content, "category": category, "impact": impact_str},
+                    status="error",
+                    error_message=f"impact が数値ではありません: {impact_str!r}",
+                    source="tag",
+                )
+                continue
+            self._execute_tag(
+                "inscribe_memory",
+                {"content": content, "category": category, "impact": impact},
+            )
+        return clean
+
+    def apply_carve_narrative_tags(self, text: str) -> str:
+        """LLM応答テキストから [CARVE_NARRATIVE:...] タグを抽出し、execute() 経由で実行する。
+
+        Args:
+            text: LLM応答テキスト。
+
+        Returns:
+            タグマーカーを除去したクリーンなテキスト。
+        """
+        clean, narratives = extract_carve_narrative_tags(text)
+        for mode, content in narratives:
+            self._execute_tag("carve_narrative", {"mode": mode, "content": content})
+        return clean
+
+    def apply_switch_angle_tags(self, text: str) -> str:
+        """LLM応答テキストから [SWITCH_ANGLE:...] タグを抽出し、execute() 経由で実行する。
+
+        実際のアングル切り替え（再ディスパッチ）は service.py 側が self.switch_request を
+        読んで行う。ここでは execute() 経由で _switcher.switch_angle() を呼び、状態を更新する。
+
+        Args:
+            text: LLM応答テキスト。
+
+        Returns:
+            タグマーカーを除去したクリーンなテキスト。
+        """
+        clean, switch_request = extract_switch_angle_tags(text)
+        if switch_request is not None:
+            preset_name, self_instruction = switch_request
+            self._execute_tag(
+                "switch_angle",
+                {"preset_name": preset_name, "self_instruction": self_instruction},
+            )
+        return clean
 
     def _dispatch(self, tool_name: str, tool_input: dict) -> str:
         """ツール名に応じて各ツール実装へ振り分ける内部メソッド。
@@ -243,9 +409,25 @@ class ToolExecutor:
             )
         if tool_name == "post_working_memory_thread":
             return self._post_working_memory_thread(tool_input)
-        if tool_name == "open_working_memory_thread":
-            return self._threader.open_working_memory_thread(
+        if tool_name == "read_working_memory_thread":
+            return self._threader.read_working_memory_thread(
                 thread_id=str(tool_input.get("thread_id", "")),
+            )
+        if tool_name == "close_working_memory_thread":
+            return self._threader.close_working_memory_thread(
+                thread_id=str(tool_input.get("thread_id", "")),
+            )
+        if tool_name == "reopen_working_memory_thread":
+            return self._threader.reopen_working_memory_thread(
+                thread_id=str(tool_input.get("thread_id", "")),
+            )
+        if tool_name == "merge_working_memory_threads":
+            raw_from = tool_input.get("from_ids") or []
+            from_ids = [str(x) for x in raw_from] if isinstance(raw_from, list) else []
+            return self._threader.merge_working_memory_threads(
+                from_ids=from_ids,
+                into_id=str(tool_input.get("into_id", "")),
+                post=str(tool_input.get("post", "") or ""),
             )
         if tool_name == "carve_narrative":
             return self._carve_narrative(
@@ -286,6 +468,7 @@ class ToolExecutor:
         try:
             self._inscriber.inscribe_memory(
                 content, category, impact,
+                source_preset_id=self.source_preset_id,
                 force_insert=force_insert,
                 origin=self.default_origin,
             )

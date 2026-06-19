@@ -1,16 +1,17 @@
 """backend.character_actions.inscriber モジュールのユニットテスト。
 
-[INSCRIBE_MEMORY:category|impact|content] マーカーの抽出・除去・書き込みを検証する。
-Inscriber クラスのタグ方式（inscribe_memory_from_text）と
-ツール呼び出し方式（inscribe_memory）の両方を網羅する。
+[INSCRIBE_MEMORY:category|impact|content] マーカーの抽出を検証する extract_inscribe_memory_tags()
+と、実書き込みを行う Inscriber.inscribe_memory() の両方を網羅する。
+タグ方式の実行口（タグ抽出 → 書き込み）は ToolExecutor.apply_inscribe_memory_tags() に
+統一されているため、本ファイルでは抽出と書き込みを別々に検証する。
 """
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
 from backend.character_actions.inscriber import (
-    _extract,
+    extract_inscribe_memory_tags,
     Inscriber,
     INSCRIBE_MEMORY_SCHEMA,
     INSCRIBE_MEMORY_TAG_GUIDE,
@@ -18,13 +19,13 @@ from backend.character_actions.inscriber import (
 )
 
 
-# ─── _extract: 基本動作 ────────────────────────────────────────────────────────
+# ─── extract_inscribe_memory_tags: 基本動作 ──────────────────────────────────
 
 
 def test_extract_basic_three_part_format():
     """[INSCRIBE_MEMORY:category|impact|content] の3要素形式が正しく抽出されること。"""
     text = "こんにちは！ [INSCRIBE_MEMORY:user|0.8|ユーザは猫が好き]\nまた話しましょう。"
-    clean, mems = _extract(text)
+    clean, mems = extract_inscribe_memory_tags(text)
 
     assert len(mems) == 1
     category, impact_str, content = mems[0]
@@ -36,7 +37,7 @@ def test_extract_basic_three_part_format():
 def test_extract_removes_marker_from_clean_text():
     """抽出後のクリーンテキストにマーカーが残らないこと。"""
     text = "本文です。[INSCRIBE_MEMORY:contextual|1.0|覚えたこと]"
-    clean, _ = _extract(text)
+    clean, _ = extract_inscribe_memory_tags(text)
 
     assert "[INSCRIBE_MEMORY:" not in clean
     assert "本文です。" in clean
@@ -45,7 +46,7 @@ def test_extract_removes_marker_from_clean_text():
 def test_extract_two_part_format_defaults_impact_to_1_0():
     """[INSCRIBE_MEMORY:category|content] の2要素形式は impact を 1.0 とみなすこと。"""
     text = "[INSCRIBE_MEMORY:semantic|Chotgorの設計を理解した]"
-    clean, mems = _extract(text)
+    clean, mems = extract_inscribe_memory_tags(text)
 
     assert len(mems) == 1
     category, impact_str, content = mems[0]
@@ -57,7 +58,7 @@ def test_extract_two_part_format_defaults_impact_to_1_0():
 def test_extract_multiple_markers_all_extracted():
     """複数の [INSCRIBE_MEMORY:...] マーカーがすべて抽出されること。"""
     text = "[INSCRIBE_MEMORY:user|0.8|ユーザA][INSCRIBE_MEMORY:contextual|1.0|出来事B]テキスト"
-    clean, mems = _extract(text)
+    clean, mems = extract_inscribe_memory_tags(text)
 
     assert len(mems) == 2
     assert mems[0][0] == "user"
@@ -75,7 +76,7 @@ def test_extract_nested_bracket_in_content_is_parsed_correctly():
     キャラクターの発言に漏れ出すバグがあった。
     """
     text = "[INSCRIBE_MEMORY:contextual|1.2|[INSCRIBE_MEMORY:]タグのパースバグで発言末尾に内容が漏れる事象。恥ずかしい。]"
-    clean, mems = _extract(text)
+    clean, mems = extract_inscribe_memory_tags(text)
 
     assert len(mems) == 1
     category, impact, content = mems[0]
@@ -90,7 +91,7 @@ def test_extract_nested_bracket_in_content_is_parsed_correctly():
 def test_extract_nested_bracket_does_not_leak_to_clean_text():
     """ネストした角括弧を含むマーカーがクリーンテキストに漏れ出さないこと (Issue #49 相当)。"""
     text = "今日は元気です。[INSCRIBE_MEMORY:contextual|1.2|[INSCRIBE_MEMORY:]タグのバグ発生。恥ずかしい。]また話しましょう。"
-    clean, _ = _extract(text)
+    clean, _ = extract_inscribe_memory_tags(text)
 
     assert "[INSCRIBE_MEMORY:" not in clean
     assert "タグのバグ" not in clean
@@ -104,94 +105,14 @@ def test_extract_nested_bracket_does_not_leak_to_clean_text():
 def test_extract_skips_marker_inside_inline_code():
     """バッククォートで囲まれたインラインコード内のマーカーは抽出されないこと。"""
     text = "例: `[INSCRIBE_MEMORY:contextual|1.0|コード内]` はスキップされる。[INSCRIBE_MEMORY:user|0.5|実際の内容]"
-    clean, mems = _extract(text)
+    clean, mems = extract_inscribe_memory_tags(text)
 
     assert len(mems) == 1
     assert mems[0][0] == "user"
     assert mems[0][2] == "実際の内容"
 
 
-# ─── Inscriber.inscribe_memory_from_text (タグ方式) ───────────────────────────
-
-
-class TestInscriberInscribeMemoryFromText:
-    """Inscriber.inscribe_memory_from_text() のタグ抽出・write_inscribed_memory 呼び出しを検証する。"""
-
-    def _make_inscriber(self, memory_manager=None):
-        """テスト用の Inscriber インスタンスを生成するヘルパー。"""
-        mm = memory_manager or MagicMock()
-        return Inscriber(character_id="char-1", memory_manager=mm), mm
-
-    def test_inscribe_memory_from_text_returns_clean_text(self):
-        """マーカーを除去したクリーンテキストを返すこと。"""
-        inscriber, _ = self._make_inscriber()
-        text = "こんにちは！ [INSCRIBE_MEMORY:user|0.8|ユーザは猫が好き]\nまた話しましょう。"
-        clean = inscriber.inscribe_memory_from_text(text)
-
-        assert "[INSCRIBE_MEMORY:" not in clean
-        assert "こんにちは！" in clean
-        assert "また話しましょう。" in clean
-
-    def test_inscribe_memory_from_text_calls_write_memory(self):
-        """マーカーが存在するとき write_inscribed_memory が呼ばれること。"""
-        inscriber, mm = self._make_inscriber()
-        text = "[INSCRIBE_MEMORY:user|0.8|ユーザは猫が好き]"
-        inscriber.inscribe_memory_from_text(text)
-
-        mm.write_inscribed_memory.assert_called_once()
-        kwargs = mm.write_inscribed_memory.call_args.kwargs
-        assert kwargs["character_id"] == "char-1"
-        assert kwargs["content"] == "ユーザは猫が好き"
-        assert kwargs["category"] == "user"
-
-    def test_inscribe_memory_from_text_no_marker_does_not_call_write_memory(self):
-        """マーカーが存在しないとき write_inscribed_memory は呼ばれないこと。"""
-        inscriber, mm = self._make_inscriber()
-        text = "マーカーのない普通の発言です。"
-        clean = inscriber.inscribe_memory_from_text(text)
-
-        assert clean == text
-        mm.write_inscribed_memory.assert_not_called()
-
-    def test_inscribe_memory_from_text_multiple_markers_calls_write_memory_multiple_times(self):
-        """複数マーカーがあるとき write_inscribed_memory が複数回呼ばれること。"""
-        inscriber, mm = self._make_inscriber()
-        text = "[INSCRIBE_MEMORY:user|1.0|ユーザA][INSCRIBE_MEMORY:contextual|0.5|出来事B]"
-        inscriber.inscribe_memory_from_text(text)
-
-        assert mm.write_inscribed_memory.call_count == 2
-
-    def test_inscribe_memory_from_text_with_source_preset_id(self):
-        """source_preset_id が指定されたとき write_inscribed_memory に渡されること。"""
-        inscriber, mm = self._make_inscriber()
-        text = "[INSCRIBE_MEMORY:semantic|1.0|Chotgorの設計]"
-        inscriber.inscribe_memory_from_text(text, source_preset_id="preset-abc")
-
-        kwargs = mm.write_inscribed_memory.call_args.kwargs
-        assert kwargs.get("source_preset_id") == "preset-abc"
-
-    def test_inscribe_memory_from_text_empty_preset_id_passes_none(self):
-        """source_preset_id が空文字列のとき None が渡されること。"""
-        inscriber, mm = self._make_inscriber()
-        text = "[INSCRIBE_MEMORY:contextual|1.0|内容]"
-        inscriber.inscribe_memory_from_text(text, source_preset_id="")
-
-        kwargs = mm.write_inscribed_memory.call_args.kwargs
-        assert kwargs.get("source_preset_id") is None
-
-    def test_inscribe_memory_from_text_write_memory_exception_does_not_raise(self):
-        """write_inscribed_memory が例外を投げても inscribe_memory_from_text はクラッシュしないこと。"""
-        mm = MagicMock()
-        mm.write_inscribed_memory.side_effect = RuntimeError("DB接続失敗")
-        inscriber = Inscriber(character_id="char-1", memory_manager=mm)
-        text = "[INSCRIBE_MEMORY:user|1.0|内容]残りのテキスト"
-        clean = inscriber.inscribe_memory_from_text(text)
-
-        # クラッシュせず、クリーンテキストを返すこと
-        assert "残りのテキスト" in clean
-
-
-# ─── Inscriber.inscribe_memory (ツール呼び出し方式) ───────────────────────────
+# ─── Inscriber.inscribe_memory (実書き込み実装) ───────────────────────────────
 
 
 class TestInscriberInscribeMemory:

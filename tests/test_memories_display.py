@@ -159,20 +159,6 @@ def _fake_provider_with_text(text: str):
     return provider
 
 
-def _mock_inscriber_passthrough():
-    """テキストをそのまま返す Inscriber モックを生成するヘルパー。"""
-    mock = MagicMock()
-    mock.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
-    return mock
-
-
-def _mock_carver_passthrough():
-    """テキストをそのまま返す Carver モックを生成するヘルパー。"""
-    mock = MagicMock()
-    mock.carve_narrative_from_text.side_effect = lambda text: text
-    return mock
-
-
 @pytest.mark.asyncio
 async def test_execute_stream_yields_memories_first():
     """記憶がある場合、最初のチャンクが ("inscribed_memories", list) であること。
@@ -190,8 +176,6 @@ async def test_execute_stream_yields_memories_first():
         patch("backend.services.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
-        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -216,8 +200,6 @@ async def test_execute_stream_no_memories_chunk_when_empty():
         patch("backend.services.chat.service.create_provider", return_value=_fake_provider_with_text("応答")),
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
-        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -249,8 +231,6 @@ async def test_execute_stream_yields_text_last():
         patch("backend.services.chat.service.create_provider", return_value=provider),
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
-        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -282,8 +262,6 @@ async def test_execute_stream_thinking_chunks_yielded():
         patch("backend.services.chat.service.create_provider", return_value=provider),
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
-        patch("backend.services.chat.service.Inscriber", return_value=_mock_inscriber_passthrough()),
-        patch("backend.services.chat.service.Carver", return_value=_mock_carver_passthrough()),
     ):
         chunks = await _collect_stream(service, request)
 
@@ -294,11 +272,12 @@ async def test_execute_stream_thinking_chunks_yielded():
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_text_is_cleaned_by_inscribe_memory_from_text():
-    """Inscriber.inscribe_memory_from_text() によって [INSCRIBE_MEMORY:...] マーカーが
+async def test_execute_stream_text_is_cleaned_by_inscribe_memory_tags():
+    """ToolExecutor.apply_inscribe_memory_tags() によって [INSCRIBE_MEMORY:...] マーカーが
     取り除かれたテキストがyieldされること。
 
-    旧テスト名: test_execute_stream_text_is_carved（carve() 時代の名称から改名）
+    StreamingTagStripper が stream の途中で除去するため、結果的に text チャンクには
+    マーカーが含まれない。
     """
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -315,30 +294,18 @@ async def test_execute_stream_text_is_cleaned_by_inscribe_memory_from_text():
     provider.SUPPORTS_TOOLS = False
     provider.generate_stream_typed = _typed
 
-    def _fake_inscribe(text, *_, **__):
-        """[INSCRIBE_MEMORY:...] を除去する簡易実装。"""
-        import re
-        return re.sub(r"\[INSCRIBE_MEMORY:[^\]]*\]", "", text)
-
-    mock_inscriber = MagicMock()
-    mock_inscriber.inscribe_memory_from_text.side_effect = _fake_inscribe
-
-    mock_carver = MagicMock()
-    mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-
     with (
         patch("backend.services.chat.service.create_provider", return_value=provider),
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
-        patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
-        patch("backend.services.chat.service.Carver", return_value=mock_carver),
     ):
         chunks = await _collect_stream(service, request)
 
     text_chunks = [c for t, c in chunks if t == "text"]
-    assert len(text_chunks) == 1
-    assert "[INSCRIBE_MEMORY:" not in text_chunks[0]
-    assert "応答テキスト" in text_chunks[0]
+    # text チャンクが何度かに分かれて来ても、全てを連結したものにマーカーは含まれない。
+    joined = "".join(text_chunks)
+    assert "[INSCRIBE_MEMORY:" not in joined
+    assert "応答テキスト" in joined
 
 
 @pytest.mark.asyncio

@@ -174,27 +174,37 @@ class TestExtractSwitchInfo:
         assert switch_info is None
 
     def test_tag_mode_extracts_tag(self):
-        """SUPPORTS_TOOLS=False 方式: テキストから [SWITCH_ANGLE:...] を抽出する。"""
+        """SUPPORTS_TOOLS=False 方式: apply_switch_angle_tags でタグ抽出 → executor.switch_request セット。"""
         service = self._make_service()
+        executor = _make_executor()
         text = "こんにちは[SWITCH_ANGLE:fastModel|軽くさっぱりと]"
-        clean_text, switch_info = service._extract_switch_info(None, text, True)
+        clean_text = executor.apply_switch_angle_tags(text)
+        _, switch_info = service._extract_switch_info(executor, clean_text, True)
         assert switch_info == ("fastModel", "軽くさっぱりと")
         assert "[SWITCH_ANGLE:" not in clean_text
 
     def test_tag_mode_no_tag_returns_none(self):
-        """SUPPORTS_TOOLS=False 方式: タグなしなら None を返す。"""
+        """SUPPORTS_TOOLS=False 方式: タグなしなら switch_info は None。"""
         service = self._make_service()
+        executor = _make_executor()
         text = "タグなしのテキスト"
-        clean_text, switch_info = service._extract_switch_info(None, text, True)
+        clean_text = executor.apply_switch_angle_tags(text)
+        _, switch_info = service._extract_switch_info(executor, clean_text, True)
         assert switch_info is None
         assert clean_text == text
 
     def test_tag_mode_skipped_when_no_presets(self):
-        """has_angle_presets=False のときはタグスキャンをスキップして None を返す。"""
+        """has_angle_presets=False のときは switch_request をスキップして None を返す。
+
+        テキスト中のタグ自体は apply_switch_angle_tags で除去できるが、本テストでは
+        apply を呼ばない（呼び出し側が has_angle_presets=False を判断するパターン）
+        ことで _extract_switch_info の挙動だけ検証する。
+        """
         service = self._make_service()
+        executor = _make_executor()
         text = "テキスト[SWITCH_ANGLE:fastModel|軽く]"
-        clean_text, switch_info = service._extract_switch_info(None, text, False)
-        # スキャンをスキップするのでタグは除去されず switch_info も None
+        # has_angle_presets=False なので即座に None を返し、タグは触らない
+        clean_text, switch_info = service._extract_switch_info(executor, text, False)
         assert switch_info is None
         assert "[SWITCH_ANGLE:" in clean_text
 

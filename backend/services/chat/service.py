@@ -9,8 +9,8 @@ Flow:
   2. URL自動fetch
   3. システムプロンプト構築
   4. プロバイダーへディスパッチ
-  5. 応答から記憶を刻み込み (Inscriber.inscribe_memory_from_text)
-  5c. inner_narrativeマーカーを処理してDBに保存 (Carver.carve_narrative_from_text)
+  5. 応答からタグを抽出して ToolExecutor.apply_*_tags() 経由で実行
+     （inscribe_memory / carve_narrative / switch_angle 各タグの解析と execute() 経由実行を集約）
   6. デバッグログ
 """
 
@@ -30,8 +30,6 @@ if TYPE_CHECKING:
 
 from backend.lib.debug_logger import logger
 from backend.lib.log_context import current_log_feature
-from backend.character_actions.carver import Carver
-from backend.character_actions.inscriber import Inscriber
 from backend.character_actions.anticipator import extract_anticipation
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
@@ -46,7 +44,6 @@ from backend.lib.web_fetch import fetch_urls, find_urls
 from backend.services.chat.models import ChatRequest, Message
 from backend.character_actions.recaller import Recaller, format_power_recall_turn
 from backend.character_actions.reflector import SelfReflector
-from backend.character_actions.switcher import Switcher
 from backend.character_actions.farewell_detector import FarewellDetector
 
 
@@ -209,21 +206,22 @@ class ChatService:
     # --- 内部ヘルパー ---
 
     def _extract_switch_info(
-        self, tool_executor: "ToolExecutor | None", clean_text: str, has_angle_presets: bool
+        self, tool_executor: "ToolExecutor", clean_text: str, has_angle_presets: bool
     ) -> tuple[str, tuple[str, str] | None]:
-        """switch_angle リクエストを tool_executor またはタグから抽出する。
+        """switch_angle リクエストを tool_executor.switch_request から取り出す。
 
-        available_presets が空のとき両方式とも無視する。
-        SUPPORTS_TOOLS プロバイダーは常に switch_angle ツールを LLM に渡すため、
-        presets が未設定でも LLM が誤呼び出しする可能性があり、ここでガードする。
+        available_presets が空のときは無視する。SUPPORTS_TOOLS プロバイダーは常に
+        switch_angle ツールを LLM に渡すため、presets が未設定でも LLM が誤呼び出しする
+        可能性があり、ここでガードする。
+
+        タグ方式・tool-use 方式 のどちらの経路でも、SWITCH_ANGLE は ToolExecutor.execute()
+        経由で _switcher.switch_angle() が呼ばれて switch_request にセットされる
+        （タグ方式は事前に apply_switch_angle_tags() を呼んでおく）。本メソッドは
+        単に「セット済みの switch_request を読むだけ」になる。
         """
         if not has_angle_presets:
             return clean_text, None
-        if tool_executor is not None:
-            return clean_text, tool_executor.switch_request
-        switcher = Switcher()
-        clean_text = switcher.switch_from_text(clean_text)
-        return clean_text, switcher.switch_request
+        return clean_text, tool_executor.switch_request
 
     def _build_switched_request(
         self, original: ChatRequest, preset_name: str, self_instruction: str,
@@ -371,6 +369,9 @@ class ChatService:
             request.provider, request.model, request.settings,
             thinking_level=request.thinking_level,
             preset_name=request.current_preset_name or "",
+            # character_name は claude_cli の conversation 整形（<キャラ名>...</キャラ名>）に使う。
+            # 未指定だと <character> へフォールバックして「自分の発話」感が薄れるため必ず渡す。
+            character_name=request.character_name or "",
             character_id=request.character_id,
             session_id=request.session_id or "",
             allowed_tools=request.allowed_tools,
@@ -431,14 +432,18 @@ class ChatService:
         """
         ctx = await self._prepare_context(request)
 
+        # ツール実行の唯一の関門。SUPPORTS_TOOLS=True なら provider 内 tool-use ループから、
+        # False ならタグ抽出後の apply_* メソッドから呼ばれ、どちらも同じ execute() を通って
+        # 記録 (tool_call_events) も実装 (_dispatch) も一元化される。
+        tool_executor = ToolExecutor(
+            character_id=request.character_id,
+            session_id=request.session_id,
+            memory_manager=self.memory_manager,
+            working_memory_manager=self.working_memory_manager,
+            default_origin=request.default_origin,
+            source_preset_id=request.current_preset_id,
+        )
         if ctx.provider_impl.SUPPORTS_TOOLS:
-            tool_executor = ToolExecutor(
-                character_id=request.character_id,
-                session_id=request.session_id,
-                memory_manager=self.memory_manager,
-                working_memory_manager=self.working_memory_manager,
-                default_origin=request.default_origin,
-            )
             try:
                 # thinking は非ストリーミングパスでは捨てる（execute はテキスト返却のみ）
                 clean_text, _ = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
@@ -450,18 +455,16 @@ class ChatService:
                 _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
                 return f"[Error: {type(e).__name__}: {e}]"
         else:
-            tool_executor = None
             try:
                 response_text = await ctx.provider_impl.generate(ctx.system_prompt, ctx.messages)
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（タグ方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
                 return f"[Error: {type(e).__name__}: {e}]"
 
-            inscriber = Inscriber(request.character_id, self.memory_manager)
-            clean_text = inscriber.inscribe_memory_from_text(
-                response_text, request.current_preset_id, origin=request.default_origin,
-            )
-            clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
+            # タグ方式は抽出だけして、実行は tool_executor.execute() 経由で記録までまとめて行う。
+            clean_text = tool_executor.apply_inscribe_memory_tags(response_text)
+            clean_text = tool_executor.apply_carve_narrative_tags(clean_text)
+            clean_text = tool_executor.apply_switch_angle_tags(clean_text)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -517,14 +520,17 @@ class ChatService:
         # True の場合、最終 yield ("text", clean_text) をスキップする。
         text_already_streamed = False
 
+        # ツール実行の唯一の関門。SUPPORTS_TOOLS=True なら provider 内 tool-use ループから、
+        # False ならタグ抽出後の apply_* メソッドから呼ばれ、どちらも同じ execute() を通る。
+        tool_executor = ToolExecutor(
+            character_id=request.character_id,
+            session_id=request.session_id,
+            memory_manager=self.memory_manager,
+            working_memory_manager=self.working_memory_manager,
+            default_origin=request.default_origin,
+            source_preset_id=request.current_preset_id,
+        )
         if ctx.provider_impl.SUPPORTS_TOOLS:
-            tool_executor = ToolExecutor(
-                character_id=request.character_id,
-                session_id=request.session_id,
-                memory_manager=self.memory_manager,
-                working_memory_manager=self.working_memory_manager,
-                default_origin=request.default_origin,
-            )
             try:
                 clean_text, thinking_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
             except LLMApiError as e:
@@ -540,7 +546,6 @@ class ChatService:
             if thinking_text:
                 yield ("thinking", thinking_text)
         else:
-            tool_executor = None
             full_text = ""
             stripper = StreamingTagStripper()
 
@@ -626,13 +631,12 @@ class ChatService:
                     yield event
                 return
 
-            # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み）
+            # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み・アングル切替）
             # テキスト表示は済んでいるため、clean_text は副作用処理とログ用途にのみ使う。
-            inscriber = Inscriber(request.character_id, self.memory_manager)
-            clean_text = inscriber.inscribe_memory_from_text(
-                full_text, request.current_preset_id, origin=request.default_origin,
-            )
-            clean_text = Carver(request.character_id, self.memory_manager.sqlite).carve_narrative_from_text(clean_text)
+            # タグ抽出後の実行は tool_executor 経由（記録まで一元化）。
+            clean_text = tool_executor.apply_inscribe_memory_tags(full_text)
+            clean_text = tool_executor.apply_carve_narrative_tags(clean_text)
+            clean_text = tool_executor.apply_switch_angle_tags(clean_text)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)

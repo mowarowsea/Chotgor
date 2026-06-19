@@ -50,12 +50,12 @@ class TestToolSchemas:
         assert anthropic_names == openai_names
 
     def test_expected_tool_names_present(self):
-        """inscribe_memory / carve_narrative / post_working_memory_thread / open_working_memory_thread / power_recall / switch_angle が存在する。"""
+        """inscribe_memory / carve_narrative / post_working_memory_thread / read_working_memory_thread / power_recall / switch_angle が存在する。"""
         names = {t["name"] for t in ANTHROPIC_TOOLS}
         assert "inscribe_memory" in names
         assert "carve_narrative" in names
         assert "post_working_memory_thread" in names
-        assert "open_working_memory_thread" in names
+        assert "read_working_memory_thread" in names
         assert "power_recall" in names
         assert "switch_angle" in names
 
@@ -292,14 +292,76 @@ class TestToolExecutorExecute:
         assert "thread-9" in result
         wm.add_post.assert_called_once_with("thread-9", "新しい書き込み")
 
-    def test_open_working_memory_thread_calls_get_thread_detail(self):
-        """open_working_memory_thread ツールが WorkingMemoryManager.get_thread_detail() を呼び出す。"""
+    def test_read_working_memory_thread_calls_get_thread_detail(self):
+        """read_working_memory_thread ツールが WorkingMemoryManager.get_thread_detail() を呼び出す。"""
         wm = MagicMock()
         wm.get_thread_detail.return_value = {"id": "thread-9", "posts": []}
         executor = self._make_executor(working_memory_manager=wm)
-        result = executor.execute("open_working_memory_thread", {"thread_id": "thread-9"})
+        result = executor.execute("read_working_memory_thread", {"thread_id": "thread-9"})
         assert "thread-9" in result
         wm.get_thread_detail.assert_called_once_with("thread-9")
+
+    def test_close_working_memory_thread_calls_set_open_false(self):
+        """close_working_memory_thread ツールが WorkingMemoryManager.set_open(id, False) を呼び出す。"""
+        wm = MagicMock()
+        wm.set_open.return_value = True
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute("close_working_memory_thread", {"thread_id": "thread-9"})
+        wm.set_open.assert_called_once_with("thread-9", False)
+        assert "閉じた" in result
+
+    def test_reopen_working_memory_thread_calls_set_open_true(self):
+        """reopen_working_memory_thread ツールが WorkingMemoryManager.set_open(id, True) を呼び出す。"""
+        wm = MagicMock()
+        wm.set_open.return_value = True
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute("reopen_working_memory_thread", {"thread_id": "thread-9"})
+        wm.set_open.assert_called_once_with("thread-9", True)
+        assert "再オープン" in result
+
+    def test_close_working_memory_thread_missing_returns_error(self):
+        """存在しないスレッドの close は set_open が False を返し、エラー文字列になる。"""
+        wm = MagicMock()
+        wm.set_open.return_value = False
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute("close_working_memory_thread", {"thread_id": "missing"})
+        assert "見つかりません" in result
+
+    def test_merge_working_memory_threads_closes_from_ids_and_posts(self):
+        """merge ツールが into_id に経緯を post し、from_ids を close することを確認する。"""
+        wm = MagicMock()
+        wm.get_thread_detail.return_value = {"id": "into-1", "posts": []}
+        wm.set_open.return_value = True
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute(
+            "merge_working_memory_threads",
+            {"from_ids": ["a", "b"], "into_id": "into-1", "post": "同じ問題だった"},
+        )
+        wm.add_post.assert_called_once_with("into-1", "同じ問題だった")
+        # from_ids 2本が close される
+        assert wm.set_open.call_count == 2
+        wm.set_open.assert_any_call("a", False)
+        wm.set_open.assert_any_call("b", False)
+        assert "2 本" in result
+
+    def test_merge_working_memory_threads_missing_into_id_does_not_close_from_ids(self):
+        """統合先が存在しない場合、from_ids を一切 close せずエラーを返すことを確認する。
+
+        post の有無に関わらず into_id 存在チェックが先に走るため、存在しない統合先を
+        指定したときに統合元だけが宛先なく閉じられる（統合の喪失）ことを防ぐ。
+        """
+        wm = MagicMock()
+        wm.get_thread_detail.return_value = None  # 統合先が存在しない
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute(
+            "merge_working_memory_threads",
+            # post を空にして「存在チェックを post 経由に頼っていた」旧バグの再現条件を作る
+            {"from_ids": ["a", "b"], "into_id": "missing", "post": ""},
+        )
+        assert "見つかりません" in result
+        # from_ids は1本も閉じられていない
+        wm.set_open.assert_not_called()
+        wm.add_post.assert_not_called()
 
     def test_switch_angle_stores_switch_request(self):
         """switch_angle ツールが executor.switch_request にリクエストを格納する。"""
@@ -379,12 +441,12 @@ class TestToolExecutorEdgeCases:
         result = executor.execute("post_working_memory_thread", {"type": "topic", "summary": "x"})
         assert "利用できない" in result
 
-    def test_open_working_memory_thread_without_working_memory_manager_returns_unavailable(self):
-        """working_memory_manager が None の場合は open_working_memory_thread が利用不可メッセージを返す。"""
+    def test_read_working_memory_thread_without_working_memory_manager_returns_unavailable(self):
+        """working_memory_manager が None の場合は read_working_memory_thread が利用不可メッセージを返す。"""
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=MagicMock(), working_memory_manager=None
         )
-        result = executor.execute("open_working_memory_thread", {"thread_id": "t-1"})
+        result = executor.execute("read_working_memory_thread", {"thread_id": "t-1"})
         assert "利用できない" in result
 
     def test_post_working_memory_thread_new_without_type_returns_error(self):
@@ -425,6 +487,38 @@ class TestToolExecutorEdgeCases:
         )
         result = executor.execute("carve_narrative", {"mode": "append", "content": "指針"})
         assert "[carve_narrative error:" in result
+
+
+class TestApplyInscribeMemoryTags:
+    """ToolExecutor.apply_inscribe_memory_tags() のタグ抽出・impact 堅牢性を検証する。"""
+
+    def test_malformed_impact_does_not_silently_inscribe(self):
+        """impact が非数値のタグは黙って 1.0 で保存せず、その1件をスキップすることを確認する。
+
+        旧 apply は float 失敗を握って impact=1.0 + 成功扱いにしていたため、不正タグが
+        正常な記憶として保存されていた。非数値 impact は inscribe をスキップ（write を呼ばない）。
+        """
+        mm = MagicMock()
+        executor = ToolExecutor(
+            character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
+        )
+        clean = executor.apply_inscribe_memory_tags(
+            "本文[INSCRIBE_MEMORY:contextual|high|不正なimpact]"
+        )
+        # 不正タグは保存されない
+        mm.write_inscribed_memory.assert_not_called()
+        # マーカーは本文から除去される
+        assert "[INSCRIBE_MEMORY:" not in clean
+        assert "本文" in clean
+
+    def test_valid_impact_inscribes(self):
+        """impact が数値の正常タグは write_inscribed_memory を呼ぶことを確認する。"""
+        mm = MagicMock()
+        executor = ToolExecutor(
+            character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
+        )
+        executor.apply_inscribe_memory_tags("[INSCRIBE_MEMORY:user|0.8|ユーザは猫好き]")
+        mm.write_inscribed_memory.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

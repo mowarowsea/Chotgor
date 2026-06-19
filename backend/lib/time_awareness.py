@@ -61,12 +61,12 @@ def japanese_season(now: datetime) -> str:
 
 
 def format_time_context(now: datetime | None = None) -> str:
-    """GM プロンプト向けに、現在の日付・曜日・時間帯・季節を日本語 1 文にまとめて返す。
+    """GM プロンプト向けに、現在の日付・曜日・時刻・時間帯・季節を日本語 1 文にまとめて返す。
 
     うつつ（Usual Days）の GM が「いつの・どんな時間か」を把握するための外的フレーム。
-    1on1 の時刻ブロックとも語彙を共有する（曜日・時間帯・季節の日本語算出）。
+    時刻（HH:MM）まで明示することで、GM が勝手に時間を進めて現実時間を追い越すのを抑制する。
 
-    例: "いまは 2026年6月14日（日）の夕方。季節は夏。"
+    例: "いまは 2026年6月14日（日）の 18:42（夕方）。季節は夏。"
 
     Args:
         now: 基準時刻。省略時は datetime.now()。
@@ -78,7 +78,8 @@ def format_time_context(now: datetime | None = None) -> str:
         now = datetime.now()
     return (
         f"いまは {now.year}年{now.month}月{now.day}日"
-        f"（{japanese_weekday(now)}）の{japanese_time_of_day(now)}。"
+        f"（{japanese_weekday(now)}）の {now.hour:02d}:{now.minute:02d}"
+        f"（{japanese_time_of_day(now)}）。"
         f"季節は{japanese_season(now)}。"
     )
 

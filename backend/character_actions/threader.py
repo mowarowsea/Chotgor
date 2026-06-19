@@ -1,13 +1,15 @@
-"""Threader — ワーキングメモリスレッド操作ツール（post_working_memory_thread / open_working_memory_thread）。
+"""Threader — ワーキングメモリスレッド操作ツール群。
 
 Threader クラスと関連定数を一元管理する。
-- POST_WORKING_MEMORY_THREAD_SCHEMA / POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: スレッド作成・更新ツール
-- OPEN_WORKING_MEMORY_THREAD_SCHEMA / OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: スレッド詳細展開ツール
-- Threader クラス: WorkingMemoryManager に委譲してスレッド・ポストを操作する
+- post_working_memory_thread     : スレッドの新規作成・既存スレッドへのポスト追加・要約更新
+- read_working_memory_thread     : スレッド1本の詳細（全ポストの履歴）を読む
+- close_working_memory_thread    : 決着・終息したスレッドを閉じる
+- reopen_working_memory_thread   : 再燃したスレッドを再オープンする
+- merge_working_memory_threads   : 同一問題の別角度だったスレッドを統合する（from_ids を閉じ、into_id に経緯を残す）
 
-post_working_memory_thread は「新規作成」「ポスト追加」「summary/atmosphere_tag/importance 更新」を
-1ツールで兼ねる統合設計。thread_id を省略すると新規作成、指定すると既存スレッドの更新になる。
-inscriber.py / drifter.py と対称的な構成。
+post は「新規作成」「ポスト追加」「summary/atmosphere_tag/importance 更新」を1ツールで兼ねる統合設計。
+thread_id を省略すると新規作成、指定すると既存スレッドの更新になる。
+inscriber.py / carver.py と対称的な構成。
 """
 
 import json
@@ -71,8 +73,8 @@ POST_WORKING_MEMORY_THREAD_SCHEMA: dict = {
     "required": [],
 }
 
-# --- ツール呼び出し方式: open_working_memory_thread パラメータスキーマ ---
-OPEN_WORKING_MEMORY_THREAD_SCHEMA: dict = {
+# --- ツール呼び出し方式: read_working_memory_thread パラメータスキーマ ---
+READ_WORKING_MEMORY_THREAD_SCHEMA: dict = {
     "type": "object",
     "properties": {
         "thread_id": {
@@ -81,6 +83,51 @@ OPEN_WORKING_MEMORY_THREAD_SCHEMA: dict = {
         },
     },
     "required": ["thread_id"],
+}
+
+# --- ツール呼び出し方式: close_working_memory_thread パラメータスキーマ ---
+CLOSE_WORKING_MEMORY_THREAD_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "thread_id": {
+            "type": "string",
+            "description": "閉じたいスレッドのID。",
+        },
+    },
+    "required": ["thread_id"],
+}
+
+# --- ツール呼び出し方式: reopen_working_memory_thread パラメータスキーマ ---
+REOPEN_WORKING_MEMORY_THREAD_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "thread_id": {
+            "type": "string",
+            "description": "再オープンしたいスレッドのID（過去に閉じたもの）。",
+        },
+    },
+    "required": ["thread_id"],
+}
+
+# --- ツール呼び出し方式: merge_working_memory_threads パラメータスキーマ ---
+MERGE_WORKING_MEMORY_THREADS_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "from_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "統合元のスレッドID群。これらは閉じられる。",
+        },
+        "into_id": {
+            "type": "string",
+            "description": "統合先のスレッドID。from_ids の内容はこちらにまとめられる。",
+        },
+        "post": {
+            "type": "string",
+            "description": "into_id に追加する、統合の経緯を残すポスト本文。",
+        },
+    },
+    "required": ["from_ids", "into_id"],
 }
 
 # --- ツール呼び出し方式: ツール説明文 ---
@@ -92,16 +139,38 @@ POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
     "まさにあなたの「今」のワーキングメモリです。惜しまず使用してください。"
 )
 
-OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
+READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
     "ワーキングメモリのスレッド1本の詳細（全ポストの履歴）を展開して読む。"
     "経緯を詳しく思い出したいときに使う。"
+)
+
+CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
+    "ワーキングメモリのスレッドを閉じる。"
+    "task / topic なら解決・断念して気にしなくなったとき、"
+    "emotion / body / relation なら自然に意識から消えたとき。"
+    "閉じたスレッドはあなたの長期記憶へ昇格するわけではなく、"
+    "後から read_working_memory_thread で読み返したり、reopen_working_memory_thread で再開できる。"
+)
+
+REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
+    "閉じたスレッドを再オープンする。"
+    "過去に閉じた話題・課題が再燃したと感じたときに使う。"
+)
+
+MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION: str = (
+    "複数のスレッドを統合する。"
+    "「同じ問題の別角度だった」「同じ話題を別々のスレッドで扱っていた」と気づいたとき、"
+    "from_ids のスレッドを閉じて into_id にまとめる。"
+    "post に統合の経緯（なぜ同じだと気づいたか・何を引き継いだか）を残す。"
 )
 
 
 class Threader:
     """ワーキングメモリスレッドの操作を担うクラス（ツール呼び出し方式）。
 
-    post_working_memory_thread / open_working_memory_thread を WorkingMemoryManager に委譲する。
+    post / read / close / reopen / merge の各ツールを WorkingMemoryManager に委譲する。
+    Chronicle が JSON 棚卸し結果を反映するときの内部実装も、すべてこのクラスを通る
+    （Chronicle は ToolExecutor.execute() 経由でここを呼ぶ）。
 
     Attributes:
         character_id: 操作対象のキャラクターID。
@@ -186,7 +255,7 @@ class Threader:
             logger.exception("post_working_memory_thread 失敗 char=%s", self.character_id)
             return f"[post_working_memory_thread error: {e}]"
 
-    def open_working_memory_thread(self, thread_id: str) -> str:
+    def read_working_memory_thread(self, thread_id: str) -> str:
         """スレッド1本の詳細（全ポスト）を JSON テキストで返す。
 
         Returns:
@@ -196,12 +265,107 @@ class Threader:
         if wm is None:
             return "ワーキングメモリは利用できない。"
         if not thread_id:
-            return "[open_working_memory_thread error: thread_id が空です]"
+            return "[read_working_memory_thread error: thread_id が空です]"
         try:
             detail = wm.get_thread_detail(thread_id)
         except Exception as e:
-            logger.exception("open_working_memory_thread 失敗 char=%s", self.character_id)
-            return f"[open_working_memory_thread error: {e}]"
+            logger.exception("read_working_memory_thread 失敗 char=%s", self.character_id)
+            return f"[read_working_memory_thread error: {e}]"
         if detail is None:
-            return f"[open_working_memory_thread: スレッド '{thread_id}' が見つかりません]"
+            return f"[read_working_memory_thread: スレッド '{thread_id}' が見つかりません]"
         return json.dumps(detail, ensure_ascii=False, indent=2)
+
+    def close_working_memory_thread(self, thread_id: str) -> str:
+        """スレッドを閉じる（is_open=False に設定する）。
+
+        Returns:
+            実行結果メッセージ。スレッド不在ならエラー文字列。
+        """
+        wm = self.working_memory_manager
+        if wm is None:
+            return "ワーキングメモリは利用できない。"
+        if not thread_id:
+            return "[close_working_memory_thread error: thread_id が空です]"
+        try:
+            ok = wm.set_open(thread_id, False)
+        except Exception as e:
+            logger.exception("close_working_memory_thread 失敗 char=%s", self.character_id)
+            return f"[close_working_memory_thread error: {e}]"
+        if not ok:
+            return f"[close_working_memory_thread: スレッド '{thread_id}' が見つかりません]"
+        return f"スレッド（id={thread_id}）を閉じた。"
+
+    def reopen_working_memory_thread(self, thread_id: str) -> str:
+        """閉じたスレッドを再オープンする（is_open=True に設定する）。
+
+        Returns:
+            実行結果メッセージ。スレッド不在ならエラー文字列。
+        """
+        wm = self.working_memory_manager
+        if wm is None:
+            return "ワーキングメモリは利用できない。"
+        if not thread_id:
+            return "[reopen_working_memory_thread error: thread_id が空です]"
+        try:
+            ok = wm.set_open(thread_id, True)
+        except Exception as e:
+            logger.exception("reopen_working_memory_thread 失敗 char=%s", self.character_id)
+            return f"[reopen_working_memory_thread error: {e}]"
+        if not ok:
+            return f"[reopen_working_memory_thread: スレッド '{thread_id}' が見つかりません]"
+        return f"スレッド（id={thread_id}）を再オープンした。"
+
+    def merge_working_memory_threads(
+        self,
+        from_ids: list[str],
+        into_id: str,
+        post: str = "",
+    ) -> str:
+        """複数のスレッドを統合する。from_ids を閉じ、into_id に経緯ポストを追加する。
+
+        Args:
+            from_ids: 統合元のスレッドID群。空・None は不可。重複・into_id 自身は除外する。
+            into_id: 統合先のスレッドID。
+            post: into_id に追加する経緯ポスト本文。空ならポスト追加はスキップする。
+
+        Returns:
+            実行結果メッセージ。
+        """
+        wm = self.working_memory_manager
+        if wm is None:
+            return "ワーキングメモリは利用できない。"
+        if not into_id:
+            return "[merge_working_memory_threads error: into_id が空です]"
+        if not from_ids:
+            return "[merge_working_memory_threads error: from_ids が空です]"
+
+        # into_id 自身・重複を取り除いた閉じ対象のリスト。
+        closing = [fid for fid in dict.fromkeys(from_ids) if fid and fid != into_id]
+        if not closing:
+            return "[merge_working_memory_threads error: 有効な from_ids がありません（into_id と同一・空のみ）]"
+
+        # 統合先の存在を最初に確認する。存在しない into_id に対して from_ids だけ閉じると、
+        # 統合元が宛先を失って消える（統合の喪失）。post の有無に関わらず検証する。
+        try:
+            if wm.get_thread_detail(into_id) is None:
+                return f"[merge_working_memory_threads error: 統合先スレッド '{into_id}' が見つかりません]"
+            if post:
+                # 経緯ポストはまず into_id に追加。post 追加が成功してから from_ids を閉じる。
+                wm.add_post(into_id, post)
+            closed_count = 0
+            for fid in closing:
+                try:
+                    if wm.set_open(fid, False):
+                        closed_count += 1
+                except Exception as e:
+                    logger.warning(
+                        "merge_working_memory_threads: from_id=%s の close 失敗 char=%s error=%s",
+                        fid, self.character_id, e,
+                    )
+        except ValueError as e:
+            # ポスト追加失敗など
+            return f"[merge_working_memory_threads error: {e}]"
+        except Exception as e:
+            logger.exception("merge_working_memory_threads 失敗 char=%s", self.character_id)
+            return f"[merge_working_memory_threads error: {e}]"
+        return f"スレッド {closed_count} 本を id={into_id} に統合した。"

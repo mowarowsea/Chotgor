@@ -33,7 +33,7 @@ class TestToolToTagMapping:
     """
 
     def test_all_expected_tools_present(self):
-        """全 6 種の既知ツールが TOOL_TO_TAG に登録されていること（end_session は廃止済み）。"""
+        """全 11 種の既知ツールが TOOL_TO_TAG に登録されていること（end_session は廃止済み）。"""
         expected = {
             "inscribe_memory",
             "carve_narrative",
@@ -41,6 +41,11 @@ class TestToolToTagMapping:
             "drift_reset",
             "switch_angle",
             "power_recall",
+            "post_working_memory_thread",
+            "read_working_memory_thread",
+            "close_working_memory_thread",
+            "reopen_working_memory_thread",
+            "merge_working_memory_threads",
         }
         assert expected == set(TOOL_TO_TAG.keys())
 

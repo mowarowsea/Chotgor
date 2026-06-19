@@ -6,10 +6,11 @@
 ブロック構成（テンプレ上の差し込み順）:
   Block 1:  キャラクター設定（何者かを確立 — 前提 + character_system_prompt）
   Block 1b: 相手（ユーザ）の人物像（呼称・位置づけ）
+  Block 1c: うつつ（日常生活）注釈
+  Block 1d: プロバイダー固有追記（PC モードでは「いまの場面メモ」も合流。Block 1 系の延長として早めに置く）
   Block 2:  想起された記憶（長期記憶・コンテキスト把握）
   Block 3:  時刻コンテキスト（薄い補足情報）
   Block 4:  フェッチしたWebコンテンツ（コンテキスト強め）
-  Block 5:  プロバイダー固有追記（モデル固有調整）
   Block 6:  ワーキングメモリ全スレッド一覧（歩みの記録・self_history 代替）
   Block 7:  ワーキングメモリ固定注入（emotion/body/relation）
   Block 8:  ワーキングメモリ heat 想起（前景の task/topic）
@@ -103,7 +104,9 @@ _WORKING_MEMORY_TOOLS_HINT = """\
 本当に定着したものはあなた自身の手で長期記憶へ昇格していきます。だから今は気軽に書き留めてください。
 
 - `post_working_memory_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
-- `open_working_memory_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
+- `read_working_memory_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
+- `close_working_memory_thread` / `reopen_working_memory_thread`: スレッドを閉じる／再オープンする。task/topic は決着したとき、emotion/body/relation は自然に意識から消えたときに閉じる。後に再燃したら再オープンしてよい。
+- `merge_working_memory_threads`: 「同じ問題の別角度だった」と気づいたスレッドを統合する。from_ids を閉じ、into_id に経緯をポストする。
 
 スレッド種別:
 - `task` / `topic` は**解決を目指す**もの（取り組み中の課題・引っかかっている問い）
@@ -127,13 +130,13 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_usual_days}
 
+{block_provider_extra}
+
 {block_memories}
 
 {block_time}
 
 {block_fetched}
-
-{block_provider_extra}
 
 {block_wm_all}
 
@@ -538,10 +541,11 @@ def build_system_prompt(
 
     ブロック構成（テンプレ上の配置順）:
         1.  キャラクター設定（前提 + character_system_prompt）
+        1c. うつつ（日常生活）注釈（optional）
+        1d. プロバイダー固有追記（optional。PC モードでは「いまの場面メモ」が合流）
         2.  想起された記憶（長期記憶・コンテキスト把握）
         3.  時刻コンテキスト（optional）
         4.  フェッチしたWebコンテンツ（optional）
-        5.  プロバイダー固有追記（optional）
         6.  ワーキングメモリ全スレッド一覧（optional）
         7.  ワーキングメモリ固定注入 emotion/body/relation（optional）
         8.  ワーキングメモリ heat 想起 task/topic（optional）

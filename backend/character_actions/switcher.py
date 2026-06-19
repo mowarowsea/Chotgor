@@ -5,11 +5,12 @@ Switcher クラスと関連定数を一元管理する。
 - SWITCH_ANGLE_TOOL_DESCRIPTION: tool-use プロバイダー向けツール説明文
 - SWITCH_ANGLE_TOOLS_HINT: tool-use プロバイダー向けシステムプロンプト案内ブロック
 - SWITCH_ANGLE_TAG_GUIDE: タグ方式プロバイダー向けガイド文
-- Switcher クラス: タグ方式（switch_from_text）とツール呼び出し方式（switch_angle）の両方に対応
+- Switcher クラス: switch_request の保持（実書き込み相当）
+- extract_switch_angle_tags(text): タグ抽出ヘルパ。タグ方式の execute() 経路で使う
 
-switch_angle ツールのタグ方式フォールバック。
-Claude CLI 等 SUPPORTS_TOOLS=False のプロバイダーが [SWITCH_ANGLE:...] タグを
-応答に埋め込んだ場合に、service.py がここを呼び出してアングル切り替えを処理する。
+タグ方式の実行口は ToolExecutor.apply_switch_angle_tags(text) に統一されている。
+実際のアングル切り替え処理（再ディスパッチ）は service.py が ToolExecutor.switch_request を
+読んで行う。本モジュールは record_tool_event を直接呼ばない（ToolExecutor.execute() が記録する）。
 
 タグ形式:
     [SWITCH_ANGLE:preset_name|self_instruction]
@@ -21,7 +22,6 @@ Claude CLI 等 SUPPORTS_TOOLS=False のプロバイダーが [SWITCH_ANGLE:...] 
 import logging
 
 from backend.lib.tag_parser import parse_tags
-from backend.lib.tool_event_recorder import record_tool_event
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ SWITCH_ANGLE_TAG_GUIDE: str = """\
 - `[SWITCH_ANGLE:...]` の行はユーザーには見えません"""
 
 
-def _extract(text: str) -> tuple[str, tuple[str, str] | None]:
+def extract_switch_angle_tags(text: str) -> tuple[str, tuple[str, str] | None]:
     """テキストから [SWITCH_ANGLE:preset_name|self_instruction] マーカーを抽出する。
 
     Args:
@@ -81,13 +81,12 @@ def _extract(text: str) -> tuple[str, tuple[str, str] | None]:
         tuple:
             clean_text (str): マーカーを除去したテキスト。
             switch_request (tuple[str, str] | None): (preset_name, self_instruction)。
-                マーカーが存在しない場合は None。
+                マーカーが存在しない場合は None。複数あっても最初の1件のみ採用する。
     """
     clean, matches = parse_tags(text, ["SWITCH_ANGLE"])
     switch_matches = matches["SWITCH_ANGLE"]
     if not switch_matches:
         return clean, None
-    # 複数ある場合も最初の1件のみ使用する
     body = switch_matches[0].body
     parts = body.split("|", 1)
     preset_name = parts[0].strip()
@@ -96,20 +95,12 @@ def _extract(text: str) -> tuple[str, tuple[str, str] | None]:
 
 
 class Switcher:
-    """アングル切り替えリクエストの抽出・記録を担うクラス。タグ方式・ツール呼び出し方式の両方に対応する。
+    """アングル切り替えリクエストの保持を担うクラス（実書き込み相当の状態保持）。
 
-    タグ方式:
-        LLM応答から [SWITCH_ANGLE:preset_name|self_instruction] マーカーを抽出して switch_request に格納する。
-        Claude CLI や Ollama など tool-use 非対応プロバイダーが使用する。
-        switch_from_text(text) を呼ぶ。
-
-    ツール呼び出し方式:
-        preset_name / self_instruction を直接受け取って switch_request に格納する。
-        Anthropic API・OpenAI API など tool-use 対応プロバイダーが使用する。
-        switch_angle(preset_name, self_instruction) を呼ぶ。
-
-    実際のアングル切り替え処理（再ディスパッチ）は service.py が担う。
-    Switcher は switch_request に切り替えリクエストを格納するだけ。
+    タグ方式・JSON 方式・tool-use 方式 のいずれの入口から来ても、最終的にこのクラスの
+    switch_angle() を経由して switch_request に格納する。実際のアングル切り替え処理
+    （再ディスパッチ）は service.py が ToolExecutor.switch_request を読んで担う。
+    記録（tool_call_events）は ToolExecutor.execute() で集約管理される。
 
     Attributes:
         switch_request: 切り替えリクエスト (preset_name, self_instruction)。未要求の場合は None。
@@ -119,34 +110,8 @@ class Switcher:
         """Switcher を初期化する。"""
         self.switch_request: tuple[str, str] | None = None
 
-    def switch_from_text(self, text: str) -> str:
-        """LLM応答から [SWITCH_ANGLE:...] マーカーを読み取り、switch_request に格納する（タグ方式）。
-
-        Args:
-            text: LLMの生応答テキスト。
-
-        Returns:
-            マーカーを除去したクリーンなテキスト。
-        """
-        clean, switch_request = _extract(text)
-        if switch_request:
-            self.switch_request = switch_request
-            preset_name, self_instruction = switch_request
-            logger.info(
-                "タグ方式 preset=%s instruction=%.50s",
-                preset_name, self_instruction,
-            )
-            # switch_request への格納がこのツールの実効作用（再ディスパッチは service.py）。
-            # 引数はツール呼び出し方式（SWITCH_ANGLE_SCHEMA）と同じキー名で記録する。
-            record_tool_event(
-                "switch_angle",
-                {"preset_name": preset_name, "self_instruction": self_instruction},
-                source="tag",
-            )
-        return clean
-
     def switch_angle(self, preset_name: str, self_instruction: str) -> str:
-        """アングル切り替えリクエストを記録する（ツール呼び出し方式）。
+        """アングル切り替えリクエストを記録する。
 
         実際の切り替え処理（再ディスパッチ）は service.py が担う。
         ここでは switch_request に格納するだけ。
@@ -160,7 +125,7 @@ class Switcher:
         """
         self.switch_request = (preset_name, self_instruction)
         logger.info(
-            "ツール方式 preset=%s instruction=%.50s",
+            "切替リクエスト preset=%s instruction=%.50s",
             preset_name, self_instruction,
         )
         return f"アングルを {preset_name} に切り替えます。"

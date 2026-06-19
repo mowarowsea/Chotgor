@@ -220,8 +220,6 @@ class SelfReflector:
             session_id: 現在のセッションID（ツール実行のコンテキストに使用）。
             settings: グローバル設定 dict。
         """
-        from backend.character_actions.carver import Carver
-
         conversation_text = _format_conversation(conversation_window)
 
         # プロバイダーが tool-use 対応かどうかをクラス変数で確認する（インスタンス生成不要）
@@ -266,9 +264,17 @@ class SelfReflector:
 
         _log.info("自己参照: 内省テキスト取得 char=%s text=%.100s", character_id, reflection_text)
 
-        # CARVE_NARRATIVE タグを処理して inner_narrative を更新する
-        carver = Carver(character_id, self.memory_manager.sqlite)
-        carver.carve_narrative_from_text(reflection_text)
+        # CARVE_NARRATIVE タグを処理して inner_narrative を更新する。
+        # 実行は ToolExecutor.execute() 経由（記録まで一元化）。
+        from backend.character_actions.executor import ToolExecutor
+        executor = ToolExecutor(
+            character_id=character_id,
+            session_id=session_id,
+            memory_manager=self.memory_manager,
+            working_memory_manager=self.working_memory_manager,
+            source_preset_id=preset_id,
+        )
+        executor.apply_carve_narrative_tags(reflection_text)
 
     async def run(
         self,

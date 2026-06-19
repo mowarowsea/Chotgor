@@ -583,10 +583,14 @@ class TestTimeContext:
         assert japanese_time_of_day(datetime(2026, 6, 14, 2)) == "深夜"
 
     def test_format_time_context_contains_all(self):
-        """1 文に日付・曜日・時間帯・季節がすべて含まれること。"""
-        ctx = format_time_context(datetime(2026, 6, 14, 18))
+        """1 文に日付・曜日・時刻・時間帯・季節がすべて含まれること。
+
+        GM が勝手に時間を進めるのを抑制するため、HH:MM の時刻明示も含む。
+        """
+        ctx = format_time_context(datetime(2026, 6, 14, 18, 42))
         assert "2026年6月14日" in ctx
         assert "（日）" in ctx
+        assert "18:42" in ctx
         assert "夕方" in ctx
         assert "夏" in ctx
 
@@ -1205,6 +1209,75 @@ class TestUsualSystemPromptNotice:
         )
         assert self._MARKER not in prompt
         assert "あなたの日常について" not in prompt
+
+
+class TestUsualConversationSceneBreak:
+    """PC 視点履歴整形 _format_scenario_history_for_pc にシーン境目マーカーが
+    入ることを検証する。
+
+    [SCENE_CLOSE] を含む GM レスポンス（raw_response）のグループと、次の
+    raw_response グループの境目で、`<scene_break>` が 1 度だけ user メッセージとして
+    挟まる。同じ raw_response グループ内には挟まらず、SCENE_CLOSE を含まない
+    通常の連続レスポンスでも挟まらない。
+    """
+
+    @staticmethod
+    def _turn(speaker_type, speaker_name, content, raw_response="", speaker_id=None):
+        """ScenarioTurn ライクなダックタイプ用の SimpleNamespace を作る。"""
+        return types.SimpleNamespace(
+            speaker_type=speaker_type,
+            speaker_name=speaker_name,
+            content=content,
+            raw_response=raw_response,
+            speaker_id=speaker_id,
+        )
+
+    def test_marker_inserted_between_scene_close_and_next_group(self):
+        """SCENE_CLOSE 含む raw_response グループの直後に別グループが続く場合、
+        境目で <scene_break> が 1 度だけ挟まる。"""
+        history = [
+            self._turn("narrator", "Narrator", "朝の光が差し込む。", raw_response="resp-1 [SCENE_CLOSE]"),
+            self._turn("narrator", "Narrator", "昼の喧騒。", raw_response="resp-2"),
+        ]
+        msgs = pc_runner_mod._format_scenario_history_for_pc(
+            history,
+            self_character_id="char-haru",
+            self_role_name="はる",
+            user_alias="user",
+        )
+        all_text = "\n".join(m["content"] for m in msgs)
+        assert "<scene_break>" in all_text
+        assert all_text.count("<scene_break>") == 1
+
+    def test_marker_not_inserted_within_same_raw_response_group(self):
+        """同じ raw_response を共有する複数ターンの間には挟まらないこと。"""
+        history = [
+            self._turn("narrator", "Narrator", "情景。", raw_response="resp-1 [SCENE_CLOSE]"),
+            self._turn("npc", "店長", "「いらっしゃい」", raw_response="resp-1 [SCENE_CLOSE]"),
+        ]
+        msgs = pc_runner_mod._format_scenario_history_for_pc(
+            history,
+            self_character_id="char-haru",
+            self_role_name="はる",
+            user_alias="user",
+        )
+        all_text = "\n".join(m["content"] for m in msgs)
+        assert "<scene_break>" not in all_text
+
+    def test_marker_not_inserted_when_no_scene_close(self):
+        """SCENE_CLOSE を含まない連続レスポンスではマーカーを入れないこと。"""
+        history = [
+            self._turn("narrator", "Narrator", "ふらりと外へ。", raw_response="resp-1"),
+            self._turn("narrator", "Narrator", "夕方の道。", raw_response="resp-2"),
+        ]
+        msgs = pc_runner_mod._format_scenario_history_for_pc(
+            history,
+            self_character_id="char-haru",
+            self_role_name="はる",
+            user_alias="user",
+        )
+        all_text = "\n".join(m["content"] for m in msgs)
+        assert "<scene_break>" not in all_text
 
 
 # ---------------------------------------------------------------------------

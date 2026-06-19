@@ -339,8 +339,6 @@ class TestChatServicePowerRecallLoop:
         さらなる再呼び出しは発生しない。
         """
         from backend.services.chat.service import ChatService
-        from backend.character_actions.inscriber import Inscriber
-        from backend.character_actions.carver import Carver
 
         mm = self._make_memory_manager()
         # power_recalled が非空 = 再呼び出し中
@@ -349,17 +347,10 @@ class TestChatServicePowerRecallLoop:
         )
         provider = self._make_stream_provider("思い出してみる\n[POWER_RECALL:もっと調べる|3]")
 
-        mock_inscriber = MagicMock()
-        mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
-        mock_carver = MagicMock()
-        mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-
         with (
             patch("backend.services.chat.service.create_provider", return_value=provider),
             patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
             patch("backend.services.chat.service.find_urls", return_value=[]),
-            patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
-            patch("backend.services.chat.service.Carver", return_value=mock_carver),
         ):
             service = ChatService(memory_manager=mm)
             events = [e async for e in service.execute_stream(request)]

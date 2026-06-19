@@ -1,7 +1,7 @@
 """backend.services.chat.service と backend.services.chat.models のテスト。
 
 ChatService のフロー全体を検証する:
-- SUPPORTS_TOOLS=False パス: Inscriber.inscribe_memory_from_text / Carver.carve_narrative_from_text 経由
+- SUPPORTS_TOOLS=False パス: タグ抽出後 ToolExecutor.apply_*_tags() で execute() 経由
 - SUPPORTS_TOOLS=True パス: generate_with_tools / ToolExecutor 経由
 """
 
@@ -60,7 +60,8 @@ def test_chat_request_defaults():
 async def test_chat_service_execute_returns_text():
     """SUPPORTS_TOOLS=False のプロバイダーは generate() を呼び、クリーンテキストを返すこと。
 
-    Inscriber.inscribe_memory_from_text と Carver.carve_narrative_from_text はパス・スルーでモックする。
+    タグ方式の実行口は ToolExecutor.apply_*_tags() に統一されたが、応答にマーカーが
+    含まれなければ何も呼ばれない（memory_manager の write が触られない）ためそのまま動く。
     """
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -77,17 +78,10 @@ async def test_chat_service_execute_returns_text():
     fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="Hi there!")
 
-    mock_inscriber = MagicMock()
-    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
-    mock_carver = MagicMock()
-    mock_carver.carve_narrative_from_text.side_effect = lambda text: text
-
     with (
         patch("backend.services.chat.service.create_provider", return_value=fake_provider),
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
-        patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
-        patch("backend.services.chat.service.Carver", return_value=mock_carver),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -130,8 +124,7 @@ async def test_chat_service_execute_provider_error_returns_error_string():
 async def test_chat_service_execute_with_tools_returns_text():
     """SUPPORTS_TOOLS=True のプロバイダーは generate_with_tools を呼び、その戻り値を返すこと。
 
-    Inscriber.inscribe_memory_from_text と Carver.carve_narrative_from_text は呼ばれない
-    （ツール側が直接 inscribe_memory / carve_narrative を操作する）。
+    タグ抽出後の apply_*_tags は呼ばれない経路（tool-use ループ内で直接 execute() される）。
     """
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -404,11 +397,12 @@ async def test_execute_with_tools_adds_post_via_post_working_memory_thread():
 
 
 @pytest.mark.asyncio
-async def test_execute_without_tools_does_not_use_tool_executor():
-    """SUPPORTS_TOOLS=False のプロバイダーは generate_with_tools を呼ばず、
-    ToolExecutor は使用されないこと。
+async def test_execute_without_tools_does_not_call_generate_with_tools():
+    """SUPPORTS_TOOLS=False のプロバイダーは generate() のみを呼び、
+    generate_with_tools は呼ばれないこと。
 
-    マーカー方式（Inscriber.inscribe_memory_from_text / Carver.carve_narrative_from_text）がパスすることを確認する。
+    タグ抽出後の実行は ToolExecutor.apply_*_tags() を経由するが、ここではマーカーがないので
+    実際の execute() 呼び出しは発生しない（マーカーなしテキストでパススルー）。
     """
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -424,25 +418,19 @@ async def test_execute_without_tools_does_not_use_tool_executor():
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = False
     fake_provider.generate = AsyncMock(return_value="Hi!")
-
-    mock_inscriber = MagicMock()
-    mock_inscriber.inscribe_memory_from_text.side_effect = lambda text, *_, **__: text
-    mock_carver = MagicMock()
-    mock_carver.carve_narrative_from_text.side_effect = lambda text: text
+    fake_provider.generate_with_tools = AsyncMock(side_effect=AssertionError("呼ばれてはいけない"))
 
     with (
         patch("backend.services.chat.service.create_provider", return_value=fake_provider),
         patch("backend.services.chat.service.build_system_prompt", return_value="sys"),
         patch("backend.services.chat.service.find_urls", return_value=[]),
-        patch("backend.services.chat.service.Inscriber", return_value=mock_inscriber),
-        patch("backend.services.chat.service.Carver", return_value=mock_carver),
-        patch("backend.services.chat.service.ToolExecutor") as mock_tool_executor_cls,
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
 
     assert result == "Hi!"
-    mock_tool_executor_cls.assert_not_called()
+    fake_provider.generate.assert_called_once()
+    fake_provider.generate_with_tools.assert_not_called()
 
 
 # --- ChatService.execute_stream — 想起失敗の UI 通知（recall_error） ---

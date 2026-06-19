@@ -128,7 +128,7 @@ class WorkingMemoryManager:
 
         Args:
             thread: WorkingMemoryThread ORM オブジェクト。
-            include_posts: True なら全ポストを ``posts`` キーに含める（open_working_memory_thread 用）。
+            include_posts: True なら全ポストを ``posts`` キーに含める（read_working_memory_thread 用）。
             include_latest_post: True なら最新ポスト本文を ``latest_post`` キーに含める。
         """
         d = {
@@ -343,7 +343,7 @@ class WorkingMemoryManager:
         return result
 
     def get_thread_detail(self, thread_id: str) -> dict | None:
-        """スレッド1件＋全ポストを dict で返す（open_working_memory_thread ツール用）。
+        """スレッド1件＋全ポストを dict で返す（read_working_memory_thread ツール用）。
 
         Returns:
             スレッド dict（``posts`` キーに全ポスト）。存在しなければ None。

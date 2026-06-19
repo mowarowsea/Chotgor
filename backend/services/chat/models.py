@@ -62,7 +62,7 @@ class ChatRequest:
     # inscribe_memory / post_working_memory_thread で保存される記憶/スレッドの origin（3値）。
     # 1on1・GroupChat 通常経路では "real"、シナリオ PC モードからの呼び出しでは "interlude"、
     # うつつ（Usual Days）無人経路では "usual"。
-    # ToolExecutor.default_origin と Inscriber.inscribe_memory_from_text(origin=) に流れる。
+    # ToolExecutor.default_origin に流れ、inscribe_memory / post_working_memory_thread の保存時に付与される。
     default_origin: str = "real"
     # うつつ（Usual Days）有効キャラかどうか。True なら 1on1 システムプロンプトに
     # 「ユーザの知らない日常生活と記憶がある」注釈ブロックを出す（request_builder）。

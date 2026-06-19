@@ -30,8 +30,14 @@ from backend.character_actions.inscriber import (
 from backend.character_actions.threader import (
     POST_WORKING_MEMORY_THREAD_SCHEMA,
     POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    OPEN_WORKING_MEMORY_THREAD_SCHEMA,
-    OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    READ_WORKING_MEMORY_THREAD_SCHEMA,
+    READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
+    CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
+    REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+    MERGE_WORKING_MEMORY_THREADS_SCHEMA,
+    MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
 )
 from backend.character_actions.carver import (
     CARVE_NARRATIVE_SCHEMA,
@@ -170,9 +176,24 @@ def _build_tool_definitions() -> list[ToolDefinition]:
             inputSchema=POST_WORKING_MEMORY_THREAD_SCHEMA,
         ),
         ToolDefinition(
-            name="open_working_memory_thread",
-            description=OPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-            inputSchema=OPEN_WORKING_MEMORY_THREAD_SCHEMA,
+            name="read_working_memory_thread",
+            description=READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+            inputSchema=READ_WORKING_MEMORY_THREAD_SCHEMA,
+        ),
+        ToolDefinition(
+            name="close_working_memory_thread",
+            description=CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+            inputSchema=CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
+        ),
+        ToolDefinition(
+            name="reopen_working_memory_thread",
+            description=REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
+            inputSchema=REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
+        ),
+        ToolDefinition(
+            name="merge_working_memory_threads",
+            description=MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
+            inputSchema=MERGE_WORKING_MEMORY_THREADS_SCHEMA,
         ),
         ToolDefinition(
             name="carve_narrative",

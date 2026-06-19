@@ -468,29 +468,31 @@ class TestUsualOriginAttribution:
 
     @pytest.mark.asyncio
     async def test_inscribe_passes_usual_origin(
-        self, sqlite_store, working_memory_manager, memory_manager,
+        self, sqlite_store, working_memory_manager,
     ):
-        """origin="usual" の inscribe が Inscriber.inscribe_memory へ origin="usual" で渡ることを確認する。
+        """origin="usual" の inscribe が memory_manager.write_inscribed_memory へ origin="usual" で渡ること。
 
-        長期記憶の実書き込み（embedding 経路）は検証対象外なので Inscriber をモックし、
+        Chronicle は ToolExecutor.execute("inscribe_memory", ..., source="chronicle") を経由し、
+        さらに Inscriber → InscribedMemoryManager.write_inscribed_memory までストレッチして origin が流れる。
+        実書き込み（embedding 経路）は検証対象外なので memory_manager を MagicMock にして、
         Chronicle が _normalize_origin 経由で origin を正しく伝搬することだけを検証する。
         """
         char_id, _, _, _ = _setup_usual_world(sqlite_store, n_turns=1)
         mock_provider = AsyncMock()
         mock_provider.generate = AsyncMock(return_value=_USUAL_INSCRIBE_RESPONSE)
-        mock_inscriber = MagicMock()
+
+        mock_mm = MagicMock()
+        mock_mm.sqlite = sqlite_store
 
         with patch(
             "backend.services.character_query.create_provider", return_value=mock_provider,
-        ), patch(
-            "backend.batch.chronicle_job.Inscriber", return_value=mock_inscriber,
         ):
             result = await run_chronicle(
                 character_id=char_id, sqlite=sqlite_store,
                 working_memory_manager=working_memory_manager,
-                memory_manager=memory_manager,
+                memory_manager=mock_mm,
             )
 
         assert result["status"] == "success"
-        mock_inscriber.inscribe_memory.assert_called_once()
-        assert mock_inscriber.inscribe_memory.call_args.kwargs.get("origin") == "usual"
+        mock_mm.write_inscribed_memory.assert_called_once()
+        assert mock_mm.write_inscribed_memory.call_args.kwargs.get("origin") == "usual"

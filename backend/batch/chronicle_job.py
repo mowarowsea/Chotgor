@@ -43,11 +43,12 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from backend.lib.log_context import new_message_id, current_log_feature, current_log_target
+from backend.lib.tool_event_recorder import result_looks_like_error
 from backend.repositories.sqlite.store import SQLiteStore
 from backend.services.character_query import ask_character
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
-from backend.character_actions.inscriber import Inscriber
+from backend.character_actions.executor import ToolExecutor
 from backend.character_actions.farewell_detector import FAREWELL_EMOTION_RUBRIC
 
 if TYPE_CHECKING:
@@ -226,6 +227,26 @@ def _normalize_origin(value) -> str:
     return v if v in _VALID_ORIGINS else "real"
 
 
+def _safe_float(value, default: float | None) -> float | None:
+    """value を float に変換する。変換できない場合は default を返す。
+
+    Chronicle の数値フィールド（importance / impact）は LLM 出力由来のため、
+    "high" のような非数値が混ざりうる。float() を直接呼ぶと棚卸し全体が中断するため、
+    ここで安全に丸めて1件のスキップに留める。
+
+    Args:
+        value: 変換対象（None・非数値文字列もありうる）。
+        default: 変換に失敗したときの戻り値（None を許す）。
+
+    Returns:
+        変換後の float、または変換不能時の default。
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # 棚卸しプロンプトに載せる Close 済みスレッドの最大件数（updated_at 降順で新しい順）。
 _CLOSED_THREADS_LIMIT = 30
 
@@ -284,19 +305,42 @@ def _parse_chronicle_response(response_text: str) -> dict | None:
 def _apply_working_memory_updates(
     character_id: str,
     parsed: dict,
-    wm: WorkingMemoryManager,
+    executor: ToolExecutor,
 ) -> dict:
     """棚卸し結果（thread_updates / new_threads / merges）をワーキングメモリへ反映する。
+
+    Chronicle の JSON 棚卸し結果は最終的に MCP ツール群と同じ操作（post / close / reopen / merge）に
+    分解できる。それらを ToolExecutor.execute() 経由で実行することで、タグ方式・tool-use 方式と
+    同じ source of truth（tool_call_events）に Chronicle の操作も記録される。これにより
+    Logs 画面でも Chronicle の効果がツール使用として可視化される。
 
     Args:
         character_id: 対象キャラクターID。
         parsed: _parse_chronicle_response() の結果辞書。
-        wm: WorkingMemoryManager インスタンス。
+        executor: Chronicle 用に作られた ToolExecutor インスタンス。origin は
+            execute(origin=...) で1呼び出しごとに渡す（executor のインスタンス状態は汚さない）。
 
     Returns:
         反映件数の辞書 {updated, created, merged}。
     """
     counts = {"updated": 0, "created": 0, "merged": 0}
+
+    def _ran_ok(tool_name: str, args: dict, *, origin: str | None = None) -> bool:
+        """execute(source="chronicle") を1回実行し、成功（エラー文字列でない）なら True を返す。
+
+        ToolExecutor.execute() はツール失敗を例外ではなくエラー文字列で返すため、
+        例外捕捉だけでなく result_looks_like_error も確認する。これにより
+        「見つからないスレッドへの更新」等の失敗を成功として計上することを防ぐ。
+        """
+        try:
+            result = executor.execute(tool_name, args, source="chronicle", origin=origin)
+        except Exception as e:
+            logger.warning("chronicle: %s 失敗 args=%s error=%s", tool_name, args, e)
+            return False
+        if result_looks_like_error(result):
+            logger.info("chronicle: %s スキップ args=%s detail=%s", tool_name, args, result)
+            return False
+        return True
 
     # 既存スレッドの更新
     for upd in parsed.get("thread_updates") or []:
@@ -305,49 +349,63 @@ def _apply_working_memory_updates(
         thread_id = upd.get("id")
         if not thread_id:
             continue
-        try:
-            summary = upd.get("summary")
-            atmosphere_tag = upd.get("atmosphere_tag")
-            importance = upd.get("importance")
-            if summary is not None or atmosphere_tag is not None or importance is not None:
-                wm.update_thread(
-                    thread_id,
-                    summary=summary,
-                    atmosphere_tag=atmosphere_tag,
-                    importance=importance,
-                )
-            new_post = upd.get("new_post")
-            if new_post:
-                wm.add_post(thread_id, str(new_post))
-            is_open = upd.get("is_open")
-            if is_open is not None:
-                wm.set_open(thread_id, bool(is_open))
-            counts["updated"] += 1
-        except Exception as e:
-            logger.warning("chronicle: スレッド更新失敗 id=%s error=%s", thread_id, e)
+        any_change = False
 
-    # 新規スレッド
+        # 内容（summary / atmosphere_tag / importance / new_post）の更新は
+        # post_working_memory_thread の1呼び出しに集約できる。
+        summary = upd.get("summary")
+        atmosphere_tag = upd.get("atmosphere_tag")
+        # importance は LLM 由来で非数値がありうる。安全に丸め、変換不能なら更新対象から外す。
+        raw_importance = upd.get("importance")
+        importance = _safe_float(raw_importance, None) if raw_importance is not None else None
+        new_post = upd.get("new_post")
+        if summary is not None or atmosphere_tag is not None or importance is not None or new_post:
+            args = {"thread_id": str(thread_id)}
+            if summary is not None:
+                args["summary"] = str(summary)
+            if atmosphere_tag is not None:
+                args["atmosphere_tag"] = str(atmosphere_tag)
+            if importance is not None:
+                args["importance"] = importance
+            if new_post:
+                args["content"] = str(new_post)
+            if _ran_ok("post_working_memory_thread", args):
+                any_change = True
+
+        # is_open フラグは close / reopen の独立ツールへ振り分ける。
+        # None=変更なし。それ以外は bool() で真偽を取り（JSON の 0/1・文字列も拾う）、
+        # 真→reopen / 偽→close。
+        is_open = upd.get("is_open")
+        if is_open is not None:
+            tool = "reopen_working_memory_thread" if bool(is_open) else "close_working_memory_thread"
+            if _ran_ok(tool, {"thread_id": str(thread_id)}):
+                any_change = True
+
+        if any_change:
+            counts["updated"] += 1
+
+    # 新規スレッド: post_working_memory_thread(thread_id 省略) で作成する。
+    # origin は item ごとに違うため、execute(origin=...) で1呼び出しごとに渡す。
     for nt in parsed.get("new_threads") or []:
         if not isinstance(nt, dict):
             continue
-        try:
-            wm.create_thread(
-                character_id=character_id,
-                type=str(nt.get("type", "")),
-                summary=str(nt.get("summary", "")),
-                atmosphere_tag=str(nt.get("atmosphere_tag", "") or ""),
-                importance=float(nt.get("importance", 0.5) or 0.5),
-                relation_target=nt.get("relation_target") or None,
-                content=nt.get("post") or None,
-                origin=_normalize_origin(nt.get("origin")),
-            )
+        args = {
+            "type": str(nt.get("type", "")),
+            "summary": str(nt.get("summary", "")),
+            "atmosphere_tag": str(nt.get("atmosphere_tag", "") or ""),
+            "importance": _safe_float(nt.get("importance"), 0.5),
+        }
+        if nt.get("relation_target"):
+            args["relation_target"] = str(nt["relation_target"])
+        if nt.get("post"):
+            args["content"] = str(nt["post"])
+        if _ran_ok(
+            "post_working_memory_thread", args,
+            origin=_normalize_origin(nt.get("origin")),
+        ):
             counts["created"] += 1
-        except ValueError as e:
-            logger.info("chronicle: 新規スレッド作成スキップ char=%s error=%s", character_id, e)
-        except Exception as e:
-            logger.warning("chronicle: 新規スレッド作成失敗 char=%s error=%s", character_id, e)
 
-    # スレッド統合: from_ids を Close し、統合の経緯を into_id に記録する
+    # スレッド統合: from_ids を Close し、統合の経緯を into_id に追記する。
     for merge in parsed.get("merges") or []:
         if not isinstance(merge, dict):
             continue
@@ -355,16 +413,14 @@ def _apply_working_memory_updates(
         from_ids = merge.get("from_ids") or []
         if not into_id or not from_ids:
             continue
-        try:
-            post = merge.get("post")
-            if post:
-                wm.add_post(into_id, str(post))
-            for fid in from_ids:
-                if fid and fid != into_id:
-                    wm.set_open(fid, False)
+        args = {
+            "from_ids": [str(fid) for fid in from_ids],
+            "into_id": str(into_id),
+        }
+        if merge.get("post"):
+            args["post"] = str(merge["post"])
+        if _ran_ok("merge_working_memory_threads", args):
             counts["merged"] += 1
-        except Exception as e:
-            logger.warning("chronicle: スレッド統合失敗 into=%s error=%s", into_id, e)
 
     return counts
 
@@ -372,42 +428,49 @@ def _apply_working_memory_updates(
 def _apply_distillation(
     character_id: str,
     parsed: dict,
-    memory_manager: InscribedMemoryManager | None,
+    executor: ToolExecutor,
 ) -> dict:
     """昇格結果（inscribe）を長期記憶へ反映する。
 
     三段階の蒸留パイプライン上、Chronicle は第2段（WM → 長期記憶への昇格）のみを担う。
     第3段の inner_narrative への昇華（carve）は Forget バッチへ移譲したため、ここでは行わない。
 
+    実行は ToolExecutor.execute("inscribe_memory", ..., source="chronicle") 経由。
+    タグ・JSON・tool-use 方式 のいずれと同じ source of truth（tool_call_events）に記録される。
+    各 item の origin は item ごとに違いうるため、execute(origin=...) で1呼び出しごとに渡す。
+
     Args:
         character_id: 対象キャラクターID。
         parsed: _parse_chronicle_response() の結果辞書。
-        memory_manager: InscribedMemoryManager インスタンス（inscribe に必要。None ならスキップ）。
+        executor: Chronicle 用に作られた ToolExecutor インスタンス。
 
     Returns:
         反映件数の辞書 {inscribed}。
     """
     counts = {"inscribed": 0}
 
-    # ワーキングメモリのスレッドから定着したものを長期記憶へ昇格する
-    if memory_manager is not None:
-        inscriber = Inscriber(character_id, memory_manager)
-        for item in parsed.get("inscribe") or []:
-            if not isinstance(item, dict):
-                continue
-            content = str(item.get("content", "")).strip()
-            if not content:
-                continue
-            try:
-                inscriber.inscribe_memory(
-                    content=content,
-                    category=str(item.get("category", "contextual")),
-                    impact=float(item.get("impact", 1.0) or 1.0),
-                    origin=_normalize_origin(item.get("origin")),
-                )
-                counts["inscribed"] += 1
-            except Exception as e:
-                logger.warning("chronicle: 長期記憶への昇格失敗 char=%s error=%s", character_id, e)
+    for item in parsed.get("inscribe") or []:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        args = {
+            "content": content,
+            "category": str(item.get("category", "contextual")),
+            # impact は LLM 由来で非数値がありうる。安全に丸める（変換不能なら 1.0）。
+            "impact": _safe_float(item.get("impact"), 1.0),
+        }
+        try:
+            result = executor.execute(
+                "inscribe_memory", args, source="chronicle",
+                origin=_normalize_origin(item.get("origin")),
+            )
+        except Exception as e:
+            logger.warning("chronicle: 長期記憶への昇格失敗 char=%s error=%s", character_id, e)
+            continue
+        if not result_looks_like_error(result):
+            counts["inscribed"] += 1
 
     return counts
 
@@ -584,10 +647,27 @@ async def run_chronicle(
         logger.warning("JSONパース失敗 char=%s raw=%.100s", char_label, response_text)
         return {"status": "error", "error": "JSON のパースに失敗しました", "raw": response_text[:500]}
 
+    # フェーズ2/3 を実行する ToolExecutor を作る。タグ方式・tool-use 方式と同じ
+    # 関門（execute）を通すことで、Chronicle の各操作も tool_call_events に source="chronicle"
+    # として記録され、Logs 画面でツール使用として可視化される。
+    executor = ToolExecutor(
+        character_id=character_id,
+        session_id=None,
+        memory_manager=memory_manager,
+        working_memory_manager=working_memory_manager,
+        # default_origin は item ごとに書き換えるが、初期値は "real" に置く。
+        default_origin="real",
+        source_preset_id=char.ghost_model or "",
+    )
+
     # フェーズ2: ワーキングメモリの棚卸し
-    wm_counts = _apply_working_memory_updates(character_id, parsed, working_memory_manager)
+    wm_counts = _apply_working_memory_updates(character_id, parsed, executor)
     # フェーズ3: 長期記憶への昇格（inscribe）。inner_narrative への昇華は Forget へ移譲済み
-    distill_counts = _apply_distillation(character_id, parsed, memory_manager)
+    # memory_manager が None なら inscribe は呼び出し時に NoneType エラーになるためスキップ。
+    if memory_manager is not None:
+        distill_counts = _apply_distillation(character_id, parsed, executor)
+    else:
+        distill_counts = {"inscribed": 0}
 
     # farewell_config: null 以外の dict が返された場合のみ更新する
     fc_value = parsed.get("farewell_config")

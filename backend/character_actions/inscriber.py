@@ -4,13 +4,17 @@ Inscriber クラスと関連定数を一元管理する。
 - INSCRIBE_MEMORY_SCHEMA: ツール呼び出し方式のパラメータ JSON スキーマ
 - INSCRIBE_MEMORY_TOOL_DESCRIPTION: tool-use プロバイダー向けツール説明文
 - INSCRIBE_MEMORY_TAG_GUIDE: タグ方式プロバイダー向けガイド文
-- Inscriber クラス: タグ方式（inscribe_memory_from_text）とツール呼び出し方式（inscribe_memory）の両方に対応
+- Inscriber クラス: 実際の書き込み実装（ツール呼び出し方式）
+- extract_inscribe_memory_tags(text): タグ抽出ヘルパ。タグ方式の execute() 経路で使う
+
+タグ方式の実行口は ToolExecutor.apply_inscribe_memory_tags(text) に統一されている。
+本モジュールはタグ解析（extract_inscribe_memory_tags）と書き込み実装（Inscriber）を提供するが、
+タグ抽出後の実行・記録はそちら側で行うため、ここでは record_tool_event を直接呼ばない。
 """
 
 import logging
 
 from backend.lib.tag_parser import parse_tags
-from backend.lib.tool_event_recorder import record_tool_event
 from backend.services.memory.manager import InscribedMemoryManager
 
 logger = logging.getLogger(__name__)
@@ -107,7 +111,7 @@ INSCRIBE_MEMORY_TAG_GUIDE: str = """\
 > `[INSCRIBE_MEMORY:...]` の行はユーザーには見えません。"""
 
 
-def _extract(text: str) -> tuple[str, list[tuple[str, str, str]]]:
+def extract_inscribe_memory_tags(text: str) -> tuple[str, list[tuple[str, str, str]]]:
     """テキストから [INSCRIBE_MEMORY:category|impact|content] マーカーを取り出す。
 
     tag_parser.parse_tags() を使用して文字単位でスキャンし、
@@ -139,17 +143,11 @@ def _extract(text: str) -> tuple[str, list[tuple[str, str, str]]]:
 
 
 class Inscriber:
-    """記憶の刻み込みを担うクラス。タグ方式・ツール呼び出し方式の両方に対応する。
+    """記憶の刻み込みを担うクラス（実書き込みの実装）。
 
-    タグ方式:
-        LLM応答から [INSCRIBE_MEMORY:category|impact|content] マーカーを抽出して書き込む。
-        Claude CLI や Ollama など tool-use 非対応プロバイダーが使用する。
-        inscribe_memory_from_text(text, source_preset_id) を呼ぶ。
-
-    ツール呼び出し方式:
-        content / category / impact を直接受け取って書き込む。
-        Anthropic API・OpenAI API など tool-use 対応プロバイダーが使用する。
-        inscribe_memory(content, category, impact) を呼ぶ。
+    タグ方式・JSON 方式・tool-use 方式 のいずれの入口から来ても、最終的にこのクラスの
+    inscribe_memory() を経由して LanceDB + SQLite に書き込む。記録（tool_call_events）は
+    ToolExecutor.execute() で集約管理されるため、本クラスは記録を行わない。
 
     Attributes:
         character_id: 記憶を保存するキャラクターID。
@@ -165,37 +163,6 @@ class Inscriber:
         """
         self.character_id = character_id
         self.memory_manager = memory_manager
-
-    def inscribe_memory_from_text(
-        self, text: str, source_preset_id: str = "", origin: str = "real",
-    ) -> str:
-        """LLM応答から [INSCRIBE_MEMORY:...] マーカーを読み取り、記憶として刻み込む（タグ方式）。
-
-        Args:
-            text: LLMの生応答テキスト。
-            source_preset_id: 記憶を作成したプリセットID（空文字列の場合はNULL保存）。
-            origin: 記憶のソース識別。"real"=日常（ユーザと共有）、"usual"=うつつ（ユーザ未共有の自分の生活体験）、
-                "interlude"=シナリオPCモードの幕間体験。ChatRequest.default_origin から渡される。
-
-        Returns:
-            マーカーを除去したクリーンなテキスト。
-        """
-        clean, memories = _extract(text)
-        for category, impact_str, content in memories:
-            impact = float(impact_str) if impact_str else 1.0
-            # 引数はツール呼び出し方式（INSCRIBE_MEMORY_SCHEMA）と同じキー名で記録し、
-            # Logs 画面の表示変換（tool_tags.tool_call_to_structured_tag）を共用する。
-            event_args = {"content": content, "category": category, "impact": impact}
-            try:
-                self.inscribe_memory(content, category, impact, source_preset_id=source_preset_id, origin=origin)
-                record_tool_event("inscribe_memory", event_args, source="tag")
-            except Exception as e:
-                logger.exception("記憶の書き込みに失敗: category=%s content=%.50s...", category, content)
-                record_tool_event(
-                    "inscribe_memory", event_args,
-                    status="error", error_message=f"{type(e).__name__}: {e}", source="tag",
-                )
-        return clean
 
     def inscribe_memory(
         self,
