@@ -133,6 +133,19 @@ class BaseLLMProvider:
     # サブクラスで上書きすることで、継承先でも正しいキー名のエラーが出る。
     _API_SETTINGS_KEY: str = "api_key"
 
+    @classmethod
+    def supports_tools_for_preset(cls, model_id: str) -> bool:
+        """指定モデルIDで tool-use を使えるかをクラスメソッドで判定する。
+
+        デフォルトはクラス属性 SUPPORTS_TOOLS をそのまま返す。
+        モデルごとに tool-use サポートが分かれるプロバイダー（さくらの AI Engine など）は
+        本メソッドをオーバーライドして model_id を見て判定する。
+
+        プロバイダーインスタンスを生成せずに判定できるため、reflector など
+        「準備フェーズで tool 方式 / タグ方式の分岐を決めたい」用途で使う。
+        """
+        return cls.SUPPORTS_TOOLS
+
     # デバッグログのファイル名に使用するプリセット名。
     # create_provider() 経由でインスタンス生成後に設定される。
     # 未設定の場合は PROVIDER_ID にフォールバックする。

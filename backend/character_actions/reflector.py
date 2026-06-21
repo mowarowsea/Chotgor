@@ -222,10 +222,12 @@ class SelfReflector:
         """
         conversation_text = _format_conversation(conversation_window)
 
-        # プロバイダーが tool-use 対応かどうかをクラス変数で確認する（インスタンス生成不要）
+        # プロバイダーが tool-use 対応かどうかをクラスメソッドで確認する（インスタンス生成不要）。
+        # さくらの AI Engine のようにモデルごとに tool-use 対応が分かれるプロバイダーでも
+        # supports_tools_for_preset() が model_id を見て正しく判定してくれる。
         preset = self.memory_manager.sqlite.get_model_preset(preset_id)
         provider_cls = PROVIDER_REGISTRY.get(preset.provider) if preset else None
-        supports_tools = bool(provider_cls and provider_cls.SUPPORTS_TOOLS)
+        supports_tools = bool(provider_cls and preset and provider_cls.supports_tools_for_preset(preset.model_id))
 
         if supports_tools:
             # MCPツール方式: carve_narrative / post_working_memory_thread ツールをキャラクター自身が呼び出す

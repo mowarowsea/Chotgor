@@ -49,6 +49,7 @@ async def save_general_settings(request: Request):
         "xai_api_key",
         "google_api_key",
         "openrouter_api_key",
+        "sakura_api_key",
         "tavily_api_key",
     ):
         value = form.get(key) or ""

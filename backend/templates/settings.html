@@ -104,6 +104,13 @@
                ) }}
 
             {{ masked_api_key_input(
+                   "sakura_api_key",
+                   "さくらの AI Engine API Key",
+                   "provider: sakura — gpt-oss / Qwen3 / llm-jp 等を提供",
+                   "(leave blank to keep current)"
+               ) }}
+
+            {{ masked_api_key_input(
                    "tavily_api_key",
                    "Tavily API Key",
                    "Optional — Chotgor MCP の web_search ツールで使用",

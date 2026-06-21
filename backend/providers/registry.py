@@ -22,6 +22,7 @@ from backend.providers.google_provider import GoogleProvider
 from backend.providers.ollama_provider import OllamaProvider
 from backend.providers.openai_provider import OpenAIProvider
 from backend.providers.openrouter_provider import OpenRouterProvider
+from backend.providers.sakura_provider import SakuraProvider
 from backend.providers.xai_provider import XAIProvider
 
 PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
@@ -31,6 +32,7 @@ PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
     XAIProvider.PROVIDER_ID: XAIProvider,
     GoogleProvider.PROVIDER_ID: GoogleProvider,
     OpenRouterProvider.PROVIDER_ID: OpenRouterProvider,
+    SakuraProvider.PROVIDER_ID: SakuraProvider,
     OllamaProvider.PROVIDER_ID: OllamaProvider,
 }
 
@@ -42,11 +44,12 @@ PROVIDER_LABELS: dict[str, str] = {
     "xai": "xAI / Grok",
     "google": "Google Gemini",
     "openrouter": "OpenRouter",
+    "sakura": "さくらの AI Engine",
     "ollama": "Ollama (ローカル)",
 }
 
 # UI での表示順
-PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "openrouter", "ollama"]
+PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "openrouter", "sakura", "ollama"]
 
 
 def get_default_model(provider_id: str) -> str:
