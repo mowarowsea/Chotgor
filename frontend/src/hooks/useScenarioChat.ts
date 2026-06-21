@@ -118,12 +118,18 @@ interface UseScenarioChatResult {
   ) => Promise<void>;
   /** GM プリセットを変更する。 */
   handleScenarioPresetChange: (presetId: string) => Promise<void>;
-  /** シナリオ発話送信（SSE ストリーム消費）。 */
+  /** シナリオ発話送信（SSE ストリーム消費）。
+   *  yieldTo は ensemble_pc の「ターンを譲る」UI 用（PC枠名 / "GM" / "ALL"）。
+   *  autoAdvance=true と組み合わせて初動ルーティングを直接指定する。 */
   handleScenarioSend: (
     content: string,
     autoAdvance?: boolean,
     regenerateRequestId?: string,
+    yieldTo?: string,
   ) => Promise<void>;
+  /** ensemble_pc 専用「ターンを譲る」操作。指定先（PC枠名/"GM"/"ALL"）に発話を回す。
+   *  内部は handleScenarioSend("", true, undefined, target) のラッパー。 */
+  handleScenarioYieldTo: (target: string) => Promise<void>;
   /** GM 応答を 1 レスポンス（= 同一 raw_response 内の話者ブロック群）丸ごと再生成する。 */
   handleScenarioRegenerate: () => Promise<void>;
   /** GM 応答を 1 レスポンス分破棄してユーザ入力待ちに戻す。 */
@@ -344,6 +350,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       content: string,
       autoAdvance: boolean = false,
       regenerateRequestId?: string,
+      yieldTo?: string,
     ) => {
       if (!activeScenarioSession) return;
       setError(null);
@@ -359,6 +366,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
           content,
           autoAdvance,
           regenerateRequestId,
+          yieldTo,
         )) {
           if (ev.type === "user_saved") {
             // user_saved はユーザ発話を確定ターンとしてリストに追加する
@@ -669,6 +677,19 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     [activeScenarioSession, activeSessionIdRef, setError],
   );
 
+  /**
+   * ensemble_pc の「ターンを譲る」操作。ユーザは無言のまま、指定先へ初動を回す。
+   *
+   * 内部は `handleScenarioSend("", autoAdvance=true, undefined, target)` のラッパー。
+   * target に PC枠名を渡せばその PC、"GM" なら GM、"ALL" ならランダム PC へルーティングされる。
+   */
+  const handleScenarioYieldTo = useCallback(
+    async (target: string) => {
+      await handleScenarioSend("", true, undefined, target);
+    },
+    [handleScenarioSend],
+  );
+
   /** あらすじ作成モーダルを開く（バー / 設定モーダルの「自動作成」から呼ばれる）。 */
   const handleOpenSynopsisCreate = useCallback(() => {
     setScenarioSettingsTab(null);
@@ -758,6 +779,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     handleStartScenario,
     handleScenarioPresetChange,
     handleScenarioSend,
+    handleScenarioYieldTo,
     handleScenarioRegenerate,
     handleScenarioDiscard,
     handleScenarioEditUserTurn,

@@ -239,6 +239,7 @@ export default function App() {
     handleStartScenario,
     handleScenarioPresetChange,
     handleScenarioSend,
+    handleScenarioYieldTo,
     handleScenarioRegenerate,
     handleScenarioDiscard,
     handleScenarioEditUserTurn,
@@ -621,6 +622,7 @@ export default function App() {
             sending={sending}
             pendingBubbles={scenarioPending}
             onSend={handleScenarioSend}
+            onYieldTo={handleScenarioYieldTo}
             onEditUserTurn={handleScenarioEditUserTurn}
             onRegenerate={handleScenarioRegenerate}
             onDiscard={handleScenarioDiscard}

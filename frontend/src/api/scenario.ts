@@ -420,12 +420,15 @@ export async function regenerateScenarioSynopsis(
  * autoAdvance=true なら「ユーザは無言で続きを促す」モードで、
  * content は無視され、user turn も保存されない。
  * regenerateRequestId を指定すると、再生成ログを同一エントリにまとめる。
+ * yieldTo は ensemble_pc の「ターンを譲る」UI 用（PC枠名 / "GM" / "ALL"）。
+ * autoAdvance=true と組み合わせ、初動ルーティングをサーバ側で直接指定する。
  */
 export async function* streamScenarioMessage(
   sessionId: string,
   content: string,
   autoAdvance: boolean = false,
   regenerateRequestId?: string,
+  yieldTo?: string,
 ): AsyncGenerator<ScenarioStreamEvent> {
   const res = await fetch(
     `/api/scenario_chat/sessions/${sessionId}/stream`,
@@ -438,6 +441,7 @@ export async function* streamScenarioMessage(
         ...(regenerateRequestId
           ? { regenerate_request_id: regenerateRequestId }
           : {}),
+        ...(yieldTo ? { yield_to: yieldTo } : {}),
       }),
     },
   );

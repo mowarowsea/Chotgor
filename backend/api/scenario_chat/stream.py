@@ -69,6 +69,7 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
             settings=settings,
             auto_advance=body.auto_advance,
             chat_service=_chat_service,
+            yield_to=body.yield_to,
         ):
             data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
             yield f"data: {data}\n\n"

@@ -121,10 +121,15 @@ class StreamRequest(BaseModel):
     regenerate_request_id を指定すると、そのログエントリに追記する形で
     再生成ログをまとめる。フロントは再生成ボタン押下時のみ前ターンの
     log_request_id を渡す（過去ターン編集時は渡さない）。
+
+    yield_to は ensemble_pc（TRPG モード）の「ターンを譲る」UI 用。auto_advance=True と
+    併用し、初動ルーティングをユーザが直接指定する。値は PC枠名 / "GM" / "ALL" の
+    いずれか。None なら従来どおりメッセージ末尾メンション解析または GM フォールバック。
     """
 
     content: str = ""
     auto_advance: bool = False
     regenerate_request_id: str | None = None
+    yield_to: str | None = None
 
 

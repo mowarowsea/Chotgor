@@ -259,6 +259,7 @@ async def run_scenario_turn(
     chat_service=None,
     headless: bool = False,
     extra_first_gm_ooc: str = "",
+    yield_to: str | None = None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """ユーザ発話を受け取り、シナリオ 1 ユーザターン分の SSE イベントを順次 yield する。
 
@@ -289,6 +290,13 @@ async def run_scenario_turn(
         - user turn は保存されない
         - SSE の "user_saved" イベントも発火しない
         - GM プロンプト末尾に「プレイヤーは無言、場面を進めて」という OOC 指示が入る
+
+    yield_to は ensemble_pc の「ターンを譲る」UI 向け。auto_advance=True と組み合わせて使い、
+    初動ルーティングをユーザが直接指定する。値の意味:
+        - PC枠名（pc_slot.name）: そのPCに直接振る（@<PC>相当）。
+        - "ALL": ランダムPC（@ALL相当）。
+        - "GM" / None / 解決不能な値: 従来どおりの GM 行き。
+    ensemble モード（GMのみ）や auto_advance=False のときは無視される。
 
     headless=True（うつつ / Usual Days 無人ループ）の場合:
         - engine_type=="usual_days" でも自動的に headless 扱いになる。
@@ -421,6 +429,19 @@ async def run_scenario_turn(
         )
         if next_kind == "none":
             next_kind = "gm"
+    elif is_pc_mode and auto_advance and yield_to:
+        # 「ターンを譲る」UI（auto_advance + yield_to）。メッセージ本文の代わりに
+        # フロントが直接指定した宛先で初動ルーティングを決める。
+        if yield_to == "ALL":
+            if routing_pcs:
+                next_kind = "all"
+                next_target = None
+        elif yield_to != "GM":
+            # PC枠名指定。PC が見つからなければ・ユーザPCなら GM フォールバック。
+            target_pc = next((p for p in routing_pcs if p.name == yield_to), None)
+            if target_pc is not None and not target_pc.is_user:
+                next_kind = "pc"
+                next_target = target_pc.name
 
     last_speaker_name: str | None = user_speaker_name if not auto_advance else None
     fired_responses = 0

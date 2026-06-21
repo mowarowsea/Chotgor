@@ -24,6 +24,7 @@ import type {
   ScenarioTurn,
 } from "../../api";
 import { useHeaderVisibilityOnScroll } from "../../hooks/useHeaderVisibilityOnScroll";
+import { CharacterAvatar } from "../ChatBubbles";
 import MessageInput from "../MessageInput";
 import { trimEnd } from "./helpers";
 import { NpcDetailDialog } from "./npc";
@@ -75,6 +76,12 @@ interface Props {
    * 自分の発話を入力したくなった場合。
    */
   onDiscard: () => void;
+  /**
+   * ensemble_pc 専用「ターンを譲る」操作。指定先（PC枠名 / "GM" / "ALL"）に発話を回す。
+   * チップ群が押されたときに呼ばれる。バックエンドでは auto_advance=true + yield_to で処理され、
+   * ユーザ発話は履歴に残らない。
+   */
+  onYieldTo?: (target: string) => void;
   /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** turn_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
@@ -109,6 +116,7 @@ export default function ScenarioChatView({
   onEditUserTurn,
   onRegenerate,
   onDiscard,
+  onYieldTo,
   onHeaderVisibilityChange,
   elapsedMap,
   synopsisBar,
@@ -456,6 +464,64 @@ export default function ScenarioChatView({
             <span className="font-medium truncate">{synopsisBar.text}</span>
             <span className="shrink-0 text-[11px] opacity-80">あらすじ作成 ›</span>
           </button>
+        </div>
+      )}
+
+      {/* ensemble_pc（TRPGモード）専用「ターンを譲る」チップ群。
+          ユーザは無言のまま、指定先（他PC枠 / @ALL / @GM）に発話順を回す。
+          他PC枠はユーザPC枠を除いた pc_slots（player_type==="character" のもの）。 */}
+      {isPcMode && onYieldTo && session.status === "active" && (
+        <div
+          className="flex flex-col gap-1.5 px-3 py-2 shrink-0"
+          style={{ borderTop: "1px solid var(--ch-sep)" }}
+        >
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] text-ch-t3 font-mono shrink-0">
+              ターンを譲る:
+            </span>
+            {pcSlotNames.map((name) => (
+              <button
+                key={name}
+                onClick={() => onYieldTo(name)}
+                disabled={sending}
+                title={`${name} に発話を譲る`}
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-30"
+                style={{
+                  border: "1px solid var(--ch-sep2)",
+                  color: "rgb(var(--ch-t2))",
+                }}
+              >
+                <CharacterAvatar characterName={name} size={16} />
+                {name}
+              </button>
+            ))}
+            {pcSlotNames.length > 1 && (
+              <button
+                onClick={() => onYieldTo("ALL")}
+                disabled={sending}
+                title="@ALL（PCの誰かに発話を譲る）"
+                className="rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-30"
+                style={{
+                  border: "1px solid var(--ch-sep2)",
+                  color: "rgb(var(--ch-t2))",
+                }}
+              >
+                @ALL
+              </button>
+            )}
+            <button
+              onClick={() => onYieldTo("GM")}
+              disabled={sending}
+              title="@GM（語り手に場を進めてもらう）"
+              className="rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-30"
+              style={{
+                border: "1px solid var(--ch-sep2)",
+                color: "rgb(var(--ch-t2))",
+              }}
+            >
+              @GM
+            </button>
+          </div>
         </div>
       )}
 
