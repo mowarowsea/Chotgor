@@ -125,6 +125,12 @@ class Character(Base):
     # うつつでは pc_slots[slot_id="user"] にもこの値が同期保存され、GM の「不在 PC を代弁しない」保護に使われる。
     user_label = Column(String, nullable=False, default="")
     user_position = Column(Text, nullable=False, default="")
+    # キャラ本人が「周囲（NPC・知人）にユーザのことをどこまで・どんなふうに伝えているか」を
+    # 自分の言葉で書き下ろした自由記述。うつつ世界の GM システムプロンプトに
+    # 「不在の関係者」ブロックとして流し込まれ、NPC の自発的な言及度を本人の流儀で
+    # コントロールする。空なら「完全に秘匿（NPC は触れない）」を意味する。
+    # 想定運用: キャラ編集画面の「キャラに聞く」ボタンで本人に問い、返答を書き留める。
+    user_visibility_note = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,

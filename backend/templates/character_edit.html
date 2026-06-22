@@ -147,12 +147,33 @@
                     value="{% if character %}{{ character.user_label }}{% endif %}"
                     placeholder="例: 太郎">
             </div>
-            <div class="ch-field" style="margin-bottom:0">
+            <div class="ch-field">
                 <label class="ch-label" for="user_position">ユーザの位置づけ
                     <span class="ch-hint">役職・関係・接触の仕方など。別名（太郎＝主任）でも同一人物と分かる手がかり。短く</span>
                 </label>
                 <textarea id="user_position" name="user_position" class="ch-textarea" rows="2"
                     placeholder="例: 職場の主任で直属の上司">{% if character %}{{ character.user_position }}{% endif %}</textarea>
+            </div>
+            {# ── ユーザの周知メモ ── #}
+            {# キャラが普段、周囲（NPC・知人）にユーザのことをどう伝えているかを本人の言葉で書き下ろす。
+               うつつ世界の GM プロンプトに「不在の関係者」ブロックとして流し込まれ、NPC の自発的言及度を
+               本人の流儀で制御する。空欄なら完全秘匿（NPC は触れない）。
+               「キャラに聞く」ボタンで本人に問い合わせ、返答を下書きとしてここに流し込める。 #}
+            <div class="ch-field" style="margin-bottom:0">
+                <label class="ch-label" for="user_visibility_note">ユーザの周知メモ
+                    <span class="ch-hint">周囲にどこまで・どう伝えているかをキャラ本人の言葉で。空欄＝完全秘匿（うつつでNPCは触れない）</span>
+                </label>
+                <textarea id="user_visibility_note" name="user_visibility_note"
+                    class="ch-textarea" rows="3"
+                    placeholder="例: 親しい友人には何でも話しているが、職場では同居人がいるとだけ伝えている。"
+                >{% if character %}{{ character.user_visibility_note }}{% endif %}</textarea>
+                {% if character %}
+                <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+                    <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                            onclick="askUserVisibility(this, '{{ character.id }}')">キャラに聞く</button>
+                    <span class="ch-hint" id="ask-visibility-status"></span>
+                </div>
+                {% endif %}
             </div>
         </section>
 
@@ -830,6 +851,44 @@
       }
     } catch (e) {
       alert(`${label} エラー: ${e.message}`);
+    }
+    btn.textContent = prev;
+    btn.disabled = false;
+  }
+
+  /**
+   * キャラ本人に「ユーザのことを周囲にどう伝えてる？」と問い、返答を
+   * user_visibility_note テキストエリアへ下書きとして流し込む。
+   *
+   * 返答は自動保存せず、ユーザが内容を確認・編集してからフォーム保存する建付け
+   * （Chotgor は本人の領分を尊重するためここを自動上書きしない）。
+   */
+  async function askUserVisibility(btn, characterId) {
+    const status = document.getElementById('ask-visibility-status');
+    const prev = btn.textContent;
+    btn.textContent = '問い合わせ中…';
+    btn.disabled = true;
+    if (status) status.textContent = '';
+    try {
+      const res = await fetch(`/ui/characters/${characterId}/ask_visibility`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.message || `エラー (${res.status})`;
+        if (status) status.textContent = msg;
+        else alert(msg);
+      } else {
+        const text = (data.text || '').trim();
+        const ta = document.getElementById('user_visibility_note');
+        if (ta) {
+          ta.value = text;
+          // 自動保存は走らせない（本人の言葉のまま下書きとして提示し、ユーザの確認後に保存）。
+          // 既存テキストエリアの change イベントを発火させると autosave が動くため発火させない。
+        }
+        if (status) status.textContent = '下書きを反映しました。確認のうえ保存してください。';
+      }
+    } catch (e) {
+      if (status) status.textContent = `通信エラー: ${e.message}`;
+      else alert(`通信エラー: ${e.message}`);
     }
     btn.textContent = prev;
     btn.disabled = false;

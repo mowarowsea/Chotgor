@@ -220,17 +220,82 @@ def roll_usual_event(
     )
 
 
+def _build_absent_user_block(
+    character_name: str,
+    user_label: str,
+    user_position: str,
+    visibility_note: str,
+) -> str:
+    """うつつ GM 向けの「不在のユーザ」ブロックを組み立てる。
+
+    キャラ本人が周囲（NPC）にユーザのことをどう伝えているか（characters.user_visibility_note）
+    を素通しで載せ、NPC の自発的言及度を本人の流儀に委ねる。空欄なら完全秘匿として
+    「NPC は触れない・話題にも出さない」を明示する（安全側デフォルト）。
+
+    本ブロックは「ユーザを画面に出さない」という既存保護（pc_slots[user] の不在マーカー
+    と prompt_builder の PC領分節）とは独立した追加レイヤー: 「周囲がユーザのことを
+    どう扱うか」を本人の言葉でコントロールする。
+
+    Args:
+        character_name: 主人公キャラ名（PC枠 pc1 と一致する想定）。
+        user_label: ユーザの呼称（characters.user_label）。空ならブロック自体を生成しない。
+        user_position: ユーザの位置づけ（characters.user_position）。NPC が別名・別呼称で
+            ユーザに言及してきても同一人物と分かるための手がかり。
+        visibility_note: キャラ本人が周囲への伝達範囲を自分の言葉で書き下ろした文章
+            （characters.user_visibility_note）。空なら完全秘匿モード。
+
+    Returns:
+        GM へ渡す OOC ブロック文字列。user_label が空なら空文字列（ブロック非生成）。
+    """
+    label = (user_label or "").strip()
+    if not label:
+        return ""
+    position = (user_position or "").strip()
+    note = (visibility_note or "").strip()
+    name = (character_name or "").strip() or "本人"
+
+    head_lines = [
+        f"# 不在の {label} について（周囲の人物が知っていること）",
+        f"今この場面に @{name} の生活上の人物「{label}」は居ない。",
+    ]
+    if position:
+        head_lines.append(f"※ {label} ＝ {position}（NPC が別呼称で言及しても同一人物）。")
+
+    if note:
+        body_lines = [
+            "",
+            f"NPC が {label} のことに触れてよい範囲は、@{name} 本人が周囲にどう伝えているかに従う:",
+            "",
+            "  " + note.replace("\n", "\n  "),
+            "",
+            f"書かれている範囲のことだけが「周囲が知っている前提」。書かれていないことは周囲も知らない。",
+            f"NPC が自発的に {label} に軽く触れるのは構わないが、会話の中心に据えたり、"
+            f"{label} の登場を促したりしてはいけない。主役はあくまで今日の {name} の一日。",
+        ]
+    else:
+        body_lines = [
+            "",
+            f"@{name} は {label} のことを周囲には明かしていない。",
+            f"NPC は {label} を話題に出さない（暗に匂わせもしない）。"
+            f" {label} に関する質問・噂・言及は NPC 側から発生させない。",
+        ]
+    return "\n".join(head_lines + body_lines)
+
+
 def _build_usual_gm_appendix(
     scenario,
     fired_responses: int,
     max_responses: int,
     is_first_gm: bool,
     rng: random.Random | None = None,
+    absent_user_block: str = "",
 ) -> str:
     """うつつ GM レスポンスの OOC 追記（常設フレーミング＋偶発イベント＋ソフト収束）を組み立てる。
 
     - 常設フレーミング（_USUAL_GM_STANDING）: 毎レスポンス必ず添える。これが [SCENE_CLOSE] の
       存在と「無人の日常・GM は外的フレームのみ」をGMに伝える土台で、主たる停止機構の前提。
+    - 不在のユーザブロック（absent_user_block）: 非空なら毎レスポンス末尾に添える。
+      キャラ本人の周知設定（user_visibility_note）に基づく NPC 言及制御。
     - 偶発イベント: シーンの最初の GM レスポンス（is_first_gm）でのみ抽選する
       （1 シーンに 1 度だけ種をまく）。
     - ソフト収束: 残りレスポンス数が _USUAL_SOFT_CLOSE_REMAINING 以下になったら、
@@ -240,6 +305,8 @@ def _build_usual_gm_appendix(
         OOC 追記文字列（複数行）。常設フレーミングを含むため headless では常に非空。
     """
     parts: list[str] = [_USUAL_GM_STANDING]
+    if absent_user_block:
+        parts.append(absent_user_block)
     if is_first_gm:
         event_hint = roll_usual_event(getattr(scenario, "usual_config", None), rng=rng)
         if event_hint:
@@ -360,6 +427,23 @@ async def run_scenario_turn(
     # うつつの時間文脈（日付・曜日・時間帯・季節）はシーン中ほぼ不変なので 1 度だけ算出する。
     usual_time_context = format_time_context() if is_headless else ""
 
+    # うつつの「不在のユーザ」ブロック（NPC 言及制御）。シーン中は不変なので 1 度だけ算出して
+    # ループ内の _build_usual_gm_appendix へ素通しで渡す。owner キャラの
+    # user_visibility_note（本人が周囲への伝達範囲を自分の言葉で書いたもの）が source of truth。
+    # 空欄なら完全秘匿（NPC は触れない）。owner_character_id が無い ensemble シナリオでは空文字列。
+    absent_user_block = ""
+    if is_headless:
+        owner_id = getattr(scenario, "owner_character_id", None)
+        if owner_id:
+            owner_char = sqlite.get_character(owner_id)
+            if owner_char is not None:
+                absent_user_block = _build_absent_user_block(
+                    character_name=getattr(owner_char, "name", "") or "",
+                    user_label=getattr(owner_char, "user_label", "") or "",
+                    user_position=getattr(owner_char, "user_position", "") or "",
+                    visibility_note=getattr(owner_char, "user_visibility_note", "") or "",
+                )
+
     from backend.services.scenario_chat.mention import (
         format_pc_summary,
         normalize_pc_assignments,
@@ -462,7 +546,9 @@ async def run_scenario_turn(
                 gm_ooc = ""
                 if is_headless:
                     gm_ooc = _build_usual_gm_appendix(
-                        scenario, fired_responses, max_responses, is_first_gm=(fired_responses == 0),
+                        scenario, fired_responses, max_responses,
+                        is_first_gm=(fired_responses == 0),
+                        absent_user_block=absent_user_block,
                     )
                     # シーン冒頭のみ、スケジューラからの経過時間メモ（「前回から N 時間後」等）を先頭に添える。
                     if fired_responses == 0 and extra_first_gm_ooc.strip():

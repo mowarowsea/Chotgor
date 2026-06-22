@@ -705,6 +705,36 @@ class SQLiteMigrationsMixin:
                     (label, position, owner_id),
                 )
 
+    def _migrate_add_user_visibility_note(self) -> None:
+        """`characters` に `user_visibility_note` 列を追加する。
+
+        うつつ世界の GM へ「キャラ本人がユーザを周囲にどう伝えているか」を流し込む素材。
+        空（既定）なら NPC はユーザを話題にしない（完全秘匿）。非空ならその文面が
+        GM プロンプトの「不在の関係者」ブロックに素通しで載り、NPC の自発的言及の手がかりになる。
+        既存 DB には列が無いため ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            if "user_visibility_note" in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE characters "
+                "ADD COLUMN user_visibility_note TEXT NOT NULL DEFAULT ''"
+            )
+
     def _migrate_add_usual_days(self) -> None:
         """うつつ（Usual Days）用カラムを `scenarios` に追加する。
 

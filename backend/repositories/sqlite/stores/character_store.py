@@ -26,6 +26,7 @@ class CharacterStoreMixin:
         allowed_tools: dict | None = None,
         user_label: str = "",
         user_position: str = "",
+        user_visibility_note: str = "",
     ):
         """キャラクターを新規作成する。
 
@@ -40,6 +41,9 @@ class CharacterStoreMixin:
             allowed_tools: 外部ツール許可設定。{google_calendar, gmail, google_drive} の bool dict。
             user_label: このキャラがユーザを呼ぶ呼称。空なら Settings の user_name フォールバック。
             user_position: このキャラから見たユーザの位置づけ（役職・関係など短文）。
+            user_visibility_note: ユーザのことを周囲（NPC・知人）にどう伝えているかをキャラ本人が
+                書き下ろした自由記述。うつつ GM の「不在の関係者」ブロックに流し込む素材。
+                空なら完全秘匿（NPC は話題に出さない）。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import Character
@@ -63,6 +67,7 @@ class CharacterStoreMixin:
                 allowed_tools=allowed_tools or {},
                 user_label=user_label,
                 user_position=user_position,
+                user_visibility_note=user_visibility_note,
             )
             session.add(char)
             session.commit()

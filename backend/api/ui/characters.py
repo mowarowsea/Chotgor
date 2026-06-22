@@ -8,10 +8,11 @@ import json
 import uuid
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from backend.api.ui.common import _read_image_data, _save_response, get_templates
 from backend.providers.registry import PROVIDER_LABELS
+from backend.services.character_query import ask_character
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -157,6 +158,7 @@ async def create_character(request: Request):
         allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),
         user_position=(form.get("user_position") or "").strip(),
+        user_visibility_note=(form.get("user_visibility_note") or "").strip(),
     )
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     _persist_usual_world(request.app.state.sqlite, char_id, name, form)
@@ -211,6 +213,7 @@ async def update_character(request: Request, character_id: str):
         allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),
         user_position=(form.get("user_position") or "").strip(),
+        user_visibility_note=(form.get("user_visibility_note") or "").strip(),
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()
@@ -435,6 +438,77 @@ async def delete_character(request: Request, character_id: str):
     """キャラクターと、紐づく全データをカスケード削除する（SQLite → LanceDB の順）。"""
     request.app.state.memory_manager.delete_character_with_inscribed_memories(character_id)
     return RedirectResponse(url="/ui/characters", status_code=303)
+
+
+# キャラ本人に「ユーザを周囲にどう伝えてる？」と問い、返答を user_visibility_note の
+# 下書きとして返す問い合わせ用プロンプト。1on1 と同等のシステムプロンプト
+# （Working Memory・記憶想起含む）で送る（character_query 原則）。
+_ASK_VISIBILITY_PROMPT = (
+    "あなたは普段、ユーザ（{user_label}）のことを、周囲の人"
+    "（同僚・友人・家族・知人・近所の人など、あなたの日常で関わる人々）に"
+    "どんなふうに伝えていますか？\n"
+    "\n"
+    "もし伝えているなら、3文程度であなたの言葉でそのまま書いてください。"
+    "相手によって明かす範囲を変えているなら、それも書いてくれて構いません"
+    "（例:「親しい友人には何でも話すが、職場では同居人がいるとだけ伝えている」）。\n"
+    "\n"
+    "「完全に秘匿していて誰にも明かしていない」も、もちろん答えとしてアリです。"
+    "その場合は『完全に秘匿している』と書いてください。\n"
+    "\n"
+    "ここに書いたあなたの言葉は、あなたが居ない時間の世界（うつつ）で、"
+    "周囲の人があなたにユーザのことを聞いてくるか・話題に出すかどうかの"
+    "手がかりになります。"
+)
+
+
+@router.post("/characters/{character_id}/ask_visibility")
+async def ask_user_visibility(request: Request, character_id: str):
+    """キャラ本人に「ユーザを周囲にどう伝えてる？」と問い、返答テキストを JSON で返す。
+
+    キャラ編集画面の `user_visibility_note` 入力欄の「キャラに聞く」ボタンが叩く。
+    返答はそのまま下書きとしてフロント側でテキストエリアへ流し込まれ、ユーザは
+    内容を確認・編集して保存する（自動上書きはしない）。
+
+    フィールドは原則キャラ自身が決めるべき領分という Chotgor 哲学に従い、
+    本人の「声」を引き出す問いかけだけを行う（システムが代筆しない）。
+    """
+    state = request.app.state
+    sqlite = state.sqlite
+    char = sqlite.get_character(character_id)
+    if not char:
+        return JSONResponse({"error": "character_not_found"}, status_code=404)
+    # 本人に「ユーザのこと」を聞くため preset は ghost_model を流用する
+    # （chronicle / forget と同じ「内省・自己解釈」系の用途）。
+    preset_id = (char.ghost_model or "").strip()
+    if not preset_id:
+        return JSONResponse(
+            {"error": "ghost_model_unset",
+             "message": "Ghost Model が未設定のため問い合わせできません。models 欄でいずれかのプリセットを ghost に指定してください。"},
+            status_code=400,
+        )
+    settings = sqlite.get_all_settings()
+    user_label = (char.user_label or settings.get("user_name") or "").strip() or "ユーザ"
+    user_content = _ASK_VISIBILITY_PROMPT.format(user_label=user_label)
+    # recall_query にも同じ問いを渡し、ユーザ関連の記憶を heat 想起させる
+    # （周囲にどう話してきたか、過去の自分の振る舞いに照らして答えやすくする）。
+    response_text = await ask_character(
+        character_id=character_id,
+        preset_id=preset_id,
+        messages=[{"role": "user", "content": user_content}],
+        sqlite=sqlite,
+        settings=settings,
+        memory_manager=getattr(state, "memory_manager", None),
+        recall_query=user_content,
+        feature_label="ask_visibility",
+        working_memory_manager=getattr(state, "working_memory_manager", None),
+    )
+    if response_text is None:
+        return JSONResponse(
+            {"error": "llm_failed",
+             "message": "LLM 呼び出しに失敗しました。ログを確認してください。"},
+            status_code=502,
+        )
+    return JSONResponse({"text": response_text})
 
 
 # --- Memories ---
