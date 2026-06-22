@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 from backend.lib.tool_event_recorder import record_tool_event, result_looks_like_error
 from backend.repositories.lance.store import EmbeddingError
+from backend.services.memory.format import origin_label_prefix
 from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
 from backend.character_actions.switcher import (
     Switcher,
@@ -583,8 +584,12 @@ class ToolExecutor:
         if memories:
             lines.append(f"▼ 記憶 ({len(memories)}件)")
             for i, mem in enumerate(memories, 1):
-                category = mem.get("metadata", {}).get("category", "general")
-                lines.append(f"  {i}. [{category}] {mem['content']}")
+                meta = mem.get("metadata") or {}
+                category = meta.get("category", "general")
+                # origin 由来の TRPG / うつつ ラベルを行頭に挟む。manager.power_recall が
+                # metadata.origin を埋めた前提（findings #5）。
+                origin_prefix = origin_label_prefix(meta.get("origin"))
+                lines.append(f"  {i}. {origin_prefix}[{category}] {mem['content']}")
 
         if chat_turns:
             lines.append(f"\n▼ 過去の会話 ({len(chat_turns)}件)")

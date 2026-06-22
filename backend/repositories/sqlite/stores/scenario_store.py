@@ -618,6 +618,200 @@ class ScenarioChatStoreMixin:
                 .all()
             )
 
+    def list_trpg_session_ids_by_character(self) -> dict[str, list[str]]:
+        """全 ensemble_pc セッションを 1 回だけスキャンして
+        ``{character_id: [session_id, ...]}`` の辞書を返す（バッチ用）。
+
+        ``run_pending_chronicles`` のように全キャラに対して順に
+        ``get_unchronicled_trpg_turns_for_character`` を呼ぶ経路では、その都度
+        全 ensemble_pc セッションを Python 側で走査することになりキャラ数 ×
+        セッション数の二次オーダーで重くなる（findings #13）。バッチ頭でこの
+        メソッドを 1 回呼べば 1 スキャンで済み、結果を ``prefetched_session_ids``
+        引数として各キャラ呼び出しに渡すことでネスト走査を回避できる。
+
+        Returns:
+            ``{character_id: [session_id, ...]}``。値リストの順序はクエリ返却順。
+            該当しないキャラはキーが存在しない（呼び出し側は ``.get(char_id, [])`` で扱う）。
+        """
+        from backend.repositories.sqlite.store import ScenarioSession
+        with self.get_session() as session:
+            sessions = (
+                session.query(ScenarioSession)
+                .filter(ScenarioSession.engine_type == "ensemble_pc")
+                .all()
+            )
+            result: dict[str, list[str]] = {}
+            for s in sessions:
+                seen_in_session: set[str] = set()
+                for a in (s.pc_assignments or []):
+                    if not (isinstance(a, dict) and a.get("player_type") == "character"):
+                        continue
+                    cid = a.get("character_id")
+                    if not cid or cid in seen_in_session:
+                        continue
+                    seen_in_session.add(cid)
+                    result.setdefault(cid, []).append(s.id)
+            return result
+
+    def _matching_ensemble_pc_session_ids(self, session, character_id: str) -> list[str]:
+        """対象キャラが PC として参加している ``ensemble_pc`` セッションの ID 集合を返す。
+
+        ``pc_assignments`` は JSON 列のため SQL では中身を直接フィルタできない。
+        該当 engine_type のセッションを全件ロードして Python 側で
+        ``player_type == "character"`` かつ ``character_id`` 一致のスロットを持つ
+        セッションだけ拾う。``get_unchronicled_trpg_turns_for_character`` と
+        ``get_trpg_turns_for_character_on_date`` の共通前処理。
+
+        Args:
+            session: 現在の SQLAlchemy セッション（呼び出し側の context 内で使う）。
+            character_id: キャラクターの UUID。
+
+        Returns:
+            条件にマッチしたセッション ID のリスト。順序は session.query の返却順。
+        """
+        from backend.repositories.sqlite.store import ScenarioSession
+        sessions = (
+            session.query(ScenarioSession)
+            .filter(ScenarioSession.engine_type == "ensemble_pc")
+            .all()
+        )
+        matching: list[str] = []
+        for s in sessions:
+            for a in (s.pc_assignments or []):
+                if (
+                    isinstance(a, dict)
+                    and a.get("player_type") == "character"
+                    and a.get("character_id") == character_id
+                ):
+                    matching.append(s.id)
+                    break
+        return matching
+
+    def _fetch_trpg_turns_with_title(
+        self, session, session_ids: list[str], extra_filters: list
+    ) -> list:
+        """指定セッション ID 群の ScenarioTurn を Scenario.title と JOIN して取得し、
+        ターン ORM に ``scenario_title`` 動的属性を貼り付けて返す共通処理。
+
+        ``get_unchronicled_trpg_turns_for_character`` / ``get_trpg_turns_for_character_on_date``
+        の共通取得部。呼び出し側は ``extra_filters`` でターン側の追加 WHERE 条件
+        （chronicled_at IS NULL や created_at 範囲）を渡す。
+
+        Args:
+            session: 現在の SQLAlchemy セッション。
+            session_ids: 取得対象の ScenarioSession ID 群。
+            extra_filters: ScenarioTurn 側に AND 結合する SQLAlchemy 式のリスト。
+
+        Returns:
+            時系列昇順のターンリスト。各要素は ``scenario_title`` 動的属性付きで、
+            session から expunge 済み。
+        """
+        from backend.repositories.sqlite.store import (
+            Scenario, ScenarioSession, ScenarioTurn,
+        )
+        rows = (
+            session.query(ScenarioTurn, Scenario.title)
+            .join(ScenarioSession, ScenarioTurn.session_id == ScenarioSession.id)
+            .join(Scenario, ScenarioSession.scenario_id == Scenario.id)
+            .filter(
+                ScenarioTurn.session_id.in_(session_ids),
+                *extra_filters,
+            )
+            .order_by(ScenarioTurn.created_at.asc())
+            .all()
+        )
+        result: list = []
+        for turn, title in rows:
+            turn.scenario_title = title or ""
+            result.append(turn)
+        session.expunge_all()
+        return result
+
+    def get_unchronicled_trpg_turns_for_character(
+        self,
+        character_id: str,
+        prefetched_session_ids: list[str] | None = None,
+    ) -> list:
+        """chronicle 用: 対象キャラが TRPG (engine_type="ensemble_pc") の PC として参加した
+        セッションの未処理ターンを、シナリオタイトル付きで時系列に返す。
+
+        対象セッションの抽出条件:
+          - ``engine_type == "ensemble_pc"``
+          - ``pc_assignments`` に ``player_type == "character"`` かつ ``character_id`` 一致の
+            スロットが含まれる
+
+        セッション抽出と turn 取得は共通ヘルパ
+        ``_matching_ensemble_pc_session_ids`` / ``_fetch_trpg_turns_with_title``
+        に集約している。本メソッドは「未処理 (chronicled_at IS NULL)」の filter だけ提供する。
+
+        Args:
+            character_id: キャラクターの UUID。
+            prefetched_session_ids: バッチ呼び出し時の最適化用。あらかじめ
+                ``list_trpg_session_ids_by_character`` で取得した該当キャラの
+                session_id リストを渡すと、内部の全 ensemble_pc セッションスキャンを
+                スキップする（findings #13）。
+
+        Returns:
+            未処理 TRPG ターンのリスト（時系列昇順）。各要素には ``scenario_title``
+            属性が付いている。
+        """
+        from backend.repositories.sqlite.store import ScenarioTurn
+        with self.get_session() as session:
+            if prefetched_session_ids is None:
+                matching_session_ids = self._matching_ensemble_pc_session_ids(session, character_id)
+            else:
+                matching_session_ids = prefetched_session_ids
+            if not matching_session_ids:
+                return []
+            return self._fetch_trpg_turns_with_title(
+                session,
+                matching_session_ids,
+                [ScenarioTurn.chronicled_at == None],  # noqa: E711
+            )
+
+    def get_trpg_turns_for_character_on_date(
+        self,
+        character_id: str,
+        date_start: datetime,
+        date_end: datetime,
+        prefetched_session_ids: list[str] | None = None,
+    ) -> list:
+        """chronicle 用 (target_date 経路): 対象キャラが PC 参加した TRPG セッションの
+        指定日ターンをシナリオタイトル付きで時系列に返す。
+
+        ``get_unchronicled_trpg_turns_for_character`` の target_date 版。
+        ``chronicled_at`` の有無に関わらず ``created_at`` が指定日範囲のターンを返す
+        （再蒸留を許す）。
+
+        Args:
+            character_id: キャラクターの UUID。
+            date_start: 対象日の開始 datetime (inclusive)。
+            date_end: 対象日の終了 datetime (exclusive)。
+            prefetched_session_ids: バッチ呼び出し時の最適化用。事前計算済みの
+                該当 session_id 群を渡すと、内部の全 ensemble_pc セッションスキャンを
+                スキップする（findings #13）。
+
+        Returns:
+            当日の TRPG ターン一覧（時系列昇順）。各要素には ``scenario_title``
+            属性が付いている。
+        """
+        from backend.repositories.sqlite.store import ScenarioTurn
+        with self.get_session() as session:
+            if prefetched_session_ids is None:
+                matching_session_ids = self._matching_ensemble_pc_session_ids(session, character_id)
+            else:
+                matching_session_ids = prefetched_session_ids
+            if not matching_session_ids:
+                return []
+            return self._fetch_trpg_turns_with_title(
+                session,
+                matching_session_ids,
+                [
+                    ScenarioTurn.created_at >= date_start,
+                    ScenarioTurn.created_at < date_end,
+                ],
+            )
+
     def mark_scenario_turns_as_chronicled(self, turn_ids: list[str]) -> None:
         """指定 ScenarioTurn の chronicled_at を現在日時にセットする。
 

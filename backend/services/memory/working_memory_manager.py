@@ -140,6 +140,8 @@ class WorkingMemoryManager:
             "importance": thread.importance,
             "is_open": bool(thread.is_open),
             "relation_target": thread.relation_target,
+            # 由来タグ。recall 表示で "real" / "usual" / "interlude" を区別するために載せる。
+            "origin": getattr(thread, "origin", "real") or "real",
             "created_at": thread.created_at.isoformat(timespec="seconds") if thread.created_at else None,
             "updated_at": thread.updated_at.isoformat(timespec="seconds") if thread.updated_at else None,
         }

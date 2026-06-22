@@ -41,6 +41,7 @@ from backend.services.chat.request_factory import (
 )
 from backend.services.chat.service import ChatService
 from backend.services.memory.format import format_recalled_memories, format_recalled_threads
+from backend.services.scenario_chat.format_speech import format_xml_speech_line
 from backend.services.scenario_chat.mention import PcAssignment
 from backend.services.scenario_chat.service import _has_scene_close
 
@@ -162,15 +163,14 @@ def _format_scenario_history_for_pc(
             tagged = content
         elif stype == "user":
             oai_role = "user"
-            tagged = f"<{user_alias}>{content}</{user_alias}>"
+            tagged = format_xml_speech_line(user_alias, content)
         elif stype == "narrator":
             oai_role = "user"
-            tagged = f"<{narrator_name}>{content}</{narrator_name}>"
+            tagged = format_xml_speech_line(narrator_name, content)
         else:
-            # npc / 他PC / 未知 → 表示名でタグ付け
-            speaker_name = getattr(turn, "speaker_name", "") or "Unknown"
+            # npc / 他PC / 未知 → 表示名でタグ付け（speaker_name 空は format 側で "Unknown" に倒れる）
             oai_role = "user"
-            tagged = f"<{speaker_name}>{content}</{speaker_name}>"
+            tagged = format_xml_speech_line(getattr(turn, "speaker_name", "") or "", content)
 
         if result and result[-1]["role"] == oai_role and isinstance(result[-1]["content"], str):
             result[-1]["content"] += "\n" + tagged

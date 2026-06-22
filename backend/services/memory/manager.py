@@ -290,6 +290,9 @@ class InscribedMemoryManager:
 
                 if m.created_at:
                     mem.setdefault("metadata", {})["created_at"] = m.created_at.isoformat(timespec="seconds")
+                # 由来タグ。LanceDB には index していないため、SQLite ORM から都度引いて
+                # 表示・整形側で "TRPGでの記憶" / "うつつでの記憶" を区別できるようにする。
+                mem.setdefault("metadata", {})["origin"] = getattr(m, "origin", "real") or "real"
 
                 reranked.append(mem)
             except Exception:
@@ -375,6 +378,21 @@ class InscribedMemoryManager:
             各リストは id / content / distance / metadata を持つ dict。
         """
         memories = self.vector_store.recall_inscribed_memory(query, character_id, top_k=top_k)
+        # vector_store 直叩き経路では metadata.origin が乗らない。recall_inscribed_memory
+        # (manager) と表示挙動を揃えるため、SQLite ORM から origin を引いて埋め込む
+        # （findings #4）。失敗時は silent skip（LanceDB と SQLite の過渡的乖離を想定）。
+        for mem in memories:
+            mem_id = mem.get("id")
+            if not mem_id:
+                continue
+            try:
+                m = self.sqlite.get_inscribed_memory(mem_id)
+                if m is not None:
+                    mem.setdefault("metadata", {})["origin"] = (
+                        getattr(m, "origin", "real") or "real"
+                    )
+            except Exception:
+                continue
         chat_turns = self.vector_store.recall_chat_turns(query, character_id, top_k=top_k)
 
         # 各ヒットに前後コンテキストを付与する。

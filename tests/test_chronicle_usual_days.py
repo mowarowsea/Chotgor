@@ -393,8 +393,8 @@ class TestUsualOriginAttribution:
     """うつつ由来の記憶が origin="usual" として帰属・保存されることの検証。
 
     Aフル実装の核心:
-        - 当日会話プロンプトにうつつターンが「うつつ｜」＋凡例で明示されること
-          （キャラ本人が源泉を判断する手がかり）
+        - 当日会話プロンプトでうつつ会話が「### うつつ」セクションとして区切られ、
+          ユーザ未共有である旨の凡例が添えられること（キャラ本人が源泉を判断する手がかり）
         - キャラが new_thread/inscribe で選んだ origin が WM スレッド/長期記憶へ反映されること
         - origin 未指定は後方互換で "real" にフォールバックすること
     LLM 呼び出しはモックし、保存後の DB の origin 値を直接検証する。
@@ -402,7 +402,7 @@ class TestUsualOriginAttribution:
 
     @pytest.mark.asyncio
     async def test_usual_turns_labeled_in_prompt(self, sqlite_store, working_memory_manager):
-        """うつつターンが当日会話に「うつつ｜」付き＋凡例で現れることを確認する。"""
+        """うつつターンが当日会話の「### うつつ」セクション＋凡例として現れることを確認する。"""
         char_id, _, _, _ = _setup_usual_world(sqlite_store, n_turns=2)
 
         captured: list[str] = []
@@ -420,7 +420,9 @@ class TestUsualOriginAttribution:
                 working_memory_manager=working_memory_manager,
             )
 
-        assert "うつつ｜" in captured[0]
+        # セクション分け方式（行頭ラベル「うつつ｜」廃止）：セクションヘッダと
+        # ユーザ未共有である旨の凡例が出ていること。
+        assert "### うつつ" in captured[0]
         assert "ユーザはこれらを知りません" in captured[0]
 
     @pytest.mark.asyncio

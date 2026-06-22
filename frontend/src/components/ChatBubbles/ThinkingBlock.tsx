@@ -15,9 +15,16 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string }> = {
   contextual: { bg: "rgba(140,105,50,0.14)",  text: "#c4a050" },
 };
 
-/** `[category] content  (score: X.XX)` 行を解析して色付きレンダリングする。 */
+/** `(origin_label? )?[category] content  (score: X.XX)` 行を解析して色付きレンダリングする。
+ *
+ * バックエンド format_recalled_memories は origin が usual/interlude のとき行頭に
+ * 「[うつつでの記憶] 」「[TRPGでの記憶] 」を付ける。category は ASCII 固定なので
+ * `[\w_]+` のままだが、origin ラベル部は日本語を含むので `[^\]]+` で吸収する。
+ * 文字クラス `\w` は JS では既定 ASCII のみで、`[\w_]+` では日本語ラベルが
+ * 捕捉できず行が「スケッチ」に流れる事故が起きていた（findings #3）。
+ */
 function ReasoningLine({ line }: { line: string }) {
-  const match = /^\[([\w_]+)\] (.*?)\s+\(score: [\d.]+\)$/.exec(line);
+  const match = /^(?:\[[^\]]+\] )?\[([\w_]+)\] (.*?)\s+\(score: [\d.]+\)$/.exec(line);
   if (match) {
     const category = match[1] as string;
     const text = match[2];
@@ -35,9 +42,15 @@ function ReasoningLine({ line }: { line: string }) {
   return <div className="text-ch-t3 whitespace-pre-wrap text-xs">{line}</div>;
 }
 
-/** `[category] content  (score: X.XX)` 形式かどうかを判定する。 */
+/** memory line 判定。`(score: X.XX)` で終わる行を一律 memory line とみなす（findings #3）。
+ *
+ * 旧実装は `/^\[[\w_]+\] .+\(score: [\d.]+\)$/` で行頭の `[category]` を見ていたが、
+ * origin ラベル `[うつつでの記憶] [contextual] ...` のように先頭ブラケットが日本語を含むと
+ * `\w` が ASCII 限定のため判定漏れし、行が「スケッチ」欄へ落ちていた。score 末尾だけで
+ * 判定すればラベル有無を問わず memory line として拾える。
+ */
 function isMemoryLine(line: string): boolean {
-  return /^\[[\w_]+\] .+\(score: [\d.]+\)$/.test(line);
+  return /\(score: [\d.]+\)\s*$/.test(line);
 }
 
 /** 想起したワーキングメモリスレッド行の先頭マーカー。 */
@@ -52,7 +65,9 @@ function isThreadLine(line: string): boolean {
  * バックエンドの ``⟦thread⟧ [type] summary 〈atmosphere_tag〉 → post`` 形式をパースする。
  */
 function ThreadLine({ line }: { line: string }) {
-  const match = /^⟦thread⟧ \[([\w_]+)\] (.*)$/.exec(line);
+  // origin ラベル（日本語含む）が type の前に挟まるパターンに対応（findings #3）。
+  // `(?:\[[^\]]+\] )?` で `[うつつでの記憶] ` / `[TRPGでの記憶] ` を任意に飲み込む。
+  const match = /^⟦thread⟧ (?:\[[^\]]+\] )?\[([\w_]+)\] (.*)$/.exec(line);
   if (!match) {
     return <div className="text-ch-t3 whitespace-pre-wrap text-xs">{line}</div>;
   }
