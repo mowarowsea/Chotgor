@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from backend.api.ui.common import _read_image_data, _save_response, get_templates
+from backend.lib.log_context import current_log_target, new_message_id
 from backend.providers.registry import PROVIDER_LABELS
 from backend.services.character_query import ask_character
 
@@ -487,6 +488,11 @@ async def ask_user_visibility(request: Request, character_id: str):
             status_code=400,
         )
     settings = sqlite.get_all_settings()
+    # この問い合わせは独立した LLM 呼出なので、debug log のフォルダ ID を fresh に切る
+    # （chronicle/forget と同じパターン）。これをしないと "--------" の旧ログ溜めへ書かれ、
+    # 過去エラーと混ざって /ui/logs が誤検出する。target はキャラ名で識別しやすくする。
+    new_message_id()
+    current_log_target.set(char.name)
     user_label = (char.user_label or settings.get("user_name") or "").strip() or "ユーザ"
     user_content = _ASK_VISIBILITY_PROMPT.format(user_label=user_label)
     # recall_query にも同じ問いを渡し、ユーザ関連の記憶を heat 想起させる
