@@ -177,6 +177,61 @@
             </div>
         </section>
 
+        {# ── 対面モード ── 1on1チャットの「テキスト／対面」切替と、対面時の背景画像 ── #}
+        {# - face_to_face_mode は1on1チャット画面のトグルからも切り替えられるが、
+             ここからも明示的に変更できる（編集画面で対面ONのままにしておけば次回1on1から
+             即対面で入れる）。
+           - face_to_face_bg_image は base64 data URI として保存され、ChatView 背景に
+             cover で表示される。image_data と同じアップロードパターン。 #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">face-to-face <small>・ 対面モード</small></h3>
+            </div>
+            <p class="ch-hint" style="margin:0 0 12px">
+                1on1チャットを「対面」として描く時のための背景画像。対面ONのとき ChatView
+                に背景として表示される。対面中はキャラ本人にも「いま対面している」ことが
+                システムプロンプトで伝わり、うつつのスケジューラはこのキャラのスロットを
+                スキップする。
+            </p>
+
+            <div class="ch-field">
+                <label class="ch-switch-row" style="border:none;padding:0">
+                    <span class="ch-switch-row__text">
+                        <span class="ch-switch-row__label">対面モードを有効にする</span>
+                        <span class="ch-switch-row__note">ONでチャット画面に背景を表示し、うつつを一時停止する</span>
+                    </span>
+                    <span class="ch-toggle">
+                        <input type="checkbox" name="face_to_face_mode" value="1"
+                            {% if character and character.face_to_face_mode %}checked{% endif %}>
+                        <span class="ch-toggle__track"></span>
+                    </span>
+                </label>
+            </div>
+
+            <div class="ch-field" style="margin-bottom:0">
+                <span class="ch-label">背景画像 <span class="ch-hint">PNG / JPG / WebP — 2MB まで</span></span>
+                <div class="image-upload-row">
+                    <input type="file" id="face-bg-file-input" name="face_to_face_bg_image_file" accept="image/*"
+                        style="display:none" data-no-autosave>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                        <button type="button" class="ch-btn ch-btn--sm"
+                            onclick="document.getElementById('face-bg-file-input').click()">画像を選択</button>
+                        <button type="button" id="remove-face-bg-btn" class="ch-btn ch-btn--sm ch-btn--ghost"
+                            style="{% if not (character and character.face_to_face_bg_image) %}display:none{% endif %}"
+                            onclick="removeFaceBgImage()">削除</button>
+                    </div>
+                    {% if character and character.face_to_face_bg_image %}
+                    <img id="face-bg-preview" src="/api/characters/{{ character.id }}/face_to_face_bg_image"
+                        alt="対面背景"
+                        style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover">
+                    {% else %}
+                    <img id="face-bg-preview" alt="" style="display:none">
+                    {% endif %}
+                </div>
+            </div>
+            <input type="hidden" id="remove-face-bg-flag" name="remove_face_to_face_bg_image" value="">
+        </section>
+
         {# ════════════ CHAPTER 2 — engine ════════════ #}
         <div class="ch-chapter">
             <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 2</span></div>
@@ -820,6 +875,39 @@
         document.getElementById('remove-image-flag').value = '1';
         document.getElementById('remove-image-btn').style.display = 'none';
         // 画像削除はイベントを伴わないため、明示的に自動保存をトリガーする。
+        if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
+    }
+
+    // ── 対面モード 背景画像（クロップなし。アバターと違ってフリーアスペクト） ──
+    (function setupFaceBgImage() {
+        const fileInput = document.getElementById('face-bg-file-input');
+        if (!fileInput) return;
+        fileInput.addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (ev) {
+                const img = document.getElementById('face-bg-preview');
+                img.src = ev.target.result;
+                img.style.display = '';
+                document.getElementById('remove-face-bg-flag').value = '';
+                document.getElementById('remove-face-bg-btn').style.display = '';
+            };
+            reader.readAsDataURL(file);
+        });
+    })();
+
+    /** 対面背景画像を削除する。プレビューを消し、削除フラグを立てる。 */
+    function removeFaceBgImage() {
+        const fileInput = document.getElementById('face-bg-file-input');
+        if (fileInput) {
+            fileInput.value = '';
+            try { fileInput.files = new DataTransfer().files; } catch (_) {}
+        }
+        const img = document.getElementById('face-bg-preview');
+        if (img) { img.src = ''; img.style.display = 'none'; }
+        document.getElementById('remove-face-bg-flag').value = '1';
+        document.getElementById('remove-face-bg-btn').style.display = 'none';
         if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
 </script>

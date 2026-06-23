@@ -196,6 +196,11 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
         if not cfg.get("enabled"):
             continue
         owner_id = getattr(scenario, "owner_character_id", None)
+        # 対面モード中はそのキャラのうつつを止める。確定方針として「通過したスロットは捨てる」ため、
+        # スキップ時にも冪等キーを当日日付で立てて、対面解除後の駆け込み実行を防ぐ。
+        # （次のスロット時刻まで自然に待ち、そこからスケジュールどおりに再開する）。
+        owner_char = sqlite.get_character(owner_id) if owner_id else None
+        owner_in_face_to_face = bool(getattr(owner_char, "face_to_face_mode", 0)) if owner_char else False
         slots = cfg.get("slots") or []
         for slot in slots:
             scheduled = _parse_slot_time(now, slot)
@@ -204,6 +209,14 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
             key = f"usual_days_last_run_{owner_id}_{slot}"
             if sqlite.get_setting(key, "") == today_str:
                 continue  # 当日このスロットは実行済み
+            if owner_in_face_to_face:
+                # 通過分は捨てる：冪等キーを立てて当日この時刻は再評価しない。
+                sqlite.set_setting(key, today_str)
+                _log.info(
+                    "うつつ: 対面モード中につきスキップ owner=%s slot=%s",
+                    owner_id, slot,
+                )
+                continue
             if ran_today >= daily_cap:
                 _log.warning(
                     "うつつ: 日次上限 %d 到達。当日は以降スキップ owner=%s slot=%s",

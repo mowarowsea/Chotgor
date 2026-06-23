@@ -36,3 +36,14 @@ class CharacterUpdate(BaseModel):
     farewell_config: dict | None = None
     relationship_status: str | None = None
     allowed_tools: dict | None = None
+    # 対面モード状態（0=テキスト / 1=対面）。1on1チャット画面のトグル経由で更新される
+    # こともあるが、キャラ編集画面からも変更可能。
+    face_to_face_mode: int | None = None
+    # 対面モード時の ChatView 背景画像（base64 data URI）。""（空文字列）で背景クリア。
+    face_to_face_bg_image: str | None = None
+
+
+class FaceToFaceModeUpdate(BaseModel):
+    """対面モード切替専用のリクエストスキーマ（チャット画面トグル用）。"""
+
+    enabled: bool

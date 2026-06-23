@@ -139,10 +139,15 @@ async def _build_chat_request(
     # 直前のキャラクター応答に含まれていた予想（ANTICIPATE_RESPONSE）を次ターンに注入する
     previous_anticipation = latest_anticipation(history_messages)
 
+    # 対面モードは 1on1 専用の概念。group_chat / scenario / 通常PC からは流れないよう、
+    # ここ（1on1 経路）でのみ override として明示的に渡す。
+    face_to_face = bool(getattr(character, "face_to_face_mode", 0))
+
     return build_character_request(
         character, preset, messages, session.id, settings, state.sqlite,
         available_presets=available_presets,
         previous_anticipation=previous_anticipation,
+        face_to_face=face_to_face,
     )
 
 
@@ -252,6 +257,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
     # estranged チェック: relationship_status="estranged" のキャラクターへのリクエストをSSEで拒否する
     char_for_estranged = state.sqlite.get_character_by_name(char_name_for_check)
+    # 当該キャラの現在の対面モード（0/1）。送信時の値をメッセージへ焼き付ける。
+    # キャラ未取得（None）なら 0（テキスト）扱い。
+    current_face_to_face = int(getattr(char_for_estranged, "face_to_face_mode", 0) or 0) if char_for_estranged else 0
     if char_for_estranged and getattr(char_for_estranged, "relationship_status", "active") == "estranged":
         estranged_text = f"{char_name_for_check}はあなたとの別れを決断しました。この関係は修復できません。"
         user_msg_id_e = str(uuid.uuid4())
@@ -261,6 +269,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             role="user",
             content=body.content,
             images=body.image_ids or None,
+            face_to_face=current_face_to_face,
         )
         sys_msg_id_e = str(uuid.uuid4())
         sys_msg_e = state.sqlite.create_chat_message(
@@ -270,6 +279,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             content=estranged_text,
             character_name=char_name_for_check,
             is_system_message=True,
+            face_to_face=current_face_to_face,
         )
 
         async def estranged_generator():
@@ -302,6 +312,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         role="user",
         content=body.content,
         images=body.image_ids or None,
+        face_to_face=current_face_to_face,
     )
     asyncio.create_task(asyncio.to_thread(
         index_message_sync, user_msg, _chat_char_ids, state.vector_store, _chat_user_name
@@ -318,6 +329,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             content=sys_text,
             character_name=char_name_for_check,
             is_system_message=True,
+            face_to_face=current_face_to_face,
         )
 
         async def already_exited_generator():
@@ -422,6 +434,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             preset_name=used_preset_name,
             log_message_id=log_msg_id,
             anticipation=anticipation_text or None,
+            face_to_face=current_face_to_face,
         )
         asyncio.create_task(asyncio.to_thread(
             index_message_sync, char_msg, _chat_char_ids, state.vector_store, _chat_user_name

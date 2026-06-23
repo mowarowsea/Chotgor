@@ -215,6 +215,8 @@ async def update_character(request: Request, character_id: str):
         user_label=(form.get("user_label") or "").strip(),
         user_position=(form.get("user_position") or "").strip(),
         user_visibility_note=(form.get("user_visibility_note") or "").strip(),
+        # 対面モード状態。未チェックなら 0。
+        face_to_face_mode=1 if form.get("face_to_face_mode") else 0,
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()
@@ -226,6 +228,13 @@ async def update_character(request: Request, character_id: str):
     elif form.get("remove_image"):
         # 削除フラグが立っている場合は画像をクリアする
         update_kwargs["image_data"] = None
+
+    # 対面モード背景画像（image_data と同じ data URI パターン。フィールド名のみ別）
+    new_bg = await _read_image_data(form, field="face_to_face_bg_image_file")
+    if new_bg:
+        update_kwargs["face_to_face_bg_image"] = new_bg
+    elif form.get("remove_face_to_face_bg_image"):
+        update_kwargs["face_to_face_bg_image"] = None
 
     request.app.state.sqlite.update_character(character_id, **update_kwargs)
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。

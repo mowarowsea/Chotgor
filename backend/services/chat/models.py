@@ -73,3 +73,7 @@ class ChatRequest:
     user_label: str = ""
     # ユーザの位置づけ短文（キャラ別の characters.user_position のみ）。空なら呼称のみ注入。
     user_position: str = ""
+    # 対面モードフラグ。True なら 1on1 システムプロンプトに「いまは対面でユーザと向き合っている」
+    # 注釈ブロックを差し込む。キャラスコープの characters.face_to_face_mode をリクエスト時に
+    # 反映する（送信時値の焼き付けは ChatMessage 側で別途行う）。
+    face_to_face: bool = False

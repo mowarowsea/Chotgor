@@ -91,6 +91,7 @@ class ChatStoreMixin:
         is_system_message: bool = False,
         log_message_id: str | None = None,
         anticipation: str | None = None,
+        face_to_face: int = 0,
     ):
         """チャットメッセージを作成する。
 
@@ -98,6 +99,8 @@ class ChatStoreMixin:
             is_system_message: True の場合、退席通知などのシステムメッセージとしてフラグを立てる。
             log_message_id: デバッグログフォルダ名（8桁hex）。CHOTGOR_DEBUG=1 時のみ設定される。
             anticipation: キャラクターが本文末尾に書いた予想（期待）。次ターンのシステムプロンプトに注入される。
+            face_to_face: 当該メッセージが交わされた時点のチャットモード（0=テキスト / 1=対面）。
+                キャラクタースコープの face_to_face_mode を送信時に焼き付ける。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ChatMessage
@@ -113,6 +116,7 @@ class ChatStoreMixin:
                 is_system_message=1 if is_system_message else None,
                 log_message_id=log_message_id or None,
                 anticipation=anticipation or None,
+                face_to_face=1 if face_to_face else 0,
             )
             session.add(msg)
             session.commit()

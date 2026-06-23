@@ -74,6 +74,10 @@ class ChatMessage(Base):
     # ANTICIPATE_RESPONSE: キャラクターが本文末尾に書いた「次の展開への予想（期待）」。
     # 次ターンのシステムプロンプトに「前回のあなたの予想」として注入される。
     anticipation = Column(Text, nullable=True)
+    # このメッセージが交わされた時点のチャットモード（0=テキスト / 1=対面）。
+    # キャラクタースコープの face_to_face_mode を送信時に焼き付ける。後からハレ履歴を
+    # うつつへ流し込む際、対面とテキストでラベルを切り替えるために使う。
+    face_to_face = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -131,6 +135,13 @@ class Character(Base):
     # コントロールする。空なら「完全に秘匿（NPC は触れない）」を意味する。
     # 想定運用: キャラ編集画面の「キャラに聞く」ボタンで本人に問い、返答を書き留める。
     user_visibility_note = Column(Text, nullable=False, default="")
+    # 対面モード状態（0=テキスト / 1=対面）。キャラクタースコープで保持し、1on1チャットの
+    # トグルで切り替える。対面中は ChatView で背景画像を出し、system prompt に対面ブロックを
+    # 差し込み、うつつスケジューラはこのキャラのスロットをスキップする。
+    face_to_face_mode = Column(Integer, nullable=False, default=0)
+    # 対面モード時に ChatView 背景へ表示する画像（base64 data URI）。image_data と同じ
+    # 保存形式。未設定 = 背景表示なし（モード ON でも背景なしで動作する）。
+    face_to_face_bg_image = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,

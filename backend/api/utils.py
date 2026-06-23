@@ -32,7 +32,8 @@ def fmt_dt(dt: datetime | None) -> str | None:
 def char_to_dict(char) -> dict:
     """Character ORM オブジェクトを API レスポンス用 dict に変換する。
 
-    image_data / enabled_providers は含まない（サイズ・センシティビティのため）。
+    image_data / face_to_face_bg_image / enabled_providers は含まない
+    （サイズ・センシティビティのため。背景画像は別エンドポイント経由でバイナリ取得）。
     """
     return {
         "id": char.id,
@@ -44,6 +45,8 @@ def char_to_dict(char) -> dict:
         "cleanup_config": char.cleanup_config,
         "ghost_model": char.ghost_model,
         "allowed_tools": getattr(char, "allowed_tools", None) or {},
+        "face_to_face_mode": int(getattr(char, "face_to_face_mode", 0) or 0),
+        "has_face_to_face_bg_image": bool(getattr(char, "face_to_face_bg_image", None)),
         "created_at": fmt_dt(char.created_at),
         "updated_at": fmt_dt(char.updated_at),
     }
@@ -97,6 +100,8 @@ def message_to_dict(m) -> dict:
         result["log_message_id"] = m.log_message_id
     if getattr(m, "anticipation", None):
         result["anticipation"] = m.anticipation
+    if getattr(m, "face_to_face", 0):
+        result["face_to_face"] = True
     return result
 
 

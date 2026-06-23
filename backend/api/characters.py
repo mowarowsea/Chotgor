@@ -5,7 +5,7 @@ import logging
 import uuid
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from backend.api.schemas import CharacterCreate, CharacterUpdate
+from backend.api.schemas import CharacterCreate, CharacterUpdate, FaceToFaceModeUpdate
 from backend.api.utils import char_to_dict
 
 logger = logging.getLogger(__name__)
@@ -110,6 +110,39 @@ async def get_character_image(request: Request, character_id: str):
     except Exception:
         raise HTTPException(status_code=500, detail="Image data is corrupted")
     return Response(content=image_bytes, media_type=mime_type)
+
+
+@router.get("/{character_id}/face_to_face_bg_image")
+async def get_face_to_face_bg_image(request: Request, character_id: str):
+    """対面モード時に ChatView 背景へ表示する画像をバイナリで返す。未設定なら 404。"""
+    char = request.app.state.sqlite.get_character(character_id)
+    bg = getattr(char, "face_to_face_bg_image", None) if char else None
+    if not bg:
+        raise HTTPException(status_code=404, detail="Background image not found")
+    try:
+        header, b64_data = bg.split(",", 1)
+        mime_type = header.split(":")[1].split(";")[0]
+        image_bytes = base64.b64decode(b64_data)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Background image data is corrupted")
+    return Response(content=image_bytes, media_type=mime_type)
+
+
+@router.put("/{character_id}/face_to_face_mode")
+async def update_face_to_face_mode(request: Request, character_id: str, body: FaceToFaceModeUpdate):
+    """対面モードの現在値だけを軽量に切り替える専用エンドポイント。
+
+    1on1チャット画面のトグルから叩く。Settings UI のフル更新（PATCH）を毎クリック
+    走らせないため独立させている。enabled=true で 1、false で 0 を書き込む。
+    """
+    state = request.app.state
+    char = state.sqlite.update_character(
+        character_id,
+        face_to_face_mode=1 if body.enabled else 0,
+    )
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return {"character_id": character_id, "face_to_face_mode": 1 if body.enabled else 0}
 
 
 @router.delete("/{character_id}", status_code=204)

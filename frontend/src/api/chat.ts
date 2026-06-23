@@ -100,6 +100,10 @@ export interface SessionDetail extends Session {
 export interface Character {
   id: string;
   name: string;
+  /** 対面モードの現在値（0=テキスト / 1=対面）。 */
+  face_to_face_mode?: number;
+  /** 対面背景画像が登録済みか。実画像は `/api/characters/{id}/face_to_face_bg_image` から取得。 */
+  has_face_to_face_bg_image?: boolean;
 }
 
 /** キャラクター一覧を取得する。 */
@@ -107,6 +111,16 @@ export async function fetchCharacters(): Promise<Character[]> {
   const res = await fetch("/api/characters/");
   if (!res.ok) throw new Error("キャラクター一覧の取得に失敗しました");
   return res.json();
+}
+
+/** 対面モードの現在値を切り替える（チャット画面トグル専用）。 */
+export async function updateFaceToFaceMode(characterId: string, enabled: boolean): Promise<void> {
+  const res = await fetch(`/api/characters/${characterId}/face_to_face_mode`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error("対面モードの切り替えに失敗しました");
 }
 
 /** 利用可能なモデル（character@preset）一覧を取得する。 */

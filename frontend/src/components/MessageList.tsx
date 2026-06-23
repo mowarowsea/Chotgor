@@ -36,6 +36,8 @@ interface Props {
     msgLogIds?: Record<string, string>;
     /** char_msg_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
     elapsedMap?: Record<string, number>;
+    /** 対面背景の上にバブルが乗る時、視認性のためバブルを半透明にするか。 */
+    translucentBubbles?: boolean;
 }
 
 /**
@@ -56,6 +58,7 @@ export default function MessageList({
     onRetry,
     msgLogIds = {},
     elapsedMap = {},
+    translucentBubbles = false,
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
     /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
@@ -73,7 +76,10 @@ export default function MessageList({
     }, [messages, sending, streamingContent, waitingCharacter]);
 
     return (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden" onScroll={handleScroll}>
+        <div
+            className={"flex-1 overflow-y-auto overflow-x-hidden" + (translucentBubbles ? " ch-face-to-face-bg" : "")}
+            onScroll={handleScroll}
+        >
           {/* pt-16: 浮遊ヘッダー分の上余白。 */}
           <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 space-y-5">
             {messages.length === 0 && !sending && !waitingCharacter && (

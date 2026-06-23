@@ -400,6 +400,7 @@ class ChatService:
             usual_days_enabled=request.usual_days_enabled,
             user_label=request.user_label,
             user_position=request.user_position,
+            face_to_face=request.face_to_face,
         )
 
         return _Context(

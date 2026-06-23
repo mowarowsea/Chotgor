@@ -163,9 +163,9 @@ def build_gm_system_prompt(
         appendix_parts.append(
             "# 描くべき時間帯\n"
             f"{time_context.strip()}\n"
-            "このシーンは、上の日付・曜日・時間帯・季節を前提として描いてください。"
-            "光の色・空気の温度・人の動き・聞こえてくる音など、その時間ならではの手触りを"
-            "地の文に滲ませて構いません（ただし無理に説明的に列挙はしない）。"
+            "これから描くシーンは、上の日付・曜日・時間帯・季節を前提として描いてください。"
+            "シーンを切り替えても構いませんが、時間を飛ばすことはしないでください。"
+            "このシナリオはリアルタイム進行である必要があります。"
         )
     if pc_summary and "{pc_summary}" not in template_to_use and pc_summary.strip() not in prompt_with_tags_replaced:
         appendix_parts.append("# PC配役（プレイヤーキャラクター）\n" + pc_summary.strip())

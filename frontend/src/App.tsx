@@ -13,6 +13,7 @@ import {
   fetchCharacters,
   fetchScenarioSessions,
   fetchScenarioPresets,
+  updateFaceToFaceMode,
 } from "./api";
 import type {
   Model,
@@ -126,6 +127,39 @@ export default function App() {
   const characterName = (selectedModel || activeSession?.model_id) ?? "キャラクター";
   /** アクティブセッションがグループチャットかどうか。 */
   const isGroupSession = activeSession?.session_type === "group";
+  /**
+   * 1on1チャットの「現在のキャラクター」とその対面モード状態を導出する。
+   *
+   * - 対面モードはキャラスコープ（characters.face_to_face_mode）。
+   * - 別セッションでの切替はリアルタイム同期しない方針（次回オープン時に反映）。
+   * - 切替時は characters state を楽観更新し、API を叩いて確定する。
+   */
+  const activeCharNameOnly = charNameOf(selectedModel || activeSession?.model_id || characterName);
+  const activeCharacter = characters.find((c) => c.name === activeCharNameOnly);
+  const faceToFaceMode = !!activeCharacter?.face_to_face_mode;
+  const faceToFaceBgUrl = activeCharacter && activeCharacter.has_face_to_face_bg_image
+    ? `/api/characters/${activeCharacter.id}/face_to_face_bg_image`
+    : null;
+  /** 対面モード切替: 楽観更新 → API。失敗時は state を巻き戻してエラー表示。 */
+  const handleToggleFaceToFace = useCallback(async (enabled: boolean) => {
+    if (!activeCharacter) return;
+    const prev = activeCharacter.face_to_face_mode || 0;
+    setCharacters((prevList) =>
+      prevList.map((c) =>
+        c.id === activeCharacter.id ? { ...c, face_to_face_mode: enabled ? 1 : 0 } : c,
+      ),
+    );
+    try {
+      await updateFaceToFaceMode(activeCharacter.id, enabled);
+    } catch (e) {
+      setCharacters((prevList) =>
+        prevList.map((c) =>
+          c.id === activeCharacter.id ? { ...c, face_to_face_mode: prev } : c,
+        ),
+      );
+      setError(String(e));
+    }
+  }, [activeCharacter]);
   /**
    * キャラクター名→アバター画像URLのリゾルバ。
    * CharacterImageProvider 経由でアプリ全体の CharacterAvatar が参照する。
@@ -669,6 +703,9 @@ export default function App() {
             onHeaderVisibilityChange={setHeaderVisible}
             msgLogIds={msgLogIds}
             elapsedMap={elapsedMap}
+            faceToFaceMode={faceToFaceMode}
+            faceToFaceBgUrl={faceToFaceBgUrl}
+            onToggleFaceToFace={handleToggleFaceToFace}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-ch-t3 text-sm px-4 text-center">

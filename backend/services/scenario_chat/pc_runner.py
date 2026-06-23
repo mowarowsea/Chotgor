@@ -271,12 +271,39 @@ async def stream_pc_response(
         raise ValueError(f"PC プリセット '{preset_id}' が見つかりません")
 
     # シナリオ履歴を PC 視点の messages に変換
-    raw_messages = _format_scenario_history_for_pc(
-        history,
-        self_character_id=pc.character_id,
-        self_role_name=pc.name,
-        user_alias=user_alias,
-    )
+    # うつつモードでは external シーン（1on1/Group/TRPG）を時系列マージした統合履歴に
+    # 差し替える。同じキャラの同じ世界軸上の連続した時間として、シーン横断を scene_break
+    # でだけ示す（システムからフレーミングは加えない）。
+    if default_origin == "usual":
+        from backend.services.character_query import _resolve_user_info
+        from backend.services.scenario_chat.external_scenes import build_unified_pc_messages
+
+        _user_label_for_ext, _ = _resolve_user_info(char, settings)
+        try:
+            raw_messages = build_unified_pc_messages(
+                sqlite,
+                history=history,
+                self_character_id=pc.character_id,
+                character_name=char.name,
+                self_role_name=pc.name,
+                user_label=_user_label_for_ext or user_alias,
+            )
+        except Exception:
+            # external シーン統合に失敗してもうつつ自体は止めない。フォールバックで既存ロジックへ。
+            logger.exception("external シーン統合に失敗、従来履歴のみで継続 character=%s", char.id)
+            raw_messages = _format_scenario_history_for_pc(
+                history,
+                self_character_id=pc.character_id,
+                self_role_name=pc.name,
+                user_alias=user_alias,
+            )
+    else:
+        raw_messages = _format_scenario_history_for_pc(
+            history,
+            self_character_id=pc.character_id,
+            self_role_name=pc.name,
+            user_alias=user_alias,
+        )
     messages = [Message(role=m["role"], content=m["content"]) for m in raw_messages]
 
     available_presets = build_available_presets(char, preset, sqlite)

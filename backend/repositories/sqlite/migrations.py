@@ -771,3 +771,53 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE scenarios ADD COLUMN usual_config TEXT"
                 )
 
+    def _migrate_add_face_to_face_columns(self) -> None:
+        """対面モード（Face-to-Face）関連カラムを追加する。
+
+        - `characters.face_to_face_mode` (INTEGER, NOT NULL DEFAULT 0): 0=テキスト / 1=対面。
+          キャラスコープで保持し、1on1チャット画面のトグルで切り替える。うつつスケジューラは
+          1 のキャラのスロットをスキップする。
+        - `characters.face_to_face_bg_image` (TEXT, NULL可): 対面時の ChatView 背景画像
+          （base64 data URI）。
+        - `chat_messages.face_to_face` (INTEGER, NOT NULL DEFAULT 0): 当該メッセージが
+          交わされた時点のモード。後からハレ履歴をうつつ PC へ流し込む際にラベルを
+          切り替えるために使う。
+
+        新規DBは ORM 定義で既に作成されるため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(characters)"
+                    ).fetchall()
+                }
+                if "face_to_face_mode" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters "
+                        "ADD COLUMN face_to_face_mode INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "face_to_face_bg_image" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters ADD COLUMN face_to_face_bg_image TEXT"
+                    )
+            if "chat_messages" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(chat_messages)"
+                    ).fetchall()
+                }
+                if "face_to_face" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE chat_messages "
+                        "ADD COLUMN face_to_face INTEGER NOT NULL DEFAULT 0"
+                    )
+

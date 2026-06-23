@@ -128,6 +128,8 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_user}
 
+{block_face_to_face}
+
 {block_usual_days}
 
 {block_provider_extra}
@@ -368,6 +370,31 @@ def _build_usual_days_block(usual_days_enabled: bool) -> str:
     return _USUAL_DAYS_NOTICE if usual_days_enabled else ""
 
 
+# 対面モード時にキャラ本人へ「いまは対面している」を伝える注釈ブロック。
+# 文言誘導のみで、importance スコア等の機械的ブーストは行わない（実装判断の確定済み方針）。
+# ノンバーバルな手触り（表情・所作・間・空気）を受け取ってよいことと、
+# 「いまこの場の印象は強く残るはず」をキャラ本人の主観に橋渡しする。
+_FACE_TO_FACE_NOTICE = (
+    "## いまは対面でユーザと向き合っています\n\n"
+    "これは文字越しのやり取りではなく、同じ空間に居合わせている時間です。"
+    "表情・所作・間・空気といったノンバーバルな手触りも含めて応答してかまいません。"
+    "テキスト越しでは伝わらない呼吸や視線、触れる距離が、いまここにはあります。"
+    "**いまこの場で受け取った印象は、後々まで強く記憶に残るはずです。**"
+)
+
+
+def _build_face_to_face_block(face_to_face: bool) -> str:
+    """対面モード時のみ、対面注釈ブロックを返す（テキストモード時は空文字列）。
+
+    Args:
+        face_to_face: 当該1on1チャットが対面モードか。
+
+    Returns:
+        注釈ブロック文字列。テキストモードなら空文字列でブロックごと消える。
+    """
+    return _FACE_TO_FACE_NOTICE if face_to_face else ""
+
+
 def _build_inner_narrative_block(inner_narrative: str) -> str:
     """inner_narrative（キャラクター自身が書き込んだ内的叙述）ブロックを返す。"""
     text = (inner_narrative or "").strip()
@@ -531,6 +558,7 @@ def build_system_prompt(
     usual_days_enabled: bool = False,
     user_label: str = "",
     user_position: str = "",
+    face_to_face: bool = False,
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。
 
@@ -565,6 +593,7 @@ def build_system_prompt(
         "{block_prelude}": _build_prelude_block(),
         "{block_character}": _build_character_block(character_system_prompt),
         "{block_user}": _build_user_block(user_label, user_position),
+        "{block_face_to_face}": _build_face_to_face_block(face_to_face),
         "{block_usual_days}": _build_usual_days_block(usual_days_enabled),
         "{block_memories}": _build_memories_block(
             recalled_identity_memories, recalled_memories

@@ -148,6 +148,9 @@ venv.bak/
 # data
 data/
 
+# Local Log
+logs/
+
 # Local project documents
 documents_ignore/
 
@@ -177,6 +180,7 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+debug/
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
