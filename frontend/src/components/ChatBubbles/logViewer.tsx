@@ -27,7 +27,7 @@ export const TAG_COLORS: Record<string, string> = {
  */
 function TagDetail({ tag }: { tag: LogTag }) {
   return (
-    <div className="rounded px-2 py-1 text-[10px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
+    <div className="ch-aux-bubble rounded px-2 py-1 text-[10px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
       <div className="text-ch-t3 font-mono mb-0.5">
         {tag.tag_name}
         {tag.status === "error" && <span className="text-red-400 ml-1.5">実行失敗</span>}
@@ -55,7 +55,7 @@ export function ToolTagRow({ tags }: { tags: LogTag[] }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded px-2 py-1.5 text-[11px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
+    <div className="ch-aux-bubble rounded px-2 py-1.5 text-[11px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
       <div className="flex items-center gap-1 flex-wrap">
         {tags.map((tag, i) => (
           <button
@@ -95,7 +95,7 @@ export function ToolCallRow({
   const [tagExpanded, setTagExpanded] = useState(false);
 
   return (
-    <div className="rounded px-2 py-1.5 text-[11px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
+    <div className="ch-aux-bubble rounded px-2 py-1.5 text-[11px]" style={{ background: "var(--ch-sep)", border: "1px solid var(--ch-sep)" }}>
       {/* ヘッダー: feature / preset */}
       <div className="flex items-center gap-1.5 mb-1 text-ch-t3">
         {tc.feature && <span className="font-mono">{tc.feature}</span>}

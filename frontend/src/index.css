@@ -143,8 +143,7 @@ body {
 
 /* 対面モード背景の上にメッセージリストが乗る時の視認性確保。
    背景画像の上では純白/純黒のバブルが浮きやすいので、薄いオーバーレイで
-   全体のコントラストを和らげる。バブル本体の半透明化までは踏み込まない
-   （CharacterBubble / UserBubble の色設計に踏み込むと衝突しやすいため）。 */
+   全体のコントラストを和らげる。 */
 .ch-face-to-face-bg::before {
   content: "";
   position: absolute;
@@ -159,4 +158,21 @@ body {
 }
 :root[data-dark] .ch-face-to-face-bg::before {
   background: linear-gradient(to bottom, rgba(0,0,0,0.28), rgba(0,0,0,0.45));
+}
+
+/* 対面モード時のバブル装飾。
+   - キャラ/ユーザの通常バブルは「少しだけ」透明にして対面背景を透けさせる。
+   - reasons（思考・想起記憶）バブルは普段透明なので、逆に薄く背景色を付けて
+     バブルらしい質感を与える。 */
+.ch-face-to-face-bg .ch-bubble--character.bg-ch-s1 {
+  background-color: rgb(var(--ch-s1) / 0.82);
+}
+.ch-face-to-face-bg .ch-bubble--user {
+  background: rgb(var(--ch-ub) / 0.82) !important;
+}
+/* 補助情報バブル（ThinkingBlock / ログ折りたたみ枠）の対面モード時背景。
+   通常時は各コンポーネントの inline スタイル（透明 or var(--ch-sep)）を使うが、
+   対面背景が透ける場面では薄い ch-s1 を当ててバブルらしい質感に揃える。 */
+.ch-face-to-face-bg .ch-aux-bubble {
+  background: rgb(var(--ch-s1) / 0.55) !important;
 }

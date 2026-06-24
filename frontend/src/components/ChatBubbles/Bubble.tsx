@@ -32,7 +32,7 @@ export function Bubble({
   if (kind === "user") {
     return (
       <div
-        className="inline-block max-w-full px-3.5 py-2 text-sm leading-relaxed overflow-hidden break-words"
+        className="ch-bubble ch-bubble--user inline-block max-w-full px-3.5 py-2 text-sm leading-relaxed overflow-hidden break-words"
         style={{
           background: "rgb(var(--ch-ub))",
           color: "rgb(var(--ch-ut))",
@@ -45,7 +45,7 @@ export function Bubble({
   }
   return (
     <div
-      className={`inline-block max-w-full px-3.5 py-2.5 text-ch-t1 text-sm leading-relaxed break-words ${colored ? bubbleClassFor(characterName) : "bg-ch-s1"}`}
+      className={`ch-bubble ch-bubble--character inline-block max-w-full px-3.5 py-2.5 text-ch-t1 text-sm leading-relaxed break-words ${colored ? bubbleClassFor(characterName) : "bg-ch-s1"}`}
       style={{
         borderRadius: "4px 14px 14px 14px",
         border: dashed ? "1px dashed" : "1px solid",

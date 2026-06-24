@@ -122,7 +122,7 @@ export function ThinkingBlock({
   const sketchLines = lines.filter((l) => !isMemoryLine(l) && !isThreadLine(l));
 
   return (
-    <div className="rounded-lg overflow-hidden text-xs mb-1" style={{ border: "1px solid var(--ch-sep)" }}>
+    <div className="ch-aux-bubble rounded-lg overflow-hidden text-xs mb-1" style={{ border: "1px solid var(--ch-sep)" }}>
       <div className="flex items-center">
         <button
           className="flex-1 flex items-center gap-1.5 px-3 py-1.5 text-ch-t3 hover:text-ch-t2 transition-colors text-left"
