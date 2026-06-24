@@ -447,10 +447,7 @@ async def run_scenario_turn(
         format_pc_summary,
         normalize_pc_assignments,
         normalize_pc_slots,
-        find_last_routing_mention,
-        pick_at_all_target,
     )
-    from backend.services.scenario_chat.engine import generate_dice_pool
 
     # PC枠・配役は engine_type に依存せず常に正規化する（ユーザPCも 1 枠として扱うため）。
     # 旧 user_alias 廃止後、ユーザの @タグ名は user 割当スロットの name から解決する。
@@ -526,243 +523,79 @@ async def run_scenario_turn(
                 next_kind = "pc"
                 next_target = target_pc.name
 
-    last_speaker_name: str | None = user_speaker_name if not auto_advance else None
-    fired_responses = 0
-    # うつつ無人ループで、このシーン中に主人公（キャラ PC）が実際に発話した回数。
-    # GM の早すぎる [SCENE_CLOSE]（キャラが一度も応答しないうちの幕引き）を抑止する判定に使う。
-    pc_responses = 0
+    # ループ制御は SceneLoop に委ねる。シナリオ固有の判断（メンション解析・SCENE_CLOSE 抑止・
+    # GM↔PC 実行）は ScenarioRouter / ScenarioTurnExecutor が ScenarioLoopState を介して担う。
+    from backend.services.chat_flow.scene_loop import LoopState, SceneLoop
+    from backend.services.scenario_chat.loop_strategies import (
+        ScenarioLoopState,
+        ScenarioRouter,
+        ScenarioTurnExecutor,
+    )
+
+    scenario_state = ScenarioLoopState(
+        sqlite=sqlite,
+        settings=settings,
+        engine=engine,
+        chat_service=chat_service,
+        session_id=session_id,
+        session=session,
+        scenario=scenario,
+        npcs=npcs,
+        npc_names=npc_names,
+        pcs=pcs,
+        routing_pcs=routing_pcs,
+        pc_summary_text=pc_summary_text,
+        user_speaker_name=user_speaker_name,
+        suppress_names=suppress_names,
+        gm_preset_id=gm_preset_id,
+        current_synopsis=current_synopsis,
+        auto_advance=auto_advance,
+        is_headless=is_headless,
+        is_pc_mode=is_pc_mode,
+        max_responses=max_responses,
+        usual_time_context=usual_time_context,
+        absent_user_block=absent_user_block,
+        extra_first_gm_ooc=extra_first_gm_ooc,
+        previous_anticipation=previous_anticipation,
+        user_message=user_message,
+        initial_next_kind=next_kind,
+        initial_next_target=next_target,
+        saved_turn_ids=saved_turn_ids,
+        last_speaker_name=user_speaker_name if not auto_advance else None,
+    )
+
+    loop = SceneLoop(
+        router=ScenarioRouter(),
+        executor=ScenarioTurnExecutor(),
+        max_iterations=max_responses,
+    )
+    loop_state = LoopState(context={"scenario_state": scenario_state})
 
     try:
-        while fired_responses < max_responses:
-            if next_kind == "gm":
-                # GM レスポンス実行
-                gm_last_raw, gm_last_name = "", None
-                # PC レスポンス（pc_runner）が同一コンテキストで feature を "usual_days_pc" に
-                # 書き換えるため、GM レスポンスごとに "usual_days" へ戻す（ログの取違い防止）。
-                if is_headless:
-                    current_log_feature.set("usual_days")
-                # うつつ: 時間文脈（外的フレーム）と OOC（偶発イベント・ソフト収束）を GM へ注入。
-                gm_ooc = ""
-                if is_headless:
-                    gm_ooc = _build_usual_gm_appendix(
-                        scenario, fired_responses, max_responses,
-                        is_first_gm=(fired_responses == 0),
-                        absent_user_block=absent_user_block,
-                    )
-                    # シーン冒頭のみ、スケジューラからの経過時間メモ（「前回から N 時間後」等）を先頭に添える。
-                    if fired_responses == 0 and extra_first_gm_ooc.strip():
-                        gm_ooc = (extra_first_gm_ooc.strip() + "\n" + gm_ooc).strip()
-                async for ev, _meta in _run_gm_turn(
-                    engine=engine,
-                    scenario=scenario,
-                    npcs=npcs,
-                    history=sqlite.list_scenario_turns(session_id),
-                    user_message=user_message if fired_responses == 0 else "",
-                    settings=settings,
-                    gm_preset_id=gm_preset_id,
-                    auto_advance=auto_advance if fired_responses == 0 else True,
-                    synopsis_auto=current_synopsis.get("auto", ""),
-                    synopsis_manual=current_synopsis.get("manual", ""),
-                    previous_anticipation=previous_anticipation,
-                    pc_summary=pc_summary_text,
-                    dice_pool=(
-                        # うつつ（headless）はダイス駆動の TRPG ではなく淡々とした日常。
-                        # 偶然性は偶発イベント抽選が担うため、GM へダイスプールは渡さない。
-                        generate_dice_pool(getattr(scenario, "dice_pool_spec", None))
-                        if (is_pc_mode and not is_headless) else ""
-                    ),
-                    suppress_names=suppress_names,
-                    user_speaker_name=user_speaker_name,
-                    sqlite=sqlite,
-                    session_id=session_id,
-                    saved_turn_ids=saved_turn_ids,
-                    time_context=usual_time_context,
-                    gm_ooc_appendix=gm_ooc,
-                ):
-                    yield ev
-
-                # GM の最終 raw_response を直近保存ターン（=最後の話者ブロック）から取り直す
-                latest = sqlite.list_scenario_turns(session_id)
-                gm_last_turn = None
-                for t in reversed(latest):
-                    if getattr(t, "speaker_type", "") in {"narrator", "npc"}:
-                        gm_last_raw = getattr(t, "raw_response", "") or ""
-                        gm_last_name = getattr(t, "speaker_name", "") or last_speaker_name
-                        gm_last_turn = t
-                        break
-                if gm_last_name:
-                    last_speaker_name = gm_last_name
-                fired_responses += 1
-
-                # うつつ無人ループ: GM がシーン幕引き（[SCENE_CLOSE]）を宣言したら
-                # そこでシーン終了。停止の主たる判断主体は GM（キャラではない）。
-                if is_headless and _has_scene_close(gm_last_raw):
-                    # 表示・要約に残る content からマーカーを除去する（anticipator 方式）。
-                    # raw_response はログ用に元のまま残す。
-                    if gm_last_turn is not None:
-                        cleaned, _ = extract_scene_close(getattr(gm_last_turn, "content", "") or "")
-                        sqlite.update_scenario_turn(gm_last_turn.id, content=cleaned)
-                    # 早すぎる幕引きの抑止: このシーンで主人公（キャラ PC）がまだ一度も
-                    # 発話していないのに GM が初手で場面を畳もうとした場合、キャラの応答を
-                    # 待たずにシーンを終わらせない。マーカーは上で content から除去済みなので、
-                    # この break を飛ばして下の通常ルーティング（GM 出力にメンションが
-                    # 無ければ @ALL フォールバック）へ委ね、主人公へ一度発話順を回す。
-                    # GM は次の自レスポンスで改めて [SCENE_CLOSE] を宣言してよい（その時は
-                    # pc_responses>0 なので幕引きが成立する）。うつつは「キャラが生きる」ことが
-                    # 目的であり、本人が一言も発さず終わるシーンは無意味なため。
-                    if pc_responses == 0 and routing_pcs:
-                        logger.info(
-                            "うつつ: GM の早すぎる SCENE_CLOSE を抑止（主人公が未発話）"
-                            " session=%s fired=%d",
-                            session_id, fired_responses,
-                        )
-                    else:
-                        logger.info(
-                            "うつつ: GM が SCENE_CLOSE を宣言 session=%s fired=%d",
-                            session_id, fired_responses,
-                        )
-                        break
-
-                if is_pc_mode and gm_last_raw:
-                    next_kind, next_target = find_last_routing_mention(
-                        gm_last_raw, routing_pcs, npc_names,
-                    )
-                    # GM 直後の特例: 明示的に @<PC> / @ALL のいずれかが
-                    # 指定されていない限り、必ず @ALL にフォールバックする。
-                    # find_last_routing_mention は GM ラベル / NPC名 / Narrator も
-                    # kind="gm" として返すが、GM が NPC を呼び合うだけのループを
-                    # 防ぐため、ここでは pc/all 以外を ALL に格上げする。
-                    # PC が 1 人もいなければ ALL は無意味なので従来どおり終了。
-                    if next_kind not in {"pc", "all"}:
-                        if routing_pcs:
-                            next_kind = "all"
-                            next_target = None
-                            continue
-                        break
-                    continue
-                # 通常モード（ensemble）または PC モードでもメンション無し → 終了
-                break
-
-            if next_kind == "all":
-                pc = pick_at_all_target(routing_pcs, last_speaker_name=last_speaker_name)
-                if pc is None or pc.is_user:
-                    break
-                next_kind = "pc"
-                next_target = pc.name
-                # フォールスルー: 同じイテレーションで PC 実行へ
-
-            if next_kind == "pc":
-                pc = next((p for p in routing_pcs if p.name == next_target), None)
-                if pc is None:
-                    break
-                if pc.is_user:
-                    # ユーザ枠が指名された → ユーザ入力待ちへ
-                    break
-                if chat_service is None:
-                    logger.warning(
-                        "PC レスポンス実行不可: chat_service が None session=%s pc=%s",
-                        session_id, pc.name,
-                    )
-                    break
-
-                preset_id = _resolve_pc_preset_id(pc, sqlite)
-                if not preset_id:
-                    logger.warning(
-                        "PC 用プリセット未解決 session=%s slot=%s character_id=%s",
-                        session_id, pc.slot_id, pc.character_id,
-                    )
-                    break
-
-                latest_history = sqlite.list_scenario_turns(session_id)
-
-                yield ("pc_start", {
-                    "character": pc.name,
-                    "character_id": pc.character_id,
-                })
-                full_text = ""
-                anticipation_text: str | None = None
-                try:
-                    from backend.services.scenario_chat.pc_runner import stream_pc_response
-                    async for ev_type, payload in stream_pc_response(
-                        pc=pc,
-                        scenario_title=scenario.title,
-                        user_alias=user_speaker_name,
-                        history=latest_history,
-                        preset_id=preset_id,
-                        sqlite=sqlite,
-                        settings=settings,
-                        chat_service=chat_service,
-                        scenario_session_id=session_id,
-                        default_origin="usual" if is_headless else "interlude",
-                    ):
-                        if ev_type == "pc_done":
-                            full_text = payload["full_text"]
-                            anticipation_text = payload.get("anticipation")
-                        yield (ev_type, payload)
-                except Exception as e:
-                    logger.exception(
-                        "PC レスポンス実行エラー session=%s pc=%s",
-                        session_id, pc.name,
-                    )
-                    yield ("pc_error", {
-                        "character": pc.name,
-                        "character_id": pc.character_id,
-                        "message": str(e),
-                    })
-                    break
-
-                if full_text.strip():
-                    saved = _save_turn(
-                        sqlite=sqlite,
-                        session_id=session_id,
-                        speaker_type="pc",
-                        speaker_name=pc.name,
-                        content=full_text,
-                        speaker_id=pc.character_id,
-                        attach_log_request_id=True,
-                        anticipation=anticipation_text,
-                    )
-                    saved_turn_ids.append(saved.id)
-                    yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
-
-                last_speaker_name = pc.name
-                fired_responses += 1
-                # 主人公（キャラ PC）が実際に発話した。以降は GM の [SCENE_CLOSE] を
-                # 正規の幕引きとして受理してよい（早すぎる幕引き抑止の解除）。
-                pc_responses += 1
-
-                # PC 発話末尾のメンションで次話者を決める
-                next_kind, next_target = find_last_routing_mention(
-                    full_text, routing_pcs, npc_names,
-                )
-                if next_kind == "none":
-                    # うつつ無人ループ: メンションが無くてもユーザに戻さず GM レスポンスへ継続し、
-                    # 場面が止まらないようにする（通常モードはユーザ入力待ちへ戻して終了）。
-                    if is_headless:
-                        next_kind = "gm"
-                        next_target = None
-                        continue
-                    break
+        async for ev in loop.run(initial_state=loop_state):
+            # SceneLoop 終端通知は API 層に渡す必要がない（turn_complete を別途 yield する）。
+            if ev[0] == "loop_complete":
                 continue
-
-            # 未知の kind: 防御的に break
-            break
+            yield ev
     except Exception as e:
         logger.exception("シナリオレスポンス実行エラー session=%s", session_id)
         yield ("error", {"message": str(e)})
         return
 
-    if fired_responses >= max_responses:
+    if scenario_state.fired_responses >= max_responses:
         logger.info(
             "シナリオレスポンス上限到達 session=%s fired=%d cap=%d headless=%s",
-            session_id, fired_responses, max_responses, is_headless,
+            session_id, scenario_state.fired_responses, max_responses, is_headless,
         )
 
     sqlite.update_scenario_session(session_id, status=session.status)
 
     # turn_ids は保存された話者ブロック ID（=ターン）、fired_responses は LLM 呼出回数（GM + PC）。
     # 後者は run_usual_days_scene の集計ログで使う。
-    yield ("turn_complete", {"turn_ids": saved_turn_ids, "fired_responses": fired_responses})
+    yield ("turn_complete", {
+        "turn_ids": saved_turn_ids,
+        "fired_responses": scenario_state.fired_responses,
+    })
 
     progress = compute_synopsis_progress(sqlite, settings, scenario, session_id)
     if progress is not None:
