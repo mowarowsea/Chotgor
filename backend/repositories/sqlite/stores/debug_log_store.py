@@ -194,7 +194,7 @@ class DebugLogStoreMixin:
         # PC ターン。いずれもシナリオ進行の一部なので Scenario タブに含める
         # （Batch タブに落ちないこと。うつつはバッチ処理ではなく、ユーザ不在時に走る
         # 場面進行であり、性質としては Scenario と同類）。
-        _CHAT_TYPES = ("chat", "group_chat", "farewell", "trigger")
+        _CHAT_TYPES = ("chat", "farewell", "trigger")
         _SCENARIO_TYPES = (
             "scenario", "scenario_chat", "scenario_chat_pc",
             "usual_days", "usual_days_pc",
@@ -206,7 +206,7 @@ class DebugLogStoreMixin:
             base_q = sess.query(DebugLogEntry.request_id)
 
             if request_type == "chat":
-                # chat/group_chat/farewell/trigger のいずれかを含む request_id
+                # chat/farewell/trigger のいずれかを含む request_id
                 matched_ids = (
                     base_q.filter(DebugLogEntry.source_type.in_(_CHAT_TYPES))
                     .distinct()

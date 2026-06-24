@@ -8,7 +8,6 @@ embedding model 変更時の再インデックス処理（``services.memory.rein
 同関数を再利用する。indexer と reindex の構築ロジックがズレないように同関数経由で行うこと。
 """
 
-import json
 import logging
 import time
 from datetime import datetime
@@ -65,47 +64,20 @@ def build_chat_doc_and_metadata(
 def get_participant_char_ids(session, sqlite) -> list[str]:
     """セッションに参加しているキャラクターのIDリストを返す。
 
-    1on1セッション: model_id から char_name を取得してIDを解決する。
-    グループセッション: group_config の participants から解決する。
-    （司会はキャラクターではなくシステムモデルのため対象外）
-    重複キャラ名は除外する。
+    1on1セッション: model_id（`{char_name}@{preset_name}`）から char_name を取得して
+    キャラクター ID を解決する。
 
     Args:
         session: ChatSession ORM オブジェクト。
         sqlite: SQLiteStore インスタンス。
 
     Returns:
-        キャラクターIDのリスト（解決できなかったキャラクターは除外）。
+        キャラクターIDのリスト（解決できなければ空リスト）。
     """
-    session_type = getattr(session, "session_type", "1on1")
-    if session_type == "group":
-        raw = getattr(session, "group_config", None)
-        if not raw:
-            return []
-        try:
-            cfg = json.loads(raw)
-        except Exception:
-            return []
-
-        # participants を重複除去しながら解決する
-        seen_names: set[str] = set()
-        char_ids: list[str] = []
-        names = [p["char_name"] for p in cfg.get("participants", [])]
-
-        for name in names:
-            if name in seen_names:
-                continue
-            seen_names.add(name)
-            char = sqlite.get_character_by_name(name)
-            if char:
-                char_ids.append(char.id)
-        return char_ids
-    else:
-        # 1on1: model_id = "{char_name}@{preset_name}"
-        model_id = getattr(session, "model_id", "")
-        char_name = model_id.split("@")[0] if "@" in model_id else model_id
-        char = sqlite.get_character_by_name(char_name)
-        return [char.id] if char else []
+    model_id = getattr(session, "model_id", "")
+    char_name = model_id.split("@")[0] if "@" in model_id else model_id
+    char = sqlite.get_character_by_name(char_name)
+    return [char.id] if char else []
 
 
 def index_message_sync(

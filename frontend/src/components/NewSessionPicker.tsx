@@ -23,7 +23,7 @@ import {
 import { CharacterAvatar } from "./ChatBubbles";
 
 /** セッション種別。 */
-type SessionType = "1on1" | "group" | "scenario";
+type SessionType = "1on1" | "scenario";
 
 interface Props {
   /** 利用可能なモデル一覧（"{char}@{preset}" 形式の id を持つ）。 */
@@ -32,8 +32,6 @@ interface Props {
   onClose: () => void;
   /** 1on1 チャット作成コールバック。 */
   onNewChat: (modelId: string) => void;
-  /** グループチャット作成コールバック（司会モデルはシステム設定で管理するため引数に含まない）。 */
-  onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオ起動コールバック。
    *
    * `gmPresetId` は GM プリセット（必須）。`synopsisPresetId` はあらすじ蒸留用プリセットの
@@ -66,7 +64,6 @@ interface PcAssignmentDraft {
 /** 種別タブの定義。 */
 const TYPE_TABS: { key: SessionType; label: string; desc: string }[] = [
   { key: "1on1", label: "1on1", desc: "1人のキャラと会話" },
-  { key: "group", label: "Group", desc: "複数キャラ + 司会AI" },
   { key: "scenario", label: "Scenario", desc: "ナレーター進行の物語" },
 ];
 
@@ -87,7 +84,6 @@ export default function NewSessionPicker({
   models,
   onClose,
   onNewChat,
-  onNewGroupChat,
   onStartScenario,
 }: Props) {
   const [type, setType] = useState<SessionType>("1on1");
@@ -108,10 +104,6 @@ export default function NewSessionPicker({
   /* ── 1on1 用 state ── */
   const [selChar, setSelChar] = useState("");
   const [selPreset, setSelPreset] = useState("");
-
-  /* ── group 用 state ── */
-  const [groupSelected, setGroupSelected] = useState<Set<string>>(new Set());
-  const [maxAutoTurns, setMaxAutoTurns] = useState(3);
 
   /* ── scenario 用 state ── */
   const [templates, setTemplates] = useState<ScenarioTemplate[]>([]);
@@ -182,16 +174,6 @@ export default function NewSessionPicker({
     );
   }, [scId, templates]);
 
-  /** グループ参加者の選択をトグルする。 */
-  const toggleGroupModel = (modelId: string) => {
-    setGroupSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(modelId)) next.delete(modelId);
-      else next.add(modelId);
-      return next;
-    });
-  };
-
   /** PC枠割当てを API 形式に変換する。AI キャラ枠は character_id が必須。 */
   const validPcAssignments = useMemo<PcAssignment[]>(
     () =>
@@ -220,19 +202,15 @@ export default function NewSessionPicker({
   const canCreate =
     type === "1on1"
       ? !!selChar && !!selPreset
-      : type === "group"
-        ? groupSelected.size >= 2
-        : !!scId &&
-          !!scPresetId &&
-          (scEngineType === "ensemble" || pcAssignmentsComplete);
+      : !!scId &&
+        !!scPresetId &&
+        (scEngineType === "ensemble" || pcAssignmentsComplete);
 
   /** 作成を確定する。 */
   const handleCreate = () => {
     if (!canCreate) return;
     if (type === "1on1") {
       onNewChat(`${selChar}@${selPreset}`);
-    } else if (type === "group") {
-      onNewGroupChat([...groupSelected], maxAutoTurns);
     } else {
       // あらすじ蒸留用プリセットの初期値は GM と同じにする（作成モーダルで毎回選び直せる）。
       onStartScenario(
@@ -284,7 +262,7 @@ export default function NewSessionPicker({
           {/* 種別タブ */}
           <div>
             <SectionLabel>TYPE</SectionLabel>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               {TYPE_TABS.map((t) => {
                 const active = type === t.key;
                 return (
@@ -364,53 +342,6 @@ export default function NewSessionPicker({
                   </div>
                 </div>
               )}
-            </>
-          )}
-
-          {/* グループ設定 */}
-          {type === "group" && (
-            <>
-              <div>
-                <SectionLabel>CHARACTERS · 2名以上選択</SectionLabel>
-                {models.length === 0 ? (
-                  <p className="text-ch-t3 text-xs">利用可能なモデルがありません</p>
-                ) : (
-                  <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
-                    {models.map((m) => {
-                      const sel = groupSelected.has(m.id);
-                      return (
-                        <label key={m.id} className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={sel}
-                            onChange={() => toggleGroupModel(m.id)}
-                            className="accent-ch-accent"
-                          />
-                          <CharacterAvatar characterName={charNameOf(m.id)} size={18} />
-                          <span className="text-ch-t2 text-xs truncate">
-                            {charNameOf(m.id)}
-                            <span className="text-ch-t3 font-mono ml-1">@{presetNameOf(m.id)}</span>
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div>
-                <SectionLabel>
-                  最大自動ターン数: <span className="text-ch-t1">{maxAutoTurns}</span>
-                  {maxAutoTurns >= 5 && <span className="text-amber-600 ml-1">⚠ API消費増</span>}
-                </SectionLabel>
-                <input
-                  type="range"
-                  min={1}
-                  max={10}
-                  value={maxAutoTurns}
-                  onChange={(e) => setMaxAutoTurns(Number(e.target.value))}
-                  className="w-full accent-ch-accent"
-                />
-              </div>
             </>
           )}
 

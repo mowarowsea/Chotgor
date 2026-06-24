@@ -9,13 +9,13 @@ import { charNameOf } from "../api";
 import NewSessionPicker from "./NewSessionPicker";
 import { CharacterAvatar } from "./ChatBubbles";
 
-/** サイドバーで表示する統合セッション型。1on1/group/scenario を判別可能にする。 */
+/** サイドバーで表示する統合セッション型。1on1/scenario を判別可能にする。 */
 export type AnySession = Session | ScenarioSession;
 
 interface Props {
   /** 利用可能なモデル一覧 */
   models: Model[];
-  /** セッション一覧（1on1 / group / scenario が混在） */
+  /** セッション一覧（1on1 / scenario が混在） */
   sessions: AnySession[];
   /** 現在選択中のセッションID */
   activeSessionId: string | null;
@@ -30,8 +30,6 @@ interface Props {
    * @param modelId - "{char_name}@{preset_name}" 形式のモデルID。
    */
   onNewChat: (modelId: string) => void;
-  /** 新規グループチャット作成時のコールバック（司会モデルはシステム設定で管理） */
-  onNewGroupChat: (participants: string[], maxAutoTurns: number) => void;
   /** シナリオテンプレートからプレイセッションを起動するコールバック。
    *
    * `gmPresetId` は GM プリセット（必須）、`synopsisPresetId` はあらすじ蒸留専用プリセット
@@ -52,20 +50,9 @@ interface Props {
   onRenameSession: (sessionId: string, newTitle: string) => void;
 }
 
-/** グループセッションの group_config JSON から参加キャラクター名を取り出す。 */
-function groupCharNames(groupConfig?: string): string[] {
-  if (!groupConfig) return [];
-  try {
-    const cfg = JSON.parse(groupConfig);
-    return (cfg.participants ?? []).map((p: { char_name: string }) => p.char_name);
-  } catch {
-    return [];
-  }
-}
-
 /**
  * セッション行の先頭アイコン。
- * 1on1 はキャラクターアバター、グループは参加者アバターの重ね、シナリオは ✦ 円。
+ * 1on1 はキャラクターアバター、シナリオは ✦ 円。
  *
  * アバター画像は CharacterAvatar が CharacterImageContext から自動解決する
  * （キャラクター設定に登録された画像。未登録・取得失敗時はイニシャル表示）。
@@ -75,21 +62,6 @@ function SessionIcon({ session }: { session: AnySession }) {
     return (
       <span className="shrink-0 w-[18px] h-[18px] rounded-full bg-ch-s3 flex items-center justify-center text-[10px] text-ch-t2">
         ✦
-      </span>
-    );
-  }
-  if (session.session_type === "group") {
-    const names = groupCharNames((session as Session).group_config);
-    if (names.length === 0) {
-      return <span className="shrink-0 text-[11px] opacity-60">👥</span>;
-    }
-    return (
-      <span className="shrink-0 flex">
-        {names.slice(0, 3).map((n, i) => (
-          <span key={n + i} style={{ marginLeft: i ? -7 : 0, zIndex: 10 - i }}>
-            <CharacterAvatar characterName={n} size={16} />
-          </span>
-        ))}
       </span>
     );
   }
@@ -111,7 +83,6 @@ export default function Sidebar({
   onToggle: _onToggle,
   onSelectSession,
   onNewChat,
-  onNewGroupChat,
   onStartScenario,
   onDeleteSession,
   onRenameSession,
@@ -277,7 +248,6 @@ export default function Sidebar({
           models={models}
           onClose={() => setPickerOpen(false)}
           onNewChat={onNewChat}
-          onNewGroupChat={onNewGroupChat}
           onStartScenario={onStartScenario}
         />
       )}

@@ -55,7 +55,7 @@ def char_to_dict(char) -> dict:
 def session_to_dict(s) -> dict:
     """ChatSession ORMオブジェクトを辞書に変換する。
 
-    group_config / exited_chars は存在する場合のみレスポンスに含める。
+    exited_chars は存在する場合のみレスポンスに含める。
     """
     result = {
         "id": s.id,
@@ -65,9 +65,6 @@ def session_to_dict(s) -> dict:
         "created_at": fmt_dt(s.created_at),
         "updated_at": fmt_dt(s.updated_at),
     }
-    group_config = getattr(s, "group_config", None)
-    if group_config:
-        result["group_config"] = group_config
     exited_chars = getattr(s, "exited_chars", None)
     if exited_chars:
         result["exited_chars"] = exited_chars

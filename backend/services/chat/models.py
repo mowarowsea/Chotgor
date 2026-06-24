@@ -60,7 +60,7 @@ class ChatRequest:
     # 次ターンのシステムプロンプトに「前回のあなたの予想」として注入される。
     previous_anticipation: str = ""
     # inscribe_memory / post_working_memory_thread で保存される記憶/スレッドの origin（3値）。
-    # 1on1・GroupChat 通常経路では "real"、シナリオ PC モードからの呼び出しでは "interlude"、
+    # 1on1 通常経路では "real"、シナリオ PC モードからの呼び出しでは "interlude"、
     # うつつ（Usual Days）無人経路では "usual"。
     # ToolExecutor.default_origin に流れ、inscribe_memory / post_working_memory_thread の保存時に付与される。
     default_origin: str = "real"

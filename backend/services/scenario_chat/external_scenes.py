@@ -327,74 +327,6 @@ def _build_1on1_scenes(
     return [s for s in scenes if s.turns]
 
 
-def _build_group_scenes(
-    sqlite,
-    character_name: str,
-    since_dt: datetime,
-    until_dt: datetime,
-) -> list[Scene]:
-    """このキャラが参加するグループチャットの発話から Scene 列を作る。
-
-    Scene 単位: session_id ごと。シーンタグ名:「グループチャット「{title}」」。
-    自分の発話タグ = キャラ名、他者発話タグ = character_name または "user"。
-    """
-    from backend.repositories.sqlite.store import ChatMessage, ChatSession
-
-    char_tag = _sanitize_xml_tag_name(character_name)
-    scenes_by_session: dict[str, Scene] = {}
-    with sqlite.get_session() as session:
-        group_sessions = (
-            session.query(ChatSession)
-            .filter(ChatSession.session_type == "group")
-            .all()
-        )
-        target_sessions: dict[str, str] = {}
-        for s in group_sessions:
-            raw = getattr(s, "group_config", None)
-            if not raw:
-                continue
-            try:
-                cfg = json.loads(raw) if isinstance(raw, str) else (raw or {})
-            except (json.JSONDecodeError, TypeError):
-                continue
-            participants = cfg.get("participants") or []
-            if any(p.get("char_name") == character_name for p in participants):
-                target_sessions[s.id] = (s.title or "グループチャット")
-        if not target_sessions:
-            return []
-        msgs = (
-            session.query(ChatMessage)
-            .filter(
-                ChatMessage.session_id.in_(list(target_sessions.keys())),
-                ChatMessage.created_at >= since_dt,
-                ChatMessage.created_at < until_dt,
-                (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0),  # noqa: E711
-            )
-            .order_by(ChatMessage.created_at.asc())
-            .all()
-        )
-    for msg in msgs:
-        title = target_sessions.get(msg.session_id, "グループチャット")
-        sid = msg.session_id
-        if sid not in scenes_by_session:
-            scenes_by_session[sid] = Scene(
-                scene_tag=f"グループチャット「{title}」",
-                scene_key=("group", sid),
-                started_at=msg.created_at,
-            )
-        content = (msg.content or "").strip()
-        if not content:
-            continue
-        if msg.role == "character" and (msg.character_name or "") == character_name:
-            tag = char_tag
-        elif msg.role == "character":
-            tag = _sanitize_xml_tag_name(msg.character_name or "")
-        else:
-            tag = "user"
-        scenes_by_session[sid].turns.append(SpeechTurn(msg.created_at, tag, content))
-    return [s for s in scenes_by_session.values() if s.turns]
-
-
 def _build_trpg_scenes(
     sqlite,
     character_id: str,
@@ -504,7 +436,6 @@ def collect_all_scenes(
     )
     ext_scenes: list[Scene] = []
     ext_scenes.extend(_build_1on1_scenes(sqlite, character_name, user_label, since_dt, until_dt))
-    ext_scenes.extend(_build_group_scenes(sqlite, character_name, since_dt, until_dt))
     ext_scenes.extend(_build_trpg_scenes(
         sqlite, self_character_id, character_name, user_label, since_dt, until_dt, narrator_name,
     ))

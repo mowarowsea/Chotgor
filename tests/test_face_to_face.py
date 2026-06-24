@@ -34,7 +34,6 @@ from backend.services.scenario_chat.external_scenes import (
     Scene,
     SpeechTurn,
     _build_1on1_scenes,
-    _build_group_scenes,
     _build_trpg_scenes,
     _build_usual_scenes,
     _resolve_trpg_role_name,
@@ -484,32 +483,6 @@ class TestBuildTrpgScenes:
             ],
         )
         assert _resolve_trpg_role_name(sqlite_store, "s1", "char-haru") == "アリサ"
-
-
-class TestBuildGroupScenes:
-    """グループチャット参加セッションのシーン化。"""
-
-    def test_basic(self, sqlite_store):
-        sqlite_store.create_character("char-haru", "はる")
-        sqlite_store.create_chat_session(
-            "g1", "group", title="昼下がり会議",
-            session_type="group",
-            group_config=json.dumps({"participants": [{"char_name": "はる"}, {"char_name": "他"}]}),
-        )
-        _new_chat_message(sqlite_store, "g1", "user", "やあ")
-        _new_chat_message(sqlite_store, "g1", "character", "こんにちは", character_name="はる")
-        _new_chat_message(sqlite_store, "g1", "character", "やあやあ", character_name="他")
-        scenes = _build_group_scenes(
-            sqlite_store, "はる",
-            datetime.now() - timedelta(hours=1), datetime.now() + timedelta(seconds=1),
-        )
-        assert len(scenes) == 1
-        assert scenes[0].scene_tag == "グループチャット「昼下がり会議」"
-        # speaker_tag: ユーザは "user"、自キャラは char_tag、他キャラは char_tag
-        tags = [t.speaker_tag for t in scenes[0].turns]
-        assert "user" in tags
-        assert "はる" in tags
-        assert "他" in tags
 
 
 # ---------------------------------------------------------------------------

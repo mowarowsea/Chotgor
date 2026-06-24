@@ -3,7 +3,7 @@
  *
  * Ensemble エンジンが GM として全話者を演じるため、メッセージは ScenarioTurn として
  * `user | narrator | npc | character` の 4 種類の speaker_type を持つ。
- * 既存の ChatMessage / GroupChatView とは異なる表示が必要なため、自前の
+ * 既存の ChatMessage（1on1）とは異なる表示が必要なため、自前の
  * バブルリストと入力欄を提供する。
  *
  * 機能:

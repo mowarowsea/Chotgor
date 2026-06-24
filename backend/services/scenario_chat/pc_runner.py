@@ -4,8 +4,7 @@ GM ターン後にメンションで指名された Chotgor キャラを「PC」
 同じ system prompt（Block 1-10）で呼び出し、ChatService.execute_stream を
 通じて応答テキストをストリーミングする。
 
-GroupChat の `_stream_character_response`（backend/services/group_chat/service.py）
-を踏襲しているが、以下の違いがある:
+1on1 のキャラクター応答ストリーミングと同じ思想だが、以下の違いがある:
 
 - 履歴ソースは ``scenario_turns`` であり ``chat_messages`` ではない。
 - 自分発話の判定は ``speaker_type=="pc"`` かつ ``speaker_id == character_id``。
@@ -50,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 # PC 専用に system prompt 末尾へ追加注入する「配役の自覚」テンプレ。
 # Block 5（provider 追記）と同じ position で provider_additional_instructions に詰める。
-# Block を新設しない理由: 1on1/GroupChat とプロンプト構造を共有したいため
+# Block を新設しない理由: 1on1 とプロンプト構造を共有したいため
 # （新 Block を作ると全テンプレートに分岐が漏れる）。
 _PC_ROLE_PREAMBLE_TEMPLATE = """\
 ## シナリオでの配役（あなた向けの状況メモ）
@@ -386,7 +385,7 @@ async def stream_pc_response(
                 "preset_name": content["preset_name"],
             })
 
-    # 末尾 ANTICIPATE_RESPONSE タグを本文から剥がす（PC モードでも GroupChat 同様に副作用処理）。
+    # 末尾 ANTICIPATE_RESPONSE タグを本文から剥がす（PC モードでも 1on1 同様に副作用処理）。
     clean_text, parsed_anticipation = extract_anticipation(full_text)
     # ChatService 側で anticipation chunk が出ていればそちら優先。なければパースした方を採用。
     if not anticipation_text and parsed_anticipation:

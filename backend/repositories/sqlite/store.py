@@ -108,6 +108,7 @@ class SQLiteStore(
         self._migrate_add_usual_days()
         self._migrate_extract_user_fields_to_character()
         self._migrate_add_user_visibility_note()
+        self._migrate_drop_group_chat()
         self._migrate_add_face_to_face_columns()
 
     def get_session(self) -> Session:

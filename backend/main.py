@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.adapters.openai import router as openai_router
-from backend.api import characters, inscribed_memories, chat as chat_module, chat_images as chat_images_module, group_chat as group_chat_module, scenario_chat as scenario_chat_module
+from backend.api import characters, inscribed_memories, chat as chat_module, chat_images as chat_images_module, scenario_chat as scenario_chat_module
 from backend.api import ui as ui_module
 from backend.api import logs_ui as logs_ui_module
 from backend.api import translation as translation_module
@@ -343,7 +343,6 @@ app.include_router(inscribed_memories.router)
 app.include_router(ui_module.router)
 app.include_router(chat_module.router)
 app.include_router(chat_images_module.router)
-app.include_router(group_chat_module.router)
 app.include_router(scenario_chat_module.router)
 app.include_router(logs_ui_module.router)
 app.include_router(logs_ui_module.json_router)

@@ -37,15 +37,15 @@ class GlobalSetting(Base):
 
 
 class ChatSession(Base):
-    """チャットセッション — 1on1またはグループチャットの会話スレッド。"""
+    """チャットセッション — 1on1 の会話スレッド（旧グループチャット撤去済み）。"""
 
     __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True)
-    model_id = Column(String, nullable=False)   # 1on1: "{char_name}@{preset_name}", グループ: "group"
+    model_id = Column(String, nullable=False)   # "{char_name}@{preset_name}"
     title = Column(String, nullable=False, default="新しいチャット")
-    session_type = Column(String, nullable=False, default="1on1")   # "1on1" | "group"
-    group_config = Column(Text, nullable=True)  # グループチャット設定JSON（session_type="group"時のみ）
+    # session_type は将来の拡張余地として残置（現状は "1on1" のみ）。
+    session_type = Column(String, nullable=False, default="1on1")
     # 退席者リスト: [{"char_name": "Alice", "reason": "理由"}]。NULLなら退席者なし。
     exited_chars = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
@@ -63,7 +63,7 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     reasoning = Column(Text, nullable=True)         # 思考ブロック・想起記憶テキスト
     images = Column(JSON, nullable=True)            # [image_id, ...] 添付画像IDリスト
-    character_name = Column(String, nullable=True)  # グループチャット時の発言キャラクター名
+    character_name = Column(String, nullable=True)  # シナリオPC・うつつ発話時のキャラクター名
     preset_name = Column(String, nullable=True)     # メッセージ送信時に使用したプリセット名
     # システムメッセージフラグ: 1=退席通知などのシステムメッセージ。NULLまたは0=通常メッセージ。
     is_system_message = Column(Integer, nullable=True)

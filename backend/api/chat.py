@@ -139,7 +139,7 @@ async def _build_chat_request(
     # 直前のキャラクター応答に含まれていた予想（ANTICIPATE_RESPONSE）を次ターンに注入する
     previous_anticipation = latest_anticipation(history_messages)
 
-    # 対面モードは 1on1 専用の概念。group_chat / scenario / 通常PC からは流れないよう、
+    # 対面モードは 1on1 専用の概念。scenario / 通常PC からは流れないよう、
     # ここ（1on1 経路）でのみ override として明示的に渡す。
     face_to_face = bool(getattr(character, "face_to_face_mode", 0))
 

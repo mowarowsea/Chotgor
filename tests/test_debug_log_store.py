@@ -269,18 +269,18 @@ class TestGetRequestIdsPaged:
         assert ids[0] == "req_old"
 
     def test_filter_chat_type_includes_farewell_and_trigger(self, store):
-        """request_type='chat': chat/group_chat/farewell/trigger を含む request_id のみ返ること。
+        """request_type='chat': chat/farewell/trigger を含む request_id のみ返ること。
 
         farewell・trigger は Chat のサブタイプとして同じ request_id に混在するため、
         それらを含む request_id は Chat タブに表示される。
         """
         store.insert_debug_log_entry(request_id="chat001", source_type="chat")
         store.insert_debug_log_entry(request_id="chat001", source_type="farewell")
-        store.insert_debug_log_entry(request_id="grp001", source_type="group_chat")
+        store.insert_debug_log_entry(request_id="trig001", source_type="trigger")
         store.insert_debug_log_entry(request_id="scen001", source_type="scenario")
         store.insert_debug_log_entry(request_id="batch001", source_type="chronicle")
         ids, total = store.get_debug_log_request_ids_paged(request_type="chat")
-        assert set(ids) == {"chat001", "grp001"}
+        assert set(ids) == {"chat001", "trig001"}
         assert total == 2
 
     def test_filter_scenario_type(self, store):

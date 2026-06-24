@@ -4,15 +4,14 @@ get_participant_char_ids と index_message_sync の動作を検証する。
 SQLiteStore は実インメモリDB、LanceStore はモックを使用する。
 
 テスト対象:
-  - get_participant_char_ids: 1on1 / グループ / 存在しないキャラの各ケース
+  - get_participant_char_ids: 1on1 / 存在しないキャラの各ケース
   - index_message_sync: ユーザ発言・キャラ発言・システムメッセージ・ファンアウトの各ケース
   - リトライ機構: LanceDB失敗時のリトライ動作とエラーログ記録
 """
 
-import json
 import uuid
 from datetime import datetime
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -40,25 +39,6 @@ def _make_1on1_session(char_name: str, preset_name: str = "default") -> MagicMoc
     s = MagicMock()
     s.session_type = "1on1"
     s.model_id = f"{char_name}@{preset_name}"
-    return s
-
-
-def _make_group_session(participants: list[dict]) -> MagicMock:
-    """グループセッションのスタブを作成する。
-
-    司会はキャラクターではなくシステムモデルのため group_config には含めない。
-
-    Args:
-        participants: [{"char_name": str, "preset_id": str}] のリスト。
-
-    Returns:
-        session_type="group"、group_config が JSON化されたMagicMock。
-    """
-    s = MagicMock()
-    s.session_type = "group"
-    s.group_config = json.dumps({
-        "participants": participants,
-    })
     return s
 
 
@@ -125,61 +105,6 @@ class TestGetParticipantCharIds:
         session = _make_1on1_session("存在しないキャラ")
 
         result = get_participant_char_ids(session, sqlite_store)
-
-        assert result == []
-
-    def test_group_resolves_all_participant_ids(self, sqlite_store):
-        """グループセッションで全参加キャラのIDが解決されることを確認する。
-
-        participants に含まれる全キャラの一意のIDリストが返されることを検証する。
-        """
-        id_alice = str(uuid.uuid4())
-        id_bob = str(uuid.uuid4())
-        sqlite_store.create_character(id_alice, "Alice")
-        sqlite_store.create_character(id_bob, "Bob")
-
-        session = _make_group_session(
-            participants=[
-                {"char_name": "Alice", "preset_id": "p1"},
-                {"char_name": "Bob",   "preset_id": "p2"},
-            ],
-        )
-
-        result = get_participant_char_ids(session, sqlite_store)
-
-        assert sorted(result) == sorted([id_alice, id_bob])
-
-    def test_group_excludes_unknown_chars(self, sqlite_store):
-        """グループセッションで存在しないキャラは除外されることを確認する。
-
-        participants に存在しないキャラ名が含まれていても例外が発生せず、
-        解決できたキャラのIDのみが返されることを検証する。
-        """
-        id_alice = str(uuid.uuid4())
-        sqlite_store.create_character(id_alice, "Alice")
-
-        session = _make_group_session(
-            participants=[
-                {"char_name": "Alice", "preset_id": "p1"},
-                {"char_name": "NotExist", "preset_id": "p2"},
-            ],
-        )
-
-        result = get_participant_char_ids(session, sqlite_store)
-
-        assert result == [id_alice]
-
-    def test_group_invalid_group_config_returns_empty(self):
-        """group_config が不正な JSON の場合、空リストを返すことを確認する。
-
-        JSON パース失敗時も例外を投げず、空リストで安全に終了することを検証する。
-        """
-        s = MagicMock()
-        s.session_type = "group"
-        s.group_config = "not-json"
-        sqlite = MagicMock()
-
-        result = get_participant_char_ids(s, sqlite)
 
         assert result == []
 

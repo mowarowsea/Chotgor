@@ -1,7 +1,7 @@
 """記憶フォーマットユーティリティ。
 
 recall_memory() の返り値を表示用テキストに変換する共通関数を提供する。
-1on1チャット（api/chat.py）とグループチャット（core/group_chat/service.py）の両方から使用する。
+1on1 チャット（api/chat.py）とシナリオ PC モード（services/scenario_chat/pc_runner.py）の両方から使用する。
 """
 
 import logging

@@ -771,6 +771,58 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE scenarios ADD COLUMN usual_config TEXT"
                 )
 
+    def _migrate_drop_group_chat(self) -> None:
+        """グループチャット機能撤去に伴い、関連レコードとカラムを物理削除する。
+
+        撤去対象:
+            - chat_messages のうち session_type='group' に属する行
+            - chat_images のうち session_type='group' に属する行
+            - chat_sessions のうち session_type='group' の行
+            - chat_sessions.group_config 列（SQLite 3.35+ の DROP COLUMN）
+
+        Director 廃止・GroupChat 統合に伴う Step1。group_config 列の有無で冪等性を担保する。
+        既に列が無ければ移行済みとして何もしない。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "chat_sessions" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(chat_sessions)"
+                ).fetchall()
+            }
+            if "group_config" not in cols:
+                return  # 既に移行済み
+
+            # 関連レコード削除（外部キーに頼らず、明示的に順序を制御する）
+            if "chat_messages" in tables:
+                conn.exec_driver_sql(
+                    "DELETE FROM chat_messages "
+                    "WHERE session_id IN ("
+                    "  SELECT id FROM chat_sessions WHERE session_type='group'"
+                    ")"
+                )
+            if "chat_images" in tables:
+                conn.exec_driver_sql(
+                    "DELETE FROM chat_images "
+                    "WHERE session_id IN ("
+                    "  SELECT id FROM chat_sessions WHERE session_type='group'"
+                    ")"
+                )
+            conn.exec_driver_sql(
+                "DELETE FROM chat_sessions WHERE session_type='group'"
+            )
+            conn.exec_driver_sql(
+                "ALTER TABLE chat_sessions DROP COLUMN group_config"
+            )
+
     def _migrate_add_face_to_face_columns(self) -> None:
         """対面モード（Face-to-Face）関連カラムを追加する。
 

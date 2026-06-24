@@ -1,4 +1,4 @@
-/** バックエンドAPI呼び出し層 — 1on1チャット・グループチャット・共通ユーティリティ。 */
+/** バックエンドAPI呼び出し層 — 1on1チャット・共通ユーティリティ。 */
 
 import { parseSSEStream } from "./sse";
 
@@ -35,10 +35,8 @@ export interface Session {
   id: string;
   model_id: string;
   title: string;
-  /** セッション種別。"1on1" または "group"。 */
-  session_type: "1on1" | "group";
-  /** グループチャット設定JSON文字列。session_type="group" のみ存在する。 */
-  group_config?: string;
+  /** セッション種別。現状は "1on1" のみ。 */
+  session_type: "1on1";
   created_at: string;
   updated_at: string;
 }
@@ -52,7 +50,7 @@ export interface ChatMessage {
   reasoning?: string;
   /** 添付画像IDのリスト。ユーザメッセージのみ存在する場合がある。 */
   images?: string[];
-  /** グループチャット時の発言キャラクター名。 */
+  /** シナリオPC・うつつ発話時のキャラクター名。 */
   character_name?: string;
   /** メッセージ送信時に使用したプリセット名（バブル表示用）。 */
   preset_name?: string;
@@ -60,37 +58,6 @@ export interface ChatMessage {
   log_message_id?: string;
   created_at: string;
 }
-
-/** グループチャット設定オブジェクト（group_config のデシリアライズ後）。
- *
- * 司会モデルはセッション単位ではなくシステム設定で一括管理するため
- * group_config には含まれない（システム設定 ``group_director_preset_id`` で一元管理）。
- */
-export interface GroupConfig {
-  participants: Array<{ char_name: string; preset_id: string; preset_name: string }>;
-  max_auto_turns: number;
-  turn_timeout_sec: number;
-}
-
-/** グループチャットSSEイベントの型定義。 */
-export type GroupStreamEvent =
-  | { type: "user_saved"; message: ChatMessage }
-  | { type: "speaker_decided"; speakers: string[] }
-  /** キャラクター応答開始（スピナー表示用） */
-  | { type: "character_start"; character: string }
-  /** 思考ブロック・想起記憶（リアルタイムストリーミング） */
-  | { type: "character_reasoning"; character: string; content: string }
-  /** 応答テキスト（1チャンク） */
-  | { type: "character_chunk"; character: string; content: string }
-  /** DB保存完了（確定済みメッセージ） */
-  | { type: "character_done"; character: string; message: ChatMessage }
-  /** キャラクターがプリセット（アングル）を切り替えた */
-  | { type: "character_angle_switched"; character: string; model_id: string; preset_id: string; preset_name: string }
-  /** 司会エラー（手動再試行・手動指名で復帰可能） */
-  | { type: "director_error"; message: string }
-  | { type: "user_turn"; auto_turns_used: number }
-  | { type: "error"; message: string; character?: string }
-  | { type: "done" };
 
 export interface SessionDetail extends Session {
   messages: ChatMessage[];
@@ -242,56 +209,5 @@ export async function fetchUserName(): Promise<string> {
   if (!res.ok) return "ユーザ";
   const data = await res.json();
   return data.user_name ?? "ユーザ";
-}
-
-/** グループチャットセッションを作成する。
- *
- * 司会モデルはシステム設定（Settings画面）で一括管理するため引数に含まない。
- */
-export async function createGroupSession(
-  participants: string[],
-  maxAutoTurns: number,
-  turnTimeoutSec: number,
-): Promise<Session & { warning?: string }> {
-  const res = await fetch("/api/group/sessions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      participants: participants.map((id) => ({ model_id: id })),
-      max_auto_turns: maxAutoTurns,
-      turn_timeout_sec: turnTimeoutSec,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? "グループセッションの作成に失敗しました");
-  }
-  return res.json();
-}
-
-/** グループチャットメッセージをSSEでストリーミング送信し、イベントをyieldする。
- *
- * @param skip - true の場合、ユーザメッセージを保存せず司会へ直接ターンを委譲する（ユーザターンスキップ）。
- * @param targetCharacter - 指定した場合、司会を介さずそのキャラクターを手動指名して発言させる。
- */
-export async function* streamGroupMessage(
-  sessionId: string,
-  content: string,
-  imageIds?: string[],
-  skip?: boolean,
-  targetCharacter?: string | null,
-): AsyncGenerator<GroupStreamEvent> {
-  const res = await fetch(`/api/group/sessions/${sessionId}/messages/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content,
-      ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
-      ...(skip ? { skip: true } : {}),
-      ...(targetCharacter ? { target_character: targetCharacter } : {}),
-    }),
-  });
-  if (!res.ok) throw new Error("グループメッセージの送信に失敗しました");
-  yield* parseSSEStream<GroupStreamEvent>(res);
 }
 

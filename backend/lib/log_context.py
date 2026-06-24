@@ -18,7 +18,7 @@ current_message_id: ContextVar[str] = ContextVar("current_message_id", default="
 # current_message_id が再利用される再生成でも、ファイルは別フォルダに書き出せる。
 current_log_dir_id: ContextVar[str] = ContextVar("current_log_dir_id", default="--------")
 
-# 現在のLLM呼び出し機能名（chat / power_recall / trigger / reflection / forget / chronicle / group_chat）
+# 現在のLLM呼び出し機能名（chat / power_recall / trigger / reflection / forget / chronicle / scenario_chat / usual_days）
 current_log_feature: ContextVar[str] = ContextVar("current_log_feature", default="chat")
 
 # デバッグログファイルの通し番号（リクエストごとに new_message_id() でリセット）

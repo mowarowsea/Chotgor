@@ -8,8 +8,7 @@
     - 各発話を scenario_turns に保存
     - raw_response はそのレスポンス内の話者ブロック群（=ターン群）に共通で紐付ける
 
-group_chat.run_group_turn と同じ思想（非同期ジェネレータで SSE 用イベントを yield）
-にすることで、API 側の StreamingResponse 実装を一貫させる。
+非同期ジェネレータで SSE 用イベントを yield することで、API 側の StreamingResponse 実装を一貫させる。
 
 周辺責務は分割済み（本モジュールが後方互換で再エクスポートする）:
     - serializers.py    — ORM → dict 変換・ユーザ話者名解決

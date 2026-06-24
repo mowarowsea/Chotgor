@@ -212,7 +212,7 @@ class ToolExecutor:
                 通常チャットでは None（=空 dict 扱い）。forget 蒸留バッチからは
                 ``{"force_insert_memory": True}`` を渡す。
             default_origin: inscribe_memory / post_working_memory_thread が保存する
-                記憶/スレッドに付与する origin。1on1・GroupChat 通常経路では "real"、
+                記憶/スレッドに付与する origin。1on1 通常経路では "real"、
                 シナリオ PC モードからは "interlude"、うつつ無人経路からは "usual" を渡す。
             source_preset_id: 記憶/スレッド作成時に「どのプリセットで生まれたか」として記録される
                 プリセット ID。ツール引数としては露出させず、Executor のインスタンス属性として持つ。

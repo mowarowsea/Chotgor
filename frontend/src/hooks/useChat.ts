@@ -3,12 +3,9 @@
  *
  * App コンポーネントに残っていた 1on1 系 state（ストリーミング内容・思考ブロック・
  * reasoningMap）と、その操作ハンドラ（doStream / handleRetry）を 1 箇所へ集約する。
- * useGroupChat の 1on1 版に相当する対称的なフック。
  *
- * 1on1・グループ・シナリオと共有する state（messages / sessions / sending / selectedModel 等）は
+ * 1on1・シナリオと共有する state（messages / sessions / sending / selectedModel 等）は
  * フックに閉じ込めず、引数で setter を受け取る形にして所有権を App 側へ残す。
- * 1on1/グループを振り分ける統合送信ハンドラ（handleSend）は横断ルーターのため
- * App 側の配線層に残し、本フックは doStream を公開してそこから呼ばれる。
  */
 import {
   useCallback,

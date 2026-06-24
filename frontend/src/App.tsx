@@ -28,7 +28,6 @@ import { charNameOf } from "./api";
 import Sidebar from "./components/Sidebar";
 import type { AnySession } from "./components/Sidebar";
 import ChatView from "./components/ChatView";
-import GroupChatView from "./components/GroupChatView";
 import ScenarioChatView from "./components/ScenarioChatView";
 import ExportDialog from "./components/ExportDialog";
 import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
@@ -38,7 +37,6 @@ import SynopsisCreateModal from "./components/SynopsisCreateModal";
 import { useTheme } from "./hooks/useTheme";
 import { useSessions } from "./hooks/useSessions";
 import { useChat } from "./hooks/useChat";
-import { useGroupChat } from "./hooks/useGroupChat";
 import { useScenarioChat } from "./hooks/useScenarioChat";
 
 /**
@@ -102,7 +100,7 @@ export default function App() {
   /**
    * セッション一覧・中核 state（sessions / activeSessionId / messages）と
    * 自己完結するセッション操作ハンドラ群。
-   * useGroupChat / useScenarioChat より先に呼び、返す setter・ref をそれらへ渡す。
+   * useScenarioChat より先に呼び、返す setter・ref をそれらへ渡す。
    */
   const {
     sessions,
@@ -113,7 +111,6 @@ export default function App() {
     setMessages,
     activeSessionIdRef,
     handleNewChat,
-    handleNewGroupChat,
     handleRenameSession,
   } = useSessions({ setError, setSelectedModel });
 
@@ -125,8 +122,6 @@ export default function App() {
    * ストリーミング中から正しいモデル名を表示できる。
    */
   const characterName = (selectedModel || activeSession?.model_id) ?? "キャラクター";
-  /** アクティブセッションがグループチャットかどうか。 */
-  const isGroupSession = activeSession?.session_type === "group";
   /**
    * 1on1チャットの「現在のキャラクター」とその対面モード状態を導出する。
    *
@@ -172,77 +167,14 @@ export default function App() {
       return id ? `/api/characters/${id}/image` : undefined;
     };
   }, [characters]);
-  /** グループチャット参加者情報（char_name・preset_name）。 */
-  const groupParticipantEntries = (() => {
-    if (!isGroupSession || !activeSession?.group_config) return [];
-    try {
-      const cfg = JSON.parse(activeSession.group_config);
-      return cfg.participants as Array<{ char_name: string; preset_id: string; preset_name: string }>;
-    } catch {
-      return [];
-    }
-  })();
-  /** グループチャット参加者名リスト（色割り当て用）。 */
-  const groupParticipantNames = groupParticipantEntries.map((p) => p.char_name);
-  /**
-   * グループメッセージから char_name → preset_name のフォールバックマップを作る。
-   * group_config に preset_name を持たない旧セッション向けの救済。
-   * 各キャラクター発言メッセージは preset_name を持つため、それを参照する。
-   */
-  const groupPresetFallback = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const msg of messages) {
-      if (msg.role !== "user" && msg.character_name && msg.preset_name) {
-        m.set(msg.character_name, msg.preset_name);
-      }
-    }
-    return m;
-  }, [messages]);
-  /** グループチャット参加者のキャラクター名+プリセット名リスト（ヘッダのアバター・名前表示用）。 */
-  const groupParticipants = groupParticipantEntries.map(({ char_name, preset_name }) => ({
-    charName: char_name,
-    // group_config の preset_name（新セッション）→ 旧セッションはメッセージから補完。
-    presetName: preset_name || groupPresetFallback.get(char_name) || "",
-  }));
   /** char_msg_id → log_message_id（8桁hex）のマッピング。バブルのログ折りたたみに使用する。 */
   const [msgLogIds, setMsgLogIds] = useState<Record<string, string>>({});
   /**
-   * メッセージID（1on1/グループの char_msg_id、シナリオの turn_id）
+   * メッセージID（1on1 の char_msg_id、シナリオの turn_id）
    * → モデルへリクエストしてから応答完了までの経過時間（ミリ秒）のマッピング。
    * 現セッションのストリーミング分のみ保持し、ページリロードで消える。
    */
   const [elapsedMap, setElapsedMap] = useState<Record<string, number>>({});
-
-  /**
-   * グループチャットの state・ストリーミング送受信ハンドラ群。
-   * 共有 state（messages / sessions / sending 等）の setter を渡し、group 専用 state は
-   * フック内に閉じ込める。返り値の setter（reasoning / userTurn）はセッション復元に使う。
-   */
-  const {
-    groupWaitingCharacter,
-    groupStreamingContent,
-    groupStreamingReasoning,
-    groupReasoningMap,
-    isGroupUserTurn,
-    groupDirectorErrored,
-    setGroupReasoningMap,
-    setIsGroupUserTurn,
-    resetStreamingState: resetGroupStreamingState,
-    doGroupStream,
-    handleGroupRetry,
-    handleGroupSkip,
-    handleGroupRetryDirector,
-    handleGroupRequestCharacter,
-  } = useGroupChat({
-    activeSessionId,
-    sending,
-    activeSessionIdRef,
-    setMessages,
-    setSessions,
-    setError,
-    setSending,
-    setElapsedMap,
-  });
 
   /**
    * シナリオプレイの state・ストリーミング送受信ハンドラ群。
@@ -371,7 +303,6 @@ export default function App() {
     // ストリーミング中だった場合の状態をリセットする
     setSending(false);
     resetChatStreamingState();
-    resetGroupStreamingState();
     // シナリオ関連の状態もリセット
     resetScenarioState();
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
@@ -390,16 +321,10 @@ export default function App() {
       const [detail] = await Promise.all([
         fetchSession(sessionId),
       ]);
-      // 1on1チャットの場合、そのセッションで最後に使ったモデルをセレクタに反映する
-      if (detail.session_type !== "group" && detail.model_id) {
+      if (detail.model_id) {
         setSelectedModel(detail.model_id);
       }
       setMessages(detail.messages);
-      // グループチャットで最後のメッセージがキャラクター発言ならユーザターン待ち状態を復元する
-      if (detail.session_type === "group" && detail.messages.length > 0) {
-        const last = detail.messages[detail.messages.length - 1];
-        setIsGroupUserTurn(last.role !== "user");
-      }
       // DBに保存された reasoning と log_message_id をメッセージIDに紐付けて復元する
       const restored: Record<string, string> = {};
       const restoredLogIds: Record<string, string> = {};
@@ -412,7 +337,6 @@ export default function App() {
         }
       }
       setReasoningMap(restored);
-      setGroupReasoningMap(restored);
       setMsgLogIds(restoredLogIds);
     } catch (e) {
       setError(String(e));
@@ -441,14 +365,10 @@ export default function App() {
     }
   }, [activeSessionId, scenarioSessions, deleteScenario, resetScenarioState]);
 
-  /**
-   * メッセージ送信。画像がある場合は先にアップロードしてから送信する。
-   * グループ・1on1どちらも画像対応済み。
-   */
+  /** メッセージ送信。画像がある場合は先にアップロードしてから送信する。 */
   const handleSend = useCallback(async (content: string, files: File[]) => {
     if (!activeSessionId) return;
 
-    // 画像アップロードはグループ・1on1共通（グループセッションも同じ画像APIを使う）
     let imageIds: string[] = [];
     if (files.length > 0) {
       try {
@@ -460,10 +380,6 @@ export default function App() {
       }
     }
 
-    if (isGroupSession) {
-      await doGroupStream(activeSessionId, content, imageIds);
-      return;
-    }
     setSending(true);
     try {
       await doStream(activeSessionId, content, imageIds, selectedModel || undefined);
@@ -472,7 +388,7 @@ export default function App() {
     } finally {
       setSending(false);
     }
-  }, [activeSessionId, isGroupSession, selectedModel, doGroupStream, doStream]);
+  }, [activeSessionId, selectedModel, doStream]);
 
   return (
     /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。 */
@@ -495,7 +411,6 @@ export default function App() {
         onToggle={() => setSidebarOpen((o) => !o)}
         onSelectSession={(id) => { handleSelectSession(id); setSidebarOpen(window.innerWidth >= 640); }}
         onNewChat={handleNewChat}
-        onNewGroupChat={handleNewGroupChat}
         onStartScenario={handleStartScenario}
         onDeleteSession={handleDeleteSession}
         onRenameSession={handleRenameSession}
@@ -545,31 +460,7 @@ export default function App() {
                   </div>
                 </button>
               </div>
-            ) : activeSessionId && isGroupSession ? (
-              <div
-                className="pointer-events-auto flex items-center gap-2 rounded-full bg-ch-bg min-w-0 max-w-[64%]"
-                style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
-              >
-                {/* 参加者アバターを重ねて表示 */}
-                <div className="flex shrink-0">
-                  {groupParticipants.map(({ charName }, i) => (
-                    <div key={charName} style={{ marginLeft: i ? -8 : 0, zIndex: 10 - i }}>
-                      <CharacterAvatar characterName={charName} size={24} />
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2.5 flex-wrap min-w-0">
-                  {groupParticipants.map(({ charName, presetName }) => (
-                    <div key={charName} className="flex items-center gap-1 shrink-0">
-                      <span className="text-ch-t1 text-[13px] font-semibold">{charName}</span>
-                      {presetName && (
-                        <span className="text-ch-t3 text-[10px] font-mono">@{presetName}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : activeSessionId && !isGroupSession ? (
+            ) : activeSessionId ? (
               <div
                 className="pointer-events-auto relative flex items-center gap-1.5 rounded-full bg-ch-bg min-w-0 max-w-[60%]"
                 style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "5px 12px 5px 6px" }}
@@ -601,7 +492,7 @@ export default function App() {
             {/* 右側ボタン群: テキスト/対面切替（1on1のみ） + テーマ切り替え + エクスポート。
                 シナリオの「あらすじ」ボタンはモデルチップ側のモーダルに統合済み。 */}
             <div className="pointer-events-auto ml-auto flex items-center gap-1.5">
-              {activeSessionId && !isScenarioSession && !isGroupSession && activeCharacter && (
+              {activeSessionId && !isScenarioSession && activeCharacter && (
                 <button
                   onClick={() => handleToggleFaceToFace(!faceToFaceMode)}
                   title={faceToFaceMode ? "テキストモードに切り替え" : "対面モードに切り替え"}
@@ -695,27 +586,6 @@ export default function App() {
             onOpenSynopsisCreate={handleOpenSynopsisCreate}
             synopsisLastTurnIndex={scenarioSynopsis?.last_turn_index ?? -1}
           />
-        ) : activeSessionId && isGroupSession ? (
-          <GroupChatView
-            sessionId={activeSessionId}
-            messages={messages}
-            participantNames={groupParticipantNames}
-            userName={userName}
-            sending={sending}
-            waitingCharacter={groupWaitingCharacter}
-            streamingContent={groupStreamingContent}
-            streamingReasoning={groupStreamingReasoning}
-            reasoningMap={groupReasoningMap}
-            onSend={handleSend}
-            onRetry={handleGroupRetry}
-            onHeaderVisibilityChange={setHeaderVisible}
-            isUserTurn={isGroupUserTurn}
-            onSkip={handleGroupSkip}
-            directorErrored={groupDirectorErrored}
-            onRetryDirector={handleGroupRetryDirector}
-            onRequestCharacter={handleGroupRequestCharacter}
-            elapsedMap={elapsedMap}
-          />
         ) : activeSessionId ? (
           <ChatView
             sessionId={activeSessionId}
@@ -754,7 +624,7 @@ export default function App() {
               ? (activeScenarioTemplate?.pc_slots?.[0]?.name ?? userName)
               : userName
           }
-          reasoningMap={isGroupSession ? groupReasoningMap : reasoningMap}
+          reasoningMap={reasoningMap}
           sessionTitle={
             isScenarioSession
               ? activeScenarioSession?.title

@@ -75,9 +75,6 @@ async def save_general_settings(request: Request):
     # 翻訳モデル設定の保存
     store.set_setting("translation_preset_id", form.get("translation_preset_id") or "")
 
-    # 司会モデル設定の保存（グループチャットの次発言者判断に使用）
-    store.set_setting("group_director_preset_id", form.get("group_director_preset_id") or "")
-
     # Ollama 設定の保存
     store.set_setting("ollama_base_url", (form.get("ollama_base_url") or "http://localhost:11434").strip())
     store.set_setting("ollama_no_think", "true" if form.get("ollama_no_think") else "false")

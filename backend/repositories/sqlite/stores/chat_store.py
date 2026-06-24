@@ -13,7 +13,6 @@ class ChatStoreMixin:
         model_id: str,
         title: str = "新しいチャット",
         session_type: str = "1on1",
-        group_config: str | None = None,
     ):
         """チャットセッションを作成する。"""
         with self.get_session() as session:
@@ -23,7 +22,6 @@ class ChatStoreMixin:
                 model_id=model_id,
                 title=title,
                 session_type=session_type,
-                group_config=group_config,
             )
             session.add(obj)
             session.commit()
@@ -139,7 +137,7 @@ class ChatStoreMixin:
     ) -> list:
         """chronicle 用: 指定日に対象キャラクターが参加したセッションのメッセージを時系列で返す。
 
-        1on1・グループチャットを問わず character_name が model_id の前半に含まれるセッションを対象とする。
+        character_name が model_id の前半（`{char}@{preset}` の `{char}`）に含まれるセッションを対象とする。
 
         Args:
             character_name: キャラクター名。

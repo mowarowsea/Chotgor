@@ -198,25 +198,6 @@
                 </select>
                 <p class="ch-hint">選択したモデルがチャット画面・ログ画面の翻訳ボタンで使用されます。</p>
             </div>
-
-            <hr class="ch-divider">
-
-            <!-- 司会モデル -->
-            <div class="ch-field">
-                <label class="ch-label" for="group_director_preset_id">司会モデル
-                    <span class="ch-hint">グループチャットで次の発言者を判断するモデル</span>
-                </label>
-                <select id="group_director_preset_id" name="group_director_preset_id" class="ch-select">
-                    <option value="" {% if not settings.get('group_director_preset_id') %}selected{% endif %}>（未設定）</option>
-                    {% for preset in model_presets %}
-                    <option value="{{ preset.id }}"
-                            {% if settings.get('group_director_preset_id') == preset.id %}selected{% endif %}>
-                        {{ preset.name }} ({{ preset.provider }}{% if preset.model_id %} / {{ preset.model_id }}{% endif %})
-                    </option>
-                    {% endfor %}
-                </select>
-                <p class="ch-hint">司会はキャラクターではなくシステム上のユーティリティモデルです。未設定の場合グループチャットは自動進行しません。</p>
-            </div>
         </form>
     </section>
 
