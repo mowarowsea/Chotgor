@@ -27,6 +27,8 @@ from backend.api.resource_resolver import parse_model_id, require_character, req
 from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 from backend.services.chat.request_factory import build_character_request, build_available_presets, latest_anticipation
 from backend.services.chat.content import apply_context_window
+from backend.services.chat_flow.scene_loop import LoopState, SceneLoop
+from backend.services.chat_flow.strategies import OneOnOneExecutor, OneOnOneRouter
 from backend.services.memory.format import format_recalled_threads
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -371,8 +373,22 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         full_text = ""
         accumulated_reasoning = ""
         anticipation_text = ""
+        # 1on1 は SceneLoop の最小構成（max_iterations=1）で回す。Scenario と同じ
+        # フロー骨に乗ることで、将来的な拡張（複数ターン連鎖、エラーリトライ等）も
+        # Strategy 差し替えだけで対応できるようにしておく。
+        scene_loop = SceneLoop(
+            router=OneOnOneRouter(),
+            executor=OneOnOneExecutor(state.chat_service),
+            max_iterations=1,
+        )
+        loop_state = LoopState(context={"pending_request": chat_request})
         try:
-            async for chunk_type, content in state.chat_service.execute_stream(chat_request):
+            async for event in scene_loop.run(initial_state=loop_state):
+                # SceneLoop 終端通知は API 層では使わない（テキスト末尾の確定処理は
+                # 既存どおり ``done`` イベントで送る）。
+                if event[0] == "loop_complete":
+                    continue
+                chunk_type, content = event
                 if chunk_type == "inscribed_memories":
                     display = format_memories_for_sse(content)
                     if display:
