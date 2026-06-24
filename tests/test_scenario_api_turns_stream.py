@@ -182,9 +182,9 @@ class TestStream:
 
         types = [e["type"] for e in events]
         assert "user_saved" in types
-        assert "speaker_start" in types
-        assert "content_delta" in types
-        assert "speaker_end" in types
+        assert "turn_start" in types
+        assert "chunk" in types
+        assert "turn_end" in types
         assert "turn_complete" in types
         assert types[-1] == "done"
 

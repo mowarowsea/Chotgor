@@ -147,27 +147,35 @@ export interface SynopsisRegenerateResult {
   progress: SynopsisProgress;
 }
 
-/** シナリオストリーミング SSE イベントの型定義。 */
+/** シナリオストリーミング SSE イベントの型定義。
+ *
+ * event 名は 1on1 の SSE（chunk/reasoning/error）と統一されている。
+ * Scenario 固有の構造（複数話者ブロック・PC レスポンス連鎖・あらすじ進捗）は
+ * turn_start/turn_end や user_saved / pc_done / turn_complete / synopsis_progress に集約。
+ */
 export type ScenarioStreamEvent =
   | { type: "user_saved"; turn: ScenarioTurn }
+  // 新しい話者が発話を開始する通知。GM ターンは speaker_type/name/id/is_known、
+  // PC ターン（ensemble_pc）は character/character_id を持つ。
   | {
-      type: "speaker_start";
+      type: "turn_start";
       speaker_type: string;
       speaker_id: string | null;
       speaker_name: string;
       is_known: boolean;
     }
-  | { type: "content_delta"; text: string }
-  | { type: "speaker_end"; turn: ScenarioTurn }
-  // ── ensemble_pc 専用イベント（PC レスポンス関連） ─────────────────────────────
-  // GM レスポンス完了後、メンションで指名された PC（Chotgor キャラ）を順次呼び出す際に発火する。
-  | { type: "pc_start"; character: string; character_id: string }
-  // PC レスポンス中の応答テキストチャンク。`character` は配役名（role_name）。
-  | { type: "pc_chunk"; character: string; content: string }
-  // PC レスポンス中の想起記憶・WM スレッド・思考ブロック等（フロントの reasoning 欄相当）。
-  | { type: "pc_reasoning"; character: string; content: string }
+  | { type: "turn_start"; character: string; character_id: string }
+  // 現在進行中の話者の本文チャンク。GM は text、PC は character + content。
+  | { type: "chunk"; text: string }
+  | { type: "chunk"; character: string; content: string }
+  // 現在進行中の話者の reasoning（想起記憶・WM スレッド・思考ブロック）。1on1 と統一。
+  | { type: "reasoning"; character: string; content: string }
+  // 話者ブロック確定通知。turn は DB 保存済み ScenarioTurn。
+  | { type: "turn_end"; turn: ScenarioTurn }
+  // ── ensemble_pc 専用イベント ─────────────────────────────
   // PC レスポンス完了通知。full_text は最終応答、anticipation は ANTICIPATE_RESPONSE 抽出値。
   // log_message_id は 1on1 同様にバブルからログ画面へ飛ぶための 8 桁 hex（CHOTGOR_DEBUG=1 時のみ）。
+  // この後 turn_end が来て turn が確定する。
   | {
       type: "pc_done";
       character: string;
@@ -177,9 +185,9 @@ export type ScenarioStreamEvent =
       anticipation: string | null;
       log_message_id?: string;
     }
-  | { type: "pc_error"; character: string; character_id: string; message: string }
+  // アングル切替（switch_angle 経由）。GM/PC どちらでも発生しうるが現状は PC のみ。
   | {
-      type: "pc_angle_switched";
+      type: "angle_switched";
       character: string;
       character_id: string;
       model_id: string;
@@ -198,7 +206,8 @@ export type ScenarioStreamEvent =
       chars: number;
       max_chars: number;
     }
-  | { type: "error"; message: string }
+  // エラー。GM 由来は message のみ、PC 由来は character/character_id も含む。
+  | { type: "error"; message: string; character?: string; character_id?: string }
   | { type: "done" };
 
 /** タグ session_type を付与するヘルパ。 */

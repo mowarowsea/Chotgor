@@ -218,10 +218,18 @@ async def stream_pc_response(
             うつつ（Usual Days）無人ループでは "usual"。
 
     Yields:
-        ("pc_reasoning", {"character": role_name, "content": str})  — 想起記憶・WM・思考
-        ("pc_chunk",    {"character": role_name, "content": str})   — 応答テキスト
+        ("turn_start",  {"character": role_name, "character_id": cid})  — PC レスポンス開始通知
+        ("reasoning",   {"character": role_name, "content": str})       — 想起記憶・WM・思考
+        ("chunk",       {"character": role_name, "content": str})       — 応答テキスト
+        ("angle_switched", {"character": role_name, "character_id": cid, ...}) — アングル切替
+        ("error",       {"character": role_name, "character_id": cid, "message": str})  — エラー
         ("pc_done",     {"character": role_name, "speaker_id": cid,
-                          "full_text": str, "anticipation": str | None}) — 完了通知
+                          "full_text": str, "anticipation": str | None,
+                          "log_message_id": str | None}) — PC レスポンス完了通知
+
+    event 名は 1on1（chunk/reasoning/error/angle_switched）と互換になっており、
+    フロントの SSE 解釈を統一しやすくしている。``pc_done`` は「PC レスポンス完了」を
+    示す PC 専用イベントで、その後ループ側で ``turn_end`` が発行される（loop_strategies）。
     """
     # PC ターンは「ユーザの 1 リクエスト中に走る独立した LLM 呼び出し」なので、
     # ログ機構上は新しい MAIN 行として扱う（ChotgorLogger._MAIN_SOURCE_TYPES 参照）。
@@ -358,27 +366,27 @@ async def stream_pc_response(
         if chunk_type == "inscribed_memories":
             memory_text = format_recalled_memories(content)
             if memory_text:
-                yield ("pc_reasoning", {"character": pc.name, "content": memory_text})
+                yield ("reasoning", {"character": pc.name, "content": memory_text})
         elif chunk_type == "recall_error":
             recall_error_text = content + "\n"
-            yield ("pc_reasoning", {"character": pc.name, "content": recall_error_text})
+            yield ("reasoning", {"character": pc.name, "content": recall_error_text})
         elif chunk_type == "working_memory_threads":
             wm_text = format_recalled_threads(content)
             if wm_text:
-                yield ("pc_reasoning", {"character": pc.name, "content": wm_text})
+                yield ("reasoning", {"character": pc.name, "content": wm_text})
         elif chunk_type == "thinking":
             thinking_parts.append(content)
-            yield ("pc_reasoning", {"character": pc.name, "content": content})
+            yield ("reasoning", {"character": pc.name, "content": content})
         elif chunk_type == "text":
             full_text += content
             if content:
-                yield ("pc_chunk", {"character": pc.name, "content": content})
+                yield ("chunk", {"character": pc.name, "content": content})
         elif chunk_type == "anticipation":
             anticipation_text = content
         elif chunk_type == "angle_switched":
             # PC モードでも switch_angle は許容（キャラ本人の判断を尊重）。
             # 呼び出し元（engine 側）でセッションの preset 反映までは行わない。
-            yield ("pc_angle_switched", {
+            yield ("angle_switched", {
                 "character": pc.name,
                 "character_id": pc.character_id,
                 "model_id": content["model_id"],

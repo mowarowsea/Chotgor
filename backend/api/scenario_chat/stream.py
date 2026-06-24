@@ -73,7 +73,7 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
         ):
             data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
             yield f"data: {data}\n\n"
-            if event_type == "speaker_end":
+            if event_type == "turn_end":
                 turn = payload.get("turn", {})
                 if turn.get("speaker_type") != "user":
                     name = turn.get("speaker_name", "")

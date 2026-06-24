@@ -386,35 +386,41 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
           if (ev.type === "user_saved") {
             // user_saved はユーザ発話を確定ターンとしてリストに追加する
             setScenarioTurns((prev) => [...prev, ev.turn]);
-          } else if (ev.type === "speaker_start") {
-            // 新しい吹き出しを未確定として追加する。
+          } else if (ev.type === "turn_start") {
+            // 新しい吹き出しを未確定として追加する。GM (speaker_type 有) と PC (character 有)
+            // で payload 差分があるが、いずれも同じ pendingBubble 機構に乗せる。
             // 安定キー (`id`)をここで一度だけ発行することで、後段の shift で
             // インデックスがズレても他の pending バブルが React 上で再マウントされない。
+            const isPcTurn = "character" in ev;
             newPending.push({
               id:
                 typeof crypto !== "undefined" && "randomUUID" in crypto
                   ? crypto.randomUUID()
                   : `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              speaker_type: ev.speaker_type,
-              speaker_name: ev.speaker_name,
-              speaker_id: ev.speaker_id,
-              is_known: ev.is_known,
+              speaker_type: isPcTurn ? "pc" : ev.speaker_type,
+              speaker_name: isPcTurn ? ev.character : ev.speaker_name,
+              speaker_id: isPcTurn ? ev.character_id : ev.speaker_id,
+              is_known: isPcTurn ? true : ev.is_known,
               content: "",
             });
             setScenarioPending([...newPending]);
-          } else if (ev.type === "content_delta") {
-            // 最新の未確定吹き出しに本文を追記する
+          } else if (ev.type === "chunk") {
+            // 最新の未確定吹き出しに本文を追記する（GM は text、PC は content フィールド）。
             if (newPending.length > 0) {
-              newPending[newPending.length - 1].content += ev.text;
+              const text = "text" in ev ? ev.text : ev.content;
+              newPending[newPending.length - 1].content += text;
               setScenarioPending([...newPending]);
             }
-          } else if (ev.type === "speaker_end") {
+          } else if (ev.type === "reasoning") {
+            // 想起記憶・WM スレッド・思考ブロックを連結保持し、後続 turn_end で turn.id に紐付ける。
+            pendingPcReasoning += ev.content;
+          } else if (ev.type === "turn_end") {
             // 確定ターンとしてリストに追加し、対応する未確定吹き出しを除く
             setScenarioTurns((prev) => [...prev, ev.turn]);
             if (newPending.length > 0) newPending.shift();
             setScenarioPending([...newPending]);
             // 直前 PC ターンの reasoning / log_message_id が溜まっていれば、
-            // この speaker_end の turn.id に紐付けて確定格納する（PC ターン以外では発生しない）。
+            // この turn_end の turn.id に紐付けて確定格納する（PC ターン以外では発生しない）。
             if (ev.turn.speaker_type === "pc") {
               if (pendingPcReasoning) {
                 const turnId = ev.turn.id;
@@ -429,39 +435,13 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
               pendingPcReasoning = "";
               pendingPcLogMessageId = null;
             }
-          } else if (ev.type === "pc_start") {
-            // ensemble_pc 専用: GM レスポンス後に PC（Chotgorキャラ）が応答開始する。
-            // 既存 speaker_start と同じ pendingBubble 機構に乗せる（PC は character として描画）。
-            newPending.push({
-              id:
-                typeof crypto !== "undefined" && "randomUUID" in crypto
-                  ? crypto.randomUUID()
-                  : `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              speaker_type: "pc",
-              speaker_name: ev.character,
-              speaker_id: ev.character_id,
-              is_known: true,
-              content: "",
-            });
-            setScenarioPending([...newPending]);
-          } else if (ev.type === "pc_chunk") {
-            // PC 発話テキストを最新 pending bubble に追記する（speaker_end までに完成する）
-            if (newPending.length > 0) {
-              newPending[newPending.length - 1].content += ev.content;
-              setScenarioPending([...newPending]);
-            }
-          } else if (ev.type === "pc_reasoning") {
-            // 想起記憶・WM スレッド・思考ブロックを連結保持し、後続 speaker_end で turn.id に紐付ける。
-            pendingPcReasoning += ev.content;
           } else if (ev.type === "pc_done") {
-            // PC レスポンス完了通知。log_message_id を保持し、後続 speaker_end で turn.id に紐付ける。
-            // 本文の確定は後続の speaker_end が行うため、テキスト系は触らない。
+            // PC レスポンス完了通知。log_message_id を保持し、後続 turn_end で turn.id に紐付ける。
+            // 本文の確定は後続の turn_end が行うため、テキスト系は触らない。
             if (ev.log_message_id) {
               pendingPcLogMessageId = ev.log_message_id;
             }
-          } else if (ev.type === "pc_error") {
-            setError(`${ev.character}: ${ev.message}`);
-          } else if (ev.type === "pc_angle_switched") {
+          } else if (ev.type === "angle_switched") {
             // PC が switch_angle した。セッションへの永続化は backend 側未実装のためログのみ
             console.info(
               "[scenario_pc] angle switched",
@@ -493,7 +473,12 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
               max_chars: ev.max_chars,
             });
           } else if (ev.type === "error") {
-            setError(ev.message);
+            // GM 由来は message のみ、PC 由来は character も付く。
+            if (ev.character) {
+              setError(`${ev.character}: ${ev.message}`);
+            } else {
+              setError(ev.message);
+            }
             break;
           } else if (ev.type === "done") {
             break;

@@ -378,7 +378,7 @@ class ScenarioTurnExecutor:
 
         latest_history = sc.sqlite.list_scenario_turns(sc.session_id)
 
-        yield ("pc_start", {"character": pc.name, "character_id": pc.character_id})
+        yield ("turn_start", {"character": pc.name, "character_id": pc.character_id})
 
         full_text = ""
         anticipation_text: str | None = None
@@ -406,7 +406,7 @@ class ScenarioTurnExecutor:
                 pc.name,
             )
             yield (
-                "pc_error",
+                "error",
                 {
                     "character": pc.name,
                     "character_id": pc.character_id,
@@ -428,7 +428,7 @@ class ScenarioTurnExecutor:
                 anticipation=anticipation_text,
             )
             sc.saved_turn_ids.append(saved.id)
-            yield ("speaker_end", {"turn": scenario_turn_to_dict(saved)})
+            yield ("turn_end", {"turn": scenario_turn_to_dict(saved)})
 
         sc.last_speaker_name = pc.name
         sc.fired_responses += 1

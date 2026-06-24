@@ -648,13 +648,16 @@ async def run_usual_days_scene(
             saved_turn_ids = list(payload.get("turn_ids", []))
             fired_responses = int(payload.get("fired_responses", 0))
         elif ev_type == "error":
-            # GM レスポンス等の致命的エラー（多くは例外送出）。シーンはここで打ち切られる。
-            error = str(payload.get("message", ""))
-        elif ev_type == "pc_error":
-            # PC（キャラ）応答のエラー。ループは break され、それまでのターン（話者ブロック）は保存される。
-            # 無人運転なので観測できるよう error に畳む（最初の1件を記録）。
-            if error is None:
-                error = f"PC応答エラー（{payload.get('character', '?')}）: {payload.get('message', '')}"
+            # 統一エラーイベント: GM 由来は message のみ、PC 由来は character も付く。
+            # 無人運転なので最初の 1 件を観測ログとして記録する。
+            character = payload.get("character")
+            if character:
+                # PC（キャラ）応答のエラー。ループは break され、それまでのターン（話者ブロック）は保存される。
+                if error is None:
+                    error = f"PC応答エラー（{character}）: {payload.get('message', '')}"
+            else:
+                # GM レスポンス等の致命的エラー（多くは例外送出）。シーンはここで打ち切られる。
+                error = str(payload.get("message", ""))
     # シーンが GM の [SCENE_CLOSE] で閉じたかは、最終 GM ターン（話者ブロック）の生出力から判定する。
     for turn in reversed(sqlite.list_scenario_turns(session_id)):
         if getattr(turn, "speaker_type", "") in {"narrator", "npc"}:
@@ -969,7 +972,7 @@ async def _run_gm_turn(
         if isinstance(item, UtteranceDelta):
             if item.is_speaker_change:
                 yield ((
-                    "speaker_start",
+                    "turn_start",
                     {
                         "speaker_type": item.speaker_type,
                         "speaker_id": item.speaker_id,
@@ -977,7 +980,7 @@ async def _run_gm_turn(
                         "is_known": item.is_known,
                     },
                 ), None)
-            yield (("content_delta", {"text": item.content_delta}), None)
+            yield (("chunk", {"text": item.content_delta}), None)
         elif isinstance(item, TurnRecord):
             turn_records_pending.append(item)
         elif isinstance(item, EngineResult):
@@ -993,7 +996,7 @@ async def _run_gm_turn(
             "GM プロバイダエラーで scenario turn 保存をスキップ session=%s 内容=%s",
             session_id, provider_error[:300],
         )
-        yield (("gm_error", {"message": provider_error}), None)
+        yield (("error", {"message": provider_error}), None)
         return
 
     _, turn_anticipation = extract_anticipation(raw_response)
@@ -1018,7 +1021,7 @@ async def _run_gm_turn(
             anticipation=turn_anticipation if i == last_index else None,
         )
         saved_turn_ids.append(saved.id)
-        yield (("speaker_end", {"turn": scenario_turn_to_dict(saved)}), None)
+        yield (("turn_end", {"turn": scenario_turn_to_dict(saved)}), None)
 
 
 def _resolve_pc_preset_id(pc, sqlite) -> str:
