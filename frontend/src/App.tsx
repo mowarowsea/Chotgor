@@ -191,6 +191,7 @@ export default function App() {
     scenarioNpcs,
     scenarioTurns,
     scenarioPending,
+    scenarioReasoningMap,
     scenarioSynopsis,
     synopsisGenerating,
     synopsisModalOpen,
@@ -220,6 +221,7 @@ export default function App() {
     setSending,
     setError,
     setElapsedMap,
+    setMsgLogIds,
   });
 
   /**
@@ -581,6 +583,7 @@ export default function App() {
             onDiscard={handleScenarioDiscard}
             onHeaderVisibilityChange={setHeaderVisible}
             elapsedMap={elapsedMap}
+            scenarioReasoningMap={scenarioReasoningMap}
             synopsisBar={synopsisBar}
             synopsisGenerating={synopsisGenerating}
             onOpenSynopsisCreate={handleOpenSynopsisCreate}

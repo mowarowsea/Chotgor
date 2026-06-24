@@ -9,6 +9,7 @@ import {
   CharacterMessageRow,
   MarkdownContent,
   MessageActionBar,
+  ThinkingBlock,
   UserMessageActions,
   mobileBubbleExtendClass,
 } from "../ChatBubbles";
@@ -165,6 +166,9 @@ interface GMBubbleRowProps {
   elapsedMs?: number;
   /** デバッグログフォルダ名（8桁 hex）。指定時のみ ▼ログ 折りたたみを表示する。 */
   logMessageId?: string;
+  /** 想起記憶・WM・思考ブロック（pc_reasoning の連結）。PC ターンでのみ非空になる。
+   *  指定時はバブル先頭に折りたたみ ThinkingBlock を表示し、1on1 のキャラクター応答と同じ見た目にする。 */
+  reasoning?: string;
 }
 
 /**
@@ -192,6 +196,7 @@ function GMBubbleRowImpl({
   onAvatarClick,
   elapsedMs,
   logMessageId,
+  reasoning,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
   // 操作バー（コピー / 破棄 / 再生成 / ログ）。1on1 / グループと共通の MessageActionBar を使う（DRY）。
@@ -247,6 +252,8 @@ function GMBubbleRowImpl({
       }
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 130px" }}
     >
+      {/* PC ターンの想起記憶・WM・思考ブロックを 1on1 と同じ ThinkingBlock で折りたたみ表示する。 */}
+      {reasoning && <div className="mb-1"><ThinkingBlock content={reasoning} /></div>}
       <Bubble
         kind="character"
         colored
@@ -295,7 +302,8 @@ export const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
     prev.isLastGM === next.isLastGM &&
     prev.copyText === next.copyText &&
     prev.elapsedMs === next.elapsedMs &&
-    prev.logMessageId === next.logMessageId
+    prev.logMessageId === next.logMessageId &&
+    prev.reasoning === next.reasoning
   );
 });
 

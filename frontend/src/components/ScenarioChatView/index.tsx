@@ -86,6 +86,9 @@ interface Props {
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** turn_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
   elapsedMap?: Record<string, number>;
+  /** PC ターンの reasoning（想起記憶・WM・思考）。turn.id → テキスト。
+   *  1on1 と同じく ThinkingBlock 折りたたみで表示する。 */
+  scenarioReasoningMap?: Record<string, string>;
   /**
    * あらすじ作成バーの表示内容。null なら非表示。
    * `text` は「あらすじ未作成（X/Yターン）」等、`danger` が true（80%超）なら赤系で表示する。
@@ -119,6 +122,7 @@ export default function ScenarioChatView({
   onYieldTo,
   onHeaderVisibilityChange,
   elapsedMap,
+  scenarioReasoningMap,
   synopsisBar,
   synopsisGenerating,
   onOpenSynopsisCreate,
@@ -392,6 +396,7 @@ export default function ScenarioChatView({
                   t.id === lastGMTurnId ? elapsedMap?.[t.id] : undefined
                 }
                 logMessageId={t.log_request_id ?? undefined}
+                reasoning={scenarioReasoningMap?.[t.id]}
               />
             );
           }

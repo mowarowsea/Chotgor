@@ -28,6 +28,7 @@ from backend.character_actions.anticipator import extract_anticipation
 from backend.lib.debug_logger import logger as debug_logger
 from backend.lib.tool_event_recorder import record_tool_event
 from backend.lib.log_context import (
+    current_log_dir_id,
     current_log_feature,
     current_log_session_id,
     current_log_target,
@@ -407,12 +408,15 @@ async def stream_pc_response(
             clean_text = stripped
             break
 
+    # log_message_id（=current_log_dir_id）は new_message_id() で振った 8 桁 hex。
+    # 1on1 と同じく PC ターンのバブルからログ画面へ飛べるように、フロントへ渡す。
     yield ("pc_done", {
         "character": pc.name,
         "character_id": pc.character_id,
         "preset_name": preset.name,
         "full_text": clean_text,
         "anticipation": anticipation_text or None,
+        "log_message_id": current_log_dir_id.get(),
     })
 
 

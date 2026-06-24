@@ -167,6 +167,7 @@ export type ScenarioStreamEvent =
   // PC レスポンス中の想起記憶・WM スレッド・思考ブロック等（フロントの reasoning 欄相当）。
   | { type: "pc_reasoning"; character: string; content: string }
   // PC レスポンス完了通知。full_text は最終応答、anticipation は ANTICIPATE_RESPONSE 抽出値。
+  // log_message_id は 1on1 同様にバブルからログ画面へ飛ぶための 8 桁 hex（CHOTGOR_DEBUG=1 時のみ）。
   | {
       type: "pc_done";
       character: string;
@@ -174,6 +175,7 @@ export type ScenarioStreamEvent =
       preset_name: string;
       full_text: string;
       anticipation: string | null;
+      log_message_id?: string;
     }
   | { type: "pc_error"; character: string; character_id: string; message: string }
   | {

@@ -63,6 +63,8 @@ interface UseScenarioChatDeps {
   setError: (e: string | null) => void;
   /** 経過時間マップの setter。 */
   setElapsedMap: Dispatch<SetStateAction<Record<string, number>>>;
+  /** PC ターンの log_message_id を turn.id に紐付けるための共有 setter（1on1 と統合）。 */
+  setMsgLogIds: Dispatch<SetStateAction<Record<string, string>>>;
 }
 
 /** useScenarioChat が返す state・setter・ハンドラ群。 */
@@ -85,6 +87,11 @@ interface UseScenarioChatResult {
   scenarioTurns: ScenarioTurn[];
   /** ストリーミング中の未確定吹き出し列。 */
   scenarioPending: PendingBubble[];
+  /** PC ターンの reasoning（想起記憶・WM・思考）を turn.id → テキストで保持。
+   *  1on1 の reasoningMap と同じ役割で、シナリオ PC バブルでも折りたたみ表示できる。 */
+  scenarioReasoningMap: Record<string, string>;
+  /** scenarioReasoningMap の setter（セッション選択時の復元・テスト用に公開）。 */
+  setScenarioReasoningMap: Dispatch<SetStateAction<Record<string, string>>>;
   /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
   scenarioSynopsis: ScenarioSynopsis | null;
   /** 裏であらすじ蒸留が走っている最中か。 */
@@ -159,6 +166,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     setSending,
     setError,
     setElapsedMap,
+    setMsgLogIds,
   } = deps;
 
   /**
@@ -215,6 +223,8 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   const [scenarioTurns, setScenarioTurns] = useState<ScenarioTurn[]>([]);
   /** ストリーミング中の未確定吹き出し列。 */
   const [scenarioPending, setScenarioPending] = useState<PendingBubble[]>([]);
+  /** PC ターン の reasoning（想起記憶・WM スレッド・思考ブロック）を turn.id をキーに保持。 */
+  const [scenarioReasoningMap, setScenarioReasoningMap] = useState<Record<string, string>>({});
   /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
   const [scenarioSynopsis, setScenarioSynopsis] = useState<ScenarioSynopsis | null>(null);
 
@@ -225,6 +235,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     setScenarioNpcs([]);
     setScenarioTurns([]);
     setScenarioPending([]);
+    setScenarioReasoningMap({});
     setScenarioSynopsis(null);
     setSynopsisProgress(null);
     setSynopsisModalOpen(false);
@@ -358,6 +369,10 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       setScenarioPending([]);
       // モデルへリクエスト〜turn 完了までの経過時間を計測する開始時刻。
       const turnStartedAt = performance.now();
+      // PC ターン進行中に蓄積する reasoning（pc_reasoning の連結）と log_message_id（pc_done で確定）。
+      // 直後の speaker_end でその turn.id をキーに reasoningMap / msgLogIds へ確定格納する。
+      let pendingPcReasoning = "";
+      let pendingPcLogMessageId: string | null = null;
       try {
         const sessionId = activeScenarioSession.id;
         const newPending: PendingBubble[] = [];
@@ -398,6 +413,22 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             setScenarioTurns((prev) => [...prev, ev.turn]);
             if (newPending.length > 0) newPending.shift();
             setScenarioPending([...newPending]);
+            // 直前 PC ターンの reasoning / log_message_id が溜まっていれば、
+            // この speaker_end の turn.id に紐付けて確定格納する（PC ターン以外では発生しない）。
+            if (ev.turn.speaker_type === "pc") {
+              if (pendingPcReasoning) {
+                const turnId = ev.turn.id;
+                const reasoning = pendingPcReasoning;
+                setScenarioReasoningMap((prev) => ({ ...prev, [turnId]: reasoning }));
+              }
+              if (pendingPcLogMessageId) {
+                const turnId = ev.turn.id;
+                const logId = pendingPcLogMessageId;
+                setMsgLogIds((prev) => ({ ...prev, [turnId]: logId }));
+              }
+              pendingPcReasoning = "";
+              pendingPcLogMessageId = null;
+            }
           } else if (ev.type === "pc_start") {
             // ensemble_pc 専用: GM レスポンス後に PC（Chotgorキャラ）が応答開始する。
             // 既存 speaker_start と同じ pendingBubble 機構に乗せる（PC は character として描画）。
@@ -420,9 +451,14 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
               setScenarioPending([...newPending]);
             }
           } else if (ev.type === "pc_reasoning") {
-            // 想起記憶・WM スレッド・思考ブロックは現状 UI に出さない（将来 reasoning パネルへ）
+            // 想起記憶・WM スレッド・思考ブロックを連結保持し、後続 speaker_end で turn.id に紐付ける。
+            pendingPcReasoning += ev.content;
           } else if (ev.type === "pc_done") {
-            // PC レスポンス完了の最終通知。本文の確定は後続の speaker_end が行うため、ここは何もしない
+            // PC レスポンス完了通知。log_message_id を保持し、後続 speaker_end で turn.id に紐付ける。
+            // 本文の確定は後続の speaker_end が行うため、テキスト系は触らない。
+            if (ev.log_message_id) {
+              pendingPcLogMessageId = ev.log_message_id;
+            }
           } else if (ev.type === "pc_error") {
             setError(`${ev.character}: ${ev.message}`);
           } else if (ev.type === "pc_angle_switched") {
@@ -492,7 +528,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
         setSending(false);
       }
     },
-    [activeScenarioSession, activeSessionIdRef, setSending, setError, setElapsedMap],
+    [activeScenarioSession, activeSessionIdRef, setSending, setError, setElapsedMap, setMsgLogIds],
   );
 
   /**
@@ -765,6 +801,8 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     scenarioNpcs,
     scenarioTurns,
     scenarioPending,
+    scenarioReasoningMap,
+    setScenarioReasoningMap,
     scenarioSynopsis,
     synopsisGenerating,
     synopsisModalOpen,
