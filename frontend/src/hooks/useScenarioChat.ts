@@ -31,6 +31,7 @@ import {
   streamScenarioMessage,
   updateScenarioSession,
 } from "../api";
+import { consumeStream } from "./streamingUtils";
 import type {
   PcAssignment,
   ScenarioNpc,
@@ -370,19 +371,21 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       // モデルへリクエスト〜turn 完了までの経過時間を計測する開始時刻。
       const turnStartedAt = performance.now();
       // PC ターン進行中に蓄積する reasoning（pc_reasoning の連結）と log_message_id（pc_done で確定）。
-      // 直後の speaker_end でその turn.id をキーに reasoningMap / msgLogIds へ確定格納する。
+      // 直後の turn_end でその turn.id をキーに reasoningMap / msgLogIds へ確定格納する。
       let pendingPcReasoning = "";
       let pendingPcLogMessageId: string | null = null;
-      try {
-        const sessionId = activeScenarioSession.id;
-        const newPending: PendingBubble[] = [];
-        for await (const ev of streamScenarioMessage(
+      const sessionId = activeScenarioSession.id;
+      const newPending: PendingBubble[] = [];
+
+      await consumeStream({
+        stream: streamScenarioMessage(
           sessionId,
           content,
           autoAdvance,
           regenerateRequestId,
           yieldTo,
-        )) {
+        ),
+        onEvent: (ev) => {
           if (ev.type === "user_saved") {
             // user_saved はユーザ発話を確定ターンとしてリストに追加する
             setScenarioTurns((prev) => [...prev, ev.turn]);
@@ -451,7 +454,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             );
           } else if (ev.type === "turn_complete") {
             // ユーザターン完了（GM/PC のレスポンス連鎖が終わり、ユーザ入力待ちへ戻った）。
-            // 残った未確定吹き出しは捨てる（speaker_end でほぼ消えるはず）。
+            // 残った未確定吹き出しは捨てる（turn_end でほぼ消えるはず）。
             newPending.length = 0;
             setScenarioPending([]);
             // 経過時間を記録する。同一レスポンス内の全GMバブル（複数話者ブロック）に同じ値を共有する。
@@ -479,11 +482,17 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             } else {
               setError(ev.message);
             }
-            break;
+            return false;
           } else if (ev.type === "done") {
-            break;
+            return false;
           }
-        }
+        },
+        onError: (e) => {
+          setError(String(e));
+        },
+      });
+
+      try {
         // 完了後にサーバから真の turns を取り直して整合性確保
         if (sessionId === activeSessionIdRef.current) {
           try {

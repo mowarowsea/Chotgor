@@ -20,6 +20,7 @@ import {
   streamMessage,
 } from "../api";
 import type { ChatMessage, Session, StreamEvent } from "../api";
+import { consumeStream } from "./streamingUtils";
 
 /** useChat が App から受け取る依存（共有 state の setter 群とセッション情報）。 */
 interface UseChatDeps {
@@ -137,8 +138,13 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     setMessages((prev) => [...prev, optimisticUserMsg]);
 
     let accumulatedReasoning = "";
-    try {
-      for await (const event of streamMessage(sessionId, content, imageIds, modelId)) {
+    // done イベントを onEvent 内で同期的に処理しきれない（fetchSessions が await を要する）
+    // ため、最終 done event を変数に退避してループ後に await する。
+    type DoneEvent = Extract<StreamEvent, { type: "done" }>;
+    let pendingDone: DoneEvent | null = null;
+    await consumeStream<StreamEvent>({
+      stream: streamMessage(sessionId, content, imageIds, modelId),
+      onEvent: (event) => {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
         } else if (event.type === "clear") {
@@ -155,44 +161,51 @@ export function useChat(deps: UseChatDeps): UseChatResult {
           accumulatedReasoning += event.content;
           setStreamingReasoning(accumulatedReasoning);
         } else if (event.type === "done") {
-          // セッションが切り替わっていたら state を汚染しない
-          if (sessionId !== activeSessionIdRef.current) return;
-          if (accumulatedReasoning) {
-            setReasoningMap((prev) => ({
-              ...prev,
-              [event.character_message.id]: accumulatedReasoning,
-            }));
-          }
-          // デバッグログIDをバブルと紐付ける
-          if (event.log_message_id) {
-            setMsgLogIds((prev) => ({
-              ...prev,
-              [event.character_message.id]: event.log_message_id!,
-            }));
-          }
-          // 経過時間を記録する（ストリーム送信〜done受信）
-          setElapsedMap((prev) => ({
-            ...prev,
-            [event.character_message.id]: performance.now() - streamStartedAt,
-          }));
-          setStreamingContent(null);
-          setStreamingReasoning(null);
-          setMessages((prev) => [
-            ...prev.filter((m) => m.id !== optimisticUserMsg.id),
-            event.user_message,
-            event.character_message,
-          ]);
-          const updated = await fetchSessions();
-          setSessions(updated);
+          pendingDone = event;
+          return false; // ループ終了
         } else if (event.type === "error") {
-          throw new Error((event as StreamEvent & { type: "error" }).message);
+          throw new Error(event.message);
         }
+      },
+      onError: (e) => {
+        setStreamingContent(null);
+        setStreamingReasoning(null);
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
+        setError(String(e));
+      },
+    });
+
+    // done イベント後処理: セッションが切り替わっていたら state を汚染しない。
+    // setReasoningMap 等の setter コールバック内で参照する値は、まずローカル変数に
+    // 取り出してから渡す（closure 越しに非 null narrowing が失われる回避）。
+    if (pendingDone !== null) {
+      const doneEvent = pendingDone as DoneEvent;
+      const charMsgId = doneEvent.character_message.id;
+      const doneLogId = doneEvent.log_message_id ?? null;
+      const userMessage = doneEvent.user_message;
+      const characterMessage = doneEvent.character_message;
+
+      if (sessionId !== activeSessionIdRef.current) return;
+      if (accumulatedReasoning) {
+        const reasoning = accumulatedReasoning;
+        setReasoningMap((prev) => ({ ...prev, [charMsgId]: reasoning }));
       }
-    } catch (e) {
+      if (doneLogId) {
+        setMsgLogIds((prev) => ({ ...prev, [charMsgId]: doneLogId }));
+      }
+      setElapsedMap((prev) => ({
+        ...prev,
+        [charMsgId]: performance.now() - streamStartedAt,
+      }));
       setStreamingContent(null);
       setStreamingReasoning(null);
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
-      setError(String(e));
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== optimisticUserMsg.id),
+        userMessage,
+        characterMessage,
+      ]);
+      const updated = await fetchSessions();
+      setSessions(updated);
     }
   }, [
     activeSessionIdRef,
