@@ -1,6 +1,7 @@
 """LLM 使用量レコーダー — プロバイダーのレスポンスからトークン使用量を記録する。
 
-claude_cli / google プロバイダーがレスポンス解析後に record_usage() を呼び、
+各プロバイダー（claude_cli / google / openai (+sakura/openrouter/xai) /
+anthropic / ollama）がレスポンス解析後に record_usage() を呼び、
 llm_usage_events テーブルへ1 API 呼び出し = 1行で追加する。
 feature / target / request_id は log_context の ContextVar から自動補完するため、
 呼び出し側はトークン数とモデル情報だけ渡せばよい。

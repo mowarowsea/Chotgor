@@ -59,6 +59,32 @@ class AnthropicProvider(BaseLLMProvider):
     def from_config(cls, model: str, settings: dict, thinking_level: str = "default", **kwargs) -> "AnthropicProvider":
         return cls(api_key=settings.get("anthropic_api_key", ""), model=model, thinking_level=thinking_level)
 
+    def _record_usage_from_response(self, usage) -> None:
+        """Anthropic SDK の Usage オブジェクトからトークン使用量を記録する。
+
+        usage は ``input_tokens`` / ``output_tokens`` /
+        ``cache_read_input_tokens`` / ``cache_creation_input_tokens`` を持つ。
+        usage が None の場合は何もしない。
+        記録失敗はチャット本流に影響しない（usage_recorder 側で握り潰す）。
+        """
+        from backend.lib.usage_recorder import record_usage
+
+        if usage is None:
+            return
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+        cache_creation = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        record_usage(
+            provider=self.PROVIDER_ID,
+            model=self.model,
+            preset_name=self.preset_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read,
+            cache_creation_input_tokens=cache_creation,
+        )
+
     @classmethod
     async def list_models(cls, settings: dict) -> list[dict]:
         """Anthropic API からモデル一覧を取得して返す。"""
@@ -101,6 +127,7 @@ class AnthropicProvider(BaseLLMProvider):
             self._log_request(params)
             response = client.messages.create(**params)
             self._log_response(response.model_dump())
+            self._record_usage_from_response(getattr(response, "usage", None))
             # thinking ブロックを除外してテキストブロックのみ返す
             return "".join(b.text for b in response.content if b.type == "text")
 
@@ -159,8 +186,10 @@ class AnthropicProvider(BaseLLMProvider):
 
             content_block_delta イベントの delta.type を見て
             thinking_delta と text_delta を区別する。
+            ストリーム終了時に get_final_message().usage から使用量を記録する。
             """
             accumulated = []
+            final_usage = None
             try:
                 with client.messages.stream(**params) as stream:
                     for event in stream:
@@ -180,11 +209,19 @@ class AnthropicProvider(BaseLLMProvider):
                                 if text:
                                     accumulated.append(text)
                                     safe_loop_call(loop, queue.put_nowait, ("text", text))
+                    # ストリーム正常終了。最終メッセージから usage を取得。
+                    try:
+                        final_message = stream.get_final_message()
+                        final_usage = getattr(final_message, "usage", None)
+                    except Exception:
+                        # SDKバージョン差で取れない場合は記録しない（本流影響なし）。
+                        final_usage = None
             except Exception as e:
                 accumulated.append(f"\n[Anthropic API error: {e}]")
                 safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
             finally:
                 self._log_response("".join(accumulated))
+                self._record_usage_from_response(final_usage)
                 safe_loop_call(loop, queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -228,6 +265,7 @@ class AnthropicProvider(BaseLLMProvider):
             self._log_request(params)
             response = client.messages.create(**params)
             self._log_response(response.model_dump())
+            self._record_usage_from_response(getattr(response, "usage", None))
 
             text = "".join(b.text for b in response.content if b.type == "text")
             tool_calls = [

@@ -81,6 +81,31 @@ class OpenAIProvider(BaseLLMProvider):
             init_kwargs["base_url"] = self.base_url
         return OpenAI(**init_kwargs)
 
+    def _record_usage_from_response(self, usage) -> None:
+        """OpenAI互換レスポンスの usage オブジェクトからトークン使用量を記録する。
+
+        usage は ChatCompletion / ChatCompletionChunk が持つ
+        ``prompt_tokens`` / ``completion_tokens`` / ``prompt_tokens_details.cached_tokens``
+        を含むオブジェクト。usage が None の場合は何もしない。
+        記録失敗はチャット本流に影響しない（usage_recorder 側で握り潰す）。
+        """
+        from backend.lib.usage_recorder import record_usage
+
+        if usage is None:
+            return
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion = int(getattr(usage, "completion_tokens", 0) or 0)
+        details = getattr(usage, "prompt_tokens_details", None)
+        cached = int(getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
+        record_usage(
+            provider=self.PROVIDER_ID,
+            model=self.model,
+            preset_name=self.preset_name,
+            input_tokens=prompt,
+            output_tokens=completion,
+            cache_read_input_tokens=cached,
+        )
+
     @_api_guard("openai")
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """OpenAI APIから応答テキストを一括生成する。"""
@@ -100,6 +125,7 @@ class OpenAIProvider(BaseLLMProvider):
             self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
             self._log_response(response.model_dump())
+            self._record_usage_from_response(getattr(response, "usage", None))
             return response.choices[0].message.content
 
         try:
@@ -145,8 +171,16 @@ class OpenAIProvider(BaseLLMProvider):
         def run():
             """同期SDKストリーミングをスレッド内で実行し、キューへ送信する。"""
             accumulated = []
+            last_usage = None
             try:
-                call_kwargs: dict = {"model": self.model, "messages": api_messages, "stream": True}
+                call_kwargs: dict = {
+                    "model": self.model,
+                    "messages": api_messages,
+                    "stream": True,
+                    # ストリーミング末尾で usage 入りチャンクを送らせるためのフラグ。
+                    # OpenAI互換サーバの一部は本オプション非対応だが、無視されるのが一般的。
+                    "stream_options": {"include_usage": True},
+                }
                 if effort:
                     # o-seriesモデルはreasoning_effort + max_completion_tokensを使用
                     call_kwargs["reasoning_effort"] = effort
@@ -156,6 +190,10 @@ class OpenAIProvider(BaseLLMProvider):
                 self._log_request(call_kwargs)
                 response = client.chat.completions.create(**call_kwargs)
                 for chunk in response:
+                    # include_usage で末尾に来る usage 入りチャンクは choices が空。
+                    usage = getattr(chunk, "usage", None)
+                    if usage is not None:
+                        last_usage = usage
                     content = chunk.choices[0].delta.content if chunk.choices else None
                     if content:
                         accumulated.append(content)
@@ -165,6 +203,7 @@ class OpenAIProvider(BaseLLMProvider):
                 safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
             finally:
                 self._log_response("".join(accumulated))
+                self._record_usage_from_response(last_usage)
                 safe_loop_call(loop, queue.put_nowait, None)
 
         threading.Thread(target=run, daemon=True).start()
@@ -215,6 +254,7 @@ class OpenAIProvider(BaseLLMProvider):
             self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
             self._log_response(response.model_dump())
+            self._record_usage_from_response(getattr(response, "usage", None))
 
             message = response.choices[0].message
             text = message.content or ""

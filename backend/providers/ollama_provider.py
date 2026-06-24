@@ -186,6 +186,28 @@ class OllamaProvider(BaseLLMProvider):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
+    def _record_usage_from_result(self, result: dict) -> None:
+        """/api/generate の生 dict からトークン使用量を記録する。
+
+        Ollama は ``prompt_eval_count`` を入力、``eval_count`` を出力とする。
+        どちらか欠ける応答（ストリーミング途中など）はそのまま 0 として扱う
+        （usage_recorder 側で入出力ともゼロなら記録しない）。
+        記録失敗はチャット本流に影響しない（usage_recorder 側で握り潰す）。
+        """
+        from backend.lib.usage_recorder import record_usage
+
+        if not isinstance(result, dict):
+            return
+        prompt_tokens = int(result.get("prompt_eval_count") or 0)
+        completion_tokens = int(result.get("eval_count") or 0)
+        record_usage(
+            provider=self.PROVIDER_ID,
+            model=self.model,
+            preset_name=self.preset_name,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+        )
+
     async def _call_and_log_raw(self, system_prompt: str, messages: list[dict]) -> str:
         """_call_api を実行してログ出力し、生レスポンス文字列を返す内部ヘルパー。
 
@@ -204,6 +226,7 @@ class OllamaProvider(BaseLLMProvider):
         try:
             result = await asyncio.to_thread(self._call_api, system_prompt, clean_messages)
             self._log_response(result)
+            self._record_usage_from_result(result)
             return result.get("response", "")
         except urllib.error.URLError as e:
             err = f"[Ollama接続エラー: {e.reason}. Ollamaが起動しているか確認してください]"
