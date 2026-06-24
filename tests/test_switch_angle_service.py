@@ -53,9 +53,9 @@ class TestChatServiceExecuteWithSwitch:
                 return second_provider
             return first_provider
 
-        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat_flow.flow.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat_flow.flow.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat_flow.flow.find_urls", lambda t: [])
         service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
         result = await service.execute(request)
@@ -95,9 +95,9 @@ class TestChatServiceExecuteWithSwitch:
                 return second_provider
             return FirstProvider()
 
-        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat_flow.flow.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat_flow.flow.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat_flow.flow.find_urls", lambda t: [])
         service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
         result = await service.execute(request)
@@ -112,9 +112,9 @@ class TestChatServiceExecuteWithSwitch:
         provider.SUPPORTS_TOOLS = False
         provider.generate = AsyncMock(return_value="本文[SWITCH_ANGLE:unknown|何か]")
 
-        monkeypatch.setattr("backend.services.chat.service.create_provider", lambda *a, **kw: provider)
-        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat_flow.flow.create_provider", lambda *a, **kw: provider)
+        monkeypatch.setattr("backend.services.chat_flow.flow.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat_flow.flow.find_urls", lambda t: [])
         service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
         result = await service.execute(request)
@@ -161,9 +161,9 @@ class TestChatServiceExecuteStreamWithSwitch:
                 return second_provider
             return first_provider
 
-        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat_flow.flow.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat_flow.flow.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat_flow.flow.find_urls", lambda t: [])
         service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(
             character_name="Alice",
@@ -215,9 +215,9 @@ class TestChatServiceExecuteStreamWithSwitch:
                 return second_provider
             return first_provider
 
-        monkeypatch.setattr("backend.services.chat.service.create_provider", fake_create_provider)
-        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat_flow.flow.create_provider", fake_create_provider)
+        monkeypatch.setattr("backend.services.chat_flow.flow.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat_flow.flow.find_urls", lambda t: [])
         service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         request = _make_request(available_presets=_SAMPLE_PRESETS)
 
@@ -259,9 +259,9 @@ class TestChatServiceExecuteStreamWithSwitch:
 
         provider.generate_with_tools = mock_generate_with_tools
 
-        monkeypatch.setattr("backend.services.chat.service.create_provider", lambda *a, **kw: provider)
-        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat_flow.flow.create_provider", lambda *a, **kw: provider)
+        monkeypatch.setattr("backend.services.chat_flow.flow.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat_flow.flow.find_urls", lambda t: [])
 
         service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         # available_presets が空 = switch 無効
@@ -290,9 +290,9 @@ class TestChatServiceExecuteStreamWithSwitch:
 
         provider.generate_stream_typed = typed_stream
 
-        monkeypatch.setattr("backend.services.chat.service.create_provider", lambda *a, **kw: provider)
-        monkeypatch.setattr("backend.services.chat.service.build_system_prompt", lambda **kw: "sys")
-        monkeypatch.setattr("backend.services.chat.service.find_urls", lambda t: [])
+        monkeypatch.setattr("backend.services.chat_flow.flow.create_provider", lambda *a, **kw: provider)
+        monkeypatch.setattr("backend.services.chat_flow.flow.build_system_prompt", lambda **kw: "sys")
+        monkeypatch.setattr("backend.services.chat_flow.flow.find_urls", lambda t: [])
         service = ChatService(memory_manager=MagicMock(), working_memory_manager=MagicMock())
         # available_presets が空 = switch 無効
         request = _make_request(available_presets=[])
