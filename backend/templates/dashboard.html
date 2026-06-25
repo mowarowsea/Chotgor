@@ -2,6 +2,70 @@
 {% block title %}dashboard &mdash; Chotgor{% endblock %}
 {% block breadcrumb %}/ <a href="/ui/" class="ch-crumb">dashboard</a>{% endblock %}
 
+{#-
+  fmt_k — トークン数をキロ単位（k / M）に丸めて短縮表示するマクロ。
+  サマリーカードの 1 行に収めるため In/Out のカンマ区切り全桁を捨て、
+  桁数別に小数 1 桁 (1〜9.9k) → 整数 k (10〜999k) → M に切り替える。
+  モーダル内テーブルは情報量重視で従来通り {:,} のカンマ区切り。
+-#}
+{% macro fmt_k(n) -%}
+{%- if n is none -%}0
+{%- elif n < 1000 -%}{{ n }}
+{%- elif n < 10000 -%}{{ "%.1f"|format(n / 1000) }}k
+{%- elif n < 1000000 -%}{{ (n // 1000) }}k
+{%- else -%}{{ "%.1f"|format(n / 1000000) }}M
+{%- endif -%}
+{%- endmacro %}
+
+{#-
+  period_table — 日次/週次/月次テーブルをモーダル本文として描画するマクロ。
+  rows は _merge_period_rows でまとめた期間サマリ（label/requests/in/out/cost/providers）。
+  プロバイダーが複数の期間だけ内訳行を半透明で追加する。
+-#}
+{% macro period_table(rows, period_label, empty_hint) -%}
+{% if rows %}
+<div class="ch-table-wrap">
+    <table class="ch-table">
+        <thead>
+            <tr>
+                <th>{{ period_label }}</th><th>プロバイダー</th>
+                <th style="text-align:right">リクエスト</th>
+                <th style="text-align:right">In (tok)</th>
+                <th style="text-align:right">Out (tok)</th>
+                <th style="text-align:right">コスト</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td>{{ r.label }}</td>
+                <td>{{ r.providers[0].provider if r.providers|length == 1 else '合計' }}</td>
+                <td style="text-align:right"><strong>{{ r.requests }}</strong></td>
+                <td style="text-align:right"><strong>{{ "{:,}".format(r.input_tokens) }}</strong></td>
+                <td style="text-align:right"><strong>{{ "{:,}".format(r.output_tokens) }}</strong></td>
+                <td style="text-align:right">{% if r.cost_usd %}${{ "%.4f"|format(r.cost_usd) }}{% else %}–{% endif %}</td>
+            </tr>
+            {% if r.providers|length > 1 %}
+            {% for p in r.providers %}
+            <tr style="opacity:.65">
+                <td></td>
+                <td>{{ p.provider }}</td>
+                <td style="text-align:right">{{ p.requests }}</td>
+                <td style="text-align:right">{{ "{:,}".format(p.input_tokens) }}</td>
+                <td style="text-align:right">{{ "{:,}".format(p.output_tokens) }}</td>
+                <td style="text-align:right">{% if p.cost_usd %}${{ "%.4f"|format(p.cost_usd) }}{% else %}–{% endif %}</td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="ch-hint">{{ empty_hint }}</p>
+{% endif %}
+{%- endmacro %}
+
 {% block content %}
 <div class="ch-shell">
     {# ── ヒーロー ─────────────────────────────────────── #}
@@ -46,132 +110,46 @@
         </div>
     </section>
 
-    {# ── 使用量サマリー（今日・今週） ─────────────────── #}
+    {# ── 使用量サマリー（今日・今週・今月） ─────────────
+       各カードをクリックすると対応する集計テーブル（直近 N 件）が
+       モーダル表示される。下部のテンプレ要素 #usage-modal-* に本体を埋めておく。 #}
     <section class="ch-section">
         <div class="ch-section__head">
-            <h2 class="ch-section-title">usage <small>・ LLM 使用量</small></h2>
+            <h2 class="ch-section-title">usage <small>・ LLM 使用量（カードをクリックで詳細）</small></h2>
         </div>
         <p class="ch-hint" style="margin-bottom:12px">
             claude_cli / google プロバイダーのレスポンスから記録（それ以外のプロバイダーは未集計）。
             コストは Claude CLI の参考値のみ。
         </p>
         <div class="ch-cardgrid">
-            <div class="ch-card">
+            <button type="button" class="ch-card" data-usage-modal="daily" data-usage-title="daily ・ 直近14日">
                 <div class="ch-card__head"><span class="ch-card__title">今日</span></div>
                 <div class="ch-card__meta">
                     リクエスト {{ usage_today.requests }} 回<br>
-                    In {{ "{:,}".format(usage_today.input_tokens) }} tok ／
-                    Out {{ "{:,}".format(usage_today.output_tokens) }} tok
+                    In {{ fmt_k(usage_today.input_tokens) }} ／
+                    Out {{ fmt_k(usage_today.output_tokens) }} tok
                     {% if usage_today.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_today.cost_usd) }}{% endif %}
                 </div>
-            </div>
-            <div class="ch-card">
+            </button>
+            <button type="button" class="ch-card" data-usage-modal="weekly" data-usage-title="weekly ・ 直近8週">
                 <div class="ch-card__head"><span class="ch-card__title">今週（月曜起点）</span></div>
                 <div class="ch-card__meta">
                     リクエスト {{ usage_week.requests }} 回<br>
-                    In {{ "{:,}".format(usage_week.input_tokens) }} tok ／
-                    Out {{ "{:,}".format(usage_week.output_tokens) }} tok
+                    In {{ fmt_k(usage_week.input_tokens) }} ／
+                    Out {{ fmt_k(usage_week.output_tokens) }} tok
                     {% if usage_week.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_week.cost_usd) }}{% endif %}
                 </div>
-            </div>
+            </button>
+            <button type="button" class="ch-card" data-usage-modal="monthly" data-usage-title="monthly ・ 直近6ヶ月">
+                <div class="ch-card__head"><span class="ch-card__title">今月（月初起点）</span></div>
+                <div class="ch-card__meta">
+                    リクエスト {{ usage_month.requests }} 回<br>
+                    In {{ fmt_k(usage_month.input_tokens) }} ／
+                    Out {{ fmt_k(usage_month.output_tokens) }} tok
+                    {% if usage_month.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_month.cost_usd) }}{% endif %}
+                </div>
+            </button>
         </div>
-    </section>
-
-    {# ── 日次集計 ─────────────────────────────────────── #}
-    <section class="ch-section">
-        <div class="ch-section__head">
-            <h2 class="ch-section-title">daily <small>・ 直近14日</small></h2>
-        </div>
-        {% if daily %}
-        <div class="ch-table-wrap">
-            <table class="ch-table">
-                <thead>
-                    <tr>
-                        <th>日付</th><th>プロバイダー</th>
-                        <th style="text-align:right">リクエスト</th>
-                        <th style="text-align:right">In (tok)</th>
-                        <th style="text-align:right">Out (tok)</th>
-                        <th style="text-align:right">コスト</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for d in daily %}
-                    <tr>
-                        <td>{{ d.label }}</td>
-                        <td>{{ d.providers[0].provider if d.providers|length == 1 else '合計' }}</td>
-                        <td style="text-align:right"><strong>{{ d.requests }}</strong></td>
-                        <td style="text-align:right"><strong>{{ "{:,}".format(d.input_tokens) }}</strong></td>
-                        <td style="text-align:right"><strong>{{ "{:,}".format(d.output_tokens) }}</strong></td>
-                        <td style="text-align:right">{% if d.cost_usd %}${{ "%.4f"|format(d.cost_usd) }}{% else %}–{% endif %}</td>
-                    </tr>
-                    {# プロバイダーが複数の日のみ内訳行を出す（1種の日は上の行に名前を出している） #}
-                    {% if d.providers|length > 1 %}
-                    {% for p in d.providers %}
-                    <tr style="opacity:.65">
-                        <td></td>
-                        <td>{{ p.provider }}</td>
-                        <td style="text-align:right">{{ p.requests }}</td>
-                        <td style="text-align:right">{{ "{:,}".format(p.input_tokens) }}</td>
-                        <td style="text-align:right">{{ "{:,}".format(p.output_tokens) }}</td>
-                        <td style="text-align:right">{% if p.cost_usd %}${{ "%.4f"|format(p.cost_usd) }}{% else %}–{% endif %}</td>
-                    </tr>
-                    {% endfor %}
-                    {% endif %}
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="ch-hint">まだ記録がありません。claude_cli / google プロバイダーで会話すると集計されます。</p>
-        {% endif %}
-    </section>
-
-    {# ── 週次集計 ─────────────────────────────────────── #}
-    <section class="ch-section">
-        <div class="ch-section__head">
-            <h2 class="ch-section-title">weekly <small>・ 直近8週</small></h2>
-        </div>
-        {% if weekly %}
-        <div class="ch-table-wrap">
-            <table class="ch-table">
-                <thead>
-                    <tr>
-                        <th>週</th><th>プロバイダー</th>
-                        <th style="text-align:right">リクエスト</th>
-                        <th style="text-align:right">In (tok)</th>
-                        <th style="text-align:right">Out (tok)</th>
-                        <th style="text-align:right">コスト</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for w in weekly %}
-                    <tr>
-                        <td>{{ w.label }}</td>
-                        <td>{{ w.providers[0].provider if w.providers|length == 1 else '合計' }}</td>
-                        <td style="text-align:right"><strong>{{ w.requests }}</strong></td>
-                        <td style="text-align:right"><strong>{{ "{:,}".format(w.input_tokens) }}</strong></td>
-                        <td style="text-align:right"><strong>{{ "{:,}".format(w.output_tokens) }}</strong></td>
-                        <td style="text-align:right">{% if w.cost_usd %}${{ "%.4f"|format(w.cost_usd) }}{% else %}–{% endif %}</td>
-                    </tr>
-                    {% for p in w.providers %}
-                    {% if w.providers|length > 1 %}
-                    <tr style="opacity:.65">
-                        <td></td>
-                        <td>{{ p.provider }}</td>
-                        <td style="text-align:right">{{ p.requests }}</td>
-                        <td style="text-align:right">{{ "{:,}".format(p.input_tokens) }}</td>
-                        <td style="text-align:right">{{ "{:,}".format(p.output_tokens) }}</td>
-                        <td style="text-align:right">{% if p.cost_usd %}${{ "%.4f"|format(p.cost_usd) }}{% else %}–{% endif %}</td>
-                    </tr>
-                    {% endif %}
-                    {% endfor %}
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="ch-hint">まだ記録がありません。</p>
-        {% endif %}
     </section>
 
     {# ── 直近リクエスト ───────────────────────────────── #}
@@ -209,4 +187,56 @@
         {% endif %}
     </section>
 </div>
+
+{# ── モーダル本体テンプレ ─────────────────────────────
+   カード（data-usage-modal=...）クリック時に JS が当該 <template> の中身を
+   ch-modal に流し込んで開く。Jinja でレンダリング済み HTML を保持しておく。 #}
+<template id="usage-modal-daily">
+    {{ period_table(daily, "日付", "まだ記録がありません。claude_cli / google プロバイダーで会話すると集計されます。") }}
+</template>
+<template id="usage-modal-weekly">
+    {{ period_table(weekly, "週", "まだ記録がありません。") }}
+</template>
+<template id="usage-modal-monthly">
+    {{ period_table(monthly, "月", "まだ記録がありません。") }}
+</template>
+
+<script>
+(function() {
+    // usage カードクリック → ch-modal で対応テーブルを開く。
+    // テンプレ HTML は <template id="usage-modal-{key}"> に Jinja でレンダ済み。
+    function openUsageModal(key, title) {
+        const tpl = document.getElementById('usage-modal-' + key);
+        if (!tpl) return;
+        const modal = document.createElement('div');
+        modal.className = 'ch-modal ch-modal--fullwidth';
+        modal.innerHTML = `
+            <div class="ch-modal__card">
+                <div class="ch-modal__head">
+                    <div class="ch-modal__title"></div>
+                    <button type="button" class="ch-modal__close" aria-label="Close">×</button>
+                </div>
+                <div class="ch-modal__body"></div>
+            </div>
+        `;
+        modal.querySelector('.ch-modal__title').textContent = title;
+        modal.querySelector('.ch-modal__body').appendChild(tpl.content.cloneNode(true));
+        document.body.appendChild(modal);
+
+        const close = () => modal.remove();
+        modal.querySelector('.ch-modal__close').addEventListener('click', close);
+        modal.addEventListener('click', e => { if (e.target === modal) close(); });
+        const onEsc = e => {
+            if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); }
+        };
+        document.addEventListener('keydown', onEsc);
+    }
+
+    document.querySelectorAll('[data-usage-modal]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            openUsageModal(btn.dataset.usageModal, btn.dataset.usageTitle || '');
+        });
+    });
+})();
+</script>
 {% endblock %}

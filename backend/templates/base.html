@@ -23,7 +23,11 @@
             <a href="/ui/" class="ch-brand">Chotgor</a>
             <span class="ch-eyebrow ch-hide-sm">{% block breadcrumb %}{% endblock %}</span>
         </div>
-        <nav class="ch-topbar__right">
+        {# ハンバーガートグル（モバイル時のみ表示。CSSで制御） #}
+        <button type="button" class="ch-nav-toggle" aria-label="メニュー" aria-controls="ch-primary-nav" aria-expanded="false">
+            <span class="ch-nav-toggle__icon" aria-hidden="true"></span>
+        </button>
+        <nav class="ch-topbar__right" id="ch-primary-nav">
             <div class="ch-nav">
                 <a href="/ui/" class="ch-nav__link {% if path == '/ui/' %}is-active{% endif %}">dashboard</a>
                 <a href="/ui/characters" class="ch-nav__link {% if path.startswith('/ui/characters') or path.startswith('/ui/inscribed_memories') or path.startswith('/ui/working-memory') %}is-active{% endif %}">characters</a>
@@ -42,6 +46,26 @@
 
     <!-- data-autosave フォームの自動保存。css_version でキャッシュバスティング。 -->
     <script src="/static/autosave.js?v={{ css_version }}"></script>
+    <script>
+      // モバイル時のハンバーガーメニュー開閉トグル。
+      // クリックで .ch-topbar に is-open を付け外しし、aria-expanded を同期する。
+      // ナビ内リンクをクリックしたら自動で閉じる（ページ遷移するため）。
+      (function () {
+        var topbar = document.querySelector('.ch-topbar');
+        var toggle = document.querySelector('.ch-nav-toggle');
+        if (!topbar || !toggle) return;
+        toggle.addEventListener('click', function () {
+          var opened = topbar.classList.toggle('is-open');
+          toggle.setAttribute('aria-expanded', opened ? 'true' : 'false');
+        });
+        topbar.querySelectorAll('.ch-nav__link').forEach(function (link) {
+          link.addEventListener('click', function () {
+            topbar.classList.remove('is-open');
+            toggle.setAttribute('aria-expanded', 'false');
+          });
+        });
+      })();
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

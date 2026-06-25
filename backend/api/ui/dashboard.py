@@ -57,11 +57,15 @@ async def dashboard(request: Request):
     today_start = datetime(now.year, now.month, now.day)
     # 今週 = 月曜起点（SQLite 集計の %W と揃える）
     week_start = today_start - timedelta(days=today_start.weekday())
+    # 今月 = 月初（SQLite 集計の %Y-%m と揃える）
+    month_start = datetime(now.year, now.month, 1)
 
     usage_today = sqlite.get_usage_totals_since(today_start)
     usage_week = sqlite.get_usage_totals_since(week_start)
+    usage_month = sqlite.get_usage_totals_since(month_start)
     daily = _merge_period_rows(sqlite.get_usage_daily(days=14), "day")
     weekly = _merge_period_rows(sqlite.get_usage_weekly(weeks=8), "week")
+    monthly = _merge_period_rows(sqlite.get_usage_monthly(months=6), "month")
     recent_events = sqlite.get_usage_recent_events(limit=30)
 
     characters = sqlite.list_characters()
@@ -73,8 +77,10 @@ async def dashboard(request: Request):
         {
             "usage_today": usage_today,
             "usage_week": usage_week,
+            "usage_month": usage_month,
             "daily": daily,
             "weekly": weekly,
+            "monthly": monthly,
             "recent_events": recent_events,
             "character_count": len(characters),
             "scenario_count": len(scenarios),

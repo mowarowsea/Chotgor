@@ -151,6 +151,53 @@ class UsageStoreMixin:
             for r in rows
         ]
 
+    def get_usage_monthly(self, months: int = 6) -> list[dict]:
+        """直近 months ヶ月の月次 × プロバイダー別集計を新しい月順で返す。
+
+        週次（fixed-width な timedelta）と違い、月は長さが揃わないため
+        「N ヶ月前の月初」を厳密に計算して since として使う。
+
+        Returns:
+            [{"month": "2026-06", "provider": "claude_cli", "requests": int,
+              "input_tokens": int, "output_tokens": int, "cost_usd": float}, ...]
+        """
+        from backend.repositories.sqlite.models import LlmUsageEvent
+
+        now = datetime.now()
+        year = now.year
+        month = now.month - (months - 1)
+        while month <= 0:
+            year -= 1
+            month += 12
+        since = datetime(year, month, 1)
+        month_label = func.strftime("%Y-%m", LlmUsageEvent.created_at).label("month")
+        with self.get_session() as session:
+            rows = (
+                session.query(
+                    month_label,
+                    LlmUsageEvent.provider,
+                    func.count(LlmUsageEvent.id),
+                    func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0),
+                    func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0),
+                    func.coalesce(func.sum(LlmUsageEvent.total_cost_usd), 0.0),
+                )
+                .filter(LlmUsageEvent.created_at >= since)
+                .group_by(month_label, LlmUsageEvent.provider)
+                .order_by(month_label.desc(), LlmUsageEvent.provider)
+                .all()
+            )
+        return [
+            {
+                "month": r[0],
+                "provider": r[1],
+                "requests": r[2],
+                "input_tokens": r[3],
+                "output_tokens": r[4],
+                "cost_usd": float(r[5] or 0.0),
+            }
+            for r in rows
+        ]
+
     def get_usage_recent_events(self, limit: int = 30) -> list[dict]:
         """直近の使用量イベント（リクエストごとの生データ）を新しい順で返す。"""
         from backend.repositories.sqlite.models import LlmUsageEvent

@@ -199,3 +199,45 @@ class TestUsageWeekly:
         _backdate_latest(sqlite_store, weeks=10)
 
         assert sqlite_store.get_usage_weekly(weeks=8) == []
+
+
+class TestUsageMonthly:
+    """get_usage_monthly の月次 × プロバイダー別グルーピングを検証する。
+
+    ダッシュボードの「monthly」表の元になる集計。週次と違って months 窓は
+    fixed-width な timedelta ではなく月初基準で計算するため、月初境界・
+    年またぎが正しく落ちないことを守る。
+    """
+
+    def test_groups_by_month(self, sqlite_store):
+        """今月の行が strftime('%Y-%m') ラベルのバケットへ合算されること。"""
+        sqlite_store.add_llm_usage_event(
+            provider="claude_cli", input_tokens=10, output_tokens=2,
+        )
+        sqlite_store.add_llm_usage_event(
+            provider="claude_cli", input_tokens=20, output_tokens=4,
+        )
+        sqlite_store.add_llm_usage_event(
+            provider="google", input_tokens=5, output_tokens=1,
+        )
+
+        monthly = sqlite_store.get_usage_monthly(months=6)
+
+        this_month = datetime.now().strftime("%Y-%m")
+        assert {(m["month"], m["provider"]) for m in monthly} == {
+            (this_month, "claude_cli"), (this_month, "google"),
+        }
+        cli = next(m for m in monthly if m["provider"] == "claude_cli")
+        assert cli["requests"] == 2
+        assert cli["input_tokens"] == 30
+        assert cli["output_tokens"] == 6
+
+    def test_excludes_months_outside_window(self, sqlite_store):
+        """months で指定した窓より古い月の行は返らないこと。"""
+        sqlite_store.add_llm_usage_event(
+            provider="claude_cli", input_tokens=1, output_tokens=1,
+        )
+        # 6ヶ月窓を確実に超えるよう 365 日（≒12ヶ月）バックデートする
+        _backdate_latest(sqlite_store, days=365)
+
+        assert sqlite_store.get_usage_monthly(months=6) == []

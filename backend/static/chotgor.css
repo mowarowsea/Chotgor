@@ -276,6 +276,41 @@ html::-webkit-scrollbar-track,
 .ch-nav__link:hover { color: var(--ch-t); background: var(--ch-sep); }
 .ch-nav__link.is-active { color: var(--ch-a-strong); background: var(--ch-a-faint); }
 
+/* ハンバーガートグル — モバイル時のみ表示（@media で display: inline-flex に切替）。
+   3 本線は ::before / ::after / 中央の span 自身で描く。is-open 時に X 形へ変形。 */
+.ch-nav-toggle {
+  display: none;
+  width: 34px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius);
+  color: var(--ch-t3);
+  cursor: pointer;
+}
+.ch-nav-toggle:hover { color: var(--ch-t); border-color: var(--ch-sep2); }
+.ch-nav-toggle__icon,
+.ch-nav-toggle__icon::before,
+.ch-nav-toggle__icon::after {
+  display: block;
+  width: 16px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+  transition: transform .15s ease, top .15s ease, background .15s ease;
+}
+.ch-nav-toggle__icon { position: relative; }
+.ch-nav-toggle__icon::before,
+.ch-nav-toggle__icon::after { content: ''; position: absolute; left: 0; }
+.ch-nav-toggle__icon::before { top: -5px; }
+.ch-nav-toggle__icon::after  { top:  5px; }
+.ch-topbar.is-open .ch-nav-toggle__icon { background: transparent; }
+.ch-topbar.is-open .ch-nav-toggle__icon::before { top: 0; transform: rotate(45deg); }
+.ch-topbar.is-open .ch-nav-toggle__icon::after  { top: 0; transform: rotate(-45deg); }
+
 /* スクロールするコンテンツ本体 */
 .ch-shell {
   max-width: var(--ch-shell-max);
@@ -1071,11 +1106,33 @@ html::-webkit-scrollbar-track,
 
   .ch-shell { padding: 24px var(--ch-pad-x) 64px; }
 
-  /* topbar のセカンダリ情報を畳む */
-  .ch-topbar__right .ch-hide-sm,
+  /* 左側のセカンダリ情報（breadcrumb）はモバイルでは畳む。
+     右側の .ch-hide-sm（api リンク等）はハンバーガーメニュー内では幅に余裕があるので表示する。 */
   .ch-topbar__left .ch-hide-sm { display: none; }
-  .ch-nav { gap: 0; }
-  .ch-nav__link { padding: 5px 7px; }
+
+  /* ハンバーガーボタンを表示 */
+  .ch-nav-toggle { display: inline-flex; }
+
+  /* ナビ群はハンバーガートグルで開閉するドロップダウンに切り替える */
+  .ch-topbar__right {
+    position: absolute;
+    top: var(--ch-topbar-h);
+    left: 0;
+    right: 0;
+    display: none;
+    padding: 6px var(--ch-pad-x) 10px;
+    background: var(--ch-bg);
+    border-bottom: 1px solid var(--ch-sep);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+  }
+  .ch-topbar.is-open .ch-topbar__right { display: flex; }
+  .ch-topbar__right .ch-nav {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 2px;
+  }
+  .ch-topbar__right .ch-nav__link { padding: 9px 10px; font-size: 13px; }
 
   /* 行を 2 カラム化（アバター + 本文）、メタは本文下に回す */
   .ch-row {
