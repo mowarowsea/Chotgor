@@ -713,6 +713,98 @@ class TestSceneCloseAndSoftHint:
         assert svc.extract_scene_close("つづく") == ("つづく", False)
 
 
+class TestUsualOpenerMode:
+    """シーン最初の GM 口火モード（イベント駆動 / 軽い幕開け）の確率分岐を検証する。
+
+    仕様: うつつのシーンが始まったとき、最初の GM レスポンスだけは event_probability で
+    1 回抽選し、ヒットすれば従来どおりのイベント駆動（状況提示＋偶発イベントの種）、
+    ハズレなら「軽い幕開け」（GM は場だけ置いてキャラ本人に委ねる）に分岐する。
+    これにより「毎回 GM が出来事を起こし、キャラが反応する」単調化を崩し、
+    キャラ主導・内省の回を混ぜる。2 レスポンス目以降は常に従来どおりの状況提示。
+    抽選はカテゴリ候補の有無に依らず event_probability そのもので決める点も検証する。
+    """
+
+    def test_first_gm_miss_is_light_opening(self):
+        """初回 GM で抽選ハズレ（確率0）なら軽い幕開けになり、偶発イベントは撒かれないこと。"""
+
+        class _Scn:
+            usual_config = {"event_probability": 0.0, "event_categories": ["来客"]}
+
+        scn = _Scn()
+        out = svc._build_usual_gm_appendix(
+            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
+        )
+        # 軽い幕開けフレーミングが入る
+        assert "静かな幕開け" in out
+        # イベントの種は撒かれない（"来客" は軽い幕開け文の例示にも含まれるため、
+        # イベントヒント特有の文言「偶発的」で判別する）
+        assert "偶発的" not in out
+
+    def test_first_gm_hit_is_event_driven(self):
+        """初回 GM で抽選ヒット（確率1）ならイベント駆動になり、軽い幕開けは出ないこと。"""
+
+        class _Scn:
+            usual_config = {"event_probability": 1.0, "event_categories": ["来客"]}
+
+        scn = _Scn()
+        out = svc._build_usual_gm_appendix(
+            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
+        )
+        # 偶発イベントの種が撒かれる（イベントヒント特有の「偶発的」で判別）
+        assert "偶発的" in out
+        assert "来客" in out
+        # 軽い幕開けには倒れない
+        assert "静かな幕開け" not in out
+
+    def test_hit_without_categories_is_plain_opening(self):
+        """ヒットしてもカテゴリ候補が無ければ、軽い幕開けもイベントも付かず素の状況提示になること。
+
+        口火モードは event_probability そのもので決まり、カテゴリ有無に依らない。
+        ヒット時にカテゴリが無ければ偶発イベントの種が無いだけで、状況提示自体は成立する。
+        """
+
+        class _Scn:
+            usual_config = {"event_probability": 1.0}
+
+        scn = _Scn()
+        out = svc._build_usual_gm_appendix(
+            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
+        )
+        # 軽い幕開けには倒れない（ヒット扱い）
+        assert "静かな幕開け" not in out
+        # 常設フレーミング（GM は外的フレームのみ）は常に存在する
+        assert "外的な状況" in out
+
+    def test_light_opening_only_on_first_gm(self):
+        """軽い幕開けは初回 GM 限定で、2 レスポンス目以降には現れないこと。"""
+
+        class _Scn:
+            usual_config = {"event_probability": 0.0}
+
+        scn = _Scn()
+        mid = svc._build_usual_gm_appendix(
+            scn, fired_responses=2, max_responses=8, is_first_gm=False, rng=random.Random(1),
+        )
+        assert "静かな幕開け" not in mid
+
+    def test_opener_mode_follows_probability(self):
+        """口火がイベント駆動になる率が event_probability におおむね従うこと（多数試行）。"""
+
+        class _Scn:
+            usual_config = {"event_probability": 0.3, "event_categories": ["来客"]}
+
+        scn = _Scn()
+        rng = random.Random(12345)
+        event_driven = 0
+        for _ in range(2000):
+            out = svc._build_usual_gm_appendix(
+                scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=rng,
+            )
+            if "偶発的" in out:
+                event_driven += 1
+        assert 0.25 < event_driven / 2000 < 0.35
+
+
 class TestGmPromptWiring:
     """time_context / gm_ooc_appendix が GM system prompt に確実に届くことを検証する。"""
 
