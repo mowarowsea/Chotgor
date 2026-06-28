@@ -180,12 +180,19 @@ class TestUsualMigrationIdempotency:
 # ---------------------------------------------------------------------------
 
 
-def _build_usual_session(store, max_responses: int = 8, user_label: str | None = None):
+def _build_usual_session(
+    store,
+    max_responses: int = 8,
+    user_label: str | None = None,
+    user_position: str = "主任。はるの直属の上司。",
+    user_visibility_note: str = "",
+):
     """うつつ（engine_type="usual_days"）の最小セッションを組み立てて返す。
 
     主人公キャラ 1 体・PC枠 1 つのうつつ世界を作る。``user_label`` を渡すと、
-    「不在のユーザPC」枠（slot_id="user"）とその割当（player_type="user"）も併せて作る
-    （ユーザがレスポンス順を取らないことの検証用）。
+    「不在のユーザPC」枠（slot_id="user"）とその割当（player_type="user"）も併せて作り、
+    主人公キャラ本体にも user_label/user_position/user_visibility_note を設定する
+    （_build_absent_user_block はキャラ本体のフィールドを source にするため）。
     GM レスポンスと PC レスポンスの LLM 呼び出しはテスト側でモックする前提なので、
     プリセットはダミーで構わない（ただし _resolve_pc_preset_id が実在を要求するため
     実レコードとして作成する）。
@@ -195,7 +202,12 @@ def _build_usual_session(store, max_responses: int = 8, user_label: str | None =
     """
     cid = "char-haru"
     pid = "preset-usual"
-    store.create_character(cid, "はる")
+    store.create_character(
+        cid, "はる",
+        user_label=user_label or "",
+        user_position=user_position if user_label else "",
+        user_visibility_note=user_visibility_note,
+    )
     store.create_model_preset(pid, "うつつ用", "anthropic", "claude-x")
     pc_slots = [{"slot_id": "pc1", "name": "はる", "description": "主人公。会社員。"}]
     pc_assignments = [{
@@ -411,11 +423,14 @@ class TestHeadlessLoop:
 
 
 class TestUsualUserPc:
-    """うつつの「不在のユーザPC」枠を検証する。
+    """うつつの「不在のユーザ」の扱いを検証する。
 
-    うつつ＝ユーザがそばにいない時間。ユーザは「ターンを取らない不在の PC」として
-    GM の pc_summary に並べ、GM の「PC を代弁しない」保護を効かせる一方、無人ループでは
-    ルーティング候補から除外してユーザにターンが回らないようにする。
+    うつつ＝ユーザがそばにいない時間。ユーザは「ターンを取らない不在の PC」として持つが、
+    GM の pc_summary（名簿）には**載せない** ── 名簿に並べると GM が「いずれ登場するキャスト」と
+    誤読し、ユーザの言動を捏造する温床になる（観測済み）。ユーザの扱いは
+    _build_absent_user_block の主語ベース3段ルール（ユーザ"について"は NPC 可／"が"は全面 NG）へ
+    一本化する。一方 suppress_names には残し、万一 GM が `@<ユーザ>:` を書いた時の最終
+    バックストップとする。無人ループではルーティング候補から除外してターンも回さない。
     """
 
     def test_parse_form_builds_absent_user_slot(self):
@@ -520,12 +535,21 @@ class TestUsualUserPc:
         assert all(c["pc"].name == "はる" for c in pc_calls)
         assert all(not c["pc"].is_user for c in pc_calls)
 
-    def test_gm_sees_absent_user_in_pc_summary(self, sqlite_store, monkeypatch):
-        """GM の pc_summary に、不在ユーザPCが「不在」表記付きで載ること。"""
-        sid, _ = _build_usual_session(sqlite_store, max_responses=2, user_label="太郎")
-        _install_mocks(monkeypatch, gm_script=[], pc_calls=[])
+    def test_absent_user_excluded_from_roster_but_backstopped(self, sqlite_store, monkeypatch):
+        """不在ユーザは pc_summary（名簿）から外れ、suppress_names と absent_user_block に集約されること。
 
-        # _install_mocks の fake_gm を、pc_summary を記録する版に差し替える。
+        新設計（捏造防止）の核心:
+            - pc_summary には不在ユーザ（太郎）を載せない（「いずれ登場するキャスト」誤読の温床を断つ）。
+            - suppress_names には残す（`@太郎:` を書かれた時の parser 段バックストップ）。
+            - GM への OOC 追記（gm_ooc_appendix）に主語ベース3段ルールの不在ユーザブロックが届く。
+        """
+        sid, _ = _build_usual_session(
+            sqlite_store, max_responses=2, user_label="太郎",
+            user_position="主任。はるの直属の上司。",
+            user_visibility_note="「友達」として登録。詳しくは話していない。",
+        )
+
+        # GM ターンの kwargs を記録する版の _run_gm_turn に差し替える。
         gm_kwargs: list[dict] = []
 
         async def rec_gm(**kwargs):
@@ -539,15 +563,78 @@ class TestUsualUserPc:
             yield
 
         monkeypatch.setattr(svc, "_run_gm_turn", rec_gm)
+        monkeypatch.setattr(pc_runner_mod, "stream_pc_response",
+                            lambda **k: (_ for _ in ()).throw(AssertionError("PC は呼ばれない")))
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        async def fake_synopsis(*a, **k):
+            return None
+
+        monkeypatch.setattr(svc, "maybe_update_auto_synopsis", fake_synopsis)
 
         asyncio.run(svc.run_usual_days_scene(
             session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
         ))
 
         assert gm_kwargs, "GM ターンが実行されていない"
-        summary = gm_kwargs[0]["pc_summary"]
-        assert "太郎" in summary       # 不在ユーザが PC ロスターに載る
-        assert "不在" in summary       # 不在マーカーが GM へ届いている
+        kw = gm_kwargs[0]
+        # 名簿（pc_summary）からは外れる: 太郎は載らないが、主人公 はる は載る。
+        assert "太郎" not in kw["pc_summary"]
+        assert "はる" in kw["pc_summary"]
+        # バックストップ: suppress_names には残る。
+        assert "太郎" in kw["suppress_names"]
+        # 主語ベース3段ルールの不在ユーザブロックが OOC 追記に届く。
+        appendix = kw["gm_ooc_appendix"]
+        assert "太郎" in appendix
+        assert "について" in appendix           # ユーザ「について」は可
+        assert "主語" in appendix               # ユーザを「主語」にするのは不可
+        assert "ANTICIPATE_RESPONSE" in appendix  # 予想での先取りも禁止
+
+    def test_absent_block_subject_rule_with_visibility_note(self):
+        """visibility_note ありの不在ブロックが、主語ベース3段ルールを含むこと。
+
+        ユーザ「について」NPC が話題化するのは可（歓迎）、ユーザ「が」主語の言動は全員 NG、
+        中身を持ち込めるのは本人だけ、Narrator は地の文に持ち込まない、予想でも先取りしない、
+        の全条項が出力に含まれることを検証する。
+        """
+        block = svc._build_absent_user_block(
+            character_name="はる",
+            user_label="太郎",
+            user_position="主任。直属の上司。",
+            visibility_note="「友達」として登録。詳しくは話していない。",
+        )
+        assert "太郎" in block
+        assert "はる" in block
+        assert "主任" in block                       # position が手がかりとして載る
+        # 原則（主語ベース）
+        assert "について" in block and "主語" in block
+        # 遠隔接触の抜け穴を塞ぐ語が含まれる（電話/メッセージ等を主語にした出来事を禁止）
+        assert ("遠隔" in block) or ("電話" in block) or ("メッセージ" in block)
+        # 中身を持ち込めるのは本人だけ
+        assert "本人だけ" in block
+        # Narrator（地の文）は持ち込まない
+        assert "Narrator" in block
+        # visibility_note が素通しで載る（NPC は伝聞の範囲で話題化可）
+        assert "「友達」として登録" in block
+        # 予想（ANTICIPATE）での先取り禁止
+        assert "ANTICIPATE_RESPONSE" in block
+
+    def test_absent_block_secret_mode_without_note(self):
+        """visibility_note 空なら完全秘匿（NPC は話題に出さない）になること。"""
+        block = svc._build_absent_user_block(
+            character_name="はる", user_label="太郎",
+            user_position="", visibility_note="",
+        )
+        assert "太郎" in block
+        assert "明かしていない" in block
+        assert "話題に出さない" in block
+        # 完全秘匿でも、本人だけは話題に出せる（原則部）と予想先取り禁止は残る。
+        assert "本人だけ" in block
+        assert "ANTICIPATE_RESPONSE" in block
+
+    def test_absent_block_empty_when_label_blank(self):
+        """user_label が空なら不在ブロックは生成されない（任意設定）。"""
+        assert svc._build_absent_user_block("はる", "", "", "") == ""
 
 
 # ---------------------------------------------------------------------------

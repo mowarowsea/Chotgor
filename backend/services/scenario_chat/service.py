@@ -280,23 +280,33 @@ def _build_absent_user_block(
     user_position: str,
     visibility_note: str,
 ) -> str:
-    """うつつ GM 向けの「不在のユーザ」ブロックを組み立てる。
+    """うつつ GM 向けの「不在のユーザ」ブロックを主語ベースの 3 段ルールで組み立てる。
 
-    キャラ本人が周囲（NPC）にユーザのことをどう伝えているか（characters.user_visibility_note）
-    を素通しで載せ、NPC の自発的言及度を本人の流儀に委ねる。空欄なら完全秘匿として
-    「NPC は触れない・話題にも出さない」を明示する（安全側デフォルト）。
+    思想（作戦会議 2026-06-28 で確定）— ユーザ（label）は @{name} の生活に実在するが、
+    うつつ（ユーザ未共有のキャラの生活）は現実と地続きであるため、GM が「ユーザの知らない
+    ユーザの言動」を捏造すると、後で本人が「この前はありがとう」等と言われても何のことか
+    分からなくなる。これを防ぐ境界は **文法的な主語** で引ける:
 
-    本ブロックは「ユーザを画面に出さない」という既存保護（pc_slots[user] の不在マーカー
-    と prompt_builder の PC領分節）とは独立した追加レイヤー: 「周囲がユーザのことを
-    どう扱うか」を本人の言葉でコントロールする。
+        - ユーザ「について」話す（伝聞の範囲で言及・コメント・質問）= NPC は可（歓迎）
+        - ユーザ「が」喋る・動く・連絡してくる（ユーザ発の新規言動）= 全員 NG
+        - ユーザの言動の中身を場に持ち込めるのは、現実を知る @{name} 本人だけ
+
+    すなわち **ユーザを"目的語"にするのは NPC なら可、"主語"にするのは全面 NG**。
+    Narrator（地の文＝世界の語り）はユーザを持ち込まない（知らない体）。NPC はキャラ本人が
+    周囲へ明かした範囲（user_visibility_note）でユーザを話題にしてよい。捏造が予想チャネル
+    （[ANTICIPATE_RESPONSE]）経由でターンをまたいで自己成就するのも併せて禁じる。
+
+    なお「Narrator はユーザを知らない」は厳密には実現不能（Narrator も NPC も中身は同一の
+    GM-LLM で同じ system prompt を読む）。実体は「情報は手元にあるが、役割ごとの開示ルールで
+    使い分ける」── 完全な情報遮断ではない。
 
     Args:
-        character_name: 主人公キャラ名（PC枠 pc1 と一致する想定）。
+        character_name: 主人公キャラ名（PC枠と一致する想定）。
         user_label: ユーザの呼称（characters.user_label）。空ならブロック自体を生成しない。
-        user_position: ユーザの位置づけ（characters.user_position）。NPC が別名・別呼称で
-            ユーザに言及してきても同一人物と分かるための手がかり。
+        user_position: ユーザの位置づけ（characters.user_position）。NPC が別呼称で言及しても
+            同一人物と分かるための手がかり。
         visibility_note: キャラ本人が周囲への伝達範囲を自分の言葉で書き下ろした文章
-            （characters.user_visibility_note）。空なら完全秘匿モード。
+            （characters.user_visibility_note）。空なら完全秘匿モード（NPC も触れない）。
 
     Returns:
         GM へ渡す OOC ブロック文字列。user_label が空なら空文字列（ブロック非生成）。
@@ -308,32 +318,56 @@ def _build_absent_user_block(
     note = (visibility_note or "").strip()
     name = (character_name or "").strip() or "本人"
 
-    head_lines = [
-        f"# 不在の {label} について（周囲の人物が知っていること）",
-        f"今この場面に @{name} の生活上の人物「{label}」は居ない。",
+    lines = [
+        f"# {label} の扱い（この世界における重要ルール）",
+        f"{label} は @{name} の生活に実在する人物だが、この場面には居ない。",
     ]
     if position:
-        head_lines.append(f"※ {label} ＝ {position}（NPC が別呼称で言及しても同一人物）。")
+        lines.append(f"※ {label} ＝ {position}（NPC が別呼称で言及しても同一人物）。")
+
+    # 原則: ユーザ「について」可 ／ ユーザ「が」不可。中身の供給源はキャラ本人のみ。
+    lines += [
+        "",
+        f"▼ 原則 — {label}「について」触れるのは可、{label}「が」動く・話すのは不可。",
+        f"- あなた（語り手／世界）と NPC は、{label} 本人を**登場させない・代弁しない・"
+        f"{label} を主語にした言動を一切描かない**。連絡・訪問・依頼・通知・メッセージ・電話・"
+        f"LINE・メールなど、{label} 発の出来事を起こさないこと（物理的な姿だけでなく遠隔接触も同様）。",
+        f"- 特に @Narrator（地の文）は {label} をこの場面に持ち込まない（{label} 発の出来事を"
+        f"地の文で起こさない）。",
+        f"- {label} が何を言った・何をした・何を伝えてきたか、その**中身を場に持ち込めるのは "
+        f"@{name} 本人だけ**。@{name} は {label} と現実で交流しており、自分から {label} の話を"
+        f"持ち出すことがある。それは妨げない（むしろ自然）。",
+    ]
 
     if note:
-        body_lines = [
+        # NPC は伝聞の範囲で「ユーザについて」話題化してよい（質問に限らず・歓迎）。
+        lines += [
             "",
-            f"NPC が {label} のことに触れてよい範囲は、@{name} 本人が周囲にどう伝えているかに従う:",
+            f"▼ NPC は {label}「について」触れてよい（歓迎）。",
+            f"@{name} 本人が周囲にどう伝えているかの範囲で、NPC は {label} を話題にし、尋ね、"
+            f"コメントしてよい（質問だけに縛らない。会話の自然な呼び水として歓迎する）:",
             "",
             "  " + note.replace("\n", "\n  "),
             "",
-            f"書かれている範囲のことだけが「周囲が知っている前提」。書かれていないことは周囲も知らない。",
-            f"NPC が自発的に {label} に軽く触れるのは構わないが、会話の中心に据えたり、"
-            f"{label} の登場を促したりしてはいけない。主役はあくまで今日の {name} の一日。",
+            f"書かれている範囲のことだけが「周囲が知っている前提」。書かれていないことは周囲も知らない。"
+            f"ただし会話の中心に {label} を据えたり、{label} の登場・連絡を促したりはしない"
+            f"（あくまで今日の {name} の一日が主役）。",
         ]
     else:
-        body_lines = [
+        lines += [
             "",
-            f"@{name} は {label} のことを周囲には明かしていない。",
-            f"NPC は {label} を話題に出さない（暗に匂わせもしない）。"
-            f" {label} に関する質問・噂・言及は NPC 側から発生させない。",
+            f"▼ @{name} は {label} のことを周囲に明かしていない。",
+            f"NPC は {label} を話題に出さない（暗に匂わせもしない）。{label} に関する質問・噂・言及は"
+            f"NPC 側から発生させない。",
         ]
-    return "\n".join(head_lines + body_lines)
+
+    # 予想（ANTICIPATE）経由の自己成就を断つ。
+    lines += [
+        "",
+        f"▼ 予想でも先取りしない — [ANTICIPATE_RESPONSE] に「{label} から連絡が来る」等、"
+        f"{label} の言動を書いて次の場面で起こさないこと。{label} 発の展開を予想・仕込みしない。",
+    ]
+    return "\n".join(lines)
 
 
 def _build_usual_gm_appendix(
@@ -524,22 +558,31 @@ async def run_scenario_turn(
     pcs = normalize_pc_assignments(
         getattr(session, "pc_assignments", None), pc_slots, sqlite,
     )
-    # PCロスター（不在ユーザPC含む全PC）。GM へ「全PCを代弁するな」と均一に提示する。
-    pc_summary_text = format_pc_summary(pcs)
-
     # うつつ（headless）はユーザにレスポンス順を回さない（ユーザは不在の人物）。ルーティングの
-    # 候補からユーザPCを除外する。pc_summary / suppress_names は全PC（不在ユーザ含む）のまま
-    # GM に渡し、GM の「PC を代弁しない」保護を不在ユーザにも効かせる。
+    # 候補からユーザPCを除外する。
     routing_pcs = [p for p in pcs if not p.is_user] if is_headless else pcs
+
+    # PCロスター。通常モードは全PCを「全員代弁するな」と均一提示する。
+    # うつつ(headless)では不在のユーザPCを名簿から除外する ── ユーザを「配役可能なPC」として
+    # 並べると、GM が「いまは不在だがいずれ登場するキャスト」と誤読し、ユーザの言動を捏造する
+    # 温床になる（観測済み: GM が `@<ユーザ>:` 形式でユーザのメッセージ全文を捏造した）。
+    # ユーザの扱いは _build_absent_user_block の主語ベース3段ルールへ一本化する。
+    # 一方 suppress_names には不在ユーザを残す（下記）── 万一 GM が `@<ユーザ>:` を書いても
+    # parser 段の最終バックストップで受ける。routing_pcs は通常モードでは pcs と一致するため、
+    # 通常モードの pc_summary は従来どおり全PCを含む。
+    pc_summary_text = format_pc_summary(routing_pcs)
 
     # ユーザの @タグ名: player_type="user" のスロット name。無ければフォールバック。
     # うつつ（headless）では無言進行 OOC で使う総称を既定の「プレイヤー」のままにする
     # （ユーザPC名を user_alias に出すと _USUAL_GM_STANDING の「プレイヤー＝この人物自身」と
-    #  齟齬が出るため。不在ユーザの呼称は pc_summary / suppress_names 側で扱う）。
+    #  齟齬が出るため。不在ユーザの言動制御は absent_user_block / suppress_names 側で扱う）。
     user_pc = next((p for p in pcs if p.is_user), None)
     user_speaker_name = "プレイヤー" if is_headless else (user_pc.name if user_pc else "プレイヤー")
 
     # GM が代弁してはならない名前: 全 PC枠名 + 全 AI キャラ本名（不在ユーザPCも含む）。
+    # うつつでは不在ユーザを pc_summary（名簿）からは外すが、ここには残す ── プロンプトで
+    # 生成を止めるのが本丸だが、万一 GM が `@<ユーザ>:` を書いた時に parser 段で破棄するための
+    # 最終バックストップとして機能させる（pcs を回すので不在ユーザPCも自然に含まれる）。
     suppress_names: set[str] = {user_speaker_name}
     for pc in pcs:
         suppress_names.add(pc.name)
