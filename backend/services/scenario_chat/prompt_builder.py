@@ -69,6 +69,7 @@ def build_gm_system_prompt(
     user_speaker_name: str = "プレイヤー",
     time_context: str = "",
     gm_ooc_appendix: str = "",
+    user_turn_speaker: str | None = None,
 ) -> str:
     """GM 用の system prompt を組み立てる。
 
@@ -81,6 +82,9 @@ def build_gm_system_prompt(
                       `<話者>本文</話者>` の連結。
         user_message: 今回のプレイヤー発話（system prompt の末尾に注釈として含める）。
                       None ならプレイヤー発話ブロックを省略する。
+        user_turn_speaker: user_message を `@名前:` で提示する際の話者名。直前の非GM発話
+                      （はる等の AI キャラ）を昇格して渡す場合にその実話者名を入れる。
+                      None なら user_speaker_name（user_alias）へフォールバック。
         narrator_name: Narrator のタグ名。デフォルト "Narrator"。
         synopsis_auto: セッションの自動あらすじ（メイン）。直近履歴より古い経緯を LLM が要約したもの。
                        空文字列ならブロックを省略する。
@@ -122,10 +126,14 @@ def build_gm_system_prompt(
         )
     elif user_message is not None and user_message.strip():
         # 履歴と同じ `@名前: 本文` 規約で渡す（GM の出力フォーマット誤学習を防ぐ）。
+        # 話者名は user_turn_speaker（昇格した非GM発話の実話者名。例: はる）を優先し、
+        # 無ければ user_alias（通常モードのユーザ発話）へフォールバックする。これにより
+        # 履歴本文と今回の発話とで同一人物が別名（@はる と @プレイヤー）で出る食い違いを防ぐ。
+        speaker_label = user_turn_speaker or user_alias
         user_turn_block = (
             "---\n"
             "プレイヤーの発話:\n"
-            f"@{user_alias}:\n{user_message.strip()}"
+            f"@{speaker_label}:\n{user_message.strip()}"
         )
     else:
         user_turn_block = ""

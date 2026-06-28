@@ -37,6 +37,60 @@ from backend.services.scenario_chat.prompt_builder import build_gm_system_prompt
 DEFAULT_DICE_POOL_SPEC: dict[str, int] = {"d6": 10}
 
 
+# GM（語り手／世界）側として扱う話者タイプ。これら以外（pc / user / character 等）の
+# 発話は「プレイヤーの入力」として GM への応答対象になる
+# （GM から見れば、はる等の AI キャラの発話もユーザ発話も等しく『プレイヤーの入力』）。
+_GM_SPEAKER_TYPES = {"narrator", "npc"}
+
+
+def _trailing_non_gm_turn(turns: list[Any]) -> Any | None:
+    """履歴末尾から見て、最初に現れる「非GM かつ本文ありの発話」を返す。
+
+    GM への今回のリクエスト本文に昇格させる発話を選ぶためのヘルパー。
+    末尾の実発話が GM（narrator/npc）＝ユーザが GM 直後に無言スキップした状況では
+    None を返し、呼び出し側で「無言で続きを促す」モードへ倒す。
+    空本文（スキップ等で生じた空ターン）は実発話扱いせず読み飛ばす。
+
+    Args:
+        turns: 時系列昇順のターン列（speaker_type / content を持つ ORM 風オブジェクト）。
+
+    Returns:
+        昇格対象の非GM発話ターン。末尾の実発話が GM、または実発話が無ければ None。
+    """
+    for turn in reversed(turns):
+        content = (getattr(turn, "content", "") or "").strip()
+        if not content:
+            continue
+        stype = getattr(turn, "speaker_type", "")
+        if stype in _GM_SPEAKER_TYPES:
+            return None
+        return turn
+    return None
+
+
+def _gm_speaker_label(turn: Any, user_alias: str, narrator_name: str = "Narrator") -> str:
+    """昇格発話を `@名前:` で提示する際の話者名を、履歴整形と同じ規約で決める。
+
+    `context.format_turn_for_gm()` と同じ分岐（user→user_alias / narrator→narrator_name /
+    その他→speaker_name）に揃え、履歴本文と今回のリクエスト本文とで同一人物が
+    別名で出る食い違いを防ぐ。
+
+    Args:
+        turn: 話者名を求めるターン（speaker_type / speaker_name を持つ）。
+        user_alias: ユーザ発話に充てる @タグ名。
+        narrator_name: Narrator の表示名。
+
+    Returns:
+        `@` に続けて使う話者名。
+    """
+    stype = getattr(turn, "speaker_type", "")
+    if stype == "user":
+        return user_alias
+    if stype == "narrator":
+        return narrator_name
+    return getattr(turn, "speaker_name", "") or narrator_name
+
+
 def generate_dice_pool(spec: dict | None, rng: random.Random | None = None) -> str:
     """`{dice_pool}` テンプレタグに埋め込むダイス文字列を生成する。
 
@@ -130,8 +184,8 @@ class SceneEngine(Protocol):
         Args:
             gm_preset_id: このターンで GM が使う LLM プリセット ID
                           （セッションが保持する値を呼び出し元が渡す）。
-            auto_advance: True なら「ユーザは無言で続きを促す」モード。
-                          user_message は使わず、GM が地の文と NPC だけで進める。
+            auto_advance: True なら「ユーザは無言で続きを促す」モード。ただし履歴末尾に
+                          非GM発話が残っていれば、それを今回の入力へ昇格して応答させる。
 
         Yields:
             UtteranceDelta: ストリーミング中の発話差分。
@@ -205,9 +259,10 @@ class EnsembleEngine:
                           auto_advance=True の場合は空文字列を渡してよい（無視される）。
             settings: グローバル設定辞書（API キー等）。
             gm_preset_id: GM が使う LLM プリセット ID（ScenarioSession.gm_preset_id）。
-            auto_advance: True なら「ユーザは無言で続きを促す」モード。
-                          user_message は GM プロンプトに含まれず、代わりに
-                          OOC 指示が末尾に注入される。
+            auto_advance: True なら「ユーザは無言で続きを促す」モード。ただし履歴末尾に
+                          非GM発話（はる等の AI キャラ／ユーザ）が残っていれば、それを
+                          今回のリクエスト本文へ昇格して GM に応答させる（無言扱いを解除）。
+                          末尾の実発話が GM の場合のみ、無言で続きを促す OOC を注入する。
             synopsis_auto: セッションの自動あらすじ（メイン）。GM への system prompt に挿入される。
             synopsis_manual: セッションの手動補足メモ（補正指示）。同上。
             pc_summary: ensemble_pc 専用。PC配役一覧テキスト。空なら GM プロンプトに
@@ -226,6 +281,27 @@ class EnsembleEngine:
         # 1. 履歴切り出しと整形
         max_turns, max_chars = resolve_history_limits(scenario, settings)
         sliced = slice_history(history, max_turns=max_turns, max_chars=max_chars)
+
+        # 1b. GM への「今回のリクエスト本文」を決める。
+        #   原則として、直前の非GM発話（はる等の AI キャラ／ユーザ）を入力とする。
+        #   GM から見れば、ユーザ発話も非GMキャラの発話も等しく「プレイヤーの入力」であり、
+        #   GM はそれに応答する側（=キャラもユーザも区別なく扱う）。
+        #   末尾の実発話が GM（narrator/npc）＝ユーザが GM 直後に無言スキップした場合のみ
+        #   「無言で続きを促す」モードを維持する。
+        #   caller が明示的に user_message を渡した（auto_advance=False）場合はそれを尊重し、
+        #   ここでは何もしない。
+        gm_turn_speaker: str | None = None
+        gm_turn_message = user_message
+        if auto_advance:
+            promoted = _trailing_non_gm_turn(sliced)
+            if promoted is not None:
+                gm_turn_speaker = _gm_speaker_label(promoted, user_speaker_name)
+                gm_turn_message = (getattr(promoted, "content", "") or "").strip()
+                # 昇格した発話はリクエスト本文として渡すので、履歴本文からは取り除く
+                # （同じ発話が「過去の履歴」と「今回の入力」に二重掲載されるのを防ぐ）。
+                sliced = [t for t in sliced if t is not promoted]
+                auto_advance = False
+
         history_text = format_history_for_gm(
             sliced, user_alias=user_speaker_name
         )
@@ -235,8 +311,9 @@ class EnsembleEngine:
             scenario=scenario,
             npcs=npcs,
             history_text=history_text,
-            user_message=None if auto_advance else user_message,
+            user_message=None if auto_advance else gm_turn_message,
             auto_advance=auto_advance,
+            user_turn_speaker=gm_turn_speaker,
             synopsis_auto=synopsis_auto,
             synopsis_manual=synopsis_manual,
             previous_anticipation=previous_anticipation,
@@ -262,8 +339,10 @@ class EnsembleEngine:
         )
 
         # 4. ストリーミング受信＆パース
-        # messages はユーザ発話のみ（system prompt 側にも複製して入れている）。
-        # auto_advance 時はプレイヤー発話がないため、OOC 指示を user role で渡す。
+        # messages はリクエスト本文のみ（system prompt 側にも複製して入れている）。
+        # 上の 1b で auto_advance が解除されている場合、gm_turn_message には直前の
+        # 非GM発話（はる等）が入っており、それを「プレイヤーの入力」として渡す。
+        # 末尾が GM のまま auto_advance が残った時だけ、無言で続きを促す OOC を渡す。
         if auto_advance:
             messages = [
                 {
@@ -275,7 +354,7 @@ class EnsembleEngine:
                 }
             ]
         else:
-            messages = [{"role": "user", "content": user_message}]
+            messages = [{"role": "user", "content": gm_turn_message}]
         known_map = {
             npc.name: npc.id for npc in npcs if getattr(npc, "name", None)
         }

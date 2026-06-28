@@ -465,6 +465,113 @@ class TestHistoryInPrompt:
         assert "発話7" not in sp
 
 
+class TestAutoAdvancePromotesTrailingTurn:
+    """auto_advance 時、履歴末尾の非GM発話を「今回のリクエスト本文」へ昇格する挙動を検証する。
+
+    うつつ(Usual Days)/TRPG では GM 以外の AI キャラ（はる等）もユーザも区別なく
+    「プレイヤーの入力」として扱う。GM ターンが回ってきた時点で履歴末尾に非GM発話が
+    残っていれば、それを GM へのリクエスト本文に昇格して応答させる（無言扱いにしない）。
+    末尾の実発話が GM（narrator/npc）＝ユーザが GM 直後に無言スキップした場合のみ、
+    無言で続きを促す OOC を渡す。
+
+    検証観点:
+      - 末尾が PC（はる）発話 → messages・system prompt とも「はるの発話」になり、
+        無言 OOC は出ない。話者名は履歴と同じ実名 `@はる:` で提示される。
+      - 昇格した発話は履歴本文から取り除かれ、二重掲載されない。
+      - 末尾が GM 発話 → 従来どおり無言 OOC が渡る。
+      - 末尾の空ターン（スキップ等）は読み飛ばし、その手前の実発話を昇格する。
+    """
+
+    @pytest.mark.asyncio
+    async def test_trailing_pc_turn_is_promoted_to_request(self):
+        """末尾の PC 発話が messages と system prompt のリクエスト本文へ昇格すること。"""
+        chunks = [("text", "@Narrator: ok\n")]
+        engine, provider = _make_engine(chunks)
+        history = [
+            FakeTurn(speaker_type="narrator", speaker_name="Narrator", content="朝の厨房"),
+            FakeTurn(speaker_type="pc", speaker_name="はる", content="今日のまかない何にしよう"),
+        ]
+        await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=history,
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+                auto_advance=True,
+                user_speaker_name="プレイヤー",
+            )
+        )
+        # messages（= プロバイダへの contents）は無言 OOC ではなく、はるの発話そのもの。
+        assert provider.received_messages == [
+            {"role": "user", "content": "今日のまかない何にしよう"}
+        ]
+        sp = provider.received_system_prompt or ""
+        # system prompt 側では「プレイヤーの発話」ブロックに、履歴と同じ実名 @はる: で載る。
+        assert "プレイヤーの発話:" in sp
+        assert "@はる:\n今日のまかない何にしよう" in sp
+        # 無言 OOC ブロックは出ない。
+        assert "プレイヤーは今回何も発言していない" not in sp
+        # 昇格した発話は履歴から取り除かれ、二重掲載されない（system prompt 中に 1 度だけ）。
+        assert sp.count("今日のまかない何にしよう") == 1
+        # @プレイヤー: という総称タグでは出ない（実話者名に統一）。
+        assert "@プレイヤー:" not in sp
+
+    @pytest.mark.asyncio
+    async def test_trailing_gm_turn_keeps_silent_ooc(self):
+        """末尾が GM 発話（=ユーザが無言スキップ）なら、無言で続きを促す OOC が渡ること。"""
+        chunks = [("text", "@Narrator: ok\n")]
+        engine, provider = _make_engine(chunks)
+        history = [
+            FakeTurn(speaker_type="pc", speaker_name="はる", content="ただいま"),
+            FakeTurn(speaker_type="narrator", speaker_name="Narrator", content="部屋は静かだ"),
+        ]
+        await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=history,
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+                auto_advance=True,
+                user_speaker_name="プレイヤー",
+            )
+        )
+        # 末尾が GM なので昇格せず、無言 OOC を渡す。
+        assert len(provider.received_messages) == 1
+        assert "プレイヤーは今ターン無言" in provider.received_messages[0]["content"]
+        sp = provider.received_system_prompt or ""
+        assert "プレイヤーは今回何も発言していない" in sp
+
+    @pytest.mark.asyncio
+    async def test_trailing_empty_turn_is_skipped(self):
+        """末尾の空ターンは読み飛ばし、その手前の実発話を昇格すること。"""
+        chunks = [("text", "@Narrator: ok\n")]
+        engine, provider = _make_engine(chunks)
+        history = [
+            FakeTurn(speaker_type="pc", speaker_name="はる", content="おはよう"),
+            # スキップ等で生じた空ターン（本文なし）は実発話扱いしない。
+            FakeTurn(speaker_type="user", speaker_name="プレイヤー", content="   "),
+        ]
+        await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=history,
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+                auto_advance=True,
+                user_speaker_name="プレイヤー",
+            )
+        )
+        assert provider.received_messages == [
+            {"role": "user", "content": "おはよう"}
+        ]
+
+
 # ─── あらすじ（synopsis）の GM プロンプト注入 ─────────────────────────────────
 
 
