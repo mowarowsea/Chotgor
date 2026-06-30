@@ -6,6 +6,7 @@ xAI / Grok は xai_provider.py に分離されている。
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from backend.character_actions.executor import OPENAI_TOOLS, ToolCall, ToolTurnResult
 from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn, safe_loop_call
 
@@ -213,7 +214,16 @@ class OpenAIProvider(BaseLLMProvider):
                 self._record_usage_from_response(last_usage)
                 safe_loop_call(loop, queue.put_nowait, None)
 
-        threading.Thread(target=run, daemon=True).start()
+        # 生スレッドは親の ContextVar を引き継がない（新スレッドは空コンテキスト＝
+        # current_log_dir_id / current_log_feature 等がデフォルト値に戻る）。そのまま
+        # run() 内で _log_request / _log_response を呼ぶと、ログが既定 ID "--------" ・
+        # feature "chat" の文脈で書かれ、呼び出し元（うつつ GM の usual_days など）が
+        # 設定したログ文脈が失われてしまう。呼び出し時点のコンテキストをコピーして
+        # スレッドへ持ち込み、ログ/usage 記録が正しい文脈で実行されるようにする。
+        # （非ストリームの generate() が asyncio.to_thread＝copy_context 経由で
+        #  問題ないのと同じ状態を、生スレッド側でも再現する。）
+        ctx = contextvars.copy_context()
+        threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
 
         while True:
             item = await queue.get()

@@ -224,7 +224,13 @@ class AnthropicProvider(BaseLLMProvider):
                 self._record_usage_from_response(final_usage)
                 safe_loop_call(loop, queue.put_nowait, None)
 
-        threading.Thread(target=run, daemon=True).start()
+        # 生スレッドは親の ContextVar を引き継がないため、run() 内の _log_response /
+        # _record_usage_from_response が既定 ID "--------"・feature "chat" の文脈で
+        # 走ってしまう（呼び出し元が設定したログ文脈が失われる）。呼び出し時点の
+        # コンテキストをコピーしてスレッドへ持ち込み、正しい文脈でログ/usage を記録する。
+        import contextvars
+        ctx = contextvars.copy_context()
+        threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
 
         while True:
             item = await queue.get()
