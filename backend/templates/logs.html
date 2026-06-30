@@ -150,7 +150,14 @@ function renderJsonHtml(text) {
 async function copyReqId(btn) {
     const text = btn.dataset.copy || '';
     try {
-        await navigator.clipboard.writeText(text);
+        // navigator.clipboard はセキュアコンテキスト（HTTPS / localhost）でしか存在しない。
+        // LAN IP や PC名での HTTP アクセス時は undefined になるため、その場合は
+        // 旧来の execCommand('copy') 方式へフォールバックする。
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            fallbackCopyText(text);
+        }
         const orig = btn.textContent;
         btn.classList.add('copied');
         btn.textContent = '✓ copied';
@@ -160,6 +167,29 @@ async function copyReqId(btn) {
         }, 1100);
     } catch (e) {
         console.error('[copyReqId] コピー失敗:', e);
+    }
+}
+
+/**
+ * navigator.clipboard が使えない非セキュアコンテキスト向けのコピー処理。
+ * 画面外に置いた一時 textarea を選択し document.execCommand('copy') でコピーする。
+ *
+ * @param {string} text - クリップボードへコピーする文字列。
+ */
+function fallbackCopyText(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // スクロールジャンプ・チラつきを防ぐため画面外へ退避させる。
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+        document.execCommand('copy');
+    } finally {
+        document.body.removeChild(ta);
     }
 }
 
