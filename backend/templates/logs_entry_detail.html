@@ -181,7 +181,12 @@
                 <div class="log-row">
                     <span class="ch-eyebrow">ID / Files</span>
                     <div>
-                        <span style="font-family:var(--ch-fm);font-size:0.75rem;color:var(--ch-t3);margin-right:0.8rem">{{ a.dir_id }}</span>
+                        {# リクエストID コピーチップ。値は debug_log_entries.request_id（= e.message_id）。
+                           生ファイルへのリンクは raw フォルダ名 a.dir_id を使う。 #}
+                        <button type="button" class="log-reqid ch-code" style="margin-right:0.8rem"
+                                data-copy="debug_log_entries.request_id: {{ e.message_id }}"
+                                title="クリックでコピー → debug_log_entries.request_id"
+                                onclick="event.preventDefault();event.stopPropagation();copyReqId(this)">debug_log_entries.request_id: {{ e.message_id }}</button>
                         {% for fname in a.files %}
                         <a href="/ui/logs/{{ a.dir_id }}/raw/{{ fname }}"
                            target="_blank" class="log-raw-link" title="{{ fname }}">{{ fname }}</a>
@@ -293,7 +298,11 @@
 <div class="log-row">
     <span class="ch-eyebrow">ID / Files</span>
     <div>
-        <span style="font-family:var(--ch-fm);font-size:0.75rem;color:var(--ch-t3);margin-right:0.8rem">{{ e.message_id }}</span>
+        {# リクエストID コピーチップ（バッチ処理用）。値は debug_log_entries.request_id。 #}
+        <button type="button" class="log-reqid ch-code" style="margin-right:0.8rem"
+                data-copy="debug_log_entries.request_id: {{ e.message_id }}"
+                title="クリックでコピー → debug_log_entries.request_id"
+                onclick="event.preventDefault();event.stopPropagation();copyReqId(this)">debug_log_entries.request_id: {{ e.message_id }}</button>
         {% for fname in e.files %}
         <a href="/ui/logs/{{ e.dir_id }}/raw/{{ fname }}"
            target="_blank" class="log-raw-link" title="{{ fname }}">{{ fname }}</a>

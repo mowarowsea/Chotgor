@@ -1614,6 +1614,11 @@ details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
 
 .log-dt    { color: var(--ch-t3); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
 .log-model { color: var(--ch-t); white-space: nowrap; flex-shrink: 0; }
+/* リクエストID コピーチップ（見た目は ch-code アトムを流用、構造/挙動のみここで付与）。
+   サマリー行では margin-left:auto で右端へ寄せ、クリックでフル文字列をコピーする。 */
+.log-reqid { margin-left: auto; flex-shrink: 0; cursor: pointer; color: var(--ch-t3); white-space: nowrap; }
+.log-reqid:hover  { color: var(--ch-a); border-color: var(--ch-a); }
+.log-reqid.copied { color: var(--ch-a); border-color: var(--ch-a); }
 /* 旧 .text-muted の代替（logs 内のみ。style.css 撤去後もログのプリセット名等を弱色に） */
 #log-main-content .text-muted { color: var(--ch-t3); }
 .log-preview {

@@ -141,6 +141,29 @@ function renderJsonHtml(text) {
 }
 
 /**
+ * リクエストIDコピーチップのクリック処理。
+ * data-copy 属性（「debug_log_entries.request_id: 値」のフル文字列）をクリップボードへ
+ * コピーし、一時的にラベルを「✓ copied」へ差し替えてフィードバックする。
+ *
+ * @param {HTMLElement} btn - クリックされたコピーチップ要素。
+ */
+async function copyReqId(btn) {
+    const text = btn.dataset.copy || '';
+    try {
+        await navigator.clipboard.writeText(text);
+        const orig = btn.textContent;
+        btn.classList.add('copied');
+        btn.textContent = '✓ copied';
+        setTimeout(() => {
+            btn.textContent = orig;
+            btn.classList.remove('copied');
+        }, 1100);
+    } catch (e) {
+        console.error('[copyReqId] コピー失敗:', e);
+    }
+}
+
+/**
  * モーダルを動的生成して表示する共通ヘルパー。
  * toggleInlineLog（ログファイル表示）と全文ボタンで共用する。
  *

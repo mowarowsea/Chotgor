@@ -39,6 +39,12 @@
             {% elif e.user_message %}
             <span class="log-preview text-muted">{{ e.user_message[:120] }}{% if e.user_message|length > 120 %}…{% endif %}</span>
             {% endif %}
+            {# リクエストID コピーチップ。クリックで「テーブル.カラム: 値」をまるごとクリップボードへ。
+               会話でログを指すとき種別ごとコピーできるようにする。details の開閉は抑止する。 #}
+            <button type="button" class="log-reqid ch-code"
+                    data-copy="debug_log_entries.request_id: {{ e.message_id }}"
+                    title="クリックでコピー → debug_log_entries.request_id"
+                    onclick="event.preventDefault();event.stopPropagation();copyReqId(this)">debug_log_entries.request_id: {{ e.message_id }}</button>
         </summary>
 
         <div class="log-detail">
