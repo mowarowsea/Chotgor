@@ -53,6 +53,14 @@ class SakuraProvider(OpenAIProvider):
     # さくら AI Engine は reasoning_effort 系をサポートしないため空dictで無効化
     _REASONING_MAP: dict = {}
 
+    # 出力トークン上限を撤廃する（max_tokens を送らず、サーバー側の上限＝残りコンテキスト全部に委ねる）。
+    # 理由: さくら AI Engine はトークン数ではなく「リクエスト数」課金のため、トークン節約の動機がない。
+    #       かつ推論モデル（preview/Kimi-K2.6 など）は本文を出す前に大量に思考する。既定の 4096 では
+    #       思考だけで上限へ到達し（finish_reason=length）、本文が一文字も返らない事象が起きる。
+    #       enable_thinking=false / reasoning_effort=low はさくら側で無視され思考を止められないため、
+    #       上限自体を撤廃して思考＋本文を最後まで生成させる方針とする（実機検証済み）。
+    DEFAULT_MAX_TOKENS = None
+
     # クラス属性の SUPPORTS_TOOLS は「楽観的デフォルト」として True。
     # 実際のtool-use対応有無は __init__ でインスタンス属性に上書きされる
     # （モデルIDが静的リストにあればそのフラグ、未登録モデルは True 扱い）。

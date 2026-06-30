@@ -28,6 +28,13 @@ class OpenAIProvider(BaseLLMProvider):
 
     _REASONING_MAP = _OPENAI_REASONING
 
+    # reasoning_effort 非対応モデル（else 分岐）で送る出力トークン上限。
+    # None の場合は max_tokens を送らず、サーバー側の上限（残りコンテキスト全部）に委ねる。
+    # 既定は 4096（トークン課金プロバイダーのコスト保護）。リクエスト数課金の
+    # さくら（推論モデル Kimi が本文前に大量に思考するため 4096 では本文が出ない）は
+    # サブクラスで None に上書きして上限を撤廃する。
+    DEFAULT_MAX_TOKENS: int | None = 4096
+
     def __init__(self, api_key: str, model: str = "", base_url: str | None = None, thinking_level: str = "default"):
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
@@ -120,8 +127,8 @@ class OpenAIProvider(BaseLLMProvider):
                 # o系モデルは reasoning_effort + max_completion_tokens を使用する
                 call_kwargs["reasoning_effort"] = effort
                 call_kwargs["max_completion_tokens"] = 16000
-            else:
-                call_kwargs["max_tokens"] = 4096
+            elif self.DEFAULT_MAX_TOKENS is not None:
+                call_kwargs["max_tokens"] = self.DEFAULT_MAX_TOKENS
             self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
             self._log_response(response.model_dump())
@@ -185,8 +192,8 @@ class OpenAIProvider(BaseLLMProvider):
                     # o-seriesモデルはreasoning_effort + max_completion_tokensを使用
                     call_kwargs["reasoning_effort"] = effort
                     call_kwargs["max_completion_tokens"] = 16000
-                else:
-                    call_kwargs["max_tokens"] = 4096
+                elif self.DEFAULT_MAX_TOKENS is not None:
+                    call_kwargs["max_tokens"] = self.DEFAULT_MAX_TOKENS
                 self._log_request(call_kwargs)
                 response = client.chat.completions.create(**call_kwargs)
                 for chunk in response:
@@ -248,8 +255,8 @@ class OpenAIProvider(BaseLLMProvider):
             if effort:
                 call_kwargs["reasoning_effort"] = effort
                 call_kwargs["max_completion_tokens"] = 16000
-            else:
-                call_kwargs["max_tokens"] = 4096
+            elif self.DEFAULT_MAX_TOKENS is not None:
+                call_kwargs["max_tokens"] = self.DEFAULT_MAX_TOKENS
 
             self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
