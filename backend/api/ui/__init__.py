@@ -20,7 +20,7 @@ from backend.api.ui.common import (  # noqa: F401
     get_templates,
     set_templates,
 )
-from backend.api.ui import characters, dashboard, instruments, memories, presets, scenarios, settings
+from backend.api.ui import characters, dashboard, instruments, memories, presets, scenarios, settings, timeline
 
 # 各ページルーターを集約した親ルーター（main.py が include する）
 router = APIRouter()
@@ -31,3 +31,4 @@ router.include_router(presets.router)
 router.include_router(scenarios.router)
 router.include_router(settings.router)
 router.include_router(instruments.router)
+router.include_router(timeline.router)

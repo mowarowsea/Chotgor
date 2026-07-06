@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}timeline &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/timeline" class="ch-crumb">timeline</a>{% endblock %}
+
+{% block content %}
+<div class="ch-shell">
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">meguri / timeline</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">タイムライン</h1>
+        </div>
+        <p class="ch-hint">
+            キャラクターの身に起きたことの正本を、あなた（user_ui）の覗き窓から見る。
+            ダイヤルを上げるほど見えるものが減る — 秘密が成立していく。
+            計器（instruments）はダイヤルに関係なく動き続ける。
+        </p>
+    </header>
+
+    {# ── キャラ選択とダイヤル ────────────────────────── #}
+    <section class="ch-section">
+        <form method="get" action="/ui/timeline" style="display:inline-block;margin-right:1em">
+            <label>
+                <span class="ch-label">キャラクター</span>
+                <select name="character_id" class="ch-input" onchange="this.form.submit()">
+                    {% for c in characters %}
+                    <option value="{{ c.id }}" {% if selected and c.id == selected.id %}selected{% endif %}>{{ c.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </form>
+        {% if selected %}
+        <form method="post" action="/ui/timeline/{{ selected.id }}/dial" style="display:inline-block">
+            <label>
+                <span class="ch-label">覗き窓ダイヤル（{{ selected.name }}）</span>
+                <select name="dial" class="ch-input" onchange="this.form.submit()">
+                    {% for level, label in dial_labels.items() %}
+                    <option value="{{ level }}" {% if dial == level %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </form>
+        {% endif %}
+    </section>
+
+    {# ── タイムライン ────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head">
+            <h2 class="ch-section-title">直近 {{ days }} 日の出来事</h2>
+        </div>
+        {% if events %}
+        <div class="ch-table-wrap">
+            <table class="ch-table">
+                <thead>
+                    <tr><th>時刻</th><th>出来事</th><th>誰が</th><th>どこで</th><th>中身</th></tr>
+                </thead>
+                <tbody>
+                    {% for ev in events %}
+                    <tr>
+                        <td style="white-space:nowrap">{{ ev.occurred_at.strftime("%m/%d %H:%M") }}</td>
+                        <td><span class="ch-tag {% if ev.event_type.startswith('intent.') %}ch-tag--accent{% elif ev.event_type.startswith('night.') or ev.event_type.startswith('memory.') %}ch-tag--sub{% endif %}">{{ ev.label }}</span></td>
+                        <td>{{ ev.actor }}</td>
+                        <td>{{ ev.origin }}</td>
+                        <td style="max-width:32em">
+                            {% if ev.disclosure == 'content' and ev.content %}
+                            {{ ev.content | truncate(160) }}
+                            {% else %}
+                            <span class="ch-hint">（封筒のみ — 中身は見えない）</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="ch-hint">
+            表示できる出来事はありません（この期間に何も起きていないか、ダイヤルで秘匿されています）。
+        </p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

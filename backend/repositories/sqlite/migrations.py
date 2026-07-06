@@ -883,6 +883,11 @@ class SQLiteMigrationsMixin:
                     conn.exec_driver_sql(
                         "ALTER TABLE characters ADD COLUMN action_menu TEXT"
                     )
+                if "timeline_dial" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters "
+                        "ADD COLUMN timeline_dial INTEGER NOT NULL DEFAULT 0"
+                    )
                 if "away_until" not in cols:
                     conn.exec_driver_sql(
                         "ALTER TABLE characters ADD COLUMN away_until DATETIME"

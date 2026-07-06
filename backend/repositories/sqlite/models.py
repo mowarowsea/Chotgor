@@ -147,6 +147,13 @@ class Character(Base):
     # 対面モード時に ChatView 背景へ表示する画像（base64 data URI）。image_data と同じ
     # 保存形式。未設定 = 背景表示なし（モード ON でも背景なしで動作する）。
     face_to_face_bg_image = Column(Text, nullable=True)
+    # ユーザダイヤル（覗き窓・めぐり / Aliveness §2.4）。user_ui 観測者の開示段階:
+    #   0 = 全開（開発期・全 content）
+    #   1 = 生活の秘匿（scene.*（usual）→ envelope）
+    #   2 = 内面の秘匿（＋ memory.* / intent.* / night.* → hidden）
+    #   3 = 最終形（チャット応答のみ。計器はダイヤル非依存で残る）
+    # v1 は手動。計器の静音期間（無事故N日）が「窓を閉じてよい」確信を支える。
+    timeline_dial = Column(Integer, nullable=False, default=0)
     # 会話外行動メニュー（めぐり / Aliveness §5.3）。JSON:
     #   {"push": bool, "research": bool, "impromptu_scene": bool}
     # 個別 ON/OFF トグル（キャラ設定画面）。NULL / 空 = 全部 OFF（オプトイン）。
