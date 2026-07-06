@@ -119,6 +119,7 @@ class SQLiteStore(
         self._migrate_add_user_visibility_note()
         self._migrate_drop_group_chat()
         self._migrate_add_face_to_face_columns()
+        self._migrate_add_pressure_profile()
         self._migrate_backfill_timeline_events()
 
     def get_session(self) -> Session:

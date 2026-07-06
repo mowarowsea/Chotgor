@@ -145,6 +145,45 @@ async def update_face_to_face_mode(request: Request, character_id: str, body: Fa
     return {"character_id": character_id, "face_to_face_mode": 1 if body.enabled else 0}
 
 
+@router.post("/{character_id}/pressure_interview")
+async def run_pressure_interview(request: Request, character_id: str):
+    """体質インタビュー（めぐり Phase 3）を実施して pressure_profile を初期化する。
+
+    ask_character（1on1 同等のシステムプロンプト・WM ブロック込み）で本人に
+    体験の質問を投げ、固定ルーブリックで係数へ決定論写像して保存する。
+    機能有効化時に一度呼ぶ想定。再実行すると上書きされる（本人の言葉も
+    interview ペイロードに残るため、ルーブリック改良時の再導出が可能）。
+    """
+    from backend.services.pressure import run_constitution_interview
+
+    state = request.app.state
+    result = await run_constitution_interview(
+        character_id=character_id,
+        sqlite=state.sqlite,
+        settings=state.sqlite.get_all_settings(),
+        working_memory_manager=getattr(state, "working_memory_manager", None),
+    )
+    if result.get("status") != "success":
+        raise HTTPException(status_code=400, detail=result.get("error", "インタビュー失敗"))
+    return result
+
+
+@router.get("/{character_id}/pressures")
+async def get_pressures(request: Request, character_id: str):
+    """現在の圧力3変数（読み取り時計算）を返す。デバッグ・管理UI用。"""
+    from backend.services.pressure import compute_pressures
+
+    state = request.app.state
+    char = state.sqlite.get_character(character_id)
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return {
+        "character_id": character_id,
+        "pressures": compute_pressures(state.sqlite, character_id),
+        "profile": getattr(char, "pressure_profile", None),
+    }
+
+
 @router.delete("/{character_id}", status_code=204)
 async def delete_character(request: Request, character_id: str):
     """キャラクターと、紐づく全データをカスケード削除する（SQLite → LanceDB の順）。"""

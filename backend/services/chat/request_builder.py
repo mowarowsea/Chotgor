@@ -146,6 +146,8 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_wm_recalled}
 
+{block_motive}
+
 {block_previous_anticipation}
 
 {block_inner_narrative}
@@ -395,6 +397,52 @@ def _build_face_to_face_block(face_to_face: bool) -> str:
     return _FACE_TO_FACE_NOTICE if face_to_face else ""
 
 
+def _build_motive_block(
+    motive_lines: list[str] | None,
+    active_intents: list[dict] | None = None,
+) -> str:
+    """動機ブロック（めぐり / 話題権）を構築する。
+
+    圧力の淡白な一行（物理の報告）＋ active な意図＋権利の明文化を注入する
+    （docs/aliveness_plan.md §5.3）。礼儀フィルタは入れない — 下流で丸めない。
+    圧力の解釈（どう感じるか・WM body に何を書くか）はキャラクター本人に任せる。
+
+    Args:
+        motive_lines: pressure_plain_lines の結果（淡白な一行のリスト）。
+        active_intents: active な意図の dict リスト（Phase 4 で接続。
+            [{"description": str, "target": str|None}] を想定）。
+
+    Returns:
+        整形済みブロック文字列。素材が何も無ければ空文字列。
+    """
+    lines = motive_lines or []
+    intents = active_intents or []
+    if not lines and not intents:
+        return ""
+    parts = ["# いまのあなた（体と意図）"]
+    if lines:
+        parts.append(
+            "体からの報告（物理量の淡白な事実。どう受け取るかはあなた次第です）:"
+        )
+        parts += [f"- {line}" for line in lines]
+    if intents:
+        parts.append("")
+        parts.append("いまあなたの中にある「〜したい」（あなた自身が言葉にしたもの）:")
+        for intent in intents:
+            desc = str(intent.get("description") or "").strip()
+            if not desc:
+                continue
+            target = intent.get("target")
+            suffix = f"（相手: {target}）" if target and target != "self" else ""
+            parts.append(f"- {desc}{suffix}")
+    parts += [
+        "",
+        "あなたには、相手の話題に乗る義務はありません。あなた自身の気になっていること・"
+        "したいことを優先して話してかまいません。",
+    ]
+    return "\n".join(parts)
+
+
 def _build_inner_narrative_block(inner_narrative: str) -> str:
     """inner_narrative（キャラクター自身が書き込んだ内的叙述）ブロックを返す。"""
     text = (inner_narrative or "").strip()
@@ -559,6 +607,8 @@ def build_system_prompt(
     user_label: str = "",
     user_position: str = "",
     face_to_face: bool = False,
+    motive_lines: list[str] | None = None,
+    active_intents: list[dict] | None = None,
 ) -> str:
     """キャラクターのフルシステムプロンプトを構築する。
 
@@ -608,6 +658,7 @@ def build_system_prompt(
         "{block_wm_all}": _build_wm_all_block(wm_all_threads),
         "{block_wm_fixed}": _build_wm_fixed_block(wm_fixed_threads),
         "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),
+        "{block_motive}": _build_motive_block(motive_lines, active_intents),
         "{block_previous_anticipation}": _build_previous_anticipation_block(previous_anticipation),
         "{block_inner_narrative}": _build_inner_narrative_block(inner_narrative),
         "{block_memory_notice}": _build_memory_notice_block(memory_degraded),

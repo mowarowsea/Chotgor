@@ -142,6 +142,17 @@ class Character(Base):
     # 対面モード時に ChatView 背景へ表示する画像（base64 data URI）。image_data と同じ
     # 保存形式。未設定 = 背景表示なし（モード ON でも背景なしで動作する）。
     face_to_face_bg_image = Column(Text, nullable=True)
+    # 圧力の体質プロファイル（めぐり / Aliveness §4.2）。JSON:
+    #   {"version": 1,
+    #    "social": {"tau_days": float, "sharpness": float},
+    #    "boredom": {"sensitivity": float},
+    #    "body": {"fatigue_sensitivity": float},
+    #    "interview": {"answers": {...}, "raw": str, "asked_at": str}}
+    # NULL = 標準プロファイル（services/pressure の DEFAULT_PROFILE）。
+    # 初期化は本人インタビュー（体験の質問 → 固定ルーブリックが係数へ決定論写像）。
+    # 本人からの更新経路は作らない（圧力は物理 — 非制御性の担保）。
+    # ユーザは管理UIから編集できる（守護者の介入枠）。
+    pressure_profile = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,

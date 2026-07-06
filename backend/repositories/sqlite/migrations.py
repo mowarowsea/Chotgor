@@ -823,6 +823,32 @@ class SQLiteMigrationsMixin:
                 "ALTER TABLE chat_sessions DROP COLUMN group_config"
             )
 
+    def _migrate_add_pressure_profile(self) -> None:
+        """`characters` に `pressure_profile` 列を追加する（めぐり Phase 3）。
+
+        圧力（社会圧・退屈圧・体調圧）の体質プロファイル JSON。
+        NULL = 標準プロファイル。既存 DB には列が無いため ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            if "pressure_profile" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters ADD COLUMN pressure_profile TEXT"
+                )
+
     def _migrate_backfill_timeline_events(self) -> None:
         """タイムライン封筒（timeline_events）へ過去データをバックフィルする。
 
