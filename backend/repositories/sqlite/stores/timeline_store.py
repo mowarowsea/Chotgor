@@ -269,6 +269,70 @@ class TimelineStoreMixin:
                 .count()
             )
 
+    def fetch_timeline_source_contents(
+        self, source_table: str, source_ids: list[str]
+    ) -> dict[str, str]:
+        """封筒の source 参照から中身テキストを一括取得する（投影の content 開示用）。
+
+        観測者ポリシーが disclosure="content" を返した封筒についてだけ呼ばれる想定。
+        テーブルごとに「中身」として意味のあるテキストへ整形して返す:
+
+            - chat_messages      → 発言本文
+            - scenario_turns     → "話者名: 本文"
+            - inscribed_memories → 記憶本文
+            - tool_call_events   → 引数 JSON（power_recall のクエリ等）
+
+        Args:
+            source_table: 中身テーブル名。
+            source_ids: 取得する中身行 ID のリスト。
+
+        Returns:
+            {source_id: 中身テキスト} の辞書。見つからない ID はキー自体を含まない。
+        """
+        if not source_ids:
+            return {}
+        from backend.repositories.sqlite.models import (
+            ChatMessage,
+            InscribedMemory,
+            ScenarioTurn,
+            ToolCallEvent,
+        )
+
+        with self.get_session() as session:
+            if source_table == "chat_messages":
+                rows = (
+                    session.query(ChatMessage.id, ChatMessage.content)
+                    .filter(ChatMessage.id.in_(source_ids))
+                    .all()
+                )
+                return {str(i): str(c or "") for i, c in rows}
+            if source_table == "scenario_turns":
+                rows = (
+                    session.query(
+                        ScenarioTurn.id, ScenarioTurn.speaker_name, ScenarioTurn.content
+                    )
+                    .filter(ScenarioTurn.id.in_(source_ids))
+                    .all()
+                )
+                return {str(i): f"{n}: {c or ''}" for i, n, c in rows}
+            if source_table == "inscribed_memories":
+                rows = (
+                    session.query(InscribedMemory.id, InscribedMemory.content)
+                    .filter(InscribedMemory.id.in_(source_ids))
+                    .all()
+                )
+                return {str(i): str(c or "") for i, c in rows}
+            if source_table == "tool_call_events":
+                # autoincrement 整数 ID を文字列として保持しているため int へ変換して引く
+                int_ids = [int(i) for i in source_ids if str(i).isdigit()]
+                rows = (
+                    session.query(ToolCallEvent.id, ToolCallEvent.arguments_json)
+                    .filter(ToolCallEvent.id.in_(int_ids))
+                    .all()
+                )
+                return {str(i): str(a or "") for i, a in rows}
+            return {}
+
     # --- 封筒付与のための共通ヘルパ ---
 
     def _resolve_character_id_by_name_in_session(self, session, name: str) -> str | None:

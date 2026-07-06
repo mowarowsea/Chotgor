@@ -370,6 +370,44 @@ def _build_absent_user_block(
     return "\n".join(lines)
 
 
+def _build_real_contact_block(sqlite, owner_char) -> str:
+    """うつつ GM 向けの「現実の接触の封筒」ブロックを組み立てる（めぐり Phase 1）。
+
+    タイムライン正本から直近7日の real イベント（chat.* / action.performed）を
+    observer="world_frame" で投影し、封筒（存在・時刻・往復数）だけを GM に渡す。
+    中身（何を話したか）は投影ポリシーが envelope 止めにするため決して載らない。
+
+    Args:
+        sqlite: SQLiteStore。
+        owner_char: うつつ世界の所有者 Character。
+
+    Returns:
+        GM へ渡す OOC ブロック文字列。素材が無ければ空文字列。
+    """
+    from datetime import datetime, timedelta
+
+    from backend.services.timeline import format_real_contact_block, project
+
+    try:
+        events = project(
+            character_id=owner_char.id,
+            observer="world_frame",
+            sqlite=sqlite,
+            since=datetime.now() - timedelta(days=7),
+            origins=["real"],
+            types=["chat.*", "action.performed"],
+        )
+        return format_real_contact_block(
+            events,
+            character_name=getattr(owner_char, "name", "") or "",
+            user_label=getattr(owner_char, "user_label", "") or "",
+        )
+    except Exception:
+        # 封筒注入は補助情報なので、失敗してもシーン進行は止めない
+        logger.exception("現実接触封筒の構築に失敗 owner=%s", getattr(owner_char, "id", "?"))
+        return ""
+
+
 def _build_usual_gm_appendix(
     scenario,
     fired_responses: int,
@@ -545,6 +583,16 @@ async def run_scenario_turn(
                     user_position=getattr(owner_char, "user_position", "") or "",
                     visibility_note=getattr(owner_char, "user_visibility_note", "") or "",
                 )
+                # 現実の接触の封筒（めぐり / タイムライン投影）を GM へ注入する。
+                # observer="world_frame" は chat.*（real）を envelope 止めで見る —
+                # 「いつ・どのくらい接触したか」の外形だけを渡し、中身は渡さない
+                # （性質4: 因果的一貫性の穴埋め。docs/aliveness_plan.md §2.4）。
+                real_contact_block = _build_real_contact_block(sqlite, owner_char)
+                if real_contact_block:
+                    absent_user_block = (
+                        f"{absent_user_block}\n\n{real_contact_block}"
+                        if absent_user_block else real_contact_block
+                    )
 
     from backend.services.scenario_chat.mention import (
         format_pc_summary,
