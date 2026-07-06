@@ -248,6 +248,44 @@ class TimelineStoreMixin:
                 q = q.limit(limit)
             return q.all()
 
+    def attach_payload_to_latest_chat_event(
+        self, character_id: str, session_id: str, patch: dict
+    ) -> bool:
+        """セッション内の最新キャラ発話封筒（chat.message）へ payload をマージする。
+
+        farewell judge の採点結果（emotions / engagement）を該当ターンの封筒に
+        残すための口（Tier 3 サンプリングの材料を兼ねる。docs/aliveness_plan.md §5.2）。
+        judge はバックグラウンドで走るため「最新のキャラ発話」への best-effort 添付。
+
+        Args:
+            character_id: 対象キャラクター。
+            session_id: 対象チャットセッション。
+            patch: payload にマージする dict。
+
+        Returns:
+            添付できたら True（該当封筒なしなら False）。
+        """
+        from backend.repositories.sqlite.models import TimelineEvent
+
+        with self.get_session() as session:
+            event = (
+                session.query(TimelineEvent)
+                .filter(
+                    TimelineEvent.character_id == character_id,
+                    TimelineEvent.session_id == session_id,
+                    TimelineEvent.event_type == "chat.message",
+                    TimelineEvent.actor == "character",
+                    TimelineEvent.retracted_at.is_(None),
+                )
+                .order_by(TimelineEvent.occurred_at.desc(), TimelineEvent.created_at.desc())
+                .first()
+            )
+            if event is None:
+                return False
+            event.payload = {**(event.payload or {}), **patch}
+            session.commit()
+            return True
+
     def count_timeline_events_by_source(self, source_table: str) -> int:
         """指定ソーステーブル由来の封筒件数を返す（retracted 含む）。
 

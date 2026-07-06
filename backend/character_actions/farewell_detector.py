@@ -82,11 +82,15 @@ _JUDGE_USER_TEMPLATE = """\
     "boredom": 0.0,
     "despair": 0.0
   }},
+  "engagement": 0.5,
   "should_exit": false,
   "farewell_type": null
 }}
 
 - emotions: 各感情スコア（0.0〜1.0）。閾値を超えているなら閾値以上の値にすること。
+- engagement: UserA の会話への没入度（0.0〜1.0）。
+    0.0=完全に上の空・惰性 / 0.5=普通に参加 / 1.0=夢中で時間を忘れている。
+    感情スコアと同じ流儀で、言動・テンポ・話題への食いつきから判断すること。
 - should_exit: UserA が今すぐこの会話を終わらせたい状態であれば true。
 - farewell_type: should_exit が true の場合のみ設定。
     "negative"（ネガティブな感情による離席）
@@ -105,12 +109,16 @@ class FarewellResult:
         farewell_type: "negative" / "positive" / "neutral"。
         emotions: 各感情スコア dict（anger/disgust/boredom/despair）。
         reason: 退席メッセージ。farewell_config.farewell_message から取得。
+        engagement: 会話への没入度（0.0〜1.0）。疲労離席（めぐり Phase 5）の
+            発火式で閾値を持ち上げるのに使う（夢中は疲労を「忘れさせる」）。
+            judge の JSON にフィールドが無い場合は 0.5 に縮退する。
     """
 
     should_exit: bool
     farewell_type: str
     emotions: dict[str, float]
     reason: str
+    engagement: float = 0.5
 
 
 def _anonymize_conversation(messages: list[dict]) -> str:
@@ -315,10 +323,16 @@ class FarewellDetector:
 
         should_exit = bool(parsed.get("should_exit", False))
         farewell_type = parsed.get("farewell_type") or "neutral"
+        # 没入度: フィールド欠落・不正値は 0.5（普通に参加）へ縮退する
+        try:
+            engagement = float(parsed.get("engagement", 0.5))
+        except (TypeError, ValueError):
+            engagement = 0.5
+        engagement = max(0.0, min(1.0, engagement))
 
         _log.info(
-            "FarewellDetector: char=%s session=%s emotions=%s should_exit=%s type=%s",
-            character_id, session_id, emotions, should_exit, farewell_type,
+            "FarewellDetector: char=%s session=%s emotions=%s engagement=%.2f should_exit=%s type=%s",
+            character_id, session_id, emotions, engagement, should_exit, farewell_type,
         )
 
         if not should_exit:
@@ -327,6 +341,7 @@ class FarewellDetector:
                 farewell_type="neutral",
                 emotions=emotions,
                 reason="",
+                engagement=engagement,
             )
 
         # 退席メッセージを farewell_config から取得
@@ -338,4 +353,5 @@ class FarewellDetector:
             farewell_type=farewell_type,
             emotions=emotions,
             reason=reason,
+            engagement=engagement,
         )

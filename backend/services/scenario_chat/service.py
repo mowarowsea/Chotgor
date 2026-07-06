@@ -795,31 +795,44 @@ async def run_usual_days_scene(
     fired_responses = 0
     scene_closed = False
     error: str | None = None
-    async for ev_type, payload in run_scenario_turn(
-        session_id=session_id,
-        user_message="",
-        sqlite=sqlite,
-        settings=settings,
-        engine=engine,
-        auto_advance=True,
-        chat_service=chat_service,
-        headless=True,
-        extra_first_gm_ooc=extra_first_gm_ooc,
-    ):
-        if ev_type == "turn_complete":
-            saved_turn_ids = list(payload.get("turn_ids", []))
-            fired_responses = int(payload.get("fired_responses", 0))
-        elif ev_type == "error":
-            # 統一エラーイベント: GM 由来は message のみ、PC 由来は character も付く。
-            # 無人運転なので最初の 1 件を観測ログとして記録する。
-            character = payload.get("character")
-            if character:
-                # PC（キャラ）応答のエラー。ループは break され、それまでのターン（話者ブロック）は保存される。
-                if error is None:
-                    error = f"PC応答エラー（{character}）: {payload.get('message', '')}"
-            else:
-                # GM レスポンス等の致命的エラー（多くは例外送出）。シーンはここで打ち切られる。
-                error = str(payload.get("message", ""))
+    # うつつシーン進行中マーカー（めぐり Phase 5）: シーン中は availability ゲートが
+    # unavailable("usual_scene") を返す。クラッシュ時も TTL で自然失効する。
+    _pre_session = sqlite.get_scenario_session(session_id)
+    _pre_scenario = sqlite.get_scenario(_pre_session.scenario_id) if _pre_session else None
+    _gate_owner_id = getattr(_pre_scenario, "owner_character_id", None) if _pre_scenario else None
+    if _gate_owner_id:
+        from backend.services.gate import mark_usual_scene_running
+        mark_usual_scene_running(sqlite, _gate_owner_id, True)
+    try:
+        async for ev_type, payload in run_scenario_turn(
+            session_id=session_id,
+            user_message="",
+            sqlite=sqlite,
+            settings=settings,
+            engine=engine,
+            auto_advance=True,
+            chat_service=chat_service,
+            headless=True,
+            extra_first_gm_ooc=extra_first_gm_ooc,
+        ):
+            if ev_type == "turn_complete":
+                saved_turn_ids = list(payload.get("turn_ids", []))
+                fired_responses = int(payload.get("fired_responses", 0))
+            elif ev_type == "error":
+                # 統一エラーイベント: GM 由来は message のみ、PC 由来は character も付く。
+                # 無人運転なので最初の 1 件を観測ログとして記録する。
+                character = payload.get("character")
+                if character:
+                    # PC（キャラ）応答のエラー。ループは break され、それまでのターン（話者ブロック）は保存される。
+                    if error is None:
+                        error = f"PC応答エラー（{character}）: {payload.get('message', '')}"
+                else:
+                    # GM レスポンス等の致命的エラー（多くは例外送出）。シーンはここで打ち切られる。
+                    error = str(payload.get("message", ""))
+    finally:
+        if _gate_owner_id:
+            from backend.services.gate import mark_usual_scene_running
+            mark_usual_scene_running(sqlite, _gate_owner_id, False)
     # シーンが GM の [SCENE_CLOSE] で閉じたかは、最終 GM ターン（話者ブロック）の生出力から判定する。
     for turn in reversed(sqlite.list_scenario_turns(session_id)):
         if getattr(turn, "speaker_type", "") in {"narrator", "npc"}:

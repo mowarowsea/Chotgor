@@ -96,6 +96,10 @@ def build_1on1_history(
     """
     messages: list[Message] = []
     for msg in history:
+        # システムメッセージ（退席通知・預かり通知などの掲示）はキャラクターの
+        # 発話ではないため LLM 履歴に載せない（キャラが自分の台詞と誤認するのを防ぐ）。
+        if getattr(msg, "is_system_message", None):
+            continue
         if msg.role == "character":
             messages.append(Message(role="assistant", content=msg.content))
         else:

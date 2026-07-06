@@ -117,6 +117,39 @@ async def _run_farewell_detection(
         _log.exception("FarewellDetector実行エラー char=%s session=%s", character_name, session_id)
         return
 
+    # judge の採点結果を該当ターン（最新キャラ発話）の封筒 payload に残す
+    # （Tier 3 サンプリングの材料を兼ねる。めぐり Phase 5）。best-effort。
+    if result is not None:
+        try:
+            detector.sqlite.attach_payload_to_latest_chat_event(
+                character_id, session_id,
+                {
+                    "judge": {
+                        "emotions": result.emotions,
+                        "engagement": result.engagement,
+                    }
+                },
+            )
+        except Exception:
+            _log.exception("judge採点の封筒添付に失敗 char=%s", character_name)
+
+    # 疲労離席（めぐり Phase 5）: 物理の発火式が終わりを決める。
+    # judge の没入度で閾値が持ち上がる（夢中は疲労を忘れさせるが消さない）。
+    # farewell（感情閾値）で退席が確定するターンでは二重離席を避けるためスキップ。
+    if result is None or not result.should_exit:
+        try:
+            from backend.services.gate import check_fatigue_leave
+            check_fatigue_leave(
+                detector.sqlite,
+                character_id=character_id,
+                character_name=character_name,
+                session_id=session_id,
+                farewell_config=farewell_config,
+                engagement=result.engagement if result is not None else 0.5,
+            )
+        except Exception:
+            _log.exception("疲労離席チェックに失敗 char=%s", character_name)
+
     if result is None or not result.should_exit:
         return
 
@@ -784,6 +817,27 @@ class ChatFlow:
                         vector_store=self.memory_manager.vector_store,
                     )
                 )
+            elif (
+                request.farewell_config
+                and isinstance(request.farewell_config.get("fatigue"), dict)
+            ):
+                # judge プリセット未設定でも疲労離席は動かす（engagement=0.5 縮退。
+                # めぐり Phase 5 — 出口は物理が握る）。
+                def _fatigue_only() -> None:
+                    """judge 不在時の疲労離席チェック（バックグラウンドスレッド実行）。"""
+                    try:
+                        from backend.services.gate import check_fatigue_leave
+                        check_fatigue_leave(
+                            self.memory_manager.sqlite,
+                            character_id=request.character_id,
+                            character_name=request.character_name,
+                            session_id=request.session_id,
+                            farewell_config=request.farewell_config,
+                            engagement=0.5,
+                        )
+                    except Exception:
+                        _log.exception("疲労離席チェックに失敗 char=%s", request.character_name)
+                asyncio.create_task(asyncio.to_thread(_fatigue_only))
 
         if clean_text and not text_already_streamed:
             yield ("text", clean_text)

@@ -307,6 +307,18 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     _chat_char_ids = get_participant_char_ids(session, state.sqlite)
     _chat_user_name = state.sqlite.get_setting("user_name", "ユーザ")
 
+    # --- 応答可能性ゲート（めぐり Phase 5） ---
+    # unavailable 中のユーザ発言は預かり（delivered_at=NULL）で保存だけして LLM を呼ばない。
+    # availability が戻った次のリクエストで、時間差注釈付きでまとめてキャラに渡る。
+    from backend.services.gate import check_availability, is_usual_scene_running
+    _availability = check_availability(
+        char_for_estranged,
+        usual_scene_running=(
+            is_usual_scene_running(state.sqlite, char_for_estranged.id)
+            if char_for_estranged else False
+        ),
+    )
+
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
         message_id=user_msg_id,
@@ -315,10 +327,43 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         content=body.content,
         images=body.image_ids or None,
         face_to_face=current_face_to_face,
+        delivered=_availability.available,
     )
     asyncio.create_task(asyncio.to_thread(
         index_message_sync, user_msg, _chat_char_ids, state.vector_store, _chat_user_name
     ))
+
+    if not _availability.available and not already_exited:
+        # 預かり通知（システムメッセージ）: 既存の退席フローと同じ SSE 形で返す。
+        # 通知自体は保存する（リロード後もユーザが状況を確認できるように）。
+        escrow_text = (
+            f"{char_name_for_check}はいま席を外しています（{_availability.reason}）。"
+            "メッセージは届いていて、戻ったら読みます。"
+        )
+        escrow_sys_msg = state.sqlite.create_chat_message(
+            message_id=str(uuid.uuid4()),
+            session_id=session_id,
+            role="character",
+            content=escrow_text,
+            character_name=char_name_for_check,
+            is_system_message=True,
+            face_to_face=current_face_to_face,
+        )
+
+        async def escrow_generator():
+            """預かり（escrow）向け SSE ジェネレーター。LLM は呼ばない。"""
+            done_data = json.dumps({
+                "type": "done",
+                "user_message": message_to_dict(user_msg),
+                "character_message": message_to_dict(escrow_sys_msg),
+            }, ensure_ascii=False)
+            yield f"data: {done_data}\n\n"
+
+        return StreamingResponse(
+            escrow_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
 
     if already_exited:
         # 退席済み → 全退席者のシステムメッセージを1件返す
@@ -351,6 +396,20 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
     history_before = state.sqlite.list_chat_messages(session_id)
     history = [m for m in history_before if m.id != user_msg_id]
+
+    # 預かり分の配達（めぐり Phase 5）: available でここまで来たら、過去の預かり
+    # メッセージをまとめて配達する。LLM に渡すコピーにだけ時間差注釈を付け
+    # （DB の本文は変更しない）、delivered_at と chat.message 封筒を確定させる。
+    from backend.services.gate import format_escrow_annotation
+    _pending = [
+        m for m in history
+        if getattr(m, "delivered_at", None) is None
+        and not getattr(m, "is_system_message", None)
+    ]
+    if _pending:
+        for m in _pending:
+            m.content = format_escrow_annotation(m)
+        state.sqlite.mark_messages_delivered([m.id for m in _pending])
 
     if len(history) == 0 and session.title == "新しいチャット":
         effective_title = body.content[:30].replace("\n", " ")

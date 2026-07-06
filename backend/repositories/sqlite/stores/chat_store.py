@@ -101,6 +101,7 @@ class ChatStoreMixin:
         log_message_id: str | None = None,
         anticipation: str | None = None,
         face_to_face: int = 0,
+        delivered: bool = True,
     ):
         """チャットメッセージを作成する。
 
@@ -110,6 +111,9 @@ class ChatStoreMixin:
             anticipation: キャラクターが本文末尾に書いた予想（期待）。次ターンのシステムプロンプトに注入される。
             face_to_face: 当該メッセージが交わされた時点のチャットモード（0=テキスト / 1=対面）。
                 キャラクタースコープの face_to_face_mode を送信時に焼き付ける。
+            delivered: False なら「預かり（escrow）」として delivered_at=NULL で保存する
+                （キャラ未読・LLM 未到達。availability が戻ったら配達される）。
+                既定 True（即配達＝従来挙動）。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ChatMessage, ChatSession
@@ -126,12 +130,15 @@ class ChatStoreMixin:
                 log_message_id=log_message_id or None,
                 anticipation=anticipation or None,
                 face_to_face=1 if face_to_face else 0,
+                delivered_at=datetime.now() if delivered else None,
             )
             session.add(msg)
             # タイムライン封筒 dual-write（chat.message）— 同一トランザクション。
             # システムメッセージ（退席通知等）は「キャラの身に起きたこと」ではない
             # 表示上の掲示なので封筒に載せない（退席自体は chat.farewell が載る）。
-            if not is_system_message:
+            # 預かり（delivered=False）のメッセージもまだキャラの身に起きていないため
+            # ここでは載せず、配達時（mark_messages_delivered）に封筒を作る。
+            if not is_system_message and delivered:
                 chat_session = session.get(ChatSession, session_id)
                 char_name = None
                 if chat_session and chat_session.model_id:
@@ -237,6 +244,88 @@ class ChatStoreMixin:
                 ChatMessage.id.in_(message_ids)
             ).update({"chronicled_at": now}, synchronize_session=False)
             session.commit()
+
+    def list_undelivered_messages(self, session_id: str) -> list:
+        """セッション内の預かり中（delivered_at IS NULL）メッセージを時系列で返す。
+
+        availability が戻った際の配達（時間差注釈付きのまとめ渡し）に使う。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ChatMessage
+            return (
+                session.query(ChatMessage)
+                .filter(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.delivered_at.is_(None),
+                )
+                .order_by(ChatMessage.created_at.asc())
+                .all()
+            )
+
+    def mark_messages_delivered(self, message_ids: list[str]) -> None:
+        """預かり中メッセージを配達済みにし、chat.message 封筒を同時に作る。
+
+        封筒の occurred_at は配達時刻（キャラの身に起きた瞬間）。送信時刻は
+        中身（chat_messages.created_at）が持っているので封筒には複製しない。
+
+        Args:
+            message_ids: 配達するメッセージ ID のリスト。
+        """
+        if not message_ids:
+            return
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ChatMessage, ChatSession
+            now = datetime.now()
+            msgs = (
+                session.query(ChatMessage)
+                .filter(
+                    ChatMessage.id.in_(message_ids),
+                    ChatMessage.delivered_at.is_(None),
+                )
+                .all()
+            )
+            for msg in msgs:
+                msg.delivered_at = now
+                chat_session = session.get(ChatSession, msg.session_id)
+                char_name = None
+                if chat_session and chat_session.model_id:
+                    char_name = chat_session.model_id.rsplit("@", 1)[0]
+                char_id = self._resolve_character_id_by_name_in_session(
+                    session, char_name or ""
+                )
+                if char_id:
+                    self._append_timeline_event(
+                        session,
+                        character_id=char_id,
+                        event_type="chat.message",
+                        occurred_at=now,
+                        actor="user" if msg.role == "user" else "character",
+                        counterpart="user",
+                        origin="real",
+                        modality="face" if msg.face_to_face else "text",
+                        session_id=msg.session_id,
+                        source_table="chat_messages",
+                        source_id=msg.id,
+                    )
+            session.commit()
+
+    def list_sessions_with_undelivered(self) -> list:
+        """預かり中メッセージを持つセッション一覧を返す（配達スケジューラ用）。
+
+        Returns:
+            (ChatSession, 預かり件数) のタプルのリスト。
+        """
+        with self.get_session() as session:
+            from sqlalchemy import func
+            from backend.repositories.sqlite.store import ChatMessage, ChatSession
+            rows = (
+                session.query(ChatSession, func.count(ChatMessage.id))
+                .join(ChatMessage, ChatMessage.session_id == ChatSession.id)
+                .filter(ChatMessage.delivered_at.is_(None))
+                .group_by(ChatSession.id)
+                .all()
+            )
+            return rows
 
     def delete_chat_messages_from(self, session_id: str, message_id: str) -> bool:
         """指定メッセージ以降（自身を含む）をすべて削除する。"""

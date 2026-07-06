@@ -849,6 +849,61 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE characters ADD COLUMN pressure_profile TEXT"
                 )
 
+    def _migrate_add_gate_columns(self) -> None:
+        """応答可能性ゲート（めぐり Phase 5）関連カラムを追加する。
+
+        - characters.availability_schedule (JSON, NULL可): 生活時間割（応答不可時間帯）。
+        - characters.away_until (DATETIME, NULL可): 動的不在の期限。
+        - characters.away_reason (TEXT, NULL可): 不在理由。
+        - chat_messages.delivered_at (DATETIME, NULL可): メッセージ預かりマーカー。
+          既存行は「配達済み」として created_at をバックフィルする
+          （NULL のまま残すと過去メッセージが預かり中扱いになるため）。
+
+        既存 DB に列がなければ ALTER TABLE で追加する。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(characters)"
+                    ).fetchall()
+                }
+                if "availability_schedule" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters ADD COLUMN availability_schedule TEXT"
+                    )
+                if "away_until" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters ADD COLUMN away_until DATETIME"
+                    )
+                if "away_reason" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters ADD COLUMN away_reason TEXT"
+                    )
+            if "chat_messages" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(chat_messages)"
+                    ).fetchall()
+                }
+                if "delivered_at" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE chat_messages ADD COLUMN delivered_at DATETIME"
+                    )
+                    # 既存メッセージは配達済み扱い（created_at で埋める）
+                    conn.exec_driver_sql(
+                        "UPDATE chat_messages SET delivered_at = created_at "
+                        "WHERE delivered_at IS NULL"
+                    )
+
     def _migrate_backfill_timeline_events(self) -> None:
         """タイムライン封筒（timeline_events）へ過去データをバックフィルする。
 

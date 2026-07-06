@@ -78,6 +78,11 @@ class ChatMessage(Base):
     # キャラクタースコープの face_to_face_mode を送信時に焼き付ける。後からハレ履歴を
     # うつつへ流し込む際、対面とテキストでラベルを切り替えるために使う。
     face_to_face = Column(Integer, nullable=False, default=0)
+    # メッセージ預かり（escrow・めぐり §5.1）: NULL = 預かり中（キャラ未読・LLM 未到達）、
+    # タイムスタンプ = キャラに渡った時刻。chronicled_at と同パターン。
+    # unavailable 中のユーザ発言は NULL で保存だけされ、availability が戻った時点で
+    # まとめて時間差注釈付きで渡される。通常のメッセージは作成時に即セットされる。
+    delivered_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -142,6 +147,16 @@ class Character(Base):
     # 対面モード時に ChatView 背景へ表示する画像（base64 data URI）。image_data と同じ
     # 保存形式。未設定 = 背景表示なし（モード ON でも背景なしで動作する）。
     face_to_face_bg_image = Column(Text, nullable=True)
+    # 生活時間割（めぐり / Aliveness §5.1）。JSON:
+    #   {"mon": [{"from": "09:00", "to": "18:00", "label": "仕事"}], "tue": [...], ...}
+    # 曜日キー（mon〜sun）ごとの **応答できない時間帯** のリスト。
+    # NULL / 空 = 常時応答可能。キャラクター設計者（ユーザ）が管理UIで設定する。
+    availability_schedule = Column(JSON, nullable=True)
+    # away 状態（動的な不在。疲労離席・take_leave が設定する）。
+    # away_until が未来の間は availability ゲートが unavailable(away_reason) を返す。
+    # NULL = away でない。時刻が過ぎれば自動的に解除扱い（行の掃除は不要）。
+    away_until = Column(DateTime, nullable=True)
+    away_reason = Column(String, nullable=True)
     # 圧力の体質プロファイル（めぐり / Aliveness §4.2）。JSON:
     #   {"version": 1,
     #    "social": {"tau_days": float, "sharpness": float},

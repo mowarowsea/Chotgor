@@ -60,6 +60,11 @@ from backend.character_actions.web_searcher import (
     WEB_SEARCH_SCHEMA,
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
+from backend.character_actions.leaver import (
+    Leaver,
+    TAKE_LEAVE_SCHEMA,
+    TAKE_LEAVE_TOOL_DESCRIPTION,
+)
 
 # Anthropic形式のツール定義リスト
 ANTHROPIC_TOOLS: list[dict] = [
@@ -112,6 +117,11 @@ ANTHROPIC_TOOLS: list[dict] = [
         "name": "web_search",
         "description": WEB_SEARCH_TOOL_DESCRIPTION,
         "input_schema": WEB_SEARCH_SCHEMA,
+    },
+    {
+        "name": "take_leave",
+        "description": TAKE_LEAVE_TOOL_DESCRIPTION,
+        "input_schema": TAKE_LEAVE_SCHEMA,
     },
 ]
 
@@ -235,6 +245,7 @@ class ToolExecutor:
         self._carver = Carver(character_id, _sqlite)
         self._switcher = Switcher()
         self._web_searcher = WebSearcher(_sqlite)
+        self._leaver = Leaver(character_id, session_id, _sqlite)
 
     @property
     def switch_request(self) -> tuple[str, str] | None:
@@ -451,6 +462,12 @@ class ToolExecutor:
                 max_results=int(tool_input.get("max_results", 5)),
                 topic=str(tool_input.get("topic", "general")),
             )
+        if tool_name == "take_leave":
+            # 本人宣言の離席（めぐり Phase 5）: 呼ばれたら必ず執行される権利。
+            return self._take_leave(
+                reason=str(tool_input.get("reason", "")),
+                hours=tool_input.get("hours"),
+            )
         self.logger.warning("未知のツール name=%s", tool_name)
         return f"[Unknown tool: {tool_name}]"
 
@@ -618,6 +635,20 @@ class ToolExecutor:
                     lines.append(f"  {i}. {turn['content']}")
 
         return "\n".join(lines)
+
+    def _take_leave(self, reason: str, hours) -> str:
+        """take_leave ツールの実装。Leaver.take_leave() に委譲して away 状態を設定する。
+
+        呼ばれたら必ず執行される権利（めぐり Phase 5 §5.2）。
+        sqlite 未接続（memory_manager=None のバッチ構成）の場合のみエラーを返す。
+        """
+        if self._leaver.sqlite_store is None:
+            return "[take_leave error: この文脈では離席を執行できません]"
+        try:
+            return self._leaver.take_leave(reason=reason, hours=hours)
+        except Exception as e:
+            self.logger.exception("take_leave エラー char=%s", self.character_id)
+            return f"[take_leave error: {e}]"
 
     def _web_search(self, query: str, max_results: int, topic: str) -> str:
         """web_search ツールの実装。Tavily API でインターネット検索を行い結果を返す。
