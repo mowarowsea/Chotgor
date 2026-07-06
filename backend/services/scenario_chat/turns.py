@@ -31,7 +31,7 @@ def _save_turn(
     turn_id = str(uuid.uuid4())
     next_index = sqlite.get_next_scenario_turn_index(session_id)
     log_req_id = current_message_id.get() if attach_log_request_id else None
-    return sqlite.create_scenario_turn(
+    saved = sqlite.create_scenario_turn(
         turn_id=turn_id,
         session_id=session_id,
         turn_index=next_index,
@@ -43,6 +43,15 @@ def _save_turn(
         log_request_id=log_req_id,
         anticipation=anticipation,
     )
+    # 計器 Tier 2: LLM 産の発話（GM/NPC/Narrator/キャラPC）を外形スキャンする。
+    # ユーザ発話・intro（人間の手書き）は対象外。誤検知許容の smell 記録であり、
+    # 失敗しても保存処理は止めない（record_response_smells 内で握り潰す）。
+    if speaker_type != "user" and raw_response is not None:
+        from backend.services.instruments.tier2 import record_response_smells
+        record_response_smells(
+            sqlite, content, character_name=speaker_name, feature="scenario",
+        )
+    return saved
 def parse_intro_to_turns(
     intro_text: str,
     user_alias: str,

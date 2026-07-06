@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}instruments &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/instruments" class="ch-crumb">instruments</a>{% endblock %}
+
+{#-
+  alarm_table — アラーム/スメルの一覧テーブルを描画するマクロ。
+  rows は Alarm ORM のリスト。ack=True のとき確認ボタン列を出す。
+-#}
+{% macro alarm_table(rows, empty_hint, ack=False) -%}
+{% if rows %}
+<div class="ch-table-wrap">
+    <table class="ch-table">
+        <thead>
+            <tr>
+                <th>発生時刻</th><th>検知器</th><th>内容</th>
+                {% if ack %}<th></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in rows %}
+            <tr {% if a.acknowledged_at %}style="opacity:.5"{% endif %}>
+                <td style="white-space:nowrap">{{ a.occurred_at.strftime("%m/%d %H:%M") }}</td>
+                <td><span class="ch-tag {% if a.severity == 'alarm' %}ch-tag--danger{% else %}ch-tag--sub{% endif %}">{{ invariant_labels.get(a.invariant_id, a.invariant_id) }}</span></td>
+                <td style="font-size:.85em;word-break:break-all">{{ a.details | tojson if a.details else "–" }}</td>
+                {% if ack %}
+                <td style="white-space:nowrap">
+                    {% if not a.acknowledged_at %}
+                    <form method="post" action="/ui/instruments/alarms/{{ a.id }}/ack" style="display:inline">
+                        <button type="submit" class="ch-btn ch-btn--xs">確認済みにする</button>
+                    </form>
+                    {% else %}
+                    <span class="ch-hint">確認済み</span>
+                    {% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="ch-hint">{{ empty_hint }}</p>
+{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<div class="ch-shell">
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">meguri / instruments</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">計器パネル</h1>
+        </div>
+        <p class="ch-hint">
+            内容を見ずに外形だけで健全性を監視する監査層。アラーム＝幻想の穴が開いた証拠（発火したら調査）、
+            スメル＝疑い記録（誤検知許容）、メーター＝傾向（発火概念なし）。
+        </p>
+    </header>
+
+    {# ── 静音期間 ────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-cardgrid">
+            <div class="ch-card">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">静</span>
+                    <span class="ch-card__title">静音期間</span>
+                </div>
+                <div class="ch-card__meta">
+                    {% if quiet_days is none %}
+                    計器未稼働
+                    {% else %}
+                    <strong style="font-size:1.6em">{{ quiet_days }}</strong> 日
+                    （既知の事故クラスすべてで無事故）
+                    {% endif %}
+                </div>
+            </div>
+            <div class="ch-card">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">!</span>
+                    <span class="ch-card__title">未確認アラーム</span>
+                </div>
+                <div class="ch-card__meta">
+                    <strong style="font-size:1.6em">{{ unacknowledged }}</strong> 件（直近30日）
+                </div>
+            </div>
+            <div class="ch-card">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">巡</span>
+                    <span class="ch-card__title">巡回状態</span>
+                </div>
+                <div class="ch-card__meta">
+                    最終巡回: {{ last_patrol or "未実行" }}<br>
+                    Tier 3 判定: {% if judge_preset_id %}有効{% else %}未設定（instruments_judge_preset_id）{% endif %}
+                </div>
+            </div>
+        </div>
+    </section>
+
+    {# ── Tier 1 / Tier 3: アラーム ─────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">アラーム（Tier 1 インバリアント / Tier 3 判定巡回）</h2></div>
+        {{ alarm_table(alarms, "直近30日、アラームの発火はありません。", ack=True) }}
+    </section>
+
+    {# ── Tier 2: スメル ────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">スメル（Tier 2 検知器・誤検知許容）</h2></div>
+        {{ alarm_table(smells, "直近30日、スメルの検知はありません。") }}
+    </section>
+
+    {# ── メーター ──────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">メーター（傾向・最新値）</h2></div>
+        {% if meter_rows %}
+        <div class="ch-table-wrap">
+            <table class="ch-table">
+                <thead>
+                    <tr><th>キャラクター</th><th>メーター</th><th style="text-align:right">値</th><th>計測時刻</th></tr>
+                </thead>
+                <tbody>
+                    {% for m in meter_rows %}
+                    <tr>
+                        <td>{{ m.character }}</td>
+                        <td>{{ m.meter }}</td>
+                        <td style="text-align:right"><strong>{{ "%g"|format(m.value) }}</strong></td>
+                        <td style="white-space:nowrap">{{ m.occurred_at.strftime("%m/%d %H:%M") }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="ch-hint">メーターのスナップショットはまだありません（巡回 05:00 以降に記録されます）。</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

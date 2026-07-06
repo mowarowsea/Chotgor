@@ -340,6 +340,14 @@ class ChatFlow:
                 _log.warning("記憶想起失敗（embedding）char=%s error=%s", request.character_id, e)
                 recall_error = "記憶の想起に失敗しました（embedding接続エラー）"
                 memory_degraded = True
+                # 計器 Tier 1（embedding_degraded）: 記憶の縮退は幻想の穴（既存の
+                # 縮退通知二系統 = recall_error / memory_notice に加え、監査記録を残す）。
+                from backend.lib.instrument_recorder import fire_alarm
+                fire_alarm("embedding_degraded", details={
+                    "where": "recall_with_identity",
+                    "character_id": request.character_id,
+                    "error": str(e),
+                })
             except Exception as e:
                 _log.warning("記憶想起失敗 char=%s error=%s", request.character_id, e)
                 recall_error = "記憶の想起に失敗しました"
@@ -372,6 +380,13 @@ class ChatFlow:
                 memory_degraded = True
                 if recall_error is None:
                     recall_error = "ワーキングメモリの取得に失敗しました（embedding接続エラー）"
+                # 計器 Tier 1（embedding_degraded）: 監査記録（縮退通知二系統とは別枠）。
+                from backend.lib.instrument_recorder import fire_alarm
+                fire_alarm("embedding_degraded", details={
+                    "where": "recall_threads",
+                    "character_id": request.character_id,
+                    "error": str(e),
+                })
             except Exception as e:
                 _log.warning("ワーキングメモリ取得失敗 char=%s error=%s", request.character_id, e)
                 memory_degraded = True

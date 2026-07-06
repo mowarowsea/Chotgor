@@ -486,6 +486,13 @@ class ToolExecutor:
             # 同ターン内で実行可能な WM への退避（SQLite 書き込みのため障害中でも保存される）と、
             # 当日会話を読み返す今夜の Chronicle（embedding 非依存）を受け皿として案内する。
             self.logger.warning("inscribe_memory embedding失敗 char=%s error=%s", self.character_id, e)
+            # 計器 Tier 1（embedding_degraded）: 記憶の縮退の監査記録。
+            from backend.lib.instrument_recorder import fire_alarm
+            fire_alarm("embedding_degraded", details={
+                "where": "inscribe_memory",
+                "character_id": self.character_id,
+                "error": str(e),
+            })
             return (
                 "[inscribe_memory error: 記憶システムが一時的に不調のため、刻み込みに失敗しました"
                 "（embedding接続エラー）。この内容はまだ保存されていませんが、"
@@ -556,6 +563,13 @@ class ToolExecutor:
             # 再試行の指示はしない（想起は必要が再び生じたときに自然に行われ、
             # 自動想起も復旧すれば勝手に再開するため）。
             self.logger.warning("power_recall embedding失敗 char=%s query=%.50s error=%s", self.character_id, query, e)
+            # 計器 Tier 1（embedding_degraded）: 記憶の縮退の監査記録。
+            from backend.lib.instrument_recorder import fire_alarm
+            fire_alarm("embedding_degraded", details={
+                "where": "power_recall",
+                "character_id": self.character_id,
+                "error": str(e),
+            })
             return (
                 "[power_recall error: 記憶システムが一時的に不調のため、想起に失敗しました"
                 "（embedding接続エラー）。あなたの記憶が消えたわけではなく、"

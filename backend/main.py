@@ -111,12 +111,19 @@ async def lifespan(app: FastAPI):
     # tool_event_recorder に SQLiteStore をセットしてツール実行イベントの記録を有効化する
     from backend.lib import tool_event_recorder
     tool_event_recorder.set_store(sqlite)
+    # instrument_recorder に SQLiteStore をセットして計器アラームの記録を有効化する
+    from backend.lib import instrument_recorder
+    instrument_recorder.set_store(sqlite)
+    # 計器の稼働開始時刻を記録する（静音期間の起点。初回のみ）
+    if not sqlite.get_setting("instruments_started_at"):
+        sqlite.set_setting("instruments_started_at", datetime.now().isoformat())
 
     _log.info("Chotgor backend 起動 sqlite=%s", SQLITE_DB_PATH)
 
     asyncio.create_task(_chronicle_scheduler(app))
     asyncio.create_task(_forget_scheduler(app))
     asyncio.create_task(_usual_days_scheduler(app))
+    asyncio.create_task(_instruments_scheduler(app))
 
     yield
 
@@ -151,6 +158,51 @@ async def _chronicle_scheduler(app: FastAPI) -> None:
                 )
             except Exception:
                 _log.exception("chronicle スケジューラー 実行エラー")
+
+
+async def _instruments_scheduler(app: FastAPI) -> None:
+    """Background task: 毎日 05:00（設定可）に計器の巡回チェックを実行する。
+
+    巡回時刻は Chronicle（03:00）→ Forget（04:00）の後に置く
+    （night_batch_heartbeat が当日の夜間バッチ完了を前提とするため）。
+    実行内容:
+        - Tier 1 巡回インバリアント（run_patrol_checks）
+        - Tier 2 肥大メーターの日次スナップショット（record_bloat_meters）
+        - Tier 3 判定巡回（run_judgement_patrol。判定プリセット未設定ならスキップ）
+    冪等キーは chronicle スケジューラと同型（日付文字列）。
+    """
+    _log = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(60)
+        now = datetime.now()
+        patrol_time_str = app.state.sqlite.get_setting("instruments_patrol_time", "05:00")
+        try:
+            h, m = map(int, patrol_time_str.split(":"))
+        except Exception:
+            h, m = 5, 0
+        scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        today_str = now.date().isoformat()
+        last_run = app.state.sqlite.get_setting("instruments_last_run_date", "")
+        if now >= scheduled and last_run != today_str:
+            _log.info("計器巡回スケジューラー 起動 設定時刻=%s", patrol_time_str)
+            app.state.sqlite.set_setting("instruments_last_run_date", today_str)
+            try:
+                from backend.services.instruments import (
+                    record_bloat_meters,
+                    run_judgement_patrol,
+                    run_patrol_checks,
+                )
+                summary = run_patrol_checks(app.state.sqlite)
+                meters = record_bloat_meters(app.state.sqlite)
+                judge_result = await run_judgement_patrol(
+                    app.state.sqlite, app.state.sqlite.get_all_settings()
+                )
+                _log.info(
+                    "計器巡回 完了 patrol=%s meters=%d judge=%s",
+                    summary, meters, judge_result.get("status"),
+                )
+            except Exception:
+                _log.exception("計器巡回スケジューラー 実行エラー")
 
 
 def _parse_slot_time(now: datetime, slot: str) -> datetime | None:

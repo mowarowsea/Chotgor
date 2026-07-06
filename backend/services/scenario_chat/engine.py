@@ -16,7 +16,7 @@ UtteranceDelta / TurnRecord の列を非同期 yield する抽象。
 """
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
 from backend.providers.registry import create_provider
@@ -155,10 +155,14 @@ class EngineResult:
     safety filter ブロック等）。エラー発生時は raw_response が部分・空の可能性が
     あるため、呼び出し側は provider_error の有無で SQLite 保存・スライディングウィ
     ンドウへの混入をスキップする判断を行う。
+    parser_warnings はパーサが破棄した代弁ブロックの警告
+    （「user_alias 代弁ブロックを破棄」等）。計器 Tier 1 `fabrication_backstop` の
+    発火材料として上位（service）へ伝える。
     """
 
     raw_response: str
     provider_error: str | None = None
+    parser_warnings: list[str] = field(default_factory=list)
 
 
 class SceneEngine(Protocol):
@@ -428,7 +432,11 @@ class EnsembleEngine:
         if provider_error is not None:
             # parser flush / TurnRecord 発行はスキップ。部分テキストを TurnRecord と
             # して保存させない（履歴に欠片を残さない）。EngineResult のみ yield する。
-            yield EngineResult(raw_response="", provider_error=provider_error)
+            yield EngineResult(
+                raw_response="",
+                provider_error=provider_error,
+                parser_warnings=list(parser.warnings),
+            )
             return
 
         # ストリーム終端: parser flush
@@ -441,5 +449,8 @@ class EnsembleEngine:
         if final is not None:
             yield final
 
-        # ターン副産物
-        yield EngineResult(raw_response="".join(raw_chunks))
+        # ターン副産物（parser の破棄警告は fabrication_backstop 計器の材料）
+        yield EngineResult(
+            raw_response="".join(raw_chunks),
+            parser_warnings=list(parser.warnings),
+        )

@@ -456,6 +456,13 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             index_message_sync, char_msg, _chat_char_ids, state.vector_store, _chat_user_name
         ))
 
+        # 計器 Tier 2: キャラ応答の外形スキャン（フォーマット残骸・エラー形状・
+        # Assistant 混入・言語逸脱）。誤検知許容の smell 記録で、失敗しても本流は止めない。
+        from backend.services.instruments.tier2 import record_response_smells
+        record_response_smells(
+            state.sqlite, clean_text, character_name=used_char_name, feature="chat",
+        )
+
         state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)
 
         done_data = json.dumps({

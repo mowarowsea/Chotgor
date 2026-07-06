@@ -467,6 +467,45 @@ class ToolCallEvent(Base):
     error_message = Column(Text, nullable=True)             # status=error 時の詳細（結果文字列 or 例外メッセージ）
 
 
+class Alarm(Base):
+    """計器アラーム — 幻想の穴が開いた証拠の追記型記録（めぐり / Aliveness §3）。
+
+    アラーム（severity="alarm"）＝発火したら調査すべき異常。
+    スメル（severity="smell"）＝Tier 2 検知器の疑い記録（誤検知許容・傾向観測）。
+    静音期間（無事故N日）の計算対象は severity="alarm" のみ。
+
+    計器は観測者ではなく監査者 — キャラクターの世界には一切現れず、
+    ユーザダイヤルにも依存せず常時稼働する。
+    """
+
+    __tablename__ = "alarms"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    invariant_id = Column(String, nullable=False, index=True)  # fabrication_backstop / usual_scene_error 等
+    severity = Column(String, nullable=False, default="alarm")  # alarm | smell
+    occurred_at = Column(DateTime, nullable=False, default=lambda: datetime.now(), index=True)
+    details = Column(JSON, nullable=True)          # 発火文脈（キャラ名・対象ID・検知内容など）
+    acknowledged_at = Column(DateTime, nullable=True)  # ユーザが確認済みにした時刻
+
+
+class MeterSnapshot(Base):
+    """計器メーター — 傾向観測の日次スナップショット（発火概念なし）。
+
+    肥大メーター（inner_narrative 長・WMスレッド数・記憶件数など）と
+    圧力の日次スナップショット（Phase 3）の記録先。
+    アラームと違い「異常」ではなく「傾向」— グラフで眺める素材。
+    """
+
+    __tablename__ = "meter_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    meter_id = Column(String, nullable=False, index=True)   # inner_narrative_len / wm_thread_count / pressure_social 等
+    character_id = Column(String, nullable=True, index=True)  # 対象キャラ（全体系メーターは NULL）
+    value = Column(Float, nullable=False)
+    occurred_at = Column(DateTime, nullable=False, default=lambda: datetime.now(), index=True)
+    details = Column(JSON, nullable=True)
+
+
 class TimelineEvent(Base):
     """タイムライン封筒 — キャラクターの身に起きた出来事の「存在・順序・相手・時刻」の正本。
 

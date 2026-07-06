@@ -855,6 +855,17 @@ async def run_usual_days_scene(
             force=False,
         )
 
+    # 計器 Tier 1（usual_scene_error）: 生活の中断は即時アラーム。
+    # run_usual_days_scene が error なく完走することが正常条件。
+    if error is not None:
+        from backend.lib.instrument_recorder import fire_alarm
+        fire_alarm("usual_scene_error", details={
+            "session_id": session_id,
+            "slot": slot,
+            "error": error,
+            "fired_responses": fired_responses,
+        })
+
     # タイムライン封筒（scene.closed）: うつつシーンの完走を正本に載せる（payload 完結型）。
     # エラーで打ち切られたシーンは「完走」ではないため載せない
     # （エラー自体は計器 Tier 1 `usual_scene_error` の領分）。
@@ -1165,6 +1176,22 @@ async def _run_gm_turn(
         elif isinstance(item, EngineResult):
             raw_response = item.raw_response
             provider_error = item.provider_error
+            # 計器 Tier 1（fabrication_backstop）: GM がユーザ（user_alias）を代弁した
+            # ブロックを parser が破棄した = バックストップの発火。正常条件は発火 0 回
+            # であり、発火した事実そのものが「幻想の穴」の証拠なので即時アラームにする。
+            user_fabrications = [
+                w for w in item.parser_warnings if w.startswith("user_alias")
+            ]
+            if user_fabrications:
+                from backend.lib.instrument_recorder import fire_alarm
+                fire_alarm(
+                    "fabrication_backstop",
+                    details={
+                        "session_id": session_id,
+                        "warnings": user_fabrications,
+                        "all_parser_warnings": item.parser_warnings,
+                    },
+                )
 
     if provider_error is not None:
         # プロバイダ由来エラー: scenario_turns への保存とあらすじ蒸留対象化を回避する。
