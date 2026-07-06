@@ -478,6 +478,40 @@ class ToolCallEvent(Base):
     error_message = Column(Text, nullable=True)             # status=error 時の詳細（結果文字列 or 例外メッセージ）
 
 
+class Intent(Base):
+    """意図 — キャラクターの「〜したい」の経済層レコード（めぐり / Aliveness §4.3）。
+
+    欲求は行動に先行し、事後に遡って発見できねばならない — 意図は夜のChronicleと
+    うつつシーン完走後の「拾い上げ」で本人の言葉のまま記録される（機械が要約・
+    丸めをしない）。
+
+    圧力カラムは持たない: 意図圧は g(経過日数, source_kind の現在圧) の読み取り時
+    計算（services/intents/lifecycle.py）。タイムライン封筒には遷移
+    （intent.created / fulfilled / expired / soured）だけが載る。
+    """
+
+    __tablename__ = "intents"
+
+    id = Column(String, primary_key=True)  # UUID
+    character_id = Column(String, ForeignKey("characters.id"), nullable=False, index=True)
+    description = Column(Text, nullable=False)   # 本人の言葉のまま（丸めない）
+    target = Column(String, nullable=True)       # user / npc:<名前> / self / NULL
+    # 唯一の可変状態: active / fulfilled / expired / soured
+    status = Column(String, nullable=False, default="active")
+    # 意図の源になった圧: social / boredom / body / none
+    source_kind = Column(String, nullable=False, default="none")
+    # 拾い上げ地点: night_chronicle / usual_scene
+    born_from = Column(String, nullable=False, default="night_chronicle")
+    payload = Column(JSON, nullable=True)        # 不満の言葉・裁定文脈など
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(),
+    )
+    resolved_at = Column(DateTime, nullable=True)  # active 以外へ遷移した時刻
+
+
 class Alarm(Base):
     """計器アラーム — 幻想の穴が開いた証拠の追記型記録（めぐり / Aliveness §3）。
 

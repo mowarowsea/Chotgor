@@ -882,6 +882,28 @@ async def run_usual_days_scene(
                 "closed_by": "scene_close" if scene_closed else "turn_limit",
             },
         )
+        # 意図の拾い上げ（めぐり Phase 4・うつつシーン完走後）: auto_synopsis と同じ
+        # チェックポイントで「あとに残りそうな『〜したい』はある？」を本人に問う。
+        # ターンが1つも保存されなかったシーンは体験ゼロなのでスキップする。
+        # 拾い上げの失敗はシーン結果を壊さない。
+        if saved_turn_ids:
+            try:
+                from backend.services.intents import run_intent_pickup
+                current_log_feature.set("intent_pickup")
+                await run_intent_pickup(
+                    scenario.owner_character_id,
+                    sqlite,
+                    settings,
+                    born_from="usual_scene",
+                    memory_manager=getattr(chat_service, "memory_manager", None),
+                    working_memory_manager=getattr(
+                        chat_service, "working_memory_manager", None
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "意図の拾い上げに失敗 owner=%s", scenario.owner_character_id
+                )
 
     return {
         "saved_turn_ids": saved_turn_ids,

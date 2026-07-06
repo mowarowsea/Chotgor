@@ -875,6 +875,29 @@ async def run_chronicle(
         await _check_estrangement(updated_char, sqlite, vector_store)
 
     counts = {**wm_counts, **distill_counts}
+
+    # 意図の拾い上げ（めぐり Phase 4・Chronicle 同乗）: 「あとに残りそうな『〜したい』は
+    # ある？　なければないでいい」を本人に問い、失効・不満化の候補も本人に裁かせる。
+    # 会話で芽生えた意図は WM に残り、ここ（夢の中）で発見される。
+    # 拾い上げの失敗は Chronicle 本体の成功を壊さない。
+    try:
+        from backend.services.intents import run_intent_pickup
+        pickup = await run_intent_pickup(
+            character_id,
+            sqlite,
+            settings or sqlite.get_all_settings(),
+            born_from="night_chronicle",
+            memory_manager=memory_manager,
+            working_memory_manager=working_memory_manager,
+        )
+        # スキップ・失敗時は counts に載せない（counts は「実施した処理の件数」の辞書）
+        if pickup.get("status") == "success":
+            counts["intents"] = {
+                k: pickup.get(k, 0) for k in ("created", "expired", "soured")
+            }
+    except Exception:
+        logger.exception("意図の拾い上げに失敗 char=%s", char_label)
+
     # タイムライン封筒（night.chronicle）: 夢（WM棚卸し・蒸留）が走ったことを正本に載せる。
     # 中身は payload 完結（昇格数などの外形のみ。個々の記憶は memory.inscribed が載る）。
     sqlite.record_timeline_event(

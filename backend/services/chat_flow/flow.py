@@ -420,15 +420,23 @@ class ChatFlow:
             timeout_seconds=request.timeout_seconds,
         )
 
-        # --- 動機ブロック（めぐり）: 圧力の淡白な一行を毎ターン読み取り時計算する ---
-        # 圧力は保存されない純関数（封筒の導関数）。失敗しても会話は止めない。
+        # --- 動機ブロック（めぐり）: 圧力の淡白な一行＋active な意図を毎ターン
+        # 読み取り時計算する。圧力は保存されない純関数（封筒の導関数）。
+        # 失敗しても会話は止めない。
         motive_lines: list[str] | None = None
+        active_intents: list[dict] | None = None
         try:
             from backend.services.pressure import compute_pressures, pressure_plain_lines
             sqlite_store = getattr(self.memory_manager, "sqlite", None)
             if sqlite_store is not None and request.character_id:
                 pressures = compute_pressures(sqlite_store, request.character_id)
                 motive_lines = pressure_plain_lines(pressures)
+                active_intents = [
+                    {"description": i.description, "target": i.target}
+                    for i in sqlite_store.list_intents(
+                        request.character_id, status="active"
+                    )
+                ] or None
         except Exception:
             _log.exception("圧力計算に失敗 char=%s", request.character_id)
 
@@ -456,6 +464,7 @@ class ChatFlow:
             user_position=request.user_position,
             face_to_face=request.face_to_face,
             motive_lines=motive_lines,
+            active_intents=active_intents,
         )
 
         return _Context(
