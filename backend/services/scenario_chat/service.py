@@ -721,6 +721,7 @@ async def run_usual_days_scene(
     chat_service,
     engine: SceneEngine | None = None,
     extra_first_gm_ooc: str = "",
+    slot: str = "",
 ) -> dict:
     """うつつ（Usual Days）の 1 シーンを無人で回し、結果サマリを返す薄いトリガー。
 
@@ -735,6 +736,7 @@ async def run_usual_days_scene(
         chat_service: PC レスポンス実行に必須の ChatService。
         engine: GM エンジン。None なら既定エンジンを使う。
         extra_first_gm_ooc: シーン冒頭の GM へ添える経過時間メモ等（「前回から N 時間後」）。
+        slot: 起動スロット時刻（"13:00" 等、スケジューラ起動時のみ）。scene.closed 封筒の payload に載る。
 
     Returns:
         {"saved_turn_ids": [...], "fired_responses": int, "fired_turns": int,
@@ -803,6 +805,23 @@ async def run_usual_days_scene(
                 or ""
             ),
             force=False,
+        )
+
+    # タイムライン封筒（scene.closed）: うつつシーンの完走を正本に載せる（payload 完結型）。
+    # エラーで打ち切られたシーンは「完走」ではないため載せない
+    # （エラー自体は計器 Tier 1 `usual_scene_error` の領分）。
+    if error is None and scenario is not None and scenario.owner_character_id:
+        sqlite.record_timeline_event(
+            character_id=scenario.owner_character_id,
+            event_type="scene.closed",
+            actor="system",
+            origin="usual",
+            session_id=session_id,
+            payload={
+                "slot": slot,
+                "turns": len(saved_turn_ids),
+                "closed_by": "scene_close" if scene_closed else "turn_limit",
+            },
         )
 
     return {

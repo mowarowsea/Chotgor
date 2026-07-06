@@ -241,6 +241,7 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                     settings=sqlite.get_all_settings(),
                     chat_service=app.state.chat_service,
                     extra_first_gm_ooc=elapsed_note,
+                    slot=slot,
                 )
                 ran_today += 1
                 sqlite.set_setting(count_key, str(ran_today))

@@ -263,7 +263,7 @@ async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
 @pytest.mark.asyncio
 async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
     """SUPPORTS_TOOLS=True のプロバイダーが carve_narrative ツールを呼び出したとき、
-    sqlite_store.update_character が実際に呼ばれること。
+    sqlite_store.carve_inner_narrative（保存終点）が実際に呼ばれること。
 
     サービス → generate_with_tools → ToolExecutor → carve_narrative → Carver → sqlite という
     一連の呼び出しチェーンをサービスレベルで統合検証する。
@@ -271,9 +271,6 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
 
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
-    mock_char = MagicMock()
-    mock_char.inner_narrative = ""
-    memory_manager.sqlite.get_character.return_value = mock_char
 
     request = ChatRequest(
         character_id="char-1",
@@ -299,7 +296,7 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
         result = await service.execute(request)
 
     assert result == "指針を彫り込んだ"
-    memory_manager.sqlite.update_character.assert_called_once()
+    memory_manager.sqlite.carve_inner_narrative.assert_called_once()
 
 
 @pytest.mark.asyncio

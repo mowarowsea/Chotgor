@@ -178,6 +178,23 @@ async def _run_farewell_detection(
             "farewell_type": result.farewell_type,
         }]
         sqlite.update_chat_session(session_id, exited_chars=exited_chars)
+        # タイムライン封筒（chat.farewell）: 退席という出来事を正本に載せる。
+        # 中身（理由・種別）は payload（chat_sessions.exited_chars と重複するが、
+        # exited_chars は上書き更新される JSON なので封筒側にも凍結して残す）。
+        sqlite.record_timeline_event(
+            character_id=character_id,
+            event_type="chat.farewell",
+            actor="character",
+            counterpart="user",
+            origin="real",
+            session_id=session_id,
+            source_table="chat_sessions",
+            source_id=session_id,
+            payload={
+                "reason": reason,
+                "farewell_type": result.farewell_type,
+            },
+        )
     except Exception:
         _log.exception("退席DB保存エラー char=%s session=%s", character_name, session_id)
 

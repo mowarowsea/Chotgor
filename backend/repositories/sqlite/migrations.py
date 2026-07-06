@@ -823,6 +823,236 @@ class SQLiteMigrationsMixin:
                 "ALTER TABLE chat_sessions DROP COLUMN group_config"
             )
 
+    def _migrate_backfill_timeline_events(self) -> None:
+        """タイムライン封筒（timeline_events）へ過去データをバックフィルする。
+
+        めぐり（巡り / Aliveness）導入時の一回きりの移行（docs/aliveness_plan.md §2.1）。
+        テーブル自体は ``Base.metadata.create_all`` が作成済みの前提で、
+        既存テーブルの過去行から封筒を焼き直す:
+
+            - chat_messages       → chat.message   （システムメッセージ除外）
+            - scenario_turns      → scene.turn     （参加キャラ1人につき封筒1行）
+            - inscribed_memories  → memory.inscribed（全行）＋ memory.forgotten（soft delete 行）
+            - tool_call_events    → memory.carved / memory.recalled（status=ok のみ）
+
+        occurred_at は各源の created_at（forgotten は deleted_at）。
+        実行済みかは global_settings の marker キーで判定する（冪等）。
+        バックフィル中に解決できないキャラクター（削除済み・名前変更済み）の行は
+        封筒を作らずスキップする（正本は「現存するキャラのタイムライン」）。
+        """
+        import json
+        import uuid as uuid_mod
+        from datetime import datetime as dt
+
+        MARKER_KEY = "timeline_backfill_done"
+
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "timeline_events" not in tables or "global_settings" not in tables:
+                return
+            done = conn.exec_driver_sql(
+                "SELECT value FROM global_settings WHERE key = ?", (MARKER_KEY,)
+            ).fetchone()
+            if done is not None:
+                return  # 実行済み
+
+            now_str = dt.now().isoformat(sep=" ")
+
+            def _insert_envelope(
+                character_id: str,
+                event_type: str,
+                occurred_at,
+                *,
+                actor: str | None = None,
+                counterpart: str | None = None,
+                origin: str = "real",
+                modality: str | None = None,
+                session_id: str | None = None,
+                source_table: str | None = None,
+                source_id: str | None = None,
+                payload: dict | None = None,
+            ) -> None:
+                """封筒1行を raw SQL で挿入する（バックフィル専用の内部ヘルパ）。"""
+                conn.exec_driver_sql(
+                    "INSERT INTO timeline_events "
+                    "(id, character_id, event_type, occurred_at, actor, counterpart, "
+                    " origin, modality, session_id, source_table, source_id, "
+                    " intent_id, payload, retracted_at, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)",
+                    (
+                        str(uuid_mod.uuid4()), character_id, event_type,
+                        occurred_at or now_str, actor, counterpart,
+                        origin, modality, session_id, source_table, source_id,
+                        json.dumps(payload, ensure_ascii=False) if payload else None,
+                        now_str,
+                    ),
+                )
+
+            # キャラクター名 → ID の解決表（model_id / target からの逆引き用）
+            name_to_id: dict[str, str] = {}
+            if "characters" in tables:
+                for cid, cname in conn.exec_driver_sql(
+                    "SELECT id, name FROM characters"
+                ).fetchall():
+                    if cname and cname not in name_to_id:
+                        name_to_id[str(cname)] = str(cid)
+
+            # 1. chat_messages → chat.message
+            if "chat_messages" in tables and "chat_sessions" in tables:
+                rows = conn.exec_driver_sql(
+                    "SELECT m.id, m.session_id, m.role, m.face_to_face, m.created_at, "
+                    "       s.model_id "
+                    "FROM chat_messages m JOIN chat_sessions s ON m.session_id = s.id "
+                    "WHERE (m.is_system_message IS NULL OR m.is_system_message = 0)"
+                ).fetchall()
+                for mid, sid, role, face, created, model_id in rows:
+                    char_name = str(model_id or "").rsplit("@", 1)[0]
+                    char_id = name_to_id.get(char_name)
+                    if not char_id:
+                        continue
+                    _insert_envelope(
+                        char_id, "chat.message", created,
+                        actor="user" if role == "user" else "character",
+                        counterpart="user",
+                        origin="real",
+                        modality="face" if face else "text",
+                        session_id=str(sid),
+                        source_table="chat_messages",
+                        source_id=str(mid),
+                    )
+
+            # 2. scenario_turns → scene.turn（参加キャラ1人につき封筒1行）
+            if (
+                "scenario_turns" in tables
+                and "scenario_sessions" in tables
+                and "scenarios" in tables
+            ):
+                rows = conn.exec_driver_sql(
+                    "SELECT t.id, t.session_id, t.speaker_type, t.speaker_id, "
+                    "       t.speaker_name, t.created_at, "
+                    "       ss.engine_type, ss.pc_assignments, sc.owner_character_id "
+                    "FROM scenario_turns t "
+                    "JOIN scenario_sessions ss ON t.session_id = ss.id "
+                    "JOIN scenarios sc ON ss.scenario_id = sc.id"
+                ).fetchall()
+                for (tid, sid, sp_type, sp_id, sp_name, created,
+                     engine_type, asn_raw, owner_id) in rows:
+                    is_usual = engine_type == "usual_days"
+                    origin = "usual" if is_usual else "interlude"
+                    participant_ids: list[str] = []
+                    if is_usual:
+                        if owner_id:
+                            participant_ids = [str(owner_id)]
+                    else:
+                        try:
+                            asn = json.loads(asn_raw) if asn_raw else []
+                        except (json.JSONDecodeError, TypeError):
+                            asn = []
+                        for a in asn if isinstance(asn, list) else []:
+                            if (
+                                isinstance(a, dict)
+                                and a.get("player_type") == "character"
+                                and a.get("character_id")
+                            ):
+                                participant_ids.append(str(a["character_id"]))
+                    for char_id in participant_ids:
+                        # actor はタイムライン所有者から見た話者
+                        # （create_scenario_turn の dual-write と同じ規則）
+                        if sp_type == "character" and str(sp_id or "") == char_id:
+                            actor = "character"
+                        elif sp_type == "user":
+                            actor = "user"
+                        elif sp_type == "narrator":
+                            actor = "narrator"
+                        else:
+                            actor = f"npc:{sp_name}"
+                        _insert_envelope(
+                            char_id, "scene.turn", created,
+                            actor=actor,
+                            origin=origin,
+                            session_id=str(sid),
+                            source_table="scenario_turns",
+                            source_id=str(tid),
+                        )
+
+            # 3. inscribed_memories → memory.inscribed ＋ memory.forgotten
+            if "inscribed_memories" in tables:
+                rows = conn.exec_driver_sql(
+                    "SELECT id, character_id, origin, created_at, deleted_at "
+                    "FROM inscribed_memories"
+                ).fetchall()
+                for mid, char_id, origin, created, deleted in rows:
+                    _insert_envelope(
+                        str(char_id), "memory.inscribed", created,
+                        actor="character",
+                        origin=str(origin or "real"),
+                        source_table="inscribed_memories",
+                        source_id=str(mid),
+                    )
+                    if deleted:
+                        _insert_envelope(
+                            str(char_id), "memory.forgotten", deleted,
+                            actor="character",
+                            origin=str(origin or "real"),
+                            source_table="inscribed_memories",
+                            source_id=str(mid),
+                        )
+
+            # 4. tool_call_events → memory.carved / memory.recalled
+            if "tool_call_events" in tables:
+                rows = conn.exec_driver_sql(
+                    "SELECT id, created_at, target, feature, tool_name, arguments_json "
+                    "FROM tool_call_events "
+                    "WHERE tool_name IN ('carve_narrative', 'power_recall') "
+                    "AND status = 'ok'"
+                ).fetchall()
+                for eid, created, target, feature, tool_name, args_raw in rows:
+                    char_id = name_to_id.get(str(target or ""))
+                    if not char_id:
+                        continue
+                    try:
+                        args = json.loads(args_raw) if args_raw else {}
+                        if not isinstance(args, dict):
+                            args = {}
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                    f = str(feature or "").lower()
+                    if f.startswith("usual"):
+                        origin = "usual"
+                    elif f.startswith("scenario"):
+                        origin = "interlude"
+                    else:
+                        origin = "real"
+                    if tool_name == "carve_narrative":
+                        _insert_envelope(
+                            char_id, "memory.carved", created,
+                            actor="character",
+                            origin=origin,
+                            payload={
+                                "mode": str(args.get("mode") or "append"),
+                                "content": str(args.get("content") or ""),
+                            },
+                        )
+                    else:  # power_recall
+                        _insert_envelope(
+                            char_id, "memory.recalled", created,
+                            actor="character",
+                            origin=origin,
+                            source_table="tool_call_events",
+                            source_id=str(eid),
+                        )
+
+            # 実行済みマーカーを立てる（同一トランザクション内。冪等性の担保）
+            conn.exec_driver_sql(
+                "INSERT INTO global_settings (key, value) VALUES (?, ?)",
+                (MARKER_KEY, dt.now().isoformat()),
+            )
+
     def _migrate_add_face_to_face_columns(self) -> None:
         """対面モード（Face-to-Face）関連カラムを追加する。
 

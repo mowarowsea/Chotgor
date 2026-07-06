@@ -64,6 +64,17 @@ class ChatStoreMixin:
         """チャットセッションとそのメッセージ・画像レコードを削除する。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ChatSession, ChatMessage, ChatImage
+            # 封筒は削除せず retracted マーク（セッションごと消してもタイムラインの
+            # 存在記録は残す。retracted は全観測者から hidden）
+            message_ids = [
+                row[0]
+                for row in session.query(ChatMessage.id)
+                .filter(ChatMessage.session_id == session_id)
+                .all()
+            ]
+            self._retract_timeline_events_in_session(
+                session, "chat_messages", message_ids
+            )
             session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
             session.query(ChatImage).filter(ChatImage.session_id == session_id).delete()
             obj = session.get(ChatSession, session_id)
@@ -101,7 +112,7 @@ class ChatStoreMixin:
                 キャラクタースコープの face_to_face_mode を送信時に焼き付ける。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatMessage
+            from backend.repositories.sqlite.store import ChatMessage, ChatSession
             msg = ChatMessage(
                 id=message_id,
                 session_id=session_id,
@@ -117,6 +128,31 @@ class ChatStoreMixin:
                 face_to_face=1 if face_to_face else 0,
             )
             session.add(msg)
+            # タイムライン封筒 dual-write（chat.message）— 同一トランザクション。
+            # システムメッセージ（退席通知等）は「キャラの身に起きたこと」ではない
+            # 表示上の掲示なので封筒に載せない（退席自体は chat.farewell が載る）。
+            if not is_system_message:
+                chat_session = session.get(ChatSession, session_id)
+                char_name = None
+                if chat_session and chat_session.model_id:
+                    # model_id = "{char_name}@{preset_name}" からキャラ名を取り出す
+                    char_name = chat_session.model_id.rsplit("@", 1)[0]
+                char_id = self._resolve_character_id_by_name_in_session(
+                    session, char_name or ""
+                )
+                if char_id:
+                    self._append_timeline_event(
+                        session,
+                        character_id=char_id,
+                        event_type="chat.message",
+                        actor="user" if role == "user" else "character",
+                        counterpart="user",
+                        origin="real",
+                        modality="face" if face_to_face else "text",
+                        session_id=session_id,
+                        source_table="chat_messages",
+                        source_id=message_id,
+                    )
             session.commit()
             session.refresh(msg)
             return msg
@@ -222,6 +258,10 @@ class ChatStoreMixin:
             session.query(ChatMessage).filter(
                 ChatMessage.id.in_(ids_to_delete)
             ).delete(synchronize_session=False)
+            # 封筒は削除せず retracted マーク（不可逆性の担保。データは残す）
+            self._retract_timeline_events_in_session(
+                session, "chat_messages", ids_to_delete
+            )
             session.commit()
             return True
 

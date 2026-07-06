@@ -107,6 +107,47 @@ class CharacterStoreMixin:
             session.refresh(char)
             return char
 
+    def carve_inner_narrative(self, character_id: str, mode: str, content: str):
+        """inner_narrative を彫り込み、タイムライン封筒（memory.carved）を同時に残す。
+
+        carve_narrative ツールの実書き込み終点（Carver から呼ばれる）。
+        更新と封筒追記を同一トランザクションで行う（封筒 dual-write 5箇所の1つ）。
+
+        Args:
+            character_id: 更新対象のキャラクター ID。
+            mode: "append"（既存に改行区切りで追記）または "overwrite"（全置換・非推奨）。
+            content: 彫り込むテキスト。
+
+        Returns:
+            更新後の Character。キャラクターが存在しなければ None。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import Character
+            char = session.get(Character, character_id)
+            if not char:
+                return None
+            if mode == "overwrite":
+                char.inner_narrative = content
+            else:
+                existing = char.inner_narrative or ""
+                char.inner_narrative = (
+                    (existing + "\n" + content).strip() if existing else content
+                )
+            char.updated_at = datetime.now()
+            # タイムライン封筒 dual-write（memory.carved）。inner_narrative は上書きされ
+            # 履歴が残らないため、彫った内容そのものを payload に残す（payload 完結型）。
+            self._append_timeline_event(
+                session,
+                character_id=character_id,
+                event_type="memory.carved",
+                actor="character",
+                origin="real",
+                payload={"mode": mode, "content": content},
+            )
+            session.commit()
+            session.refresh(char)
+            return char
+
     def delete_character_cascade(self, character_id: str) -> bool:
         """キャラクターと、SQLite 上で紐づく全レコードを1トランザクションで削除する。
 

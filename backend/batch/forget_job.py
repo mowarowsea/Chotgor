@@ -201,6 +201,19 @@ async def run_forget_process(
             # recall_inscribed_memory でアクセス日時を更新し、直近の忘却を防ぐ。
             sqlite.recall_inscribed_memory(m.id)
 
+    # タイムライン封筒（night.forget）: 忘却レビューが走ったことを正本に載せる。
+    # 中身は payload 完結（忘却数などの外形のみ。個々の忘却は memory.forgotten が載る）。
+    sqlite.record_timeline_event(
+        character_id=character_id,
+        event_type="night.forget",
+        actor="character",
+        origin="real",
+        payload={
+            "candidates_count": len(candidates),
+            "deleted_count": deleted_count,
+            "kept_count": kept_count,
+        },
+    )
     logger.info(
         "forget(バイナリ) 完了 char=%s candidates=%d deleted=%d kept=%d",
         char_label, len(candidates), deleted_count, kept_count,

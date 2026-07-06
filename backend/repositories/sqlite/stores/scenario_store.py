@@ -483,6 +483,16 @@ class ScenarioChatStoreMixin:
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioSession, ScenarioTurn
+            # 封筒は削除せず retracted マーク（セッションごと消しても存在記録は残す）
+            turn_ids = [
+                row[0]
+                for row in session.query(ScenarioTurn.id)
+                .filter(ScenarioTurn.session_id == session_id)
+                .all()
+            ]
+            self._retract_timeline_events_in_session(
+                session, "scenario_turns", turn_ids
+            )
             session.query(ScenarioTurn).filter(ScenarioTurn.session_id == session_id).delete()
             obj = session.get(ScenarioSession, session_id)
             if not obj:
@@ -524,7 +534,7 @@ class ScenarioChatStoreMixin:
             log_request_id: debug_log_entries.request_id との紐付け。再生成時に引き継ぐ。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ScenarioTurn
+            from backend.repositories.sqlite.store import Scenario, ScenarioSession, ScenarioTurn
             obj = ScenarioTurn(
                 id=turn_id,
                 session_id=session_id,
@@ -538,6 +548,49 @@ class ScenarioChatStoreMixin:
                 anticipation=anticipation or None,
             )
             session.add(obj)
+            # タイムライン封筒 dual-write（scene.turn）— 同一トランザクション。
+            # 「誰のタイムラインか」はシーンに参加しているキャラクター:
+            #   - うつつ（usual_days）: 世界の所有者キャラ（origin="usual"）
+            #   - 通常シナリオ: pc_assignments の character 配役全員（origin="interlude"）
+            # 参加キャラが1人もいないシーン（ユーザとNPCだけ）は封筒を作らない。
+            sess = session.get(ScenarioSession, session_id)
+            if sess is not None:
+                is_usual = sess.engine_type == "usual_days"
+                origin = "usual" if is_usual else "interlude"
+                participant_ids: list[str] = []
+                if is_usual:
+                    scenario = session.get(Scenario, sess.scenario_id)
+                    if scenario is not None and scenario.owner_character_id:
+                        participant_ids = [scenario.owner_character_id]
+                else:
+                    for a in (sess.pc_assignments or []):
+                        if (
+                            isinstance(a, dict)
+                            and a.get("player_type") == "character"
+                            and a.get("character_id")
+                        ):
+                            participant_ids.append(str(a["character_id"]))
+                for char_id in participant_ids:
+                    # actor はタイムライン所有者から見た話者。自分の発話は "character"、
+                    # 他キャラPCはこの世界では場の登場人物なので npc:<名前> に丸める。
+                    if speaker_type == "character" and speaker_id == char_id:
+                        actor = "character"
+                    elif speaker_type == "user":
+                        actor = "user"
+                    elif speaker_type == "narrator":
+                        actor = "narrator"
+                    else:
+                        actor = f"npc:{speaker_name}"
+                    self._append_timeline_event(
+                        session,
+                        character_id=char_id,
+                        event_type="scene.turn",
+                        actor=actor,
+                        origin=origin,
+                        session_id=session_id,
+                        source_table="scenario_turns",
+                        source_id=turn_id,
+                    )
             session.commit()
             session.refresh(obj)
             return obj
@@ -857,6 +910,19 @@ class ScenarioChatStoreMixin:
             if pivot is None or pivot.session_id != session_id:
                 return False
             pivot_index = int(pivot.turn_index)
+            # 封筒は削除せず retracted マーク（不可逆性の担保。データは残す）
+            ids_to_delete = [
+                row[0]
+                for row in session.query(ScenarioTurn.id)
+                .filter(
+                    ScenarioTurn.session_id == session_id,
+                    ScenarioTurn.turn_index >= pivot_index,
+                )
+                .all()
+            ]
+            self._retract_timeline_events_in_session(
+                session, "scenario_turns", ids_to_delete
+            )
             session.query(ScenarioTurn).filter(
                 ScenarioTurn.session_id == session_id,
                 ScenarioTurn.turn_index >= pivot_index,

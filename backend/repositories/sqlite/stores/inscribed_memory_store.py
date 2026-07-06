@@ -42,6 +42,17 @@ class InscribedMemoryStoreMixin:
                 origin=origin,
             )
             session.add(mem)
+            # タイムライン封筒 dual-write（memory.inscribed）— 同一トランザクション。
+            # 記憶を刻んだのはキャラクター本人（actor="character"）。
+            self._append_timeline_event(
+                session,
+                character_id=character_id,
+                event_type="memory.inscribed",
+                actor="character",
+                origin=origin,
+                source_table="inscribed_memories",
+                source_id=memory_id,
+            )
             session.commit()
             session.refresh(mem)
             return mem
@@ -152,24 +163,46 @@ class InscribedMemoryStoreMixin:
             return True
 
     def soft_delete_inscribed_memory(self, memory_id: str) -> bool:
-        """保存記憶をソフト削除する（deleted_at をセット）。"""
+        """保存記憶をソフト削除する（deleted_at をセット）。
+
+        タイムライン封筒には memory.forgotten を同一トランザクションで追記する
+        （記憶を手放した出来事の記録。中身は soft delete 行が残る）。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import InscribedMemory
             mem = session.get(InscribedMemory, memory_id)
             if not mem:
                 return False
             mem.deleted_at = datetime.now()
+            # タイムライン封筒 dual-write（memory.forgotten）
+            self._append_timeline_event(
+                session,
+                character_id=mem.character_id,
+                event_type="memory.forgotten",
+                actor="character",
+                origin=mem.origin or "real",
+                source_table="inscribed_memories",
+                source_id=memory_id,
+            )
             session.commit()
             return True
 
     def restore_inscribed_memory(self, memory_id: str) -> bool:
-        """ソフト削除された保存記憶を復元する。"""
+        """ソフト削除された保存記憶を復元する。
+
+        忘却の巻き戻しなので、対応する memory.forgotten 封筒に retracted マークを付ける
+        （memory.inscribed 封筒は残す。記憶を刻んだ事実は変わらない）。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import InscribedMemory
             mem = session.get(InscribedMemory, memory_id)
             if not mem:
                 return False
             mem.deleted_at = None
+            self._retract_timeline_events_in_session(
+                session, "inscribed_memories", [memory_id],
+                event_type="memory.forgotten",
+            )
             session.commit()
             return True
 

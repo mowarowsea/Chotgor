@@ -184,14 +184,13 @@ class Carver:
             mode: "append"（追記）または "overwrite"（全体置換、非推奨）。
             content: 書き込むテキスト。
         """
+        # 更新とタイムライン封筒（memory.carved）を同一トランザクションで行う
+        # 保存終点（store 側の carve_inner_narrative）へ委譲する。
         if mode == "overwrite":
             # 非推奨: inner_narrative を完全に置き換える
             logger.info("上書き char=%s", self.character_id)
-            self.sqlite_store.update_character(self.character_id, inner_narrative=content)
+            self.sqlite_store.carve_inner_narrative(self.character_id, "overwrite", content)
         else:
             # append（デフォルト）: 既存テキストに改行区切りで追記
-            char = self.sqlite_store.get_character(self.character_id)
-            existing = (char.inner_narrative or "") if char else ""
-            new_narrative = (existing + "\n" + content).strip() if existing else content
-            self.sqlite_store.update_character(self.character_id, inner_narrative=new_narrative)
+            self.sqlite_store.carve_inner_narrative(self.character_id, "append", content)
             logger.info("追記 char=%s content=%.50s", self.character_id, content)

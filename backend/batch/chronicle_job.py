@@ -875,6 +875,15 @@ async def run_chronicle(
         await _check_estrangement(updated_char, sqlite, vector_store)
 
     counts = {**wm_counts, **distill_counts}
+    # タイムライン封筒（night.chronicle）: 夢（WM棚卸し・蒸留）が走ったことを正本に載せる。
+    # 中身は payload 完結（昇格数などの外形のみ。個々の記憶は memory.inscribed が載る）。
+    sqlite.record_timeline_event(
+        character_id=character_id,
+        event_type="night.chronicle",
+        actor="character",
+        origin="real",
+        payload={"counts": counts},
+    )
     logger.info("完了 char=%s counts=%s", char_label, counts)
     return {"status": "success", "counts": counts}
 

@@ -242,12 +242,13 @@ class TestToolExecutorExecute:
         assert call_kwargs.get("force_insert") is False
 
     def test_carve_narrative_append_calls_sqlite_update(self):
-        """carve_narrative（append）ツールが sqlite_store.update_character を呼び出す。"""
+        """carve_narrative（append）ツールが sqlite_store.carve_inner_narrative を呼び出す。
+
+        追記の結合ロジック（改行区切り）は store 側（carve_inner_narrative）に移設済みの
+        ため、ここでは mode / content が正しく保存終点へ渡ることだけを検証する
+        （結合とタイムライン封筒は tests/test_timeline_events.py で検証）。
+        """
         mm = MagicMock()
-        # sqlite.get_character が Character-like オブジェクトを返すよう設定
-        mock_char = MagicMock()
-        mock_char.inner_narrative = "既存指針"
-        mm.sqlite.get_character.return_value = mock_char
 
         executor = self._make_executor(memory_manager=mm)
         result = executor.execute(
@@ -255,9 +256,10 @@ class TestToolExecutorExecute:
             {"mode": "append", "content": "新しい自己指針"},
         )
         assert result == "inner_narrative を更新した。"
-        mm.sqlite.update_character.assert_called_once()
-        call_kwargs = mm.sqlite.update_character.call_args.kwargs
-        assert call_kwargs.get("inner_narrative") == "既存指針\n新しい自己指針"
+        mm.sqlite.carve_inner_narrative.assert_called_once()
+        call_args = mm.sqlite.carve_inner_narrative.call_args.args
+        assert call_args[1] == "append"
+        assert call_args[2] == "新しい自己指針"
 
     def test_carve_narrative_empty_content_returns_error(self):
         """carve_narrative に空 content を渡した場合、エラーメッセージを返す。"""
@@ -478,10 +480,9 @@ class TestToolExecutorEdgeCases:
         assert "[post_working_memory_thread error:" in result
 
     def test_carve_narrative_exception_returns_error_message(self):
-        """update_character が例外を投げた場合、carve_narrative はエラーメッセージを返す（クラッシュしない）。"""
+        """carve_inner_narrative が例外を投げた場合、carve_narrative はエラーメッセージを返す（クラッシュしない）。"""
         mm = MagicMock()
-        mm.sqlite.get_character.return_value = MagicMock(inner_narrative="")
-        mm.sqlite.update_character.side_effect = RuntimeError("DB error")
+        mm.sqlite.carve_inner_narrative.side_effect = RuntimeError("DB error")
         executor = ToolExecutor(
             character_id="c", session_id="s", memory_manager=mm, working_memory_manager=None
         )
@@ -795,9 +796,6 @@ class TestGenerateWithToolsLoop:
 
         tc = ToolCall(id="tc-2", name="carve_narrative", input={"mode": "append", "content": "新指針"})
         mm = MagicMock()
-        mock_char = MagicMock()
-        mock_char.inner_narrative = ""
-        mm.sqlite.get_character.return_value = mock_char
 
         provider = self._make_provider([
             ToolTurnResult(text="", tool_calls=[tc]),
@@ -807,7 +805,7 @@ class TestGenerateWithToolsLoop:
 
         text, _ = asyncio.run(provider.generate_with_tools("sys", [], executor))
         assert text == "指針を彫り込んだ"
-        mm.sqlite.update_character.assert_called_once()
+        mm.sqlite.carve_inner_narrative.assert_called_once()
 
     def test_multiple_tool_calls_in_sequence(self):
         """複数ターンのツール呼び出しが正しくループする。"""

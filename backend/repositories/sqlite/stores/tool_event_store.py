@@ -49,7 +49,7 @@ class ToolEventStoreMixin:
         from backend.repositories.sqlite.models import ToolCallEvent
 
         with self.get_session() as session:
-            session.add(ToolCallEvent(
+            event = ToolCallEvent(
                 created_at=datetime.now(),
                 request_id=request_id,
                 dir_id=dir_id,
@@ -60,7 +60,26 @@ class ToolEventStoreMixin:
                 arguments_json=arguments_json,
                 status=status,
                 error_message=error_message,
-            ))
+            )
+            session.add(event)
+            # タイムライン封筒 dual-write（memory.recalled）— 同一トランザクション。
+            # 能動的想起 = power_recall のみ載せる（pre-recall はシステムの自動注入なので
+            # キャラの「したこと」ではなく、封筒に載せない。docs/aliveness_plan.md §2.3）。
+            if tool_name == "power_recall" and status == "ok":
+                char_id = self._resolve_character_id_by_name_in_session(
+                    session, target or ""
+                )
+                if char_id:
+                    session.flush()  # autoincrement id を確定させて source_id に使う
+                    self._append_timeline_event(
+                        session,
+                        character_id=char_id,
+                        event_type="memory.recalled",
+                        actor="character",
+                        origin=_feature_to_origin(feature),
+                        source_table="tool_call_events",
+                        source_id=str(event.id),
+                    )
             session.commit()
 
     def get_tool_call_events_by_dir_ids(
@@ -96,6 +115,20 @@ class ToolEventStoreMixin:
                 if r.dir_id in result:
                     result[r.dir_id].append(_event_to_dict(r))
             return result
+
+
+def _feature_to_origin(feature: str | None) -> str:
+    """機能名（log_context 由来）をタイムライン origin（real/usual/interlude）へ写像する。
+
+    うつつ由来の想起は "usual"、シナリオ PC モード由来は "interlude"、
+    それ以外（1on1 チャット・バッチ処理など）は "real" として扱う。
+    """
+    f = (feature or "").lower()
+    if f.startswith("usual"):
+        return "usual"
+    if f.startswith("scenario"):
+        return "interlude"
+    return "real"
 
 
 def _event_to_dict(event) -> dict:

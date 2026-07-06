@@ -467,6 +467,42 @@ class ToolCallEvent(Base):
     error_message = Column(Text, nullable=True)             # status=error 時の詳細（結果文字列 or 例外メッセージ）
 
 
+class TimelineEvent(Base):
+    """タイムライン封筒 — キャラクターの身に起きた出来事の「存在・順序・相手・時刻」の正本。
+
+    めぐり（巡り / Aliveness）の中核テーブル（docs/aliveness_plan.md §2）。
+    中身（発言本文・記憶本文など）は既存テーブルに残し、source_table / source_id で
+    JOIN する（封筒 dual-write 方式。中身の複製はしない）。
+    payload 完結型イベント（night.* / scene.closed / memory.carved 等）は
+    source_table = NULL で payload に可変属性を持つ。
+
+    不可逆性の担保: 履歴の巻き戻し（再生成・編集による削除）では封筒を削除せず
+    retracted_at をマークする。retracted なイベントは全観測者から hidden（存在層ごと）
+    だがデータは残る。
+
+    可視性（self / world_frame / user_ui の開示レベル）は読み取り時ポリシーで判定し、
+    この行には焼き付けない。
+    """
+
+    __tablename__ = "timeline_events"
+
+    id = Column(String, primary_key=True)                      # UUID
+    character_id = Column(String, nullable=False, index=True)  # 誰のタイムラインか
+    event_type = Column(String, nullable=False)                # ドット記法カタログ（chat.message / scene.turn / memory.inscribed ...）
+    occurred_at = Column(DateTime, nullable=False, index=True) # 出来事の時刻（バックフィルは源の created_at）
+    actor = Column(String, nullable=True)                      # user / character / narrator / npc:<名前> / system
+    counterpart = Column(String, nullable=True)                # 封筒の「相手」: user / npc:<名前> / NULL
+    origin = Column(String, nullable=False, default="real")    # real / usual / interlude（既存3値と同次元）
+    modality = Column(String, nullable=True)                   # text / face（chat.message のみ）
+    session_id = Column(String, nullable=True, index=True)     # 投影の封筒集約キー（chat/scenario セッション）
+    source_table = Column(String, nullable=True)               # 中身への参照（payload 完結型は NULL）
+    source_id = Column(String, nullable=True, index=True)      # 中身への参照（payload 完結型は NULL）
+    intent_id = Column(String, nullable=True)                  # intent.* / action.* が張る FK（intents.id）
+    payload = Column(JSON, nullable=True)                      # 型ごとの可変属性（判定スコア等もここ）
+    retracted_at = Column(DateTime, nullable=True)             # 巻き戻しマーク（削除の代わり）
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())  # 記録された時刻（occurred_at と分離）
+
+
 class ScenarioTurn(Base):
     """シナリオセッションの発話ターン — ユーザ・Narrator・NPC・(将来)既存キャラを多態で格納する。"""
 
