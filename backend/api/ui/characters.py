@@ -161,6 +161,11 @@ async def create_character(request: Request):
         user_position=(form.get("user_position") or "").strip(),
         user_visibility_note=(form.get("user_visibility_note") or "").strip(),
     )
+    # 会話外行動メニュー（めぐり Phase 6）: create_character は既定引数を持たないため
+    # 作成直後に付け足す（全 OFF なら None のままで何もしない）。
+    action_menu = _build_action_menu(form)
+    if action_menu:
+        request.app.state.sqlite.update_character(char_id, action_menu=action_menu)
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     _persist_usual_world(request.app.state.sqlite, char_id, name, form)
     return RedirectResponse(url="/ui/characters", status_code=303)
@@ -217,6 +222,8 @@ async def update_character(request: Request, character_id: str):
         user_visibility_note=(form.get("user_visibility_note") or "").strip(),
         # 対面モード状態。未チェックなら 0。
         face_to_face_mode=1 if form.get("face_to_face_mode") else 0,
+        # 会話外行動メニュー（めぐり Phase 6）: 個別 ON/OFF トグル。全 OFF なら NULL。
+        action_menu=_build_action_menu(form),
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()
@@ -243,6 +250,25 @@ async def update_character(request: Request, character_id: str):
     if char:
         _persist_usual_world(request.app.state.sqlite, character_id, char.name, form)
     return _save_response(request, "/ui/characters")
+
+
+def _build_action_menu(form) -> dict | None:
+    """フォームから会話外行動メニュー（めぐり Phase 6）の設定 dict を組み立てる。
+
+    Args:
+        form: リクエストフォーム（action_menu_push / action_menu_research /
+            action_menu_impromptu_scene のチェックボックス）。
+
+    Returns:
+        {"push": bool, "research": bool, "impromptu_scene": bool}。
+        全 OFF なら None（NULL 保存 = オプトインの既定状態）。
+    """
+    menu = {
+        "push": bool(form.get("action_menu_push")),
+        "research": bool(form.get("action_menu_research")),
+        "impromptu_scene": bool(form.get("action_menu_impromptu_scene")),
+    }
+    return menu if any(menu.values()) else None
 
 
 # ユーザPC枠（不在の人物）の description 先頭に必ず付ける不在マーカー。

@@ -879,6 +879,10 @@ class SQLiteMigrationsMixin:
                     conn.exec_driver_sql(
                         "ALTER TABLE characters ADD COLUMN availability_schedule TEXT"
                     )
+                if "action_menu" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters ADD COLUMN action_menu TEXT"
+                    )
                 if "away_until" not in cols:
                     conn.exec_driver_sql(
                         "ALTER TABLE characters ADD COLUMN away_until DATETIME"

@@ -124,6 +124,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_forget_scheduler(app))
     asyncio.create_task(_usual_days_scheduler(app))
     asyncio.create_task(_instruments_scheduler(app))
+    asyncio.create_task(_action_scheduler(app))
 
     yield
 
@@ -206,6 +207,71 @@ async def _instruments_scheduler(app: FastAPI) -> None:
                 )
             except Exception:
                 _log.exception("計器巡回スケジューラー 実行エラー")
+
+
+async def _action_scheduler(app: FastAPI) -> None:
+    """Background task: 会話外行動権の周期評価（めぐり Phase 6）。
+
+    行動メニューが1つでも ON のキャラクターについて、2時間格子＋キャラ別ジッター
+    （決定論・乱数は世界に置く）のタイミングで評価する:
+
+        availability 確認 → 閾値評価（純関数・無料）→ 閾値超えのときだけ
+        本人問い合わせ → 本人の選択で実行 or 見送り → 帰還
+
+    unavailable のスロットは流す（通過したスロットは捨てる — うつつと同じ思想）。
+    冪等キーはキャラごと1本（最後に評価したスロットの ISO 文字列）。
+    """
+    from backend.services.actions import jittered_slot_time, run_action_cycle
+    from backend.services.gate import check_availability, is_usual_scene_running
+
+    _log = logging.getLogger(__name__)
+    period_minutes = 120
+    while True:
+        await asyncio.sleep(60)
+        try:
+            sqlite = app.state.sqlite
+            now = datetime.now()
+            # 現在のスロット開始時刻（period_minutes 格子に床合わせ）
+            minutes_of_day = now.hour * 60 + now.minute
+            slot_index = minutes_of_day // period_minutes
+            slot_start = now.replace(
+                hour=(slot_index * period_minutes) // 60,
+                minute=(slot_index * period_minutes) % 60,
+                second=0, microsecond=0,
+            )
+            for char in sqlite.list_characters():
+                menu = getattr(char, "action_menu", None) or {}
+                if not isinstance(menu, dict) or not any(
+                    menu.get(k) for k in ("push", "research", "impromptu_scene")
+                ):
+                    continue
+                key = f"action_eval_{char.id}"
+                if sqlite.get_setting(key, "") == slot_start.isoformat():
+                    continue  # このスロットは評価済み
+                if now < jittered_slot_time(char.id, slot_start):
+                    continue  # ジッター時刻がまだ来ていない
+                # 評価を試みた時点で冪等キーを立てる（unavailable でも流す）
+                sqlite.set_setting(key, slot_start.isoformat())
+                availability = check_availability(
+                    char, now,
+                    usual_scene_running=is_usual_scene_running(sqlite, char.id, now),
+                )
+                if not availability.available:
+                    _log.debug(
+                        "行動権: unavailable のためスロットを流す char=%s reason=%s",
+                        char.name, availability.reason,
+                    )
+                    continue
+                result = await run_action_cycle(
+                    char.id, sqlite, sqlite.get_all_settings(),
+                    chat_service=app.state.chat_service,
+                    memory_manager=app.state.memory_manager,
+                    working_memory_manager=app.state.working_memory_manager,
+                )
+                if result.get("status") in ("executed", "declined", "error"):
+                    _log.info("行動権: char=%s result=%s", char.name, result)
+        except Exception:
+            _log.exception("行動権スケジューラー 実行エラー")
 
 
 def _parse_slot_time(now: datetime, slot: str) -> datetime | None:

@@ -220,11 +220,14 @@ async def ask_character_with_tools(
     working_memory_manager: "WorkingMemoryManager | None" = None,
     recall_query: str | None = None,
     batch_context: dict | None = None,
-) -> bool:
+    return_response: bool = False,
+) -> bool | str | None:
     """tool-use MCPループを使ってキャラクターに問いかける。
 
     inscribe_memory 等のツールを呼び出しながら応答を生成する。
-    テキスト応答は捨てる（バッチ処理向け）。
+    テキスト応答は既定では捨てる（バッチ処理向け）。
+    ``return_response=True`` を渡すと応答テキストを返す（行動権の裁定など、
+    ツールを使わせつつ本人の言葉も読みたい問い合わせ向け。めぐり Phase 6）。
 
     Args:
         character_id: 問い合わせ対象のキャラクターID。
@@ -243,18 +246,23 @@ async def ask_character_with_tools(
         batch_context: バッチ処理由来のツール挙動切り替えフラグ。例えば forget 蒸留バッチは
             ``{"force_insert_memory": True}`` を渡すことで、inscribe_memory ツールが
             類似既存記憶を上書きせず必ず新規 ID で挿入するようになる。通常チャットでは None。
+        return_response: True なら応答テキスト（str。失敗時 None）を返す。
+            False（既定）なら従来通り成否の bool を返す。
 
     Returns:
-        True: tool-use ループを正常に実行した。
-        False: プロバイダーが tool-use に非対応、またはエラー発生（呼び出し元でフォールバック）。
+        return_response=False: True=tool-use ループを正常に実行 / False=非対応・エラー。
+        return_response=True: 応答テキスト（失敗・非対応時は None）。
     """
     from backend.character_actions.executor import ToolExecutor
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
 
+    # return_response=True のときの失敗時戻り値（bool 互換のための分岐値）
+    _fail = None if return_response else False
+
     char = sqlite.get_character(character_id)
     if not char:
         _log.warning("ask_character_with_tools: キャラクター未発見 character_id=%s", character_id)
-        return False
+        return _fail
 
     preset = sqlite.get_model_preset(preset_id)
     if preset is None:
@@ -262,7 +270,7 @@ async def ask_character_with_tools(
             "ask_character_with_tools: プリセット未発見 character_id=%s preset_id=%s",
             character_id, preset_id,
         )
-        return False
+        return _fail
 
     try:
         if feature_label:
@@ -282,14 +290,14 @@ async def ask_character_with_tools(
             "ask_character_with_tools: プロバイダー生成失敗 character_id=%s preset=%s error=%s",
             character_id, preset_id, e,
         )
-        return False
+        return _fail
 
     if not provider.SUPPORTS_TOOLS:
         _log.info(
             "ask_character_with_tools: tool-use非対応プロバイダー character_id=%s provider=%s",
             character_id, preset.provider,
         )
-        return False
+        return _fail
 
     # WM マネージャーは未指定なら内部生成する。システムプロンプトの WM ブロックと
     # ツール実行（post_working_memory_thread 等）の両方で同じインスタンスを使う。
@@ -323,17 +331,19 @@ async def ask_character_with_tools(
     )
 
     try:
-        await provider.generate_with_tools(system_prompt, messages, tool_executor)
+        response_text, _thinking = await provider.generate_with_tools(
+            system_prompt, messages, tool_executor
+        )
     except Exception as e:
         _log.warning(
             "ask_character_with_tools: LLMコール失敗 character_id=%s preset=%s error=%s",
             character_id, preset_id, e,
         )
-        return False
+        return _fail
 
     char_label = f"{char.name}@{preset.name or preset.provider}"
     _log.info(
         "ask_character_with_tools: 完了 char=%s feature=%s",
         char_label, feature_label or "(none)",
     )
-    return True
+    return response_text if return_response else True

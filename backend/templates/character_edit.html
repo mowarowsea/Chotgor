@@ -327,6 +327,60 @@
 
         </section>
 
+        {# ── めぐり ・ 会話外行動権（Phase 6） ──
+           閾値超えの意図があるとき、本人への問い合わせを経て実行される行動のメニュー。
+           個別 ON/OFF（全 OFF = 行動権スケジューラの評価対象外）。
+           「調べるかどうかも本人任せ」— ここで許可するのは可能性だけで、
+           実行するかは毎回キャラクター本人が選ぶ。 #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">meguri <small>・ 会話外行動</small></h3>
+            </div>
+            <p class="ch-hint">
+                心に残った「〜したい」（意図）の圧が高まったとき、本人に「いま、これをする？」と
+                問い合わせて、本人が選べば実行される行動のメニュー。実行の可否は毎回本人が決める。
+            </p>
+            <div class="ch-field">
+                <label class="ch-switch-row" style="border:none;padding:0">
+                    <span class="ch-switch-row__text">
+                        <span class="ch-switch-row__label">push — 自分からメッセージを送る</span>
+                        <span class="ch-switch-row__note">新しい会話としてキャラ発のメッセージが届く</span>
+                    </span>
+                    <span class="ch-toggle">
+                        <input type="checkbox" name="action_menu_push" value="1"
+                            {% if character and character.action_menu and character.action_menu.push %}checked{% endif %}>
+                        <span class="ch-toggle__track"></span>
+                    </span>
+                </label>
+            </div>
+            <div class="ch-field">
+                <label class="ch-switch-row" style="border:none;padding:0">
+                    <span class="ch-switch-row__text">
+                        <span class="ch-switch-row__label">調べもの — 興味を検索で追いかける</span>
+                        <span class="ch-switch-row__note">web_search で意図を消費する（Tavily APIキーが必要）</span>
+                    </span>
+                    <span class="ch-toggle">
+                        <input type="checkbox" name="action_menu_research" value="1"
+                            {% if character and character.action_menu and character.action_menu.research %}checked{% endif %}>
+                        <span class="ch-toggle__track"></span>
+                    </span>
+                </label>
+            </div>
+            <div class="ch-field" style="margin-bottom:0">
+                <label class="ch-switch-row" style="border:none;padding:0">
+                    <span class="ch-switch-row__text">
+                        <span class="ch-switch-row__label">臨時うつつ — 予定外にちょっと出かける</span>
+                        <span class="ch-switch-row__note">スロット外で1シーン（うつつ有効が前提・日次上限を共有）</span>
+                    </span>
+                    <span class="ch-toggle">
+                        <input type="checkbox" name="action_menu_impromptu_scene" value="1"
+                            {% if character and character.action_menu and character.action_menu.impromptu_scene %}checked{% endif %}>
+                        <span class="ch-toggle__track"></span>
+                    </span>
+                </label>
+            </div>
+        </section>
+
         {# ── tools ・ 外部連携 ── #}
         <section class="ch-section">
             <div class="ch-section__head">

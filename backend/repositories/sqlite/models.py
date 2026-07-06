@@ -147,6 +147,13 @@ class Character(Base):
     # 対面モード時に ChatView 背景へ表示する画像（base64 data URI）。image_data と同じ
     # 保存形式。未設定 = 背景表示なし（モード ON でも背景なしで動作する）。
     face_to_face_bg_image = Column(Text, nullable=True)
+    # 会話外行動メニュー（めぐり / Aliveness §5.3）。JSON:
+    #   {"push": bool, "research": bool, "impromptu_scene": bool}
+    # 個別 ON/OFF トグル（キャラ設定画面）。NULL / 空 = 全部 OFF（オプトイン）。
+    #   push            = 新規セッションを立ててキャラ発メッセージ
+    #   research        = web_search で興味 intent を消費（調べもの）
+    #   impromptu_scene = スロット外の臨時うつつシーン（うつつ有効が前提条件）
+    action_menu = Column(JSON, nullable=True)
     # 生活時間割（めぐり / Aliveness §5.1）。JSON:
     #   {"mon": [{"from": "09:00", "to": "18:00", "label": "仕事"}], "tue": [...], ...}
     # 曜日キー（mon〜sun）ごとの **応答できない時間帯** のリスト。
