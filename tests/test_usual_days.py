@@ -1643,3 +1643,65 @@ class TestUsualErrorHandling:
         ))
         assert result["error"] is not None
         assert "gm provider down" in result["error"]
+
+    def test_gm_provider_error_closes_scene(self, sqlite_store, monkeypatch):
+        """GM がプロバイダエラー（503 等）を ("error", ...) イベントで返したら、
+        そのうつつシーンを即座に閉じること（本来のバグの再現＋回帰防止）。
+
+        実機の 503 は例外送出ではなく、_run_gm_turn が provider_error を検知して
+        ("error", {...}) を 1 度流し、scenario_turn を保存せず return する経路で起きる。
+        修正前は _run_gm がこのエラーを TurnResult に載せず、保存済みの「古い GM ターン」の
+        raw を拾って @はる を再解析し、次の話者へ誤ルーティングしたままループが継続、
+        max_responses まで暴走していた。
+
+        台本: GM1=正常（@はる を呼ぶ）→ PC1 → GM2=503。修正後は GM2 のエラーで
+        シーンが閉じ、cap(8) には到達しない。GM は 2 回だけ、PC は 1 回だけ呼ばれる。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_responses=8)
+        pc_calls: list[dict] = []
+        gm_calls = {"n": 0}
+
+        async def flaky_gm(**kwargs):
+            # 1回目は正常応答（@はる を呼び、narrator ターンを保存）。
+            gm_calls["n"] += 1
+            if gm_calls["n"] == 1:
+                svc._save_turn(
+                    sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                    speaker_type="narrator", speaker_name="Narrator",
+                    content="朝。@はる", raw_response="朝。@はる",
+                )
+                return
+                yield  # 到達しないが async generator にするためのダミー
+            # 2回目以降は provider_error を模した error イベントを流し、ターンは保存しない。
+            yield (("error", {"message": "503 Service Unavailable"}), None)
+
+        async def fake_pc(**kwargs):
+            pc_calls.append(dict(kwargs))
+            yield ("pc_done", {
+                "character": kwargs["pc"].name,
+                "character_id": kwargs["pc"].character_id,
+                "full_text": "（はるは黙々と仕事を続けた）",
+                "anticipation": None,
+            })
+
+        monkeypatch.setattr(svc, "_run_gm_turn", flaky_gm)
+        monkeypatch.setattr(pc_runner_mod, "stream_pc_response", fake_pc)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        async def fake_synopsis(*a, **k):
+            return None
+
+        monkeypatch.setattr(svc, "maybe_update_auto_synopsis", fake_synopsis)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        # 503 が result.error に畳まれ、シーンは幕引き扱いではなく打ち切り。
+        assert result["error"] is not None
+        assert "503" in result["error"]
+        assert result["scene_closed"] is False
+        # 修正の肝: エラーで即停止するため GM は 2 回・PC は 1 回で止まる
+        # （cap まで暴走していれば GM/PC はそれぞれ 4 回前後呼ばれるはず）。
+        assert gm_calls["n"] == 2
+        assert len(pc_calls) == 1

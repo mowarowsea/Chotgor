@@ -256,6 +256,9 @@ class ScenarioTurnExecutor:
             extract_scene_close,
         )
 
+        # GM ターン中にプロバイダエラーを検知したら保持する（末尾でシーンを閉じる判定に使う）。
+        gm_error: str | None = None
+
         # PC ターンが feature を "usual_days_pc" に書き換えているため、GM ターン側で
         # "usual_days" へ戻す（ログの取り違い防止）。
         if sc.is_headless:
@@ -300,7 +303,21 @@ class ScenarioTurnExecutor:
             time_context=sc.usual_time_context,
             gm_ooc_appendix=gm_ooc,
         ):
+            # プロバイダエラー（503 等）は _run_gm_turn が ("error", {...}) を 1 度だけ
+            # 流して scenario_turn を保存せず return する。ここで捕捉しておかないと、
+            # 後段で古い GM ターンの raw を拾って誤ルーティングしたままループが継続し、
+            # max_responses まで暴走する（PC ターンと非対称な穴だった）。
+            if isinstance(ev, tuple) and ev and ev[0] == "error":
+                payload = ev[1] if len(ev) > 1 and isinstance(ev[1], dict) else {}
+                gm_error = payload.get("message") or "GM provider error"
             yield ev
+
+        # GM がエラー回答だった場合は、そのシーンをここで閉じる（後続ターンへ進めない）。
+        # error 付き TurnResult を返すと SceneLoop が done_reason="executor_error" で
+        # ループを脱出する。古い raw でのメンション誤ルーティングもこれで止まる。
+        if gm_error is not None:
+            yield ("turn_result", TurnResult(text="", error=gm_error))
+            return
 
         # GM の最終 raw_response を直近保存ターン（=最後の話者ブロック）から取り直す。
         latest = sc.sqlite.list_scenario_turns(sc.session_id)
