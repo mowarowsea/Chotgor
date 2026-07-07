@@ -98,23 +98,25 @@ class MessageCreate(BaseModel):
     model_id: str | None = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
 
 
-async def _build_chat_request(
-    request: Request,
+async def build_1on1_chat_request(
+    state,
     session,
     history_messages: list,
     user_content: str | list,
     model_id: str | None = None,
 ):
-    """セッション情報からChatRequestを構築する内部ヘルパー。
+    """セッション情報からChatRequestを構築するヘルパー。
 
     1on1 固有の処理（コンテキストウィンドウ適用・available_presets 構築）を行った後、
     共通ファクトリ build_character_request に委譲する。
+    SSE エンドポイントのほか、預かりメッセージの能動配達
+    （services/gate/delivery.py — HTTP リクエスト文脈なし）からも呼ばれるため、
+    Request ではなく app.state を直接受け取る。
 
     Args:
+        state: FastAPI の app.state（sqlite / uploads_dir を持つ）。
         model_id: 使用するモデルIDを明示的に指定する場合に渡す。省略時はセッションの model_id を使う。
     """
-    state = request.app.state
-
     effective_id = model_id or session.model_id
     char_name, preset_name = parse_model_id(effective_id)
 
@@ -422,7 +424,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     )
 
     try:
-        chat_request = await _build_chat_request(request, session, history, user_content, model_id=effective_model_id)
+        chat_request = await build_1on1_chat_request(state, session, history, user_content, model_id=effective_model_id)
     except HTTPException:
         raise
 

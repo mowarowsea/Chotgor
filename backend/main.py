@@ -125,6 +125,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_usual_days_scheduler(app))
     asyncio.create_task(_instruments_scheduler(app))
     asyncio.create_task(_action_scheduler(app))
+    asyncio.create_task(_escrow_delivery_scheduler(app))
 
     yield
 
@@ -399,6 +400,25 @@ async def _usual_days_scheduler(app: FastAPI) -> None:
             await _run_due_usual_scenes(app)
         except Exception:
             _log.exception("うつつスケジューラー 実行エラー")
+
+
+async def _escrow_delivery_scheduler(app: FastAPI) -> None:
+    """Background task: 預かり（escrow）メッセージの能動配達（めぐり §5.1 フォローアップ）。
+
+    毎分、未配達メッセージ（delivered_at=NULL）を持つセッションを走査し、
+    キャラの availability が戻っていれば決定論ジッター（0〜10分）を挟んで
+    本人へ配達し、返信を生成・保存する。判定・ガードの詳細は
+    services/gate/delivery.py 参照。
+    """
+    from backend.services.gate.delivery import run_pending_escrow_deliveries
+
+    _log = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await run_pending_escrow_deliveries(app.state)
+        except Exception:
+            _log.exception("能動配達スケジューラー 実行エラー")
 
 
 async def _forget_scheduler(app: FastAPI) -> None:
