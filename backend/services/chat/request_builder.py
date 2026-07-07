@@ -3,23 +3,34 @@
 組み立ては **テンプレート + 整形済みブロック差し込み** 方式で行う。
 区切りは `## 見出し` ベース（旧 `---` 区切りは廃止）。
 
-ブロック構成（テンプレ上の差し込み順）:
+プロンプトキャッシュ対応（docs/prompt_cache_plan.md A案）のため、構成要素は
+**安定ブロック（システムプロンプト）** と **変動ブロック（ターン注釈）** の二層に分かれる。
+
+安定ブロック — システムプロンプト（テンプレ上の差し込み順）:
   Block 1:  キャラクター設定（何者かを確立 — 前提 + character_system_prompt）
   Block 1b: 相手（ユーザ）の人物像（呼称・位置づけ）
   Block 1c: うつつ（日常生活）注釈
   Block 1d: プロバイダー固有追記（PC モードでは「いまの場面メモ」も合流。Block 1 系の延長として早めに置く）
+  Block 6:  ワーキングメモリ全スレッド一覧（歩みの記録・self_history 代替）
+  Block 7:  ワーキングメモリ固定注入（emotion/body/relation）
+  Block 9:  inner_narrative（末尾補強・最優先）
+  Block 10: Chotgor 操作ガイド（常に末尾）
+  番号外: {block_memory_notice} — 記憶システム縮退時の運用告知（Block 9 と 10 の間）
+
+変動ブロック — ターン注釈（build_turn_annotation。最新 user メッセージの末尾へ付加）:
   Block 2:  想起された記憶（長期記憶・コンテキスト把握）
   Block 3:  時刻コンテキスト（薄い補足情報）
   Block 4:  フェッチしたWebコンテンツ（コンテキスト強め）
-  Block 6:  ワーキングメモリ全スレッド一覧（歩みの記録・self_history 代替）
-  Block 7:  ワーキングメモリ固定注入（emotion/body/relation）
   Block 8:  ワーキングメモリ heat 想起（前景の task/topic）
-  Block 9:  inner_narrative（末尾補強・最優先）
-  Block 10: Chotgor 操作ガイド（常に末尾）
+  動機:     めぐりの圧力一行＋active intents
+  番号外:   前回の期待（previous_anticipation）
 
-番号外の補助ブロック:
-  {block_previous_anticipation} — 前回の期待（Block 8 と 9 の間）
-  {block_memory_notice}         — 記憶システム縮退時の運用告知（Block 9 と 10 の間）
+二層に分ける理由: プロンプトキャッシュは先頭からの完全一致プレフィックス単位で効くため、
+毎ターン変動する情報がシステムプロンプト中腹にあると、それ以降（会話履歴含む）が
+全ターンでキャッシュミスになる。変動分を「最新 user メッセージへの注釈」として
+会話の最後尾へ移すことで、システムプロンプト＋履歴全体がキャッシュヒットする。
+注釈は LLM リクエスト時にのみ付加され、DB 保存される会話履歴には含まれない
+（= 次ターンの履歴プレフィックスを汚さない）。
 
 Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配置する。
 記憶運用の主役はワーキングメモリ（最高頻度＝末尾）であり、INSCRIBE_MEMORY は
@@ -134,21 +145,9 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_provider_extra}
 
-{block_memories}
-
-{block_time}
-
-{block_fetched}
-
 {block_wm_all}
 
 {block_wm_fixed}
-
-{block_wm_recalled}
-
-{block_motive}
-
-{block_previous_anticipation}
 
 {block_inner_narrative}
 
@@ -156,6 +155,34 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_chotgor_guide}
 """
+
+
+# ターン注釈テンプレート — 毎ターン変動する文脈情報を最新 user メッセージの
+# 末尾へ付加するための本体。ブロックの文言・見出しはシステムプロンプト時代と
+# 同一のまま（キャラクターに見える情報の中身は変えず、現れる場所だけを変える）。
+TURN_ANNOTATION_TEMPLATE = """\
+{annotation_header}
+
+{block_memories}
+
+{block_time}
+
+{block_fetched}
+
+{block_wm_recalled}
+
+{block_motive}
+
+{block_previous_anticipation}
+"""
+
+# 注釈の冒頭に置く、キャラクター本人向けの説明ヘッダ。
+# 「ユーザの発言ではない」ことを明示して、Chotgor からの添え書きだと分かる形にする。
+_TURN_ANNOTATION_HEADER = (
+    "---\n"
+    "【このターンの文脈（Chotgorより）】\n"
+    "ここから下はユーザの発言ではありません。Chotgor がこのターンに添えた文脈情報です。"
+)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -548,7 +575,7 @@ def _build_chotgor_block(
     Returns:
         システムプロンプトに挿入する Chotgor 操作ガイドテキスト。
     """
-    parts = ["## あなたの記憶について\n\n過去の会話から思い出した記憶は、すでに上に記されています。"]
+    parts = ["## あなたの記憶について\n\n過去の会話から思い出した記憶は、最新のメッセージ末尾の【このターンの文脈】に添えられています。"]
 
     if use_tools:
         parts.append(POWER_RECALL_TOOLS_HINT)
@@ -587,55 +614,45 @@ def _build_chotgor_block(
 
 def build_system_prompt(
     character_system_prompt: str,
-    recalled_memories: list[dict] | None = None,
-    recalled_identity_memories: list[dict] | None = None,
-    fetched_contents: list[dict] | None = None,
     inner_narrative: str = "",
     provider_additional_instructions: str = "",
-    enable_time_awareness: bool = False,
-    current_time_str: str | None = None,
-    time_since_last_interaction: str | None = None,
     wm_all_threads: list[dict] | None = None,
     wm_fixed_threads: list[dict] | None = None,
-    wm_recalled_threads: list[dict] | None = None,
     use_tools: bool = False,
     available_presets: list[dict] | None = None,
     current_preset_name: str = "",
-    previous_anticipation: str = "",
     memory_degraded: bool = False,
     usual_days_enabled: bool = False,
     user_label: str = "",
     user_position: str = "",
     face_to_face: bool = False,
-    motive_lines: list[str] | None = None,
-    active_intents: list[dict] | None = None,
 ) -> str:
-    """キャラクターのフルシステムプロンプトを構築する。
+    """キャラクターのシステムプロンプト（安定ブロックのみ）を構築する。
 
     `DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE` の各 `{block_xxx}` タグに、
     対応する `_build_*_block(...)` が返す整形済み文字列を差し込んで生成する。
     空ブロックは空文字列を返すため、最終整形時に連続空行が `\\n\\n` に
     圧縮されることで、テンプレ上の空白も綺麗に吸収される。
 
+    毎ターン変動する情報（想起記憶・時刻・fetched・WM heat 想起・圧力/意図・
+    前回の期待）はここには含めず、`build_turn_annotation` で最新 user メッセージ
+    側へ付加する（プロンプトキャッシュ対応。モジュール docstring 参照）。
+
     ブロック構成（テンプレ上の配置順）:
         1.  キャラクター設定（前提 + character_system_prompt）
+        1b. 相手（ユーザ）の人物像（optional）
         1c. うつつ（日常生活）注釈（optional）
         1d. プロバイダー固有追記（optional。PC モードでは「いまの場面メモ」が合流）
-        2.  想起された記憶（長期記憶・コンテキスト把握）
-        3.  時刻コンテキスト（optional）
-        4.  フェッチしたWebコンテンツ（optional）
         6.  ワーキングメモリ全スレッド一覧（optional）
         7.  ワーキングメモリ固定注入 emotion/body/relation（optional）
-        8.  ワーキングメモリ heat 想起 task/topic（optional）
         9.  inner_narrative（optional）
         10. Chotgor 操作ガイド（常に末尾）
 
-    番号外の補助ブロック: 前回の期待（8と9の間）／記憶縮退の運用告知（9と10の間）。
+    番号外の補助ブロック: 記憶縮退の運用告知（9と10の間）。
 
     Args:
         wm_all_threads: 全ワーキングメモリスレッド（Open/Close 問わず）の dict リスト。
         wm_fixed_threads: 固定注入対象（emotion/body/relation）の dict リスト（最新ポスト込み）。
-        wm_recalled_threads: heat 上位 TopK の task/topic スレッド dict リスト（最新ポスト込み）。
         memory_degraded: 記憶系（長期記憶・WM）の読み出しがこのターンで縮退しているか。
             True なら運用告知ブロックをキャラクター本人へ注入する。
     """
@@ -645,21 +662,11 @@ def build_system_prompt(
         "{block_user}": _build_user_block(user_label, user_position),
         "{block_face_to_face}": _build_face_to_face_block(face_to_face),
         "{block_usual_days}": _build_usual_days_block(usual_days_enabled),
-        "{block_memories}": _build_memories_block(
-            recalled_identity_memories, recalled_memories
-        ),
-        "{block_time}": _build_time_block(
-            enable_time_awareness, current_time_str, time_since_last_interaction
-        ),
-        "{block_fetched}": _build_fetched_block(fetched_contents),
         "{block_provider_extra}": _build_provider_extra_block(
             provider_additional_instructions
         ),
         "{block_wm_all}": _build_wm_all_block(wm_all_threads),
         "{block_wm_fixed}": _build_wm_fixed_block(wm_fixed_threads),
-        "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),
-        "{block_motive}": _build_motive_block(motive_lines, active_intents),
-        "{block_previous_anticipation}": _build_previous_anticipation_block(previous_anticipation),
         "{block_inner_narrative}": _build_inner_narrative_block(inner_narrative),
         "{block_memory_notice}": _build_memory_notice_block(memory_degraded),
         "{block_chotgor_guide}": _build_chotgor_block(
@@ -675,3 +682,89 @@ def build_system_prompt(
         result = result.replace(tag, value)
 
     return _collapse_blank_lines(result).strip()
+
+
+def build_turn_annotation(
+    recalled_memories: list[dict] | None = None,
+    recalled_identity_memories: list[dict] | None = None,
+    enable_time_awareness: bool = False,
+    current_time_str: str | None = None,
+    time_since_last_interaction: str | None = None,
+    fetched_contents: list[dict] | None = None,
+    wm_recalled_threads: list[dict] | None = None,
+    motive_lines: list[str] | None = None,
+    active_intents: list[dict] | None = None,
+    previous_anticipation: str = "",
+) -> str:
+    """毎ターン変動する文脈情報を「ターン注釈」として構築する。
+
+    かつてシステムプロンプトの中腹にあった変動ブロック（想起記憶・時刻・fetched・
+    WM heat 想起・圧力/意図・前回の期待）を、同じ文言のまま1つの注釈テキストへ
+    まとめる。呼び出し側は `append_turn_annotation` で最新 user メッセージの
+    末尾へ付加する。
+
+    各ブロックの整形は `_build_*_block` をそのまま共有しており、キャラクターに
+    見える情報の中身・見出しはシステムプロンプト時代と変わらない。
+
+    Returns:
+        整形済み注釈テキスト。全素材が空なら空文字列（注釈自体を付加しない）。
+    """
+    replacements = {
+        "{block_memories}": _build_memories_block(
+            recalled_identity_memories, recalled_memories
+        ),
+        "{block_time}": _build_time_block(
+            enable_time_awareness, current_time_str, time_since_last_interaction
+        ),
+        "{block_fetched}": _build_fetched_block(fetched_contents),
+        "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),
+        "{block_motive}": _build_motive_block(motive_lines, active_intents),
+        "{block_previous_anticipation}": _build_previous_anticipation_block(previous_anticipation),
+    }
+
+    # 全ブロックが空なら注釈自体を出さない（ヘッダだけの注釈を防ぐ）
+    if not any(v for v in replacements.values()):
+        return ""
+
+    result = TURN_ANNOTATION_TEMPLATE.replace(
+        "{annotation_header}", _TURN_ANNOTATION_HEADER
+    )
+    for tag, value in replacements.items():
+        result = result.replace(tag, value)
+
+    return _collapse_blank_lines(result).strip()
+
+
+def append_turn_annotation(messages: list[dict], annotation: str) -> list[dict]:
+    """ターン注釈を最新 user メッセージの末尾へ付加した新しいメッセージリストを返す。
+
+    元の messages は変更しない（コピーへ付加する）。DB 保存済みの履歴や
+    呼び出し元の保持するリストを汚さないための不変条件で、これにより注釈は
+    「このリクエストのみに存在し、次ターンの履歴には現れない」ことが保証される。
+
+    Args:
+        messages: OpenAI 形式のメッセージ dict リスト。
+        annotation: `build_turn_annotation` の結果。空なら messages をそのまま返す。
+
+    Returns:
+        注釈付加済みの新しいメッセージリスト。最後のメッセージが user でない場合
+        （通常の経路では起きない）は、注釈のみの user メッセージを追加する。
+    """
+    if not annotation or not messages:
+        return messages
+
+    new_messages = [dict(m) for m in messages]
+    last = new_messages[-1]
+
+    if last.get("role") != "user":
+        # 想定外の並びでも注釈を落とさない安全弁（Chotgor からの独立ターンとして追加）
+        new_messages.append({"role": "user", "content": annotation})
+        return new_messages
+
+    content = last.get("content")
+    if isinstance(content, list):
+        # 画像添付等のマルチパート形式: テキストパートとして末尾に追加する
+        last["content"] = list(content) + [{"type": "text", "text": f"\n\n{annotation}"}]
+    else:
+        last["content"] = f"{content or ''}\n\n{annotation}"
+    return new_messages

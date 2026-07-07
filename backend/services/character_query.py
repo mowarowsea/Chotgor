@@ -24,7 +24,11 @@ from typing import TYPE_CHECKING
 
 from backend.lib.log_context import current_log_feature
 from backend.providers.registry import create_provider
-from backend.services.chat.request_builder import build_system_prompt
+from backend.services.chat.request_builder import (
+    append_turn_annotation,
+    build_system_prompt,
+    build_turn_annotation,
+)
 
 if TYPE_CHECKING:
     from backend.character_actions.executor import ToolExecutor
@@ -181,15 +185,20 @@ async def ask_character(
 
     system_prompt = build_system_prompt(
         character_system_prompt=char.system_prompt_block1 or "",
-        recalled_memories=recalled,
-        recalled_identity_memories=recalled_identity,
         inner_narrative=char.inner_narrative or "",
         wm_all_threads=wm_all_threads,
         wm_fixed_threads=wm_fixed_threads,
-        wm_recalled_threads=wm_recalled_threads,
         user_label=user_label,
         user_position=user_position,
     )
+    # 変動情報（想起記憶・WM heat 想起）はターン注釈として最新 user メッセージへ
+    # 付加する。1on1 チャットと同じ認知構造（キャラクター問い合わせ原則）。
+    annotation = build_turn_annotation(
+        recalled_memories=recalled or None,
+        recalled_identity_memories=recalled_identity or None,
+        wm_recalled_threads=wm_recalled_threads,
+    )
+    messages = append_turn_annotation(messages, annotation)
 
     try:
         result = await provider.generate(system_prompt, messages)
@@ -311,16 +320,17 @@ async def ask_character_with_tools(
 
     system_prompt = build_system_prompt(
         character_system_prompt=char.system_prompt_block1 or "",
-        recalled_memories=[],
-        recalled_identity_memories=[],
         inner_narrative=char.inner_narrative or "",
         wm_all_threads=wm_all_threads,
         wm_fixed_threads=wm_fixed_threads,
-        wm_recalled_threads=wm_recalled_threads,
         use_tools=True,
         user_label=user_label,
         user_position=user_position,
     )
+    # 変動情報（WM heat 想起）はターン注釈として最新 user メッセージへ付加する
+    # （1on1 チャットと同じ認知構造。キャラクター問い合わせ原則）。
+    annotation = build_turn_annotation(wm_recalled_threads=wm_recalled_threads)
+    messages = append_turn_annotation(messages, annotation)
 
     tool_executor = ToolExecutor(
         character_id=character_id,

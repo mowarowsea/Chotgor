@@ -15,7 +15,7 @@
 import uuid
 from datetime import datetime, timedelta
 
-from backend.services.chat.request_builder import build_system_prompt
+from backend.services.chat.request_builder import build_system_prompt, build_turn_annotation
 from backend.services.pressure.engine import (
     DEFAULT_PROFILE,
     compute_boredom,
@@ -274,31 +274,47 @@ class TestInterviewRubric:
 
 
 class TestMotiveBlock:
-    """動機ブロック（話題権）のプロンプト注入を検証するテストクラス。"""
+    """動機ブロック（話題権）のターン注釈への注入を検証するテストクラス。
+
+    動機ブロック（圧力の一行＋active な意図）は毎ターン変動しうる情報のため、
+    プロンプトキャッシュ対応（docs/prompt_cache_plan.md A案）でシステムプロンプト
+    からターン注釈（build_turn_annotation）へ移設された。文言・見出しは移設前と
+    同一であること（キャラクターに見える中身は変えない）も含めて検証する。
+    """
 
     def test_block_appears_with_lines(self):
-        """圧力の一行があれば動機ブロックと話題権の明文化が載る。"""
-        prompt = build_system_prompt(
-            character_system_prompt="あなたは「はる」です。",
+        """圧力の一行があれば動機ブロックと話題権の明文化が注釈に載る。"""
+        annotation = build_turn_annotation(
             motive_lines=["ここ数日、体は重め。"],
         )
-        assert "いまのあなた（体と意図）" in prompt
-        assert "ここ数日、体は重め。" in prompt
-        assert "話題に乗る義務はありません" in prompt
+        assert "いまのあなた（体と意図）" in annotation
+        assert "ここ数日、体は重め。" in annotation
+        assert "話題に乗る義務はありません" in annotation
 
     def test_block_with_intents(self):
         """active な意図も動機ブロックに載る（Phase 4 接続点）。"""
-        prompt = build_system_prompt(
-            character_system_prompt="あなたは「はる」です。",
+        annotation = build_turn_annotation(
             motive_lines=[],
             active_intents=[{"description": "あの本の続きを読みたい", "target": "self"}],
         )
-        assert "あの本の続きを読みたい" in prompt
+        assert "あの本の続きを読みたい" in annotation
 
     def test_block_absent_when_empty(self):
         """素材ゼロならブロック自体が出ない（毎ターンのノイズにしない）。"""
-        prompt = build_system_prompt(
-            character_system_prompt="あなたは「はる」です。",
+        annotation = build_turn_annotation(
             motive_lines=[],
         )
-        assert "いまのあなた（体と意図）" not in prompt
+        assert "いまのあなた（体と意図）" not in annotation
+
+    def test_block_not_in_system_prompt(self):
+        """動機ブロックがシステムプロンプト側に紛れ込まないこと（移設の回帰防止）。
+
+        build_system_prompt が motive_lines を受け取らないこと（TypeError）で、
+        変動情報の混入によるキャッシュプレフィックス破壊を構造的に防ぐ。
+        """
+        import pytest
+        with pytest.raises(TypeError):
+            build_system_prompt(
+                character_system_prompt="あなたは「はる」です。",
+                motive_lines=["ここ数日、体は重め。"],
+            )

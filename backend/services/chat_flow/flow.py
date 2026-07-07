@@ -46,7 +46,11 @@ from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.repositories.lance.store import EmbeddingError
 from backend.providers.base import LLMApiError
 from backend.providers.registry import create_provider
-from backend.services.chat.request_builder import build_system_prompt
+from backend.services.chat.request_builder import (
+    append_turn_annotation,
+    build_system_prompt,
+    build_turn_annotation,
+)
 from backend.lib.tag_parser import StreamingTagStripper
 from backend.lib.tool_event_recorder import record_tool_event
 from backend.character_actions.executor import ToolExecutor
@@ -473,32 +477,41 @@ class ChatFlow:
         except Exception:
             _log.exception("圧力計算に失敗 char=%s", request.character_id)
 
-        # --- システムプロンプト構築 ---
+        # --- システムプロンプト構築（安定ブロックのみ） ---
+        # 毎ターン変動する情報はターン注釈として最新 user メッセージ側へ付加する
+        # （プロンプトキャッシュ対応。docs/prompt_cache_plan.md A案）。
         system_prompt = build_system_prompt(
             character_system_prompt=request.character_system_prompt,
-            recalled_identity_memories=recalled_identity or None,
-            recalled_memories=recalled or None,
-            fetched_contents=fetched_contents,
             inner_narrative=request.inner_narrative,
             provider_additional_instructions=request.provider_additional_instructions,
-            enable_time_awareness=request.enable_time_awareness,
-            current_time_str=request.current_time_str,
-            time_since_last_interaction=request.time_since_last_interaction,
             wm_all_threads=wm_all_threads,
             wm_fixed_threads=wm_fixed_threads,
-            wm_recalled_threads=wm_recalled_threads,
             use_tools=provider_impl.SUPPORTS_TOOLS,
             available_presets=request.available_presets or None,
             current_preset_name=request.current_preset_name,
-            previous_anticipation=request.previous_anticipation,
             memory_degraded=memory_degraded,
             usual_days_enabled=request.usual_days_enabled,
             user_label=request.user_label,
             user_position=request.user_position,
             face_to_face=request.face_to_face,
+        )
+
+        # --- ターン注釈（変動ブロック）を最新 user メッセージへ付加 ---
+        # 注釈は LLM リクエストにのみ乗り、DB 保存の履歴には残らない
+        # （messages はここでコピーへ差し替わるため、元リストは汚れない）。
+        annotation = build_turn_annotation(
+            recalled_memories=recalled or None,
+            recalled_identity_memories=recalled_identity or None,
+            enable_time_awareness=request.enable_time_awareness,
+            current_time_str=request.current_time_str,
+            time_since_last_interaction=request.time_since_last_interaction,
+            fetched_contents=fetched_contents,
+            wm_recalled_threads=wm_recalled_threads,
             motive_lines=motive_lines,
             active_intents=active_intents,
+            previous_anticipation=request.previous_anticipation,
         )
+        messages = append_turn_annotation(messages, annotation)
 
         return _Context(
             messages=messages,

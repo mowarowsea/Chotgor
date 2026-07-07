@@ -251,8 +251,15 @@ class TestAskCharacterRecall:
         memory_manager.recall_with_identity.assert_called_once_with(char_id, "ユーザーの最後の発言")
 
     @pytest.mark.asyncio
-    async def test_recalled_memories_injected_into_system_prompt(self, sqlite_store, char_id, preset_id):
-        """recall_query あり時に想起記憶がシステムプロンプトに注入されること。"""
+    async def test_recalled_memories_injected_into_turn_annotation(self, sqlite_store, char_id, preset_id):
+        """recall_query あり時に想起記憶がターン注釈として最新 user メッセージへ注入されること。
+
+        プロンプトキャッシュ対応（docs/prompt_cache_plan.md A案）により、想起記憶は
+        システムプロンプトではなく最新 user メッセージ末尾の【このターンの文脈】へ
+        付加される。バッチ問い合わせ（ask_character）も 1on1 と同じ認知構造を保つ
+        （キャラクター問い合わせ原則）ことの回帰防止。あわせて、システムプロンプト側に
+        記憶が混入していないこと（キャッシュプレフィックスを汚さない）も検証する。
+        """
         memory_manager = MagicMock()
         # recall_with_identity が identity記憶とその他記憶を返すようにする
         identity_mems = [{"id": "m1", "content": "アイデンティティ記憶", "metadata": {"category": "identity"}}]
@@ -269,9 +276,15 @@ class TestAskCharacterRecall:
                 memory_manager=memory_manager,
                 recall_query="テストクエリ",
             )
-        system_prompt, _ = provider.generate.call_args[0]
-        assert "アイデンティティ記憶" in system_prompt
-        assert "その他の記憶" in system_prompt
+        system_prompt, messages = provider.generate.call_args[0]
+        last_user_content = messages[-1]["content"]
+        # 記憶はターン注釈（最新 user メッセージ末尾）に載る
+        assert "【このターンの文脈（Chotgorより）】" in last_user_content
+        assert "アイデンティティ記憶" in last_user_content
+        assert "その他の記憶" in last_user_content
+        # システムプロンプト側には混入しない（安定プレフィックス維持）
+        assert "アイデンティティ記憶" not in system_prompt
+        assert "その他の記憶" not in system_prompt
 
     @pytest.mark.asyncio
     async def test_recall_failure_does_not_abort(self, sqlite_store, char_id, preset_id):
