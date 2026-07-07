@@ -157,6 +157,18 @@
 
             <hr class="ch-divider">
 
+            <!-- 預かり（escrow）能動配達 — めぐり §5.1 -->
+            <div class="ch-field">
+                <label class="ch-label" for="escrow_delivery_daily_cap">預かりメッセージの能動配達（日次上限）
+                    <span class="ch-hint">席を外している間に届いたメッセージを、availability が戻ったらキャラクターから自発的に配達・返信します。1 日あたりの配達（LLM 呼び出し）回数の上限。0 = 能動配達を止める（次にあなたが話しかけたときにまとめて届く従来動作）</span>
+                </label>
+                <input type="number" id="escrow_delivery_daily_cap" name="escrow_delivery_daily_cap"
+                       value="{{ settings.get('escrow_delivery_daily_cap', '12') }}"
+                       min="0" max="200" class="ch-input" style="width:120px">
+            </div>
+
+            <hr class="ch-divider">
+
             <!-- Chronicle Time -->
             <div class="ch-field">
                 <label class="ch-label" for="chronicle_time">Chronicle Time

@@ -72,6 +72,14 @@ async def save_general_settings(request: Request):
         cw = 10
     store.set_setting("context_window_max_chronicled", str(max(0, min(200, cw))))
 
+    # 預かり（escrow）能動配達の日次上限（0 = 能動配達オフ）。
+    # delivery.py は空文字を既定12に倒すため、明示保存値は 0〜200 にクランプする。
+    try:
+        cap = int(form.get("escrow_delivery_daily_cap") or 12)
+    except (TypeError, ValueError):
+        cap = 12
+    store.set_setting("escrow_delivery_daily_cap", str(max(0, min(200, cap))))
+
     # 翻訳モデル設定の保存
     store.set_setting("translation_preset_id", form.get("translation_preset_id") or "")
 
