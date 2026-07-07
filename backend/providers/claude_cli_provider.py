@@ -117,8 +117,9 @@ _CLAUDE_ENV_EXCLUDES = {"CLAUDECODE", "ANTHROPIC_API_KEY"}
 def _clean_env() -> dict:
     """グローバル環境変数からClaudeネスト検出・誤認証キーを除き、コスト削減フラグを注入した dict を返す。"""
     env = {k: v for k, v in os.environ.items() if k not in _CLAUDE_ENV_EXCLUDES}
-    # プロンプトキャッシュを無効化してコストを削減する（キャッシュ料金を避けるため）
-    env["DISABLE_PROMPT_CACHING"] = "1"
+    # プロンプトキャッシュは有効のまま使う（docs/prompt_cache_plan.md §7.0）。
+    # サブスク（OAuth）運用ではキャッシュ読出がレート枠の節約に直結するため、
+    # 旧実装にあった DISABLE_PROMPT_CACHING=1 の注入は撤去した。
     # 自動メモリ（~/.claude/projects/.../memory/MEMORY.md）の読み込みを無効化し、
     # システムプロンプトへの不要な注入を防いでトークン消費を削減する。
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
