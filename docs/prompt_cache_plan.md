@@ -1,6 +1,6 @@
 # プロンプトキャッシュ有効化計画 — claude_cli 1on1 のレート枠消費削減
 
-> ステータス: **作戦立案のみ（2026-07-07）**。調査・実装は未着手。
+> ステータス: **調査フェーズ完了（2026-07-07）**。調査結果は §7。実装は未着手。
 > 経緯: Fable 5 との検討スレで立案。本書だけ読めば着手できるよう自己完結で書く。
 > 関連: `CLAUDE.md`（キャラクター問い合わせ原則）、MEMORY.md「トークン表示機能」残課題（cache列UI）
 
@@ -103,3 +103,104 @@ Anthropic のプロンプトキャッシュ仕様（前提知識）:
 
 調査(§3) → C案（計測） → A案（組み立て順） → 実測確認 → 必要なら B案（常駐化）。
 各段が単独で価値を持ち、途中で止まっても壊れない。
+
+---
+
+## 7. 調査結果（2026-07-07 実施）
+
+### 7.0 最重要発見 — キャッシュは「効いていない」のではなく「自分で切っている」
+
+`backend/providers/claude_cli_provider.py` の `_clean_env()`（L118-125）が、
+CLI サブプロセスへ **`DISABLE_PROMPT_CACHING=1` を明示的に注入している**。
+コメントは「プロンプトキャッシュを無効化してコストを削減する（キャッシュ料金を
+避けるため）」— API 従量課金でのキャッシュ書込 +25% を避ける意図だったと思われるが、
+サブスク（OAuth）運用ではドル課金は発生せず、レート枠削減の機会だけを捨てている。
+§2 の仮説2本柱より**手前**にある根本原因。除去は1行。
+
+なお `_clean_env()` は `invoke_claude_cli`（digest / forget 等のバッチ）とも共有
+されているため、除去すればバッチ経路にも同時に効く（悪影響なし）。
+
+### 7.1 プロンプト組み立て順の実態（§3-1）
+
+組み立ては `backend/services/chat/request_builder.py` の
+`DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE` ＋ `build_system_prompt(...)`。
+素材の供給は `backend/services/chat_flow/flow.py::_build_context`（1on1）と
+`backend/services/character_query.py::_collect_wm_blocks`（バッチ）が同じ WM 3系統を使う。
+
+テンプレ順と変動性の表（上から実際の並び順）:
+
+| # | ブロック | 内容 | 変動性 |
+|---|---------|------|--------|
+| 1 | prelude | Chotgor 世界観固定文 | **固定** |
+| 2 | character | character_system_prompt | 安定（キャラ編集時のみ） |
+| 3 | user | 呼称・位置づけ | 安定 |
+| 4 | face_to_face | 対面注釈 | 安定（モード切替時のみ） |
+| 5 | usual_days | うつつ注釈 | 安定（設定変更時のみ） |
+| 6 | provider_extra | プロバイダー追記 | 安定 |
+| 7 | **memories (Block 2)** | pre-recall 結果 | **毎ターン変動**（最新user発話がクエリ） |
+| 8 | **time (Block 3)** | 現在時刻 | **毎ターン変動・秒粒度**（`now.isoformat(timespec="seconds")`, `backend/lib/time_awareness.py` L114）＋前回交流からの経過 |
+| 9 | fetched (Block 4) | URL fetch 結果 | URL 含む時のみ |
+| 10 | wm_all (Block 6) | 全スレッド一覧 | 会話中変動 — **`updated_at DESC` ソート**（`working_memory_store.py` L81）のため WM ポストのたび順序が入れ替わる |
+| 11 | wm_fixed (Block 7) | emotion/body/relation ＋最新ポスト | WM 更新のたび変動 |
+| 12 | wm_recalled (Block 8) | heat 上位 task/topic | **毎ターン変動**（クエリ類似度×decay） |
+| 13 | motive | 圧力一行＋active intents | 準安定（圧力文は閾値量子化された6種のみ・日単位変化。intents は意図変化時） |
+| 14 | previous_anticipation | 前回の期待 | **毎ターン変動** |
+| 15 | inner_narrative (Block 9) | 内的叙述 | 安定（carve 時のみ） |
+| 16 | memory_notice | 縮退告知 | 障害時のみ |
+| 17 | chotgor_guide (Block 10) | 操作ガイド | ほぼ固定（carve ヒント文が inner_narrative の文字数に依存する点のみ注意） |
+
+→ 仮説1は**確定**。最初の変動点は #7 pre-recall で、以降（WM 全部・inner_narrative・
+操作ガイド）が毎ターン道連れミス。仮に pre-recall が同じでも #8 の秒粒度時刻が必ず割る。
+安定プレフィックスとして残るのは #1〜#6（prelude〜provider_extra）のみ。
+
+claude_cli 固有の追加事情: 会話履歴はメッセージ配列ではなく
+`_format_conversation()` で `<history>...</history>\n\n{最新発話}` の**単一テキスト**に
+畳んで stdin で渡す。`</history>` 閉じタグの位置が毎ターン後退するが、履歴本体は
+追記型なのでプレフィックス一致は概ね保たれる。killer はあくまでシステムプロンプト側。
+
+### 7.2 CLI 呼び出し方式（§3-2）
+
+- **完全ワンショット**: ターンごとに `subprocess.run` / `Popen` で新プロセス起動。
+  フラグは `--print --output-format stream-json --verbose --tools "" --no-session-persistence --system-prompt <全文>`（`_build_cli_args`, L88-109）。会話全文は stdin。
+- `--resume` / セッション維持は一切使っていない。むしろ `--no-session-persistence` で
+  セッション保存自体を切っている。
+- cwd は `Chotgor_ClaudeCodeWorkDir`（CLAUDE.md/MEMORY.md 注入回避）。
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` も設定済み — この2つは維持してよい。
+- B案（常駐化）をやる場合は `generate_stream` / `generate_stream_typed` の
+  スレッド＋キュー設計（L577-758）に手が入る。A案が成立していればプロセス跨ぎでも
+  プレフィックス一致で当たる理屈なので、まず A案＋実測で判断する（計画どおり）。
+
+### 7.3 キャッシュ計測の現状（§3-3）
+
+- **データ層は既に完備**: `llm_usage_events` に `cache_read_input_tokens` /
+  `cache_creation_input_tokens` カラムあり（`repositories/sqlite/models.py` L474-475）。
+  claude_cli は stream-json の result イベントから（`_extract_usage_from_stream_json`）、
+  anthropic は SDK の Usage オブジェクトから、両方とも**記録済み**。
+- **欠けているのは集計と表示のみ**: cache カラムを参照しているのは insert 経路だけで、
+  集計クエリ・UI 列は未実装。C案は「集計＋トークン表示UIへの cache 列追加」だけで済む
+  （MEMORY.md 残課題「cache列UI」とそのまま合流）。
+- 成功指標の実測手順: `DISABLE_PROMPT_CACHING` 注入を外して backend 再起動 →
+  同一セッションで5分内に2ターン → `llm_usage_events` の2発目
+  `cache_read_input_tokens > 0` を SQL で直接確認できる（UI 実装前でも検証可能）。
+
+### 7.4 anthropic 直プロバイダーへの横展開（§3-4）
+
+- `anthropic_provider.py` に `cache_control` は**皆無**。`system` は素の文字列で渡している
+  （L120-126）。generate / generate_stream / generate_stream_typed の3箇所とも同型。
+- 横展開する場合: `system` をブロック配列 `[{"type":"text","text":...,"cache_control":{"type":"ephemeral"}}]`
+  に変えるだけでシステムプロンプト末尾ブレークポイントを置ける。A案で安定部が
+  先頭に固まっていれば、`system` を安定部/変動部の2ブロックに割って安定部にだけ
+  ブレークポイントを置く形が素直。usage 記録は既存のまま動く。
+
+### 7.5 着手順の更新
+
+§6 の順序に **Step 0 を追加**:
+
+1. **Step 0（即効・1行）**: `_clean_env()` の `DISABLE_PROMPT_CACHING=1` 注入を除去。
+   安定プレフィックス（#1〜#6）が十分長ければこれだけで部分ヒットが出る可能性がある。
+2. **C案**: cache 列の集計＋UI表示（データ層完備のため薄い）。
+3. Step 0 ＋ C案の実測で「素の状態のヒット率」を観測してから **A案**（組み立て順）。
+   A案では #7 pre-recall・#8 時刻・#12 WM想起・#14 前回期待を最新userメッセージ側へ
+   移設し、#10 wm_all のソートを `updated_at DESC` から安定順（created_at 等）へ変える
+   検討も含める（※順序変更は §5-1 のとおり、はる本人への相談を先行させる）。
+4. 実測確認 → 必要なら **B案**（常駐化）。
