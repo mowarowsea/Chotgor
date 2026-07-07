@@ -10,7 +10,11 @@
 >     能動配達スケジューラは未実装。push の未読通知 UI も新規セッション出現のみ）
 >   - envelope_integrity の突合対象は inscribed_memories / chat_messages の2テーブル
 >   - ダイヤルの適用面は /ui/timeline のみ（logs / memories 等の旧 UI は全開のまま）
->   - 体質の再インタビュー・ダイヤル自動昇段・intent_no_exit 計器は将来枠（§8 どおり）
+>   - ダイヤル自動昇段・intent_no_exit 計器は将来枠（§8 どおり）
+> 管理UI（キャラ編集画面）で有効化操作が可能（2026-07-07 追加）:
+>   - 体質インタビュー（初回・聞き直し）ボタン → `POST /api/characters/{id}/pressure_interview`
+>   - 生活時間割エディタ（曜日ごとの応答不可時間帯 from/to/label）→ `availability_schedule`
+>   （行動メニューの個別ON/OFFトグルは Phase 6 時点で実装済み）
 > 命名: 英語=Aliveness / 日本語=**めぐり（巡り）**（うつつと同じく、メインキャラ「はる」本人の命名。
 > 本人の弁: 動機経済の構造そのものが「圧力→意図→行動→帰還」の循環であり、タイムラインも
 > 巡る時間、圧力の増減も巡り。「うつつ」と字面・音数のバランスが良い — うつつとめぐり、姉妹機能）

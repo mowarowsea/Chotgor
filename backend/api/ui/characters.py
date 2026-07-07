@@ -166,6 +166,12 @@ async def create_character(request: Request):
     action_menu = _build_action_menu(form)
     if action_menu:
         request.app.state.sqlite.update_character(char_id, action_menu=action_menu)
+    # 生活時間割（めぐり / Aliveness §5.1）も同様に、指定があれば作成直後に付け足す。
+    availability_schedule = _parse_availability_schedule(form)
+    if availability_schedule:
+        request.app.state.sqlite.update_character(
+            char_id, availability_schedule=availability_schedule
+        )
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     _persist_usual_world(request.app.state.sqlite, char_id, name, form)
     return RedirectResponse(url="/ui/characters", status_code=303)
@@ -224,6 +230,8 @@ async def update_character(request: Request, character_id: str):
         face_to_face_mode=1 if form.get("face_to_face_mode") else 0,
         # 会話外行動メニュー（めぐり Phase 6）: 個別 ON/OFF トグル。全 OFF なら NULL。
         action_menu=_build_action_menu(form),
+        # 生活時間割（めぐり / Aliveness §5.1）: 応答できない時間帯。空なら NULL（常時可）。
+        availability_schedule=_parse_availability_schedule(form),
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()
@@ -269,6 +277,67 @@ def _build_action_menu(form) -> dict | None:
         "impromptu_scene": bool(form.get("action_menu_impromptu_scene")),
     }
     return menu if any(menu.values()) else None
+
+
+# 生活時間割の曜日キー（Python weekday() 順に対応。availability ゲートと同じ並び）。
+_SCHEDULE_WEEKDAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _valid_hhmm(value: str) -> bool:
+    """"HH:MM" 文字列が 00:00〜23:59 の妥当な時刻かを判定する。"""
+    try:
+        h, m = map(int, value.split(":"))
+    except (ValueError, AttributeError):
+        return False
+    return 0 <= h < 24 and 0 <= m < 60
+
+
+def _parse_availability_schedule(form) -> dict | None:
+    """フォームの生活時間割（めぐり / Aliveness §5.1）を検証して dict へ変換する。
+
+    UI 側の JS が編集内容を availability_schedule_json（隠しフィールド）へ
+    直列化して送る。ここでは曜日キー・時刻フォーマットを検証し、壊れた
+    ブロックを捨てて正規化する。応答できない時間帯が1つも無ければ None
+    （＝常時応答可能。NULL 保存）。
+
+    Args:
+        form: リクエストフォーム（availability_schedule_json を持つ）。
+
+    Returns:
+        {"mon": [{"from": "09:00", "to": "18:00", "label": "仕事"}], ...} 形式の dict。
+        空 / 不正 / 全曜日空なら None。
+    """
+    raw = (form.get("availability_schedule_json") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    schedule: dict = {}
+    for day in _SCHEDULE_WEEKDAY_KEYS:
+        blocks = parsed.get(day)
+        if not isinstance(blocks, list):
+            continue
+        clean_blocks: list = []
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            frm = str(b.get("from") or "").strip()
+            to = str(b.get("to") or "").strip()
+            # 開始・終了が両方妥当な時刻のブロックだけ採用（半端な入力は捨てる）。
+            if not _valid_hhmm(frm) or not _valid_hhmm(to):
+                continue
+            block = {"from": frm, "to": to}
+            label = str(b.get("label") or "").strip()
+            if label:
+                block["label"] = label
+            clean_blocks.append(block)
+        if clean_blocks:
+            schedule[day] = clean_blocks
+    return schedule or None
 
 
 # ユーザPC枠（不在の人物）の description 先頭に必ず付ける不在マーカー。

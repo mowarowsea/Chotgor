@@ -381,6 +381,64 @@
             </div>
         </section>
 
+        {# ── 体質インタビュー（めぐり Phase 3）──
+           圧力（社会圧・退屈圧・体調圧）の体質係数を、本人への体験の質問で初期化する。
+           数値は聞かず、選択肢＋本人の言葉を固定ルーブリックで係数へ写像する。
+           本人からの更新経路は作らない（圧力＝物理）。ここはユーザ（守護者）の介入枠。 #}
+        {% if character %}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">constitution <small>・ 体質インタビュー</small></h3>
+            </div>
+            <p class="ch-hint">
+                圧力（人恋しさ・退屈・疲れやすさ）の体質を、本人に体験の質問を投げて初期化する。
+                数値は聞かず、選択肢と本人の言葉を固定ルーブリックで係数化する。
+                機能を有効化するとき一度だけ実施すればよい（再実行で上書き）。
+            </p>
+            {% set has_interview = character.pressure_profile and character.pressure_profile.get('interview') %}
+            <div class="ch-field" style="margin-bottom:0;flex-direction:row;align-items:center;gap:12px">
+                <button type="button" class="ch-btn ch-btn--sm"
+                    onclick="runPressureInterview(this, '{{ character.id }}')">
+                    {% if has_interview %}体質を聞き直す{% else %}体質インタビューを実施{% endif %}
+                </button>
+                <span id="pressure-interview-status" class="ch-hint">
+                    {% if has_interview %}
+                        実施済み（{{ character.pressure_profile.interview.get('asked_at', '')[:10] }}）
+                    {% else %}未実施 — 標準の体質で動作中{% endif %}
+                </span>
+            </div>
+        </section>
+        {% endif %}
+
+        {# ── 生活時間割（めぐり / Aliveness §5.1）──
+           応答できない時間帯（仕事・睡眠など）。ここに入れた時間帯の間はメッセージを
+           預かり、本人には席に戻ったときにまとめて届く（availability ゲート）。
+           編集内容は JS が availability_schedule_json（隠しフィールド）へ直列化して保存。 #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">availability <small>・ 生活時間割</small></h3>
+            </div>
+            <p class="ch-hint">
+                このキャラが「席にいない」時間帯（仕事・睡眠など）。この間に届いたメッセージは
+                預かり、本人が席に戻ったときにまとめて届く。空 = 常時応答可能。
+                <code>from &gt; to</code> は日跨ぎ（例 23:00〜06:00）として扱う。
+            </p>
+            <div id="schedule-editor" class="ch-schedule">
+                {% for day, label in [('mon','月'),('tue','火'),('wed','水'),('thu','木'),('fri','金'),('sat','土'),('sun','日')] %}
+                <div class="ch-schedule__day" data-day="{{ day }}">
+                    <div class="ch-schedule__dayhead">
+                        <span class="ch-schedule__dayname">{{ label }}</span>
+                        <button type="button" class="ch-btn ch-btn--xs ch-btn--ghost"
+                            onclick="addScheduleBlock('{{ day }}')">+ 時間帯</button>
+                    </div>
+                    <div class="ch-schedule__blocks" data-blocks></div>
+                </div>
+                {% endfor %}
+            </div>
+            <input type="hidden" name="availability_schedule_json" id="availability_schedule_json"
+                value='{{ (character.availability_schedule or {}) | tojson if character else "{}" }}'>
+        </section>
+
         {# ── tools ・ 外部連携 ── #}
         <section class="ch-section">
             <div class="ch-section__head">
@@ -1035,5 +1093,138 @@
     btn.textContent = prev;
     btn.disabled = false;
   }
+
+  /**
+   * 体質インタビュー（めぐり Phase 3）を実施する。
+   * 本人（ghost_model）に体験の質問を投げて圧力係数を初期化する非同期 LLM 呼び出し。
+   * @param {HTMLElement} btn - クリックされたボタン要素。
+   * @param {string} characterId - キャラクターID。
+   */
+  async function runPressureInterview(btn, characterId) {
+    const status = document.getElementById('pressure-interview-status');
+    const prev = btn.textContent;
+    btn.textContent = 'インタビュー中…';
+    btn.disabled = true;
+    if (status) status.textContent = '本人に体質を聞いています…';
+    try {
+      const res = await fetch(`/api/characters/${characterId}/pressure_interview`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (status) status.textContent = `失敗: ${data.detail || res.status}`;
+      } else {
+        const answers = data.answers || {};
+        const picked = Object.keys(answers).sort()
+          .map(q => `${q}:${answers[q]}`).join(' ');
+        if (status) status.textContent = `完了 — 回答 ${picked || '（既定へフォールバック）'}`;
+        btn.textContent = '体質を聞き直す';
+        btn.disabled = false;
+        return;
+      }
+    } catch (e) {
+      if (status) status.textContent = `通信エラー: ${e.message}`;
+    }
+    btn.textContent = prev;
+    btn.disabled = false;
+  }
+
+  /* ── 生活時間割エディタ（availability_schedule）──────────────────
+     行入力には name を付けない（FormData には隠しフィールドの JSON だけを送る）。
+     どの入力でも #schedule-editor で拾って再直列化 → 隠しフィールドへ書き戻す。
+     行入力の input/change は form へバブルして autosave も起動する。 */
+  const SCHEDULE_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+  /**
+   * 1つの時間帯ブロックの行要素を生成する。
+   * @param {object} block - 初期値（from / to / label を持ちうる）。
+   * @returns {HTMLElement} .ch-schedule__block 要素。
+   */
+  function makeScheduleBlockRow(block) {
+    block = block || {};
+    const row = document.createElement('div');
+    row.className = 'ch-schedule__block';
+    const from = document.createElement('input');
+    from.type = 'time'; from.className = 'ch-input ch-input--mono'; from.dataset.role = 'from';
+    from.value = block.from || '';
+    const sep = document.createElement('span'); sep.className = 'ch-hint'; sep.textContent = '〜';
+    const to = document.createElement('input');
+    to.type = 'time'; to.className = 'ch-input ch-input--mono'; to.dataset.role = 'to';
+    to.value = block.to || '';
+    const label = document.createElement('input');
+    label.type = 'text'; label.className = 'ch-input'; label.dataset.role = 'label';
+    label.placeholder = 'ラベル（例: 仕事）'; label.value = block.label || '';
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'ch-btn ch-btn--xs ch-btn--ghost'; del.textContent = '✕';
+    del.onclick = function () { removeScheduleBlock(del); };
+    row.append(from, sep, to, label, del);
+    return row;
+  }
+
+  /** 隠しフィールドの JSON から各曜日の行を描画する（初期ロード用）。 */
+  function renderSchedule() {
+    const hidden = document.getElementById('availability_schedule_json');
+    if (!hidden) return;
+    let sched = {};
+    try { sched = JSON.parse(hidden.value || '{}') || {}; } catch (e) { sched = {}; }
+    SCHEDULE_DAYS.forEach(function (day) {
+      const container = document.querySelector(`.ch-schedule__day[data-day="${day}"] [data-blocks]`);
+      if (!container) return;
+      container.innerHTML = '';
+      (sched[day] || []).forEach(function (b) { container.appendChild(makeScheduleBlockRow(b)); });
+    });
+  }
+
+  /** DOM を走査して隠しフィールドへ直列化する。両端が揃った時間帯だけ採用。 */
+  function serializeSchedule() {
+    const out = {};
+    SCHEDULE_DAYS.forEach(function (day) {
+      const container = document.querySelector(`.ch-schedule__day[data-day="${day}"] [data-blocks]`);
+      if (!container) return;
+      const blocks = [];
+      container.querySelectorAll('.ch-schedule__block').forEach(function (row) {
+        const from = row.querySelector('[data-role="from"]').value.trim();
+        const to = row.querySelector('[data-role="to"]').value.trim();
+        if (!from || !to) return; // 半端な行は保存対象外（DOM には残す）
+        const label = row.querySelector('[data-role="label"]').value.trim();
+        const block = { from: from, to: to };
+        if (label) block.label = label;
+        blocks.push(block);
+      });
+      if (blocks.length) out[day] = blocks;
+    });
+    const hidden = document.getElementById('availability_schedule_json');
+    if (hidden) hidden.value = JSON.stringify(out);
+  }
+
+  /**
+   * 指定曜日に空の時間帯行を追加する（追加は確定操作なので即時保存）。
+   * @param {string} day - 曜日キー（mon〜sun）。
+   */
+  function addScheduleBlock(day) {
+    const container = document.querySelector(`.ch-schedule__day[data-day="${day}"] [data-blocks]`);
+    if (!container) return;
+    container.appendChild(makeScheduleBlockRow({}));
+    serializeSchedule();
+    if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
+  }
+
+  /**
+   * 時間帯行を削除する（削除は確定操作なので即時保存）。
+   * @param {HTMLElement} btn - 行内の削除ボタン。
+   */
+  function removeScheduleBlock(btn) {
+    const row = btn.closest('.ch-schedule__block');
+    if (row) row.remove();
+    serializeSchedule();
+    if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
+  }
+
+  (function setupSchedule() {
+    const editor = document.getElementById('schedule-editor');
+    if (!editor) return;
+    renderSchedule();
+    // 行内の時刻・ラベル変更を拾って隠しフィールドへ再直列化（form 側 autosave は自然に起動）。
+    editor.addEventListener('input', serializeSchedule);
+    editor.addEventListener('change', serializeSchedule);
+  })();
 </script>
 {% endblock %}

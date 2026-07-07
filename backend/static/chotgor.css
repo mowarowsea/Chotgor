@@ -1291,6 +1291,34 @@ html::-webkit-scrollbar-track,
 .ch-switch-row__label { font-size: 13px; color: var(--ch-t); }
 .ch-switch-row__note { display: block; margin-top: 2px; font-size: 11px; color: var(--ch-t3); }
 
+/* ============================================================
+   SCHEDULE — 生活時間割エディタ（availability_schedule）
+   曜日ごとに応答不可の時間帯（from〜to＋ラベル）を並べる構造。
+   見た目は ch-input / ch-btn を再利用し、ここはレイアウトのみ。
+   ============================================================ */
+.ch-schedule { display: flex; flex-direction: column; gap: 10px; }
+.ch-schedule__day {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ch-sep);
+}
+.ch-schedule__day:last-child { border-bottom: none; }
+.ch-schedule__dayhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.ch-schedule__dayname { font-size: 13px; color: var(--ch-t); min-width: 2.5em; }
+.ch-schedule__blocks { display: flex; flex-direction: column; gap: 6px; }
+.ch-schedule__block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ch-schedule__block .ch-input { width: auto; }
+.ch-schedule__block .ch-input[data-role="label"] { flex: 1; min-width: 120px; }
+
 /* ████████████████████████████████████████████████████████████
    LEGACY BRIDGES（18）— 旧 style.css のクラス名を温存し新テーマで上書き
    ------------------------------------------------------------

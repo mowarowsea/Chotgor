@@ -323,3 +323,79 @@ class TestEngagementParsing:
             '{"emotions": {}, "should_exit": false, "farewell_type": null}'
         )
         assert "engagement" not in parsed  # detect() が 0.5 に縮退させる
+
+
+class TestParseAvailabilitySchedule:
+    """生活時間割フォームの解釈 _parse_availability_schedule を検証するテストクラス。
+
+    管理UI（キャラ編集画面）の JS が編集内容を availability_schedule_json という
+    隠しフィールドへ JSON 直列化して送る。バックエンドはこの JSON を検証し、
+    壊れたブロックを捨てて characters.availability_schedule 用の dict へ正規化する。
+
+    ここで検証するのは以下の4点:
+        1. 正常系: 曜日ごとの時間帯（from/to/label）がそのまま採用されること。
+           label 省略ブロックや日跨ぎ（from > to）もそのまま通ること。
+        2. 空・未指定・非 dict は None（＝常時応答可能・NULL 保存）へ倒れること。
+        3. 時刻フォーマット不正（"bad" / "24:00" 等）のブロックだけが捨てられ、
+           同じ曜日の妥当なブロックは残ること。
+        4. 全曜日が空になった場合は None を返すこと（半端入力の掃除結果が空でも安全）。
+    """
+
+    def _parser(self):
+        """テスト対象の解釈関数を取得するヘルパ（import をテスト内に閉じる）。"""
+        from backend.api.ui.characters import _parse_availability_schedule
+        return _parse_availability_schedule
+
+    def test_normal_case_keeps_blocks(self):
+        """正常な曜日・時間帯はそのまま採用され、label 省略・日跨ぎも通る。"""
+        import json
+        parse = self._parser()
+        form = {
+            "availability_schedule_json": json.dumps({
+                "mon": [{"from": "09:00", "to": "18:00", "label": "仕事"}],
+                "wed": [{"from": "23:00", "to": "06:00"}],  # 日跨ぎ・label 省略
+            })
+        }
+        result = parse(form)
+        assert result == {
+            "mon": [{"from": "09:00", "to": "18:00", "label": "仕事"}],
+            "wed": [{"from": "23:00", "to": "06:00"}],
+        }
+
+    def test_empty_or_invalid_returns_none(self):
+        """空文字・未指定・"{}"・非 dict JSON はすべて None（常時応答可能）へ倒れる。"""
+        parse = self._parser()
+        assert parse({}) is None
+        assert parse({"availability_schedule_json": ""}) is None
+        assert parse({"availability_schedule_json": "{}"}) is None
+        assert parse({"availability_schedule_json": "not json"}) is None
+        assert parse({"availability_schedule_json": "[1,2,3]"}) is None  # 配列は dict でない
+
+    def test_broken_blocks_dropped_valid_kept(self):
+        """時刻不正のブロックだけ捨て、同じ曜日の妥当なブロックは残る。"""
+        import json
+        parse = self._parser()
+        form = {
+            "availability_schedule_json": json.dumps({
+                "tue": [
+                    {"from": "bad", "to": "18:00"},   # 開始が不正 → 捨てる
+                    {"from": "10:00", "to": "24:00"},  # 終了が範囲外 → 捨てる
+                    {"from": "10:00", "to": "12:00"},  # 妥当 → 残す
+                ],
+                "fri": [],  # 空リストの曜日はキーごと消える
+            })
+        }
+        result = parse(form)
+        assert result == {"tue": [{"from": "10:00", "to": "12:00"}]}
+
+    def test_all_blocks_dropped_returns_none(self):
+        """全ブロックが不正で掃除の結果が空になった場合は None を返す。"""
+        import json
+        parse = self._parser()
+        form = {
+            "availability_schedule_json": json.dumps({
+                "mon": [{"from": "bad", "to": "bad"}],
+                "sun": [{"foo": "bar"}],  # dict だが時刻キー無し
+            })
+        }
+        assert parse(form) is None
