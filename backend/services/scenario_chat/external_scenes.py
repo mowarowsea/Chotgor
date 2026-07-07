@@ -282,6 +282,10 @@ def _build_1on1_scenes(
     同じセッション内で face_to_face モードが切り替わったら別シーン扱い。
     Scene 単位: (session_id, face_to_face) ごとに 1 つ。
     シーンタグ名: 対面なら「{user_label}との対面」、テキストなら「{user_label}とのテキストのやり取り」。
+
+    預かり中（delivered_at IS NULL）のメッセージは含めない。escrow の思想上
+    「まだキャラの身に起きていない」出来事であり、ここから漏れるとうつつシーンの
+    最中に未配達メッセージへキャラが応答してしまう（配達時に二重回答にもなる）。
     """
     from backend.repositories.sqlite.store import ChatMessage, ChatSession
 
@@ -297,6 +301,7 @@ def _build_1on1_scenes(
                 ChatMessage.created_at >= since_dt,
                 ChatMessage.created_at < until_dt,
                 (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0),  # noqa: E711
+                ChatMessage.delivered_at.isnot(None),  # 預かり中はまだキャラの身に起きていない
             )
             .order_by(ChatMessage.created_at.asc())
             .all()

@@ -51,8 +51,13 @@ from tests._scenario_sqlite_helpers import _make_scenario
 # ---------------------------------------------------------------------------
 
 
-def _new_chat_message(store, session_id, role, content, face_to_face=0, character_name=None):
-    """create_chat_message のショートカット（テスト用にメッセージIDを自動生成）。"""
+def _new_chat_message(
+    store, session_id, role, content, face_to_face=0, character_name=None, delivered=True,
+):
+    """create_chat_message のショートカット（テスト用にメッセージIDを自動生成）。
+
+    delivered=False で「預かり（escrow・delivered_at=NULL）」のメッセージを作れる。
+    """
     import uuid
 
     return store.create_chat_message(
@@ -62,6 +67,7 @@ def _new_chat_message(store, session_id, role, content, face_to_face=0, characte
         content=content,
         face_to_face=face_to_face,
         character_name=character_name,
+        delivered=delivered,
     )
 
 
@@ -397,6 +403,43 @@ class TestBuild1on1Scenes:
         assert len(scenes) == 2
         assert scenes[0].scene_tag == "太郎とのテキストのやり取り"
         assert scenes[1].scene_tag == "太郎との対面"
+
+    def test_undelivered_message_excluded(self, sqlite_store):
+        """預かり中（delivered_at=NULL）のメッセージは統合履歴に含めない。
+
+        escrow の思想上「まだキャラの身に起きていない」出来事であり、ここから
+        漏れるとうつつシーンの最中にキャラが未配達メッセージへ応答してしまう
+        （実障害: 1on1 の預かりメッセージへの回答がうつつ側に記録された）。
+        配達済みメッセージだけがシーンに載ることを確認する。
+        """
+        sqlite_store.create_character("char-haru", "はる")
+        sqlite_store.create_chat_session("s1", "はる@p")
+        _new_chat_message(sqlite_store, "s1", "user", "配達済みの発言", face_to_face=0)
+        _new_chat_message(sqlite_store, "s1", "character", "うん", face_to_face=0, character_name="はる")
+        # うつつシーン進行中に届いた預かりメッセージ（キャラ未読）
+        _new_chat_message(sqlite_store, "s1", "user", "預かり中の発言", face_to_face=0, delivered=False)
+        scenes = _build_1on1_scenes(
+            sqlite_store, "はる", "太郎",
+            datetime.now() - timedelta(hours=1), datetime.now() + timedelta(seconds=1),
+        )
+        assert len(scenes) == 1
+        contents = [t.content for t in scenes[0].turns]
+        assert contents == ["配達済みの発言", "うん"]
+
+    def test_undelivered_message_included_after_delivery(self, sqlite_store):
+        """配達（mark_messages_delivered）後は同じメッセージがシーンに載る。"""
+        sqlite_store.create_character("char-haru", "はる")
+        sqlite_store.create_chat_session("s1", "はる@p")
+        msg = _new_chat_message(
+            sqlite_store, "s1", "user", "預かり中の発言", face_to_face=0, delivered=False,
+        )
+        sqlite_store.mark_messages_delivered([msg.id])
+        scenes = _build_1on1_scenes(
+            sqlite_store, "はる", "太郎",
+            datetime.now() - timedelta(hours=1), datetime.now() + timedelta(seconds=1),
+        )
+        assert len(scenes) == 1
+        assert [t.content for t in scenes[0].turns] == ["預かり中の発言"]
 
 
 class TestBuildTrpgScenes:
