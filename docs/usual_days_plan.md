@@ -2,7 +2,9 @@
 
 > ステータス: **Phase 0〜7 実装完了（2026-06-14）**。ブランチ `feat/usual-days`。
 > 命名: 英語=Usual Days / 日本語=うつつ（メインキャラ「はる」本人と相談して決定）
-> 関連: `CLAUDE.md`（哲学）、`docs/ARCHITECTURE.md`（システム地図、「うつつ」節）
+> 関連: `CLAUDE.md`（哲学）、`docs/ARCHITECTURE.md`（システム地図、「うつつ」節）、
+>       `docs/schedule_plan.md`（生活カレンダー設計。`usual_config.slots` 手動設定を②はる固定予定
+>        からの導出に置換する設計）
 >
 > 実装時の確定事項:
 > - §4.3 engine_type は案A採用（`engine_type="usual_days"` を新設、GM/PC機構は ensemble_pc と共有）。
