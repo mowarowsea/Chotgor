@@ -1,6 +1,6 @@
 """応答可能性ゲート（gate）のテスト — めぐり（巡り / Aliveness）Phase 5。
 
-検証対象（docs/aliveness_plan.md §5.1〜5.2）:
+検証対象（docs/planned/aliveness_plan.md §5.1〜5.2）:
     1. check_availability: 純関数の判定優先順位
        （対面 > away > うつつシーン進行中 > 生活時間割）と日跨ぎ時間帯
     2. メッセージ預かり（escrow）: delivered=False 保存では封筒が作られず、

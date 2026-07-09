@@ -64,7 +64,7 @@ class ToolEventStoreMixin:
             session.add(event)
             # タイムライン封筒 dual-write（memory.recalled）— 同一トランザクション。
             # 能動的想起 = power_recall のみ載せる（pre-recall はシステムの自動注入なので
-            # キャラの「したこと」ではなく、封筒に載せない。docs/aliveness_plan.md §2.3）。
+            # キャラの「したこと」ではなく、封筒に載せない。docs/planned/aliveness_plan.md §2.3）。
             if tool_name == "power_recall" and status == "ok":
                 char_id = self._resolve_character_id_by_name_in_session(
                     session, target or ""

@@ -1,6 +1,6 @@
 """疲労離席 — 物理（体調圧×没入度の発火式）が終わりを決める終了権。
 
-発火式（docs/aliveness_plan.md §5.2）:
+発火式（docs/planned/aliveness_plan.md §5.2）:
 
     発火: 体調圧 > θ_base + β × engagement    # 夢中は閾値を持ち上げる
     ただし 体調圧 > θ_hard なら無条件発火      # 限界は限界

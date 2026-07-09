@@ -1,6 +1,6 @@
 """意図の拾い上げ — 本人への問いかけで意図を発見・裁定する。
 
-拾い上げは2点（docs/aliveness_plan.md §4.3）:
+拾い上げは2点（docs/planned/aliveness_plan.md §4.3）:
     - 夜間 Chronicle 同乗（batch/chronicle_job.py の末尾から呼ばれる）
     - うつつシーン完走後（services/scenario_chat/service.run_usual_days_scene の末尾）
 

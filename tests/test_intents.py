@@ -1,6 +1,6 @@
 """意図（intents）のテスト — めぐり（巡り / Aliveness）Phase 4。
 
-検証対象（docs/aliveness_plan.md §4.3）:
+検証対象（docs/planned/aliveness_plan.md §4.3）:
     1. IntentStoreMixin: 作成・一覧・終端遷移と、intent.created / expired /
        soured 封筒の同一トランザクション直書き（intent_id FK 込み）
     2. lifecycle: 意図圧の読み取り時計算 g(経過日数, source_kind の現在圧)、

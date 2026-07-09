@@ -1,6 +1,6 @@
 """計器（アラーム・メーター）の永続化 — SQLiteStore Mixin。
 
-めぐり（巡り / Aliveness）の計器層（docs/aliveness_plan.md §3）のデータ口。
+めぐり（巡り / Aliveness）の計器層（docs/planned/aliveness_plan.md §3）のデータ口。
 アラーム（追記型・調査対象）とメータースナップショット（傾向・発火概念なし）を扱う。
 検知ロジック自体は services/instruments/ にあり、ここは読み書きだけを担う。
 """

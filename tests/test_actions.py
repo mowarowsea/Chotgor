@@ -1,6 +1,6 @@
 """会話外行動権（actions）のテスト — めぐり（巡り / Aliveness）Phase 6。
 
-検証対象（docs/aliveness_plan.md §5.3）:
+検証対象（docs/planned/aliveness_plan.md §5.3）:
     1. jittered_slot_time: 評価タイミングのジッターが決定論（乱数は世界に置く）
     2. evaluate_action_urge: 閾値評価が純関数・無料（LLM 不使用）で候補を返す
     3. run_action_cycle: 本人の選択で実行/見送りが分かれ、

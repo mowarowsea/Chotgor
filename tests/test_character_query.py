@@ -254,7 +254,7 @@ class TestAskCharacterRecall:
     async def test_recalled_memories_injected_into_turn_annotation(self, sqlite_store, char_id, preset_id):
         """recall_query あり時に想起記憶がターン注釈として最新 user メッセージへ注入されること。
 
-        プロンプトキャッシュ対応（docs/prompt_cache_plan.md A案）により、想起記憶は
+        プロンプトキャッシュ対応（docs/planned/prompt_cache_plan.md A案）により、想起記憶は
         システムプロンプトではなく最新 user メッセージ末尾の【このターンの文脈】へ
         付加される。バッチ問い合わせ（ask_character）も 1on1 と同じ認知構造を保つ
         （キャラクター問い合わせ原則）ことの回帰防止。あわせて、システムプロンプト側に

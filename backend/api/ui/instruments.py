@@ -1,6 +1,6 @@
 """設定 UI — 計器パネル（instruments）ページ。
 
-めぐり（巡り / Aliveness）の計器層（docs/aliveness_plan.md §3）の表示口。
+めぐり（巡り / Aliveness）の計器層（docs/planned/aliveness_plan.md §3）の表示口。
 3層別（Tier 1 アラーム / Tier 2 スメル / Tier 3 判定巡回）＋静音期間（無事故N日）＋
 メーターの最新スナップショットを表示する。計器はダイヤル非依存で常時稼働し、
 このパネルの数字が「窓を閉じてよい」というユーザの確信を支える。

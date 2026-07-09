@@ -1,0 +1,6 @@
+ run.bat -debug on
+
+  cd frontend
+  npm run dev
+
+http://localhost:3000

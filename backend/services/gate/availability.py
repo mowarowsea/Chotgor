@@ -1,6 +1,6 @@
 """応答可能性の判定 — availability(character, now) の純関数実装。
 
-判定材料（docs/aliveness_plan.md §5.1）:
+判定材料（docs/planned/aliveness_plan.md §5.1）:
     1. 対面モード（既存）      : 対面中は常に available（目の前にいる）
     2. away 状態（動的）       : 疲労離席・take_leave が設定した不在期限
     3. うつつシーン進行中      : 無人シーンの最中は席にいない

@@ -583,7 +583,7 @@ class MeterSnapshot(Base):
 class TimelineEvent(Base):
     """タイムライン封筒 — キャラクターの身に起きた出来事の「存在・順序・相手・時刻」の正本。
 
-    めぐり（巡り / Aliveness）の中核テーブル（docs/aliveness_plan.md §2）。
+    めぐり（巡り / Aliveness）の中核テーブル（docs/planned/aliveness_plan.md §2）。
     中身（発言本文・記憶本文など）は既存テーブルに残し、source_table / source_id で
     JOIN する（封筒 dual-write 方式。中身の複製はしない）。
     payload 完結型イベント（night.* / scene.closed / memory.carved 等）は

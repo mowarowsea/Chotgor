@@ -1,6 +1,6 @@
 """タイムライン投影（projector）のテスト — めぐり（巡り / Aliveness）Phase 1。
 
-検証対象（docs/aliveness_plan.md §2.4〜2.5）:
+検証対象（docs/planned/aliveness_plan.md §2.4〜2.5）:
     1. resolve_disclosure: 観測者×イベント×origin → 開示レベルのポリシー表
        - self は全 content / world_frame は chat.*=envelope・memory.*等=hidden・
          intent.*=hidden・action.performed(対ユーザ)=envelope
@@ -34,7 +34,7 @@ def _make_character(sqlite_store, name="はるテスト"):
 class TestResolveDisclosure:
     """観測者ポリシー表（resolve_disclosure）を検証するテストクラス。
 
-    docs/aliveness_plan.md §2.4 の表と設計判断（GM への chat.* envelope 止め・
+    docs/planned/aliveness_plan.md §2.4 の表と設計判断（GM への chat.* envelope 止め・
     intent.* hidden・action.performed 対ユーザ envelope）を1項目ずつ確認する。
     """
 

@@ -2,7 +2,7 @@
 
 すべてタイムライン封筒（timeline_events）と体質プロファイル
 （characters.pressure_profile）からの導出で、状態を保存しない
-（docs/aliveness_plan.md §4.1）。LLM 不使用。
+（docs/planned/aliveness_plan.md §4.1）。LLM 不使用。
 
 設計原則:
     - 乱数は世界に置き意志に置かない（リズム成分は character_id シードの決定論導出）
@@ -335,7 +335,7 @@ def record_pressure_meters(sqlite) -> int:
     """全キャラクターの圧力3変数を計器メーターとして日次スナップショットする。
 
     圧力は保存しない（純関数）が、傾向観測のためのメーター記録だけは残す
-    （docs/aliveness_plan.md §4.1「日次スナップショットは計器メーターとして残す」）。
+    （docs/planned/aliveness_plan.md §4.1「日次スナップショットは計器メーターとして残す」）。
     計器スケジューラ（05:00）から呼ばれる。
 
     Args:

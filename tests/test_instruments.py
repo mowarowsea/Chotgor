@@ -1,6 +1,6 @@
 """計器（instruments）のテスト — めぐり（巡り / Aliveness）Phase 2。
 
-検証対象（docs/aliveness_plan.md §3）:
+検証対象（docs/planned/aliveness_plan.md §3）:
     1. InstrumentStoreMixin: アラームの追記・一覧・確認済み化・静音期間、
        メータースナップショットの記録・一覧
     2. Tier 1 巡回インバリアント:

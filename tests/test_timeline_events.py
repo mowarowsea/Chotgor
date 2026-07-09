@@ -1,6 +1,6 @@
 """タイムライン封筒（timeline_events）のテスト — めぐり（巡り / Aliveness）Phase 0。
 
-検証対象（docs/aliveness_plan.md §2.1〜2.3）:
+検証対象（docs/planned/aliveness_plan.md §2.1〜2.3）:
     1. dual-write: 中身テーブルへの書き込みと同時に封筒1行が追記されること
        - chat_store.create_chat_message      → chat.message
        - scenario_store.create_scenario_turn → scene.turn（参加キャラ分）

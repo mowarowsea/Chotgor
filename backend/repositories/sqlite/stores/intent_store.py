@@ -1,7 +1,7 @@
 """意図（intents）CRUD — SQLiteStore Mixin。
 
 めぐり（巡り / Aliveness）の動機経済・意図レコードの永続化層
-（docs/aliveness_plan.md §4.3）。
+（docs/planned/aliveness_plan.md §4.3）。
 
 タイムライン封筒との関係:
     - 作成時に intent.created、遷移時に intent.fulfilled / expired / soured の

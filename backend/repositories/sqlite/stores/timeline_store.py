@@ -1,7 +1,7 @@
 """タイムライン封筒（timeline_events）CRUD — SQLiteStore Mixin。
 
 めぐり（巡り / Aliveness）の正本テーブルへの追記・巻き戻しマーク・読み出しを担う層
-（docs/aliveness_plan.md §2）。
+（docs/planned/aliveness_plan.md §2）。
 
 設計上の要点:
     - 封筒の追記は、中身の書き込みと **同一トランザクション** で行う
@@ -254,7 +254,7 @@ class TimelineStoreMixin:
         """セッション内の最新キャラ発話封筒（chat.message）へ payload をマージする。
 
         farewell judge の採点結果（emotions / engagement）を該当ターンの封筒に
-        残すための口（Tier 3 サンプリングの材料を兼ねる。docs/aliveness_plan.md §5.2）。
+        残すための口（Tier 3 サンプリングの材料を兼ねる。docs/planned/aliveness_plan.md §5.2）。
         judge はバックグラウンドで走るため「最新のキャラ発話」への best-effort 添付。
 
         Args:
@@ -290,7 +290,7 @@ class TimelineStoreMixin:
         """指定ソーステーブル由来の封筒件数を返す（retracted 含む）。
 
         計器 Tier 1 `envelope_integrity`（源テーブルと封筒の件数突合）の材料。
-        ID 突合はしない（docs/aliveness_plan.md §3）。
+        ID 突合はしない（docs/planned/aliveness_plan.md §3）。
 
         Args:
             source_table: 中身テーブル名。

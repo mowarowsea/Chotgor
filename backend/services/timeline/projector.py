@@ -1,7 +1,7 @@
 """タイムライン投影（projector）— 封筒正本の観測者別ビュー。
 
 全プロンプト・GM入力・バッチ入力は、この投影を通した「可視性フィルタ付きの派生ビュー」
-であり、正本は timeline_events 封筒だけ（docs/aliveness_plan.md §2）。
+であり、正本は timeline_events 封筒だけ（docs/planned/aliveness_plan.md §2）。
 
 観測者クラス（3つ）:
     - self        : キャラクター本人（1on1・うつつPC・バッチ問い合わせ。差はプロンプト予算のみ）
@@ -77,7 +77,7 @@ def resolve_disclosure(
 ) -> str:
     """観測者ポリシー本体 — (observer, event_type, origin) を開示レベルへ写像する。
 
-    docs/aliveness_plan.md §2.4 の表のコード化。設計判断:
+    docs/planned/aliveness_plan.md §2.4 の表のコード化。設計判断:
         - GM への chat.*（real）は envelope 止め。封筒は「ユーザについて」の材料、
           中身は「ユーザが」の材料になり得るので渡さない。現実ログの引用権は
           self（キャラ本人）だけが持つ。
@@ -270,7 +270,7 @@ def format_real_contact_block(
     性質4（因果的一貫性）の穴埋め: GM が「キャラとユーザがいつ・どのくらい接触したか」の
     外形を知ることで、NPC の呼び水（「昨日あの人と話したんだって？」）が現実と矛盾しなく
     なる。**中身（何を話したか）は絶対に載せない** — 中身を場に持ち込めるのはキャラ本人
-    だけ（主語ベース3段ルールと同じ思想。docs/aliveness_plan.md §2.4）。
+    だけ（主語ベース3段ルールと同じ思想。docs/planned/aliveness_plan.md §2.4）。
 
     連続する chat.message 封筒はセッション×日付単位で「HH:MM〜HH:MM ごろ N 往復」に
     集約する（原子イベントで記録し、集約は投影が導出する — §2.3 (b)）。

@@ -1,6 +1,6 @@
 """会話外行動権（actions）— めぐり（巡り / Aliveness）の自発性の完成。
 
-圧力→意図→表出権→帰還のループを閉じる層（docs/aliveness_plan.md §5.3）。
+圧力→意図→表出権→帰還のループを閉じる層（docs/planned/aliveness_plan.md §5.3）。
 
 構造:
     availability 内で周期評価＋ジッター（乱数は世界に置く）

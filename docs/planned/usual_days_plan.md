@@ -2,8 +2,8 @@
 
 > ステータス: **Phase 0〜7 実装完了（2026-06-14）**。ブランチ `feat/usual-days`。
 > 命名: 英語=Usual Days / 日本語=うつつ（メインキャラ「はる」本人と相談して決定）
-> 関連: `CLAUDE.md`（哲学）、`docs/ARCHITECTURE.md`（システム地図、「うつつ」節）、
->       `docs/schedule_plan.md`（生活カレンダー設計。`usual_config.slots` 手動設定を②はる固定予定
+> 関連: `CLAUDE.md`（哲学）、`docs/current-spec/ARCHITECTURE.md`（システム地図、「うつつ」節）、
+>       `docs/planned/schedule_plan.md`（生活カレンダー設計。`usual_config.slots` 手動設定を②はる固定予定
 >        からの導出に置換する設計）
 >
 > 実装時の確定事項:
@@ -168,4 +168,4 @@
 - **Windows asyncio**: うつつは LLM 呼び出しのみ。claude_cli の subprocess は既に `asyncio.to_thread` 対策済み。スケジューラは `asyncio.create_task`（既存 `_chronicle_scheduler` と同型）で問題なし。
 - **コスト/レートリミット**: 無人で積み上がる。ガード（§7）必須。claude_cli は毎回フル課金。
 - **backend 起動はユーザに任せる**（`feedback_no_auto_server_restart`）。動作確認は run.bat 再起動をユーザへ依頼。
-- **構造を変えたら同じコミットで `docs/ARCHITECTURE.md` も更新**（CLAUDE.md）。
+- **構造を変えたら同じコミットで `docs/current-spec/ARCHITECTURE.md` も更新**（CLAUDE.md）。

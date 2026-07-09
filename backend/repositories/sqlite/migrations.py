@@ -916,7 +916,7 @@ class SQLiteMigrationsMixin:
     def _migrate_backfill_timeline_events(self) -> None:
         """タイムライン封筒（timeline_events）へ過去データをバックフィルする。
 
-        めぐり（巡り / Aliveness）導入時の一回きりの移行（docs/aliveness_plan.md §2.1）。
+        めぐり（巡り / Aliveness）導入時の一回きりの移行（docs/planned/aliveness_plan.md §2.1）。
         テーブル自体は ``Base.metadata.create_all`` が作成済みの前提で、
         既存テーブルの過去行から封筒を焼き直す:
 

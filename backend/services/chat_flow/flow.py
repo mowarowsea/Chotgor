@@ -479,7 +479,7 @@ class ChatFlow:
 
         # --- システムプロンプト構築（安定ブロックのみ） ---
         # 毎ターン変動する情報はターン注釈として最新 user メッセージ側へ付加する
-        # （プロンプトキャッシュ対応。docs/prompt_cache_plan.md A案）。
+        # （プロンプトキャッシュ対応。docs/planned/prompt_cache_plan.md A案）。
         system_prompt = build_system_prompt(
             character_system_prompt=request.character_system_prompt,
             inner_narrative=request.inner_narrative,

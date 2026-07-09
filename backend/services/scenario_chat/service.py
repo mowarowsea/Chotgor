@@ -586,7 +586,7 @@ async def run_scenario_turn(
                 # 現実の接触の封筒（めぐり / タイムライン投影）を GM へ注入する。
                 # observer="world_frame" は chat.*（real）を envelope 止めで見る —
                 # 「いつ・どのくらい接触したか」の外形だけを渡し、中身は渡さない
-                # （性質4: 因果的一貫性の穴埋め。docs/aliveness_plan.md §2.4）。
+                # （性質4: 因果的一貫性の穴埋め。docs/planned/aliveness_plan.md §2.4）。
                 real_contact_block = _build_real_contact_block(sqlite, owner_char)
                 if real_contact_block:
                     absent_user_block = (

@@ -3,7 +3,7 @@
 build_system_prompt()（安定ブロックのみ）と build_turn_annotation()（毎ターン
 変動ブロック＝ターン注釈）、append_turn_annotation()（注釈のメッセージ付加）を検証する。
 
-プロンプトキャッシュ対応（docs/prompt_cache_plan.md A案）により、想起記憶・時刻・
+プロンプトキャッシュ対応（docs/planned/prompt_cache_plan.md A案）により、想起記憶・時刻・
 fetched・WM heat 想起・前回の期待はシステムプロンプトから外れ、ターン注釈として
 最新 user メッセージの末尾へ付加される二層構成になった。本テストは
 「安定ブロックがシステムプロンプトに残り、変動ブロックが注釈側へ移っている」

@@ -1,6 +1,6 @@
 """計器（instruments）— めぐり（巡り / Aliveness）の監査層。
 
-キャラクターの世界には一切現れない監査者（docs/aliveness_plan.md §3）。
+キャラクターの世界には一切現れない監査者（docs/planned/aliveness_plan.md §3）。
 内容を見ずに外形だけで健全性を監視し、「窓（内容観測）を閉じる」ための
 ユーザの確信を数字で支える。
 
