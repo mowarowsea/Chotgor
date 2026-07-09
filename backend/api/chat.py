@@ -309,9 +309,13 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     _chat_char_ids = get_participant_char_ids(session, state.sqlite)
     _chat_user_name = state.sqlite.get_setting("user_name", "ユーザ")
 
-    # --- 応答可能性ゲート（めぐり Phase 5） ---
-    # unavailable 中のユーザ発言は預かり（delivered_at=NULL）で保存だけして LLM を呼ばない。
-    # availability が戻った次のリクエストで、時間差注釈付きでまとめてキャラに渡る。
+    # --- 応答可能性ゲート（めぐり Phase 5 → 生活カレンダー §5 で一般化） ---
+    # 同期 SSE で即時応答するのは OnTime（対面含む）だけ。それ以外（active / busy /
+    # offline）のユーザ発言は預かり（delivered_at=NULL）で保存だけして LLM を呼ばない。
+    # active / busy は能動配達スケジューラがチェック間隔×返信率で配達・返信し、
+    # offline は従来どおり次の非 offline チェック点（または次のユーザリクエスト）で
+    # まとめてキャラに渡る。従来キャラ（生活カレンダー無効）は available が
+    # OnTime / offline の二値に写るため、挙動は従来と変わらない。
     from backend.services.gate import check_availability, is_usual_scene_running
     _availability = check_availability(
         char_for_estranged,
@@ -321,6 +325,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         ),
         sqlite=state.sqlite,
     )
+    _sync_response = _availability.state == "OnTime"
 
     user_msg_id = str(uuid.uuid4())
     user_msg = state.sqlite.create_chat_message(
@@ -330,19 +335,27 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         content=body.content,
         images=body.image_ids or None,
         face_to_face=current_face_to_face,
-        delivered=_availability.available,
+        delivered=_sync_response,
     )
     asyncio.create_task(asyncio.to_thread(
         index_message_sync, user_msg, _chat_char_ids, state.vector_store, _chat_user_name
     ))
 
-    if not _availability.available and not already_exited:
+    if not _sync_response and not already_exited:
         # 預かり通知（システムメッセージ）: 既存の退席フローと同じ SSE 形で返す。
         # 通知自体は保存する（リロード後もユーザが状況を確認できるように）。
-        escrow_text = (
-            f"{char_name_for_check}はいま席を外しています（{_availability.reason}）。"
-            "メッセージは届いていて、戻ったら読みます。"
-        )
+        # offline（席にいない）と active/busy（いるが手が離せない）で文言を分ける。
+        _reason = _availability.reason or "予定あり"
+        if _availability.state == "offline":
+            escrow_text = (
+                f"{char_name_for_check}はいま席を外しています（{_reason}）。"
+                "メッセージは届いていて、戻ったら読みます。"
+            )
+        else:
+            escrow_text = (
+                f"{char_name_for_check}はいま手が離せないようです（{_reason}）。"
+                "メッセージは届いていて、手が空いたときに読みます。"
+            )
         escrow_sys_msg = state.sqlite.create_chat_message(
             message_id=str(uuid.uuid4()),
             session_id=session_id,

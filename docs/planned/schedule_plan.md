@@ -461,7 +461,23 @@ aliveness §5.3 のコストガード（行動問い合わせ N回/日）と esc
 依存順。各 Phase 単独で止まっても壊れない。生活カレンダーは**キャラ単位の有効化トグル**を持ち、
 無効キャラは従来挙動（二値 availability＋手動 slots）のまま動き続ける。
 
-> 進捗: **Phase 0・1 実装完了（2026-07-09）**。
+> 進捗: **Phase 0〜3 実装完了（2026-07-09）**。
+> - Phase 2: `resolve_delivery_due`（チェック間隔格子＋決定論 reply_rate 判定の純関数）を
+>   `gate/delivery.py` に追加。生活カレンダー有効キャラは `escrow_ready_*` マーカー＋ジッターを
+>   使わず格子判定で配達（busy 中もチェック点で配達しうる）。無効キャラは従来経路のまま。
+>   `list_sessions_with_undelivered` が最古未配達時刻を返すよう拡張（格子の起点）。
+>   1on1 受信路（api/chat.py）は同期 SSE = OnTime のみに線引き（active/busy も escrow・
+>   offline と文言を分けた預かり通知）。
+> - Phase 3: `services/schedule/` 新設 — `plan_parser.py`（[PLAN] 行パース・24時超え表記・
+>   日跨ぎ・不正行スキップ・テンプレ裸変換・整形）と `weekly_batch.py`（①GM生成→②はる問い
+>   合わせ→template 入れ替え保存。層フォールバック = 失敗時 前週→テンプレ裸/はる層なし。
+>   層失敗判定 = offline ゼロ）。`main.py` に `_weekly_schedule_scheduler`（毎分・冪等キー=
+>   キャラ別対象 ISO 週 `weekly_schedule_done_{id}`・日曜夜 `weekly_schedule_time` 既定 20:00 に
+>   翌週分・コールドスタート/取りこぼしは当週分を即時生成）。
+> - テスト: `tests/test_schedule.py` 拡張（配達格子判定・パーサ・層フォールバック・バッチ
+>   保存・スケジューラ冪等）。全 1867 テスト通過。
+>
+> Phase 0-1 実装内容（2026-07-09）:
 > - Phase 0: `ScheduleEntry` モデル（`schedule_entries` テーブル）＋ `ScheduleStoreMixin`
 >   （create / list（重なり期間フィルタ）/ get_active（占有圧降順）/ set_status / delete）＋
 >   migration `_migrate_add_living_schedule`（`characters.living_schedule_enabled` 追加。テーブルは

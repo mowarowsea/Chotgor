@@ -171,7 +171,7 @@ class TestEscrow:
         assert len(sqlite_store.list_timeline_events(char_id)) == 1
 
     def test_sessions_with_undelivered(self, sqlite_store):
-        """配達スケジューラ用の未配達セッション一覧が件数付きで返る。"""
+        """配達スケジューラ用の未配達セッション一覧が件数・最古到着時刻付きで返る。"""
         _, char_name = _make_character(sqlite_store)
         sid = self._make_session(sqlite_store, char_name)
         for i in range(2):
@@ -181,8 +181,11 @@ class TestEscrow:
             )
         rows = sqlite_store.list_sessions_with_undelivered()
         assert len(rows) == 1
-        session, count = rows[0]
+        session, count, oldest_at = rows[0]
         assert session.id == sid and count == 2
+        # 最古到着時刻はチェック間隔格子の起点（schedule_plan.md §5）
+        msgs = sqlite_store.list_undelivered_messages(sid)
+        assert oldest_at == min(m.created_at for m in msgs)
 
     def test_escrow_annotation_format(self, sqlite_store):
         """時間差注釈が送信時刻付きで本文の前に付く（DB は変更しない）。"""

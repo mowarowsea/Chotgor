@@ -313,13 +313,19 @@ class ChatStoreMixin:
         """預かり中メッセージを持つセッション一覧を返す（配達スケジューラ用）。
 
         Returns:
-            (ChatSession, 預かり件数) のタプルのリスト。
+            (ChatSession, 預かり件数, 最古の未配達 created_at) のタプルのリスト。
+            最古時刻は生活カレンダー経路のチェック間隔格子（schedule_plan.md §5）が
+            「メッセージ到着後の最初のチェック点」を求めるのに使う。
         """
         with self.get_session() as session:
             from sqlalchemy import func
             from backend.repositories.sqlite.store import ChatMessage, ChatSession
             rows = (
-                session.query(ChatSession, func.count(ChatMessage.id))
+                session.query(
+                    ChatSession,
+                    func.count(ChatMessage.id),
+                    func.min(ChatMessage.created_at),
+                )
                 .join(ChatMessage, ChatMessage.session_id == ChatSession.id)
                 .filter(ChatMessage.delivered_at.is_(None))
                 .group_by(ChatSession.id)

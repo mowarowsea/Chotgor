@@ -126,6 +126,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_instruments_scheduler(app))
     asyncio.create_task(_action_scheduler(app))
     asyncio.create_task(_escrow_delivery_scheduler(app))
+    asyncio.create_task(_weekly_schedule_scheduler(app))
 
     yield
 
@@ -420,6 +421,25 @@ async def _escrow_delivery_scheduler(app: FastAPI) -> None:
             await run_pending_escrow_deliveries(app.state)
         except Exception:
             _log.exception("能動配達スケジューラー 実行エラー")
+
+
+async def _weekly_schedule_scheduler(app: FastAPI) -> None:
+    """Background task: 生活カレンダーの週次バッチ①②（schedule_plan.md §3 / Phase 3）。
+
+    毎分、生活カレンダー有効キャラを走査し、未生成の週があればバッチを実行する。
+    日曜夜（weekly_schedule_time・既定 20:00）に翌週分、コールドスタート
+    （機能有効化・取りこぼし復旧）では当週分を即時生成する。
+    冪等キー = キャラごとの対象 ISO 週（判定の詳細は services/schedule/weekly_batch.py）。
+    """
+    from backend.services.schedule import run_pending_weekly_batches
+
+    _log = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await run_pending_weekly_batches(app.state)
+        except Exception:
+            _log.exception("週次スケジュールスケジューラー 実行エラー")
 
 
 async def _forget_scheduler(app: FastAPI) -> None:

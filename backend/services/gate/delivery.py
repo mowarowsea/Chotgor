@@ -1,17 +1,33 @@
-"""預かり（escrow）メッセージの能動配達 — availability 復帰時の配達スケジューラ実装。
+"""預かり（escrow）メッセージの能動配達 — 配達スケジューラ実装。
 
 docs/planned/aliveness_plan.md §5.1 のフォローアップ（v1 簡略化の解消）。
 v1 では預かり分の配達は「次のユーザリクエスト時」のみだったが、本モジュールにより
-availability が戻った時点でキャラクター本人が預かり分を読み、**自分から返信を書く**。
+キャラクター本人が預かり分を読み、**自分から返信を書く**。
 仕事中に送っても返らないが、昼休みにユーザが何もしなくても返信が届く。
 
-設計:
-    - 判定は毎分（main.py の _escrow_delivery_scheduler）。LLM 呼び出しは配達時のみ。
+2系統の配達判定を持つ（生活カレンダーのキャラ単位トグルで切り替わる）:
+
+**従来経路**（living_schedule_enabled = 0）:
+    - availability が戻った時点で配達候補になる（unavailable 中は配達しない）。
     - 復帰の瞬間ちょうどに返信するのは機械的なので、決定論ジッター
       （0〜_JITTER_MAX_MINUTES 分・乱数は世界に置く — 行動権と同じ思想）を挟む。
       ready マーカー（settings: ``escrow_ready_{session_id}``）が
       「availability 復帰を最初に観測した時刻」を覚え、ジッター経過で配達する。
       配達前に availability が再び失われたらマーカーを破棄し、次の復帰で仕切り直す。
+
+**生活カレンダー経路**（living_schedule_enabled = 1）— schedule_plan.md §5:
+    - ready マーカー＋ジッターを **チェック間隔格子＋決定論 reply_rate 判定**に置換する。
+      「available になるまで配達しない」ではなく、**busy 中もチェック点で配達しうる**。
+    - チェック間隔 = 溜まった発言を見に来る周期。メッセージ到着後の最初のチェック点
+      （0時起点の格子）から、各チェック点ごとに決定論乱数（seed = session＋チェック点時刻）
+      で reply_rate 判定し、成功した点が来ていれば配達する。
+    - 判定は純関数（resolve_delivery_due）— 同じ入力なら常に同じ結果。失敗した点は
+      何度評価しても失敗のままなので、マーカー等の状態を持たない。
+    - offline（チェック間隔 ∞）は配達しない — 次の非 offline チェック点まで預かり。
+      「見るか・返せる余裕があるか」は世界物理なので世界乱数、返す中身だけが本人の意志。
+
+共通:
+    - 判定は毎分（main.py の _escrow_delivery_scheduler）。LLM 呼び出しは配達時のみ。
     - 配達マーク（mark_messages_delivered）は LLM 呼び出しの**前**（1on1 経路と同順）。
       LLM が失敗しても再送ループにはならない（メッセージ自体は履歴に残っており、
       次のユーザターンで通常履歴としてキャラに渡る — 時間差注釈だけが失われる）。
@@ -43,10 +59,67 @@ from backend.services.gate.availability import (
 
 logger = logging.getLogger(__name__)
 
-# 復帰観測から配達までの決定論ジッターの最大幅（分）
+# 復帰観測から配達までの決定論ジッターの最大幅（分）— 従来経路のみ
 _JITTER_MAX_MINUTES = 10
 # 日次コストガードの既定値（配達 = LLM 1呼び出し）
 _DEFAULT_DAILY_CAP = 12
+# チェック間隔格子の評価点数の上限（生活カレンダー経路）。
+# 古い預かりに対して毎分すべてのチェック点を再評価すると計算が伸びるため、
+# 直近 _MAX_CHECKPOINTS 点に絞る（reply_rate > 0 なら十分な点数で実質必ず成功する）。
+_MAX_CHECKPOINTS = 500
+
+
+def resolve_delivery_due(
+    session_id: str,
+    oldest_pending_at: datetime,
+    reply_rate: float,
+    check_interval: int | None,
+    now: datetime,
+) -> bool:
+    """チェック間隔格子＋決定論 reply_rate 判定で「今配達すべきか」を返す純関数。
+
+    schedule_plan.md §5 の一般化配達。0時起点・check_interval 分刻みの格子のうち、
+    最古の預かりメッセージ到着以降のチェック点を順に評価する。各点で
+    決定論乱数（seed = session＋チェック点時刻）を振り、reply_rate を下回る点が
+    now までに1つでもあれば配達する（「見た上で返信する気になった瞬間」が既に来ている）。
+
+    同じ入力なら常に同じ結果を返すため、失敗したチェック点を記録するマーカーは不要
+    （毎分再評価しても同じ点は同じ結果になる）。
+
+    Args:
+        session_id: 対象セッション ID（決定論乱数のシードの一部）。
+        oldest_pending_at: 最古の未配達メッセージの到着時刻。これより前のチェック点は
+            評価しない（届く前に「見て返信」は起きない）。
+        reply_rate: 返信率 0.0–1.0（チェック点で実際に返信を生成する確率）。
+        check_interval: チェック間隔 [分]。None は ∞（offline — 配達しない）、
+            0 は即時（OnTime — 到着済みなら常に配達）。
+        now: 基準時刻。
+
+    Returns:
+        配達すべきなら True。
+    """
+    if check_interval is None:
+        return False  # offline: 次の非 offline チェック点まで預かり
+    if check_interval <= 0:
+        return True  # OnTime: 完全リアルタイム（溜まっていれば即配達）
+    step = timedelta(minutes=check_interval)
+    # メッセージ到着後の最初のチェック点（0時起点の格子に天井合わせ）
+    midnight = oldest_pending_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed = oldest_pending_at - midnight
+    slots = -(-int(elapsed.total_seconds()) // int(step.total_seconds()))  # ceil
+    checkpoint = midnight + step * slots
+    # 直近 _MAX_CHECKPOINTS 点だけ評価する（毎分の再評価コストの上限）
+    floor_start = now - step * _MAX_CHECKPOINTS
+    if checkpoint < floor_start:
+        behind = floor_start - checkpoint
+        jumps = -(-int(behind.total_seconds()) // int(step.total_seconds()))  # ceil
+        checkpoint += step * jumps
+    while checkpoint <= now:
+        rng = random.Random(f"escrow-check:{session_id}:{checkpoint.isoformat()}")
+        if rng.random() < reply_rate:
+            return True
+        checkpoint += step
+    return False
 
 
 def _delivery_jitter_seconds(session_id: str, ready_at: datetime) -> int:
@@ -79,22 +152,28 @@ async def run_pending_escrow_deliveries(state, now: datetime | None = None) -> N
     """
     now = now or datetime.now()
     rows = state.sqlite.list_sessions_with_undelivered()
-    for session, _count in rows:
+    for session, _count, oldest_at in rows:
         try:
-            await _maybe_deliver_session(state, session, now)
+            await _maybe_deliver_session(state, session, now, oldest_at)
         except Exception:
             logger.exception("能動配達に失敗 session=%s", session.id)
 
 
-async def _maybe_deliver_session(state, session, now: datetime) -> None:
-    """1セッション分の配達判定 — availability・ジッター・コストガードを通す。
+async def _maybe_deliver_session(
+    state, session, now: datetime, oldest_pending_at: datetime | None = None
+) -> None:
+    """1セッション分の配達判定 — 経路別ゲート・コストガードを通す。
 
+    従来経路は availability 復帰＋ジッター、生活カレンダー経路はチェック間隔格子＋
+    決定論 reply_rate 判定（resolve_delivery_due）。
     通過したら _deliver_session で実際に配達する（LLM 呼び出しはここが唯一の入口）。
 
     Args:
         state: FastAPI の app.state。
         session: 未配達メッセージを持つ ChatSession ORM。
         now: 基準時刻。
+        oldest_pending_at: 最古の未配達メッセージの到着時刻（生活カレンダー経路の
+            チェック点起点）。None なら now 扱い（安全側 — 次のチェック点から数える）。
     """
     sqlite = state.sqlite
     model_id = getattr(session, "model_id", "") or ""
@@ -108,32 +187,47 @@ async def _maybe_deliver_session(state, session, now: datetime) -> None:
     if any(e.get("char_name") == char_name for e in exited):
         return  # このセッションからは退席済み — 戻って返信はしない
 
-    ready_key = f"escrow_ready_{session.id}"
     availability = check_availability(
         char, now,
         usual_scene_running=is_usual_scene_running(sqlite, char.id, now),
         sqlite=sqlite,
     )
-    if not availability.available:
-        # 配達前に窓が閉じた（再び unavailable）— 復帰観測を破棄して仕切り直す
-        if sqlite.get_setting(ready_key, ""):
-            sqlite.set_setting(ready_key, "")
-        return
 
-    # 復帰観測時刻（ready マーカー）: 初観測なら今を記録し、ジッター待ちに入る
-    raw = sqlite.get_setting(ready_key, "")
-    ready_at = None
-    if raw and isinstance(raw, str):
-        try:
-            ready_at = datetime.fromisoformat(raw)
-        except ValueError:
-            ready_at = None
-    if ready_at is None:
-        ready_at = now
-        sqlite.set_setting(ready_key, now.isoformat())
-    due = ready_at + timedelta(seconds=_delivery_jitter_seconds(session.id, ready_at))
-    if now < due:
-        return  # ジッター待ち（復帰直後の機械的な即レスを避ける）
+    if int(getattr(char, "living_schedule_enabled", 0) or 0):
+        # --- 生活カレンダー経路（schedule_plan.md §5）---
+        # チェック間隔格子＋決定論 reply_rate 判定。busy 中もチェック点で配達しうる。
+        # 状態を持たない純関数判定なので ready マーカーは使わない。
+        if not resolve_delivery_due(
+            session.id,
+            oldest_pending_at or now,
+            availability.reply_rate,
+            availability.check_interval,
+            now,
+        ):
+            return
+    else:
+        # --- 従来経路: availability 復帰＋ready マーカー＋決定論ジッター ---
+        ready_key = f"escrow_ready_{session.id}"
+        if not availability.available:
+            # 配達前に窓が閉じた（再び unavailable）— 復帰観測を破棄して仕切り直す
+            if sqlite.get_setting(ready_key, ""):
+                sqlite.set_setting(ready_key, "")
+            return
+
+        # 復帰観測時刻（ready マーカー）: 初観測なら今を記録し、ジッター待ちに入る
+        raw = sqlite.get_setting(ready_key, "")
+        ready_at = None
+        if raw and isinstance(raw, str):
+            try:
+                ready_at = datetime.fromisoformat(raw)
+            except ValueError:
+                ready_at = None
+        if ready_at is None:
+            ready_at = now
+            sqlite.set_setting(ready_key, now.isoformat())
+        due = ready_at + timedelta(seconds=_delivery_jitter_seconds(session.id, ready_at))
+        if now < due:
+            return  # ジッター待ち（復帰直後の機械的な即レスを避ける）
 
     # 日次コストガード（配達 = LLM 1呼び出し）。cap=0 は「能動配達を止める」
     # 意味で有効な設定値なので、or フォールバックではなく明示的にパースする
@@ -150,8 +244,9 @@ async def _maybe_deliver_session(state, session, now: datetime) -> None:
         )
         return
 
-    # 配達確定 — マーカーを消費し、カウンタを進めてから配達する
-    sqlite.set_setting(ready_key, "")
+    # 配達確定 — カウンタを進め、従来経路なら ready マーカーを消費してから配達する
+    if not int(getattr(char, "living_schedule_enabled", 0) or 0):
+        sqlite.set_setting(f"escrow_ready_{session.id}", "")
     sqlite.set_setting(count_key, str(delivered_today + 1))
     await _deliver_session(state, session, char)
 
