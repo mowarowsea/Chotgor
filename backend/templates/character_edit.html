@@ -422,7 +422,25 @@
                 このキャラが「席にいない」時間帯（仕事・睡眠など）。この間に届いたメッセージは
                 預かり、本人が席に戻ったときにまとめて届く。空 = 常時応答可能。
                 <code>from &gt; to</code> は日跨ぎ（例 23:00〜06:00）として扱う。
+                各時間帯には状態（OnTime／active／busy／offline）を付けられる（既定 active）。
             </p>
+            {# 生活カレンダー（Living Schedule）有効化トグル。ONにすると availability が
+               二値から (占有圧・返信率・チェック間隔) へ一般化され、schedule_entries
+               （週次バッチが生成する実現層）で駆動される。OFF は従来挙動（二値＋手動 slots）。 #}
+            <div class="ch-switchlist" style="margin-bottom:10px">
+                <label class="ch-switch-row">
+                    <span class="ch-switch-row__text">
+                        <span class="ch-switch-row__label">生活カレンダーを有効化</span>
+                        <span class="ch-hint">ON = 実現層エントリで応答性を駆動（週次バッチ前提）。
+                            OFF = 従来の二値 availability ＋ 手動 slots。</span>
+                    </span>
+                    <span class="ch-toggle">
+                        <input type="checkbox" name="living_schedule_enabled" value="1"
+                            {% if character and character.living_schedule_enabled %}checked{% endif %}>
+                        <span class="ch-toggle__track"></span>
+                    </span>
+                </label>
+            </div>
             <div id="schedule-editor" class="ch-schedule">
                 {% for day, label in [('mon','月'),('tue','火'),('wed','水'),('thu','木'),('fri','金'),('sat','土'),('sun','日')] %}
                 <div class="ch-schedule__day" data-day="{{ day }}">
@@ -1138,6 +1156,9 @@
    * @param {object} block - 初期値（from / to / label を持ちうる）。
    * @returns {HTMLElement} .ch-schedule__block 要素。
    */
+  // 時間帯ブロックに付けられる state（生活カレンダー Phase 0）。既定 active。
+  const SCHEDULE_STATES = ['OnTime', 'active', 'busy', 'offline'];
+
   function makeScheduleBlockRow(block) {
     block = block || {};
     const row = document.createElement('div');
@@ -1152,10 +1173,19 @@
     const label = document.createElement('input');
     label.type = 'text'; label.className = 'ch-input'; label.dataset.role = 'label';
     label.placeholder = 'ラベル（例: 仕事）'; label.value = block.label || '';
+    // state セレクタ（テンプレ層シード用）。未指定は active 扱い。
+    const state = document.createElement('select');
+    state.className = 'ch-input'; state.dataset.role = 'state';
+    SCHEDULE_STATES.forEach(function (s) {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      state.appendChild(opt);
+    });
+    state.value = SCHEDULE_STATES.indexOf(block.state) >= 0 ? block.state : 'active';
     const del = document.createElement('button');
     del.type = 'button'; del.className = 'ch-btn ch-btn--xs ch-btn--ghost'; del.textContent = '✕';
     del.onclick = function () { removeScheduleBlock(del); };
-    row.append(from, sep, to, label, del);
+    row.append(from, sep, to, label, state, del);
     return row;
   }
 
@@ -1187,6 +1217,9 @@
         const label = row.querySelector('[data-role="label"]').value.trim();
         const block = { from: from, to: to };
         if (label) block.label = label;
+        const stateEl = row.querySelector('[data-role="state"]');
+        const state = stateEl ? stateEl.value : 'active';
+        if (state && state !== 'active') block.state = state; // 既定 active は載せない
         blocks.push(block);
       });
       if (blocks.length) out[day] = blocks;

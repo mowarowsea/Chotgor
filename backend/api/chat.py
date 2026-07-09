@@ -319,6 +319,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             is_usual_scene_running(state.sqlite, char_for_estranged.id)
             if char_for_estranged else False
         ),
+        sqlite=state.sqlite,
     )
 
     user_msg_id = str(uuid.uuid4())

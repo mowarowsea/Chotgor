@@ -1193,3 +1193,34 @@ class SQLiteMigrationsMixin:
                         "ADD COLUMN face_to_face INTEGER NOT NULL DEFAULT 0"
                     )
 
+    def _migrate_add_living_schedule(self) -> None:
+        """生活カレンダー（Living Schedule）Phase 0 の器を追加する。
+
+        - `characters.living_schedule_enabled` (INTEGER, NOT NULL DEFAULT 0):
+          キャラ単位の有効化トグル。0=従来挙動（二値 availability＋手動 slots）、
+          1=生活カレンダー有効（schedule_entries を実現層とする）。オプトイン移行。
+        - `schedule_entries` テーブル自体は ``Base.metadata.create_all`` が新規・既存 DB
+          いずれでも作成する（checkfirst=True）ので、ここでは ALTER のみ扱う。
+
+        新規DBは ORM 定義で既に列を持つため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(characters)"
+                    ).fetchall()
+                }
+                if "living_schedule_enabled" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE characters "
+                        "ADD COLUMN living_schedule_enabled INTEGER NOT NULL DEFAULT 0"
+                    )
+

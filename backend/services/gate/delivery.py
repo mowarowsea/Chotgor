@@ -112,6 +112,7 @@ async def _maybe_deliver_session(state, session, now: datetime) -> None:
     availability = check_availability(
         char, now,
         usual_scene_running=is_usual_scene_running(sqlite, char.id, now),
+        sqlite=sqlite,
     )
     if not availability.available:
         # 配達前に窓が閉じた（再び unavailable）— 復帰観測を破棄して仕切り直す

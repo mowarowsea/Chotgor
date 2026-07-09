@@ -461,6 +461,19 @@ aliveness §5.3 のコストガード（行動問い合わせ N回/日）と esc
 依存順。各 Phase 単独で止まっても壊れない。生活カレンダーは**キャラ単位の有効化トグル**を持ち、
 無効キャラは従来挙動（二値 availability＋手動 slots）のまま動き続ける。
 
+> 進捗: **Phase 0・1 実装完了（2026-07-09）**。
+> - Phase 0: `ScheduleEntry` モデル（`schedule_entries` テーブル）＋ `ScheduleStoreMixin`
+>   （create / list（重なり期間フィルタ）/ get_active（占有圧降順）/ set_status / delete）＋
+>   migration `_migrate_add_living_schedule`（`characters.living_schedule_enabled` 追加。テーブルは
+>   `create_all` が作成）。生活時間割エディタに任意 state セレクタ＋有効化トグル。
+> - Phase 1: `Availability` に (state, occupancy, reply_rate, check_interval) を追加（`available`
+>   は二値互換で導出）。生活カレンダー経路 `_check_availability_scheduled`（占有圧最大・
+>   エントリなし=OnTime・§7.5 優先順位・うつつ進行中の無視）と従来経路 `_check_availability_legacy`
+>   をトグルで分岐。`check_availability(..., sqlite=)` を main.py / delivery.py / api/chat.py の
+>   3呼び出しに配線。状態プリセット `_STATE_PRESETS`（§5）と個別上書き解決 `_resolve_delivery_values`。
+> - テスト: `tests/test_schedule.py` 新設（store CRUD・配達値解決・生活カレンダー経路・従来互換）。
+>   全 1841 テスト通過。実DBへ migration 適用・UI レンダリング確認済み。
+
 | Phase | 内容 | 主な改修先 |
 |---|---|---|
 | **0. 器** | `schedule_entries` 新テーブル＋store CRUD＋migration（要バックアップ）。生活時間割エディタに任意 state 欄。有効化トグル | models / migrations / stores / ui |

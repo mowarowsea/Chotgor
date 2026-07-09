@@ -256,6 +256,7 @@ async def _action_scheduler(app: FastAPI) -> None:
                 availability = check_availability(
                     char, now,
                     usual_scene_running=is_usual_scene_running(sqlite, char.id, now),
+                    sqlite=sqlite,
                 )
                 if not availability.available:
                     _log.debug(

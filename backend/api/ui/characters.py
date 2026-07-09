@@ -172,6 +172,9 @@ async def create_character(request: Request):
         request.app.state.sqlite.update_character(
             char_id, availability_schedule=availability_schedule
         )
+    # 生活カレンダー（Living Schedule）有効化トグル。既定 OFF なので ON のときだけ付け足す。
+    if form.get("living_schedule_enabled"):
+        request.app.state.sqlite.update_character(char_id, living_schedule_enabled=1)
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     _persist_usual_world(request.app.state.sqlite, char_id, name, form)
     return RedirectResponse(url="/ui/characters", status_code=303)
@@ -232,6 +235,8 @@ async def update_character(request: Request, character_id: str):
         action_menu=_build_action_menu(form),
         # 生活時間割（めぐり / Aliveness §5.1）: 応答できない時間帯。空なら NULL（常時可）。
         availability_schedule=_parse_availability_schedule(form),
+        # 生活カレンダー（Living Schedule）有効化トグル。未チェックなら 0（従来挙動）。
+        living_schedule_enabled=1 if form.get("living_schedule_enabled") else 0,
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()
@@ -281,6 +286,10 @@ def _build_action_menu(form) -> dict | None:
 
 # 生活時間割の曜日キー（Python weekday() 順に対応。availability ゲートと同じ並び）。
 _SCHEDULE_WEEKDAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+# 時間帯ブロックに付与できる state（生活カレンダー Phase 0・schedule_plan.md §2）。
+# テンプレ層シードとして週次バッチ（Phase 3）が参照する。既定は active。
+_SCHEDULE_STATES = ("OnTime", "active", "busy", "offline")
 
 
 def _valid_hhmm(value: str) -> bool:
@@ -334,6 +343,10 @@ def _parse_availability_schedule(form) -> dict | None:
             label = str(b.get("label") or "").strip()
             if label:
                 block["label"] = label
+            # 任意の state（テンプレ層シード用）。既定 active は冗長なので載せない。
+            state = str(b.get("state") or "").strip()
+            if state in _SCHEDULE_STATES and state != "active":
+                block["state"] = state
             clean_blocks.append(block)
         if clean_blocks:
             schedule[day] = clean_blocks

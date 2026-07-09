@@ -182,6 +182,11 @@ class Character(Base):
     # 本人からの更新経路は作らない（圧力は物理 — 非制御性の担保）。
     # ユーザは管理UIから編集できる（守護者の介入枠）。
     pressure_profile = Column(JSON, nullable=True)
+    # 生活カレンダー（Living Schedule）のキャラ単位有効化トグル
+    # （docs/planned/schedule_plan.md §14）。0=無効（従来挙動＝二値 availability＋手動 slots）、
+    # 1=有効（schedule_entries を実現層とする占有圧・配達値ベースの生活カレンダー）。
+    # 無効キャラは従来どおり動き続ける（オプトイン移行）。
+    living_schedule_enabled = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -614,6 +619,56 @@ class TimelineEvent(Base):
     payload = Column(JSON, nullable=True)                      # 型ごとの可変属性（判定スコア等もここ）
     retracted_at = Column(DateTime, nullable=True)             # 巻き戻しマーク（削除の代わり）
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())  # 記録された時刻（occurred_at と分離）
+
+
+class ScheduleEntry(Base):
+    """生活カレンダー（Living Schedule）の実現層 — 1回性の予定インスタンス。
+
+    生活カレンダー設計（docs/planned/schedule_plan.md §2）の中核テーブル。
+    4系統（世界固定 / はる固定 / 世界突発 / はるイベント）すべてを、発生源を問わず
+    同一の「予定エントリ」としてこの1枚のカレンダーに載せる。「固定 vs 突発」は生成
+    タイミング（origin）の違い、「世界 vs はる」は author（source）の違いにすぎず、
+    availability を計算する側から見ればどれも「ある時間帯に、こういう状態」でしかない。
+
+    重なりは許容し、物理分割・削除はしない（③④は insert するだけ）。読み取り時に
+    「その時刻を含む planned エントリのうち占有圧（occupancy）最大が勝つ」で解決する
+    （services/gate/availability.py）。轢かれた側の消す/ずらす/削るは、本人裁定（④）が
+    status 変更・再 insert で表現する（§6）。
+
+    timeline_events（起きたことの追記型正本）とは意味論が異なる（予定＝未来・可変・
+    status あり）ため相乗りせず、独立テーブルとする（§13 裁定）。
+    """
+
+    __tablename__ = "schedule_entries"
+
+    id = Column(String, primary_key=True)                       # UUID
+    character_id = Column(String, nullable=False, index=True)   # 誰の生活カレンダーか
+    start_at = Column(DateTime, nullable=False, index=True)     # 予定の開始時刻
+    end_at = Column(DateTime, nullable=False)                   # 予定の終了時刻
+    # 配達プリセット状態（§5）。OnTime / active / busy / offline。
+    # プリセットが (返信率, チェック間隔) の既定を決め、reply_rate / check_interval が
+    # None ならこのプリセット既定を使う。
+    state = Column(String, nullable=False, default="active")
+    source = Column(String, nullable=False, default="haru")     # author: world / haru
+    origin = Column(String, nullable=False, default="template") # 固定由来 template / 随時挿入 adhoc
+    # 占有圧 0.0–1.0（§4）。③④が既存を轢く侵食力＝既存が耐える抵抗力の双方向スケール。
+    occupancy = Column(Float, nullable=False, default=0.5)
+    # 返信率 0.0–1.0 の個別上書き（§5）。None = state プリセット既定を使う。
+    reply_rate = Column(Float, nullable=True)
+    # チェック間隔 [分] の個別上書き（§5）。None = state プリセット既定を使う
+    # （∞ は offline プリセットが表現するため、ここでの None は「継承」の意）。
+    check_interval = Column(Integer, nullable=True)
+    # 玉突き裁定（§6）の監査用ステータス。planned / cancelled / done。
+    status = Column(String, nullable=False, default="planned")
+    label = Column(String, nullable=True)                       # 表示ラベル（[PLAN] のラベル）
+    # 型ごとの可変属性（③の種・具体化結果・intent 参照など）。
+    payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(),
+    )
 
 
 class ScenarioTurn(Base):
