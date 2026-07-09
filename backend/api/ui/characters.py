@@ -437,6 +437,9 @@ def _parse_usual_form(
     usual_config = {
         "enabled": bool(form.get("usual_enabled")),
         "slots": slots,
+        # 生活カレンダー有効キャラの1日のシーン回数（Phase 4・§8）。手動 slots に依らず
+        # ②はる固定予定からシーンを導出する際の枠数。0 は「未設定＝既定回数に委ねる」。
+        "scenes_per_day": _num("usual_scenes_per_day", 0),
         "time_grid": time_grid,
         "event_categories": cats,
         "event_probability": _num("usual_event_probability", 0.0),

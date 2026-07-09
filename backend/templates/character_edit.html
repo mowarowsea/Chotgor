@@ -599,11 +599,20 @@
 
             <div class="ch-field">
                 <label class="ch-label" for="usual_slots">スロット時刻
-                    <span class="ch-hint">カンマ区切りの "HH:MM"。各時刻に1シーン進む</span>
+                    <span class="ch-hint">カンマ区切りの "HH:MM"。各時刻に1シーン進む（生活カレンダー無効時のみ有効）</span>
                 </label>
                 <input type="text" id="usual_slots" name="usual_slots" class="ch-input"
                     value="{{ usual_config.get('slots', []) | join(', ') }}"
                     placeholder="10:00, 13:00, 17:00">
+            </div>
+
+            <div class="ch-field">
+                <label class="ch-label" for="usual_scenes_per_day">1日のシーン回数（生活カレンダー用）
+                    <span class="ch-hint">生活カレンダー有効時、②はる固定予定からこの回数のシーンを導出する。0=既定（3回）</span>
+                </label>
+                <input type="number" id="usual_scenes_per_day" name="usual_scenes_per_day" class="ch-input"
+                    min="0" max="24" step="1"
+                    value="{{ usual_config.get('scenes_per_day', 0) }}">
             </div>
 
             <div class="ch-field">

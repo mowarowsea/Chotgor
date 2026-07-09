@@ -461,7 +461,35 @@ aliveness §5.3 のコストガード（行動問い合わせ N回/日）と esc
 依存順。各 Phase 単独で止まっても壊れない。生活カレンダーは**キャラ単位の有効化トグル**を持ち、
 無効キャラは従来挙動（二値 availability＋手動 slots）のまま動き続ける。
 
-> 進捗: **Phase 0〜3 実装完了（2026-07-09）**。
+> 進捗: **Phase 0〜8 全実装完了（2026-07-09）**。
+> - Phase 4: `services/schedule/scene_selection.py`（`select_daily_scenes` — offline 以外の当日
+>   planned エントリから占有圧上位50%＋残りランダムを決定論選出（seed=キャラ+日）・起動時刻=
+>   エントリ開始＋決定論ジッター、`format_scene_framing`）。`main.py _run_due_usual_scenes` を
+>   2経路化（生活カレンダー有効=②導出 `_schedule_scene_descriptors` / 無効=従来 slots
+>   `_slot_scene_descriptors`）。冪等キーはエントリ単位 `usual_days_entry_run_{entry_id}`。
+>   UI に `usual_scenes_per_day`（未設定=既定3）を追加。
+> - Phase 5: `plan_parser.parse_event_line`（[EVENT] 行・reply=/check= 個別上書き）＋
+>   `services/schedule/events.py`（`place_weekly_hidden_events` = 週次バッチ内で決定論確率配置・
+>   status="pending" で availability 不可視／`run_pending_sudden_events` = 発火時 GM 具体化→
+>   `max_overlapping_occupancy` 轢き判定（占有圧>既存最大なら insert・同値以下は流れる）→
+>   シーン実行）。`main.py _sudden_event_scheduler`（毎分）。日次上限 `sudden_event_daily_cap`
+>   （既定3）・発火猶予6h（超過は捨てる）。
+> - Phase 6: `services/schedule/dilemma.py run_collision_ruling`（③シーン完走後に本人へ
+>   「潰れた予定＋内圧」を問い合わせ→ `[GIVE_UP]`=cancelled／`[RESCHEDULE]`=旧cancel＋④adhoc
+>   insert／`[DISSATISFIED]`=意図生成→soured＋不満を記憶へ刻む。轢かれた予定抽出は重なる
+>   template・低占有圧・非offlineのみ）。events から発火成功時に呼ぶ。
+> - Phase 7: 対面 (a)OnTime 強制は Phase 1 で実装済。(b)起動ガード = `PUT /face_to_face_mode` で
+>   生活カレンダー有効キャラが active/OnTime 以外の時は blocked+reason を返し DB 不変更。
+>   (c)聖域化 = `_run_due_usual_scenes` は対面中②シーンを捨てる（冪等キーだけ立てる）・
+>   `run_pending_sudden_events` は対面中③を保留（伏せ枠に触れず対面終了後に発火）。
+> - Phase 8: Tier 1 `weekly_batch_heartbeat`（生活カレンダー有効キャラに当週 template
+>   エントリがあるか）を `instruments/tier1.py _PATROL_CHECKS` に追加。③発火の日次上限
+>   `sudden_event_daily_cap`（§5 に前述）。
+> - テスト: `tests/test_schedule.py` を Phase 4〜8 分拡張（シーン選出・[EVENT]パーサ・伏せ枠配置・
+>   轢き判定・発火/上限/聖域化・玉突き裁定・heartbeat）。全 1897 テスト通過。スキーマ変更なし
+>   （status="pending"・payload は既存カラム再利用のため migration 不要）。
+>
+> Phase 0〜3 実装内容（2026-07-09）:
 > - Phase 2: `resolve_delivery_due`（チェック間隔格子＋決定論 reply_rate 判定の純関数）を
 >   `gate/delivery.py` に追加。生活カレンダー有効キャラは `escrow_ready_*` マーカー＋ジッターを
 >   使わず格子判定で配達（busy 中もチェック点で配達しうる）。無効キャラは従来経路のまま。

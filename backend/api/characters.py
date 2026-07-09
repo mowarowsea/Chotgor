@@ -134,14 +134,34 @@ async def update_face_to_face_mode(request: Request, character_id: str, body: Fa
 
     1on1チャット画面のトグルから叩く。Settings UI のフル更新（PATCH）を毎クリック
     走らせないため独立させている。enabled=true で 1、false で 0 を書き込む。
+
+    生活カレンダー有効キャラの**起動ガード**（schedule_plan.md §7 (b)）: 就寝中・超繁忙中
+    （offline / busy）には対面を始められない。理由（「いま仕事中」等）を返して DB は変更しない。
+    無効キャラは従来どおり無条件で切り替わる（従来挙動を変えない）。解除（enabled=false）は
+    常に許可する。
     """
     state = request.app.state
-    char = state.sqlite.update_character(
+    char = state.sqlite.get_character(character_id)
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    # 起動ガード: 生活カレンダー有効キャラを、active/OnTime 以外の時間帯には対面起動させない
+    if body.enabled and int(getattr(char, "living_schedule_enabled", 0) or 0):
+        from backend.services.gate import check_availability
+
+        availability = check_availability(char, sqlite=state.sqlite)
+        if availability.state not in ("OnTime", "active"):
+            return {
+                "character_id": character_id,
+                "face_to_face_mode": int(getattr(char, "face_to_face_mode", 0) or 0),
+                "blocked": True,
+                "reason": availability.reason or availability.state,
+            }
+
+    state.sqlite.update_character(
         character_id,
         face_to_face_mode=1 if body.enabled else 0,
     )
-    if not char:
-        raise HTTPException(status_code=404, detail="Character not found")
     return {"character_id": character_id, "face_to_face_mode": 1 if body.enabled else 0}
 
 

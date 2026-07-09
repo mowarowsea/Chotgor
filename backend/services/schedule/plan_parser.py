@@ -41,8 +41,14 @@ _DAY_INDEX: dict[str, int] = {
 # [PLAN: ...] 行の抽出（本文の自由文と共存できる行単位タグ方式）
 _PLAN_RE = re.compile(r"\[PLAN:\s*([^\]]*?)\s*\]")
 
+# [EVENT: ...] 行の抽出（③突発の発火時 GM 具体化・§5）
+_EVENT_RE = re.compile(r"\[EVENT:\s*([^\]]*?)\s*\]")
+
 # "HH:MM-HH:MM"。時は 0〜47 を受理（24 以上 = 翌日跨ぎ表記）
 _TIME_RANGE_RE = re.compile(r"^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$")
+
+# 個別上書き（reply=0.2 / check=90）の key=value 抽出（§5「個別値を吐ける穴」）
+_OVERRIDE_RE = re.compile(r"^(reply|check)\s*=\s*([0-9.]+)$")
 
 
 @dataclass
@@ -149,6 +155,91 @@ def parse_plan_lines(text: str, week_start: date) -> list[PlanEntry]:
             )
         )
     return entries
+
+
+@dataclass
+class EventEntry:
+    """③突発イベントの発火時 GM 具体化1件（[EVENT] 行のパース結果・§5）。
+
+    PlanEntry に配達値の個別上書き（reply_rate / check_interval）を加えたもの。
+    ③は「拘束時間・返信率・間隔は発火時に GM が定義」なので、プリセットに縛られない
+    個別値を持てる（None なら state プリセット既定を使う）。
+
+    Attributes:
+        start_at: イベントの開始時刻（絶対時刻）。
+        end_at: イベントの終了時刻。
+        label: 表示ラベル（"客先トラブルの電話対応" 等）。
+        state: 配達プリセット状態（OnTime / active / busy / offline）。
+        occupancy: 占有圧 0.0–1.0（轢き判定に使う侵食力）。
+        reply_rate: 返信率の個別上書き（None = state プリセット既定）。
+        check_interval: チェック間隔 [分] の個別上書き（None = state プリセット既定）。
+    """
+
+    start_at: datetime
+    end_at: datetime
+    label: str
+    state: str
+    occupancy: float
+    reply_rate: float | None = None
+    check_interval: int | None = None
+
+
+def parse_event_line(text: str, base_date: date) -> EventEntry | None:
+    """本文から最初の [EVENT] 行を抽出し、その日の絶対時刻イベントへ展開する（§5）。
+
+    書式: ``[EVENT: HH:MM-HH:MM | ラベル | 状態 | 圧 | reply=0.2 | check=90]``
+    末尾の ``reply=`` / ``check=`` は任意（配達値の個別上書き）。PLAN と違い曜日を持たず、
+    base_date（発火日）を基準に時刻を展開する。24時超え表記・日跨ぎは PLAN と同流儀。
+
+    複数の [EVENT] 行があっても最初の1件だけ採用する（1発火＝1イベント）。
+
+    Args:
+        text: GM の具体化出力（自由文と [EVENT] 行が混在してよい）。
+        base_date: イベント発火日（この日の 0:00 を時刻の基準にする）。
+
+    Returns:
+        EventEntry。有効な [EVENT] 行が無い・パース不能なら None。
+    """
+    if not text:
+        return None
+    base = datetime(base_date.year, base_date.month, base_date.day)
+    for body in _EVENT_RE.findall(text):
+        parts = [p.strip() for p in body.split("|")]
+        if len(parts) < 4:
+            continue
+        time_raw, label, state_raw, pressure_raw = parts[:4]
+        span = _parse_time_range(time_raw, base)
+        if span is None:
+            continue
+        occupancy = PRESSURE_VALUES.get(pressure_raw)
+        if occupancy is None:
+            continue
+        reply_rate: float | None = None
+        check_interval: int | None = None
+        for extra in parts[4:]:
+            m = _OVERRIDE_RE.match(extra.lower())
+            if m is None:
+                continue
+            if m.group(1) == "reply":
+                try:
+                    reply_rate = max(0.0, min(1.0, float(m.group(2))))
+                except ValueError:
+                    pass
+            else:  # check
+                try:
+                    check_interval = max(0, int(float(m.group(2))))
+                except ValueError:
+                    pass
+        return EventEntry(
+            start_at=span[0],
+            end_at=span[1],
+            label=label or "突発",
+            state=canonical_state(state_raw, default="busy"),
+            occupancy=occupancy,
+            reply_rate=reply_rate,
+            check_interval=check_interval,
+        )
+    return None
 
 
 def layer_has_offline(entries: list[PlanEntry]) -> bool:

@@ -127,6 +127,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_action_scheduler(app))
     asyncio.create_task(_escrow_delivery_scheduler(app))
     asyncio.create_task(_weekly_schedule_scheduler(app))
+    asyncio.create_task(_sudden_event_scheduler(app))
 
     yield
 
@@ -291,14 +292,98 @@ def _parse_slot_time(now: datetime, slot: str) -> datetime | None:
     return now.replace(hour=h, minute=m, second=0, microsecond=0)
 
 
-async def _run_due_usual_scenes(app: FastAPI) -> None:
-    """到来済みのうつつスロットを 1 回ずつ無人進行させる（冪等キー＝日付+スロット）。
+# 生活カレンダー有効キャラで usual_scenes_per_day 未設定時の既定シーン回数（Phase 4・§8）
+_DEFAULT_SCENES_PER_DAY = 3
 
-    - 有効（usual_config.enabled）なうつつ世界ごとに、今日すでに到来したスロットを処理。
-    - 冪等キー ``usual_days_last_run_{owner}_{slot}`` に当日日付を立てて二重起動を防ぐ。
-    - 日次コストガード ``usual_days_daily_cap``（既定 24）を超えたら以降は当日スキップ。
-    - セッションは永続1本（ensure_usual_session が find-or-create）。
-    - GM へ前回シーンからの経過時間メモを添える。
+
+def _slot_scene_descriptors(now: datetime, owner_id, cfg: dict) -> list[dict]:
+    """従来 slots からの到来済みシーン記述子を返す（生活カレンダー無効キャラ）。
+
+    各記述子は {key, slot, topic_ooc}。topic_ooc は空（従来は題材を指定しない）。
+    まだ到来していないスロット・不正スロットは含めない。
+
+    Args:
+        now: 基準時刻。
+        owner_id: うつつ世界の所有者キャラ ID。
+        cfg: usual_config。
+
+    Returns:
+        到来済みスロットの記述子リスト。
+    """
+    descriptors: list[dict] = []
+    for slot in cfg.get("slots") or []:
+        scheduled = _parse_slot_time(now, slot)
+        if scheduled is None or now < scheduled:
+            continue  # まだ到来していない / 不正スロット
+        descriptors.append({
+            "key": f"usual_days_last_run_{owner_id}_{slot}",
+            "slot": slot,
+            "topic_ooc": "",
+        })
+    return descriptors
+
+
+def _schedule_scene_descriptors(
+    sqlite, owner_char, cfg: dict, now: datetime
+) -> list[dict]:
+    """②導出（実現層エントリ）からの到来済みシーン記述子を返す（生活カレンダー有効キャラ）。
+
+    その日の planned エントリから select_daily_scenes で決定論選出し、起動時刻が到来した
+    ものだけを記述子化する。冪等キーはエントリ単位（entry_id）。題材（ラベル）を GM への
+    framing OOC として topic_ooc に載せる（§8）。
+
+    Args:
+        sqlite: SQLiteStore。
+        owner_char: うつつ世界の所有者 Character（living_schedule_enabled=1）。
+        cfg: usual_config（scenes_per_day を読む）。
+        now: 基準時刻。
+
+    Returns:
+        起動時刻到来済みシーンの記述子リスト。
+    """
+    from datetime import timedelta
+
+    from backend.services.schedule import format_scene_framing, select_daily_scenes
+
+    owner_id = owner_char.id
+    scenes_per_day = int(cfg.get("scenes_per_day") or 0) or _DEFAULT_SCENES_PER_DAY
+    day = now.date()
+    day_start = datetime(day.year, day.month, day.day)
+    day_end = day_start + timedelta(days=1)
+    entries = sqlite.list_schedule_entries(
+        owner_id, since=day_start, until=day_end, statuses=["planned"],
+    )
+    scenes = select_daily_scenes(
+        entries, character_id=owner_id, day=day, scenes_per_day=scenes_per_day,
+    )
+    descriptors: list[dict] = []
+    for scene in scenes:
+        if now < scene.fire_at:
+            continue  # 起動時刻がまだ来ていない
+        descriptors.append({
+            "key": f"usual_days_entry_run_{scene.entry_id}",
+            "slot": f"{scene.fire_at:%H:%M}",
+            "topic_ooc": format_scene_framing(
+                getattr(owner_char, "name", "") or "", scene.label
+            ),
+        })
+    return descriptors
+
+
+async def _run_due_usual_scenes(app: FastAPI) -> None:
+    """到来済みのうつつシーンを 1 回ずつ無人進行させる（冪等キー＝シーン単位）。
+
+    2系統のシーン起動タイミングを持つ（Phase 4・§8）:
+        - 生活カレンダー無効: 従来どおり ``usual_config.slots`` の時刻で起動。
+        - 生活カレンダー有効: ②はる固定（＋①世界固定）エントリから決定論選出して起動。
+          手動 slots に依らず「はるが自分で決めた予定」がそのままシーンになる。
+
+    共通:
+        - 有効（usual_config.enabled）なうつつ世界ごとに、今日すでに到来したシーンを処理。
+        - 冪等キーに当日日付を立てて二重起動を防ぐ（対面スキップ時も立てる＝通過分は捨てる）。
+        - 日次コストガード ``usual_days_daily_cap``（既定 24）を超えたら以降は当日スキップ。
+        - セッションは永続1本（ensure_usual_session が find-or-create）。
+        - GM へ前回シーンからの経過時間メモ＋（②導出なら）題材の framing を添える。
     """
     from backend.services.scenario_chat.service import (
         ensure_usual_session,
@@ -325,16 +410,20 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
         # （次のスロット時刻まで自然に待ち、そこからスケジュールどおりに再開する）。
         owner_char = sqlite.get_character(owner_id) if owner_id else None
         owner_in_face_to_face = bool(getattr(owner_char, "face_to_face_mode", 0)) if owner_char else False
-        slots = cfg.get("slots") or []
-        for slot in slots:
-            scheduled = _parse_slot_time(now, slot)
-            if scheduled is None or now < scheduled:
-                continue  # まだ到来していない / 不正スロット
-            key = f"usual_days_last_run_{owner_id}_{slot}"
+        # 生活カレンダー有効キャラは②導出、無効キャラは従来 slots でシーンを起動する。
+        living_enabled = bool(
+            owner_char and int(getattr(owner_char, "living_schedule_enabled", 0) or 0)
+        )
+        if living_enabled:
+            descriptors = _schedule_scene_descriptors(sqlite, owner_char, cfg, now)
+        else:
+            descriptors = _slot_scene_descriptors(now, owner_id, cfg)
+        for desc in descriptors:
+            key, slot, topic_ooc = desc["key"], desc["slot"], desc["topic_ooc"]
             if sqlite.get_setting(key, "") == today_str:
-                continue  # 当日このスロットは実行済み
+                continue  # 当日このシーンは実行済み
             if owner_in_face_to_face:
-                # 通過分は捨てる：冪等キーを立てて当日この時刻は再評価しない。
+                # 通過分は捨てる：冪等キーを立てて当日この時刻は再評価しない（§7 聖域化）。
                 sqlite.set_setting(key, today_str)
                 _log.info(
                     "うつつ: 対面モード中につきスキップ owner=%s slot=%s",
@@ -354,9 +443,11 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                 _log.error("うつつ: セッション未解決のためスキップ owner=%s", owner_id)
                 continue
             elapsed_note = usual_elapsed_note(sqlite, session.id, now)
+            # 経過時間メモ＋題材 framing（②導出時のみ非空）を結合して GM へ渡す。
+            extra_ooc = "\n\n".join(p for p in (elapsed_note, topic_ooc) if p)
             _log.info(
-                "うつつ: シーン起動 owner=%s slot=%s session=%s",
-                owner_id, slot, session.id,
+                "うつつ: シーン起動 owner=%s slot=%s session=%s living=%s",
+                owner_id, slot, session.id, living_enabled,
             )
             try:
                 result = await run_usual_days_scene(
@@ -364,7 +455,7 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                     sqlite=sqlite,
                     settings=sqlite.get_all_settings(),
                     chat_service=app.state.chat_service,
-                    extra_first_gm_ooc=elapsed_note,
+                    extra_first_gm_ooc=extra_ooc,
                     slot=slot,
                 )
                 ran_today += 1
@@ -440,6 +531,24 @@ async def _weekly_schedule_scheduler(app: FastAPI) -> None:
             await run_pending_weekly_batches(app.state)
         except Exception:
             _log.exception("週次スケジュールスケジューラー 実行エラー")
+
+
+async def _sudden_event_scheduler(app: FastAPI) -> None:
+    """Background task: 生活カレンダーの③世界突発イベントの発火（schedule_plan.md §5 / Phase 5）。
+
+    毎分、生活カレンダー有効キャラの未発火伏せ枠（週次バッチで確率配置済み）を走査し、
+    発火時刻が到来したものを GM 具体化 → 轢き判定 → insert → シーン → 玉突き裁定の順で
+    処理する。判定・ガードの詳細は services/schedule/events.py 参照。
+    """
+    from backend.services.schedule import run_pending_sudden_events
+
+    _log = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await run_pending_sudden_events(app.state)
+        except Exception:
+            _log.exception("突発イベントスケジューラー 実行エラー")
 
 
 async def _forget_scheduler(app: FastAPI) -> None:

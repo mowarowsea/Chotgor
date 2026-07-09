@@ -187,14 +187,21 @@ async def run_weekly_schedule_batch(state, char, week_start: date) -> dict:
                 label=e.label,
                 payload={"week": wkey, "generated_by": mode},
             )
+    # ③世界突発の伏せ枠を確率配置する（②→③の順序で秘匿の仕掛けが不要・§3）。
+    # 発火時 GM 具体化・轢き判定は events.run_pending_sudden_events が担う（Phase 5）。
+    # 循環 import（events → weekly_batch）を起動時に作らないため遅延 import。
+    from backend.services.schedule.events import place_weekly_hidden_events
+
+    events_placed = place_weekly_hidden_events(sqlite, char, week_start)
     logger.info(
-        "週次バッチ完了 char=%s week=%s world=%d(%s) haru=%d(%s) 旧template削除=%d",
+        "週次バッチ完了 char=%s week=%s world=%d(%s) haru=%d(%s) 旧template削除=%d 伏せ枠=%d",
         char.name, wkey, len(world_entries), world_mode,
-        len(haru_entries), haru_mode, deleted,
+        len(haru_entries), haru_mode, deleted, events_placed,
     )
     return {
         "world": len(world_entries), "haru": len(haru_entries),
         "world_mode": world_mode, "haru_mode": haru_mode,
+        "events": events_placed,
     }
 
 
@@ -248,19 +255,9 @@ async def _ask_gm_for_world_plan(state, char, week_start: date) -> str | None:
     sqlite = state.sqlite
     settings = sqlite.get_all_settings()
     scenario = _find_usual_scenario(sqlite, char.id)
-    gm_preset_id = ""
-    if scenario is not None:
-        cfg = getattr(scenario, "usual_config", None) or {}
-        gm_preset_id = (cfg.get("gm_preset_id") or "").strip()
-    gm_preset_id = gm_preset_id or (getattr(char, "ghost_model", None) or "").strip()
-    if not gm_preset_id:
-        logger.warning("週次バッチ①: GM プリセット未解決 char=%s", char.name)
-        return None
-    preset = sqlite.get_model_preset(gm_preset_id)
+    preset = resolve_gm_preset(sqlite, char, scenario)
     if preset is None:
-        logger.warning(
-            "週次バッチ①: プリセット未発見 char=%s preset=%s", char.name, gm_preset_id,
-        )
+        logger.warning("週次バッチ①: GM プリセット未解決 char=%s", char.name)
         return None
 
     template_entries = entries_from_template(
@@ -316,6 +313,32 @@ def _find_usual_scenario(sqlite, character_id: str):
         if getattr(scenario, "owner_character_id", None) == character_id:
             return scenario
     return None
+
+
+def resolve_gm_preset(sqlite, char, scenario=None):
+    """GM（人格なき環境）を動かすモデルプリセットを解決する。
+
+    優先順: うつつ世界の usual_config.gm_preset_id → 本人の ghost_model。①週次バッチと
+    ③突発の具体化で共有する（どちらも「世界の側」を GM に喋らせるため）。
+
+    Args:
+        sqlite: SQLiteStore。
+        char: 対象 Character ORM。
+        scenario: 所有うつつシナリオ（省略時はここで探す）。
+
+    Returns:
+        ModelPreset ORM。プリセット未解決・未発見なら None。
+    """
+    if scenario is None:
+        scenario = _find_usual_scenario(sqlite, char.id)
+    gm_preset_id = ""
+    if scenario is not None:
+        cfg = getattr(scenario, "usual_config", None) or {}
+        gm_preset_id = (cfg.get("gm_preset_id") or "").strip()
+    gm_preset_id = gm_preset_id or (getattr(char, "ghost_model", None) or "").strip()
+    if not gm_preset_id:
+        return None
+    return sqlite.get_model_preset(gm_preset_id)
 
 
 def _usual_synopsis_text(sqlite, scenario) -> str:

@@ -187,12 +187,13 @@ class ScheduleStoreMixin:
         since: datetime | None = None,
         until: datetime | None = None,
         origins: list[str] | None = None,
+        statuses: list[str] | None = None,
     ) -> int:
         """エントリを物理削除する（週次バッチの再生成・掃除用）。
 
-        id 指定と (character_id, 期間, origin) 指定の両方を受ける。両方を渡した場合は
-        AND で絞り込む。character_id も entry_ids も無い呼び出しは、全キャラの一括削除
-        事故を避けるため何もしない。
+        id 指定と (character_id, 期間, origin, status) 指定の両方を受ける。両方を渡した
+        場合は AND で絞り込む。character_id も entry_ids も無い呼び出しは、全キャラの一括
+        削除事故を避けるため何もしない。
 
         Args:
             entry_ids: 削除対象 ID のリスト。
@@ -200,6 +201,7 @@ class ScheduleStoreMixin:
             since: この時刻以降に開始するエントリに限定（start_at >= since）。
             until: この時刻より前に開始するエントリに限定（start_at < until）。
             origins: origin フィルタ（["template"] 等）。
+            statuses: status フィルタ（["pending"] 等。③伏せ枠の再配置で未発火のみ消す用途）。
 
         Returns:
             削除した件数。
@@ -220,6 +222,8 @@ class ScheduleStoreMixin:
                 q = q.filter(ScheduleEntry.start_at < until)
             if origins:
                 q = q.filter(ScheduleEntry.origin.in_(origins))
+            if statuses:
+                q = q.filter(ScheduleEntry.status.in_(statuses))
             deleted = q.delete(synchronize_session=False)
             session.commit()
             return deleted

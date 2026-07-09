@@ -99,6 +99,39 @@ def _check_usual_slot_completion(sqlite) -> list[dict]:
     return fired
 
 
+def _check_weekly_batch_heartbeat(sqlite) -> list[dict]:
+    """生活カレンダーの停止を見張る — 有効キャラに当週の実現層エントリがあるか（§13）。
+
+    週次バッチ（日曜夜・コールドスタート即時）が正常なら、生活カレンダー有効キャラには
+    当週（月曜起点）に template 由来の planned エントリが存在するはず。1件も無ければ、
+    バッチが回っていない（生活が編まれていない）疑い。フォールバック連鎖が最悪でも
+    テンプレ裸変換まで保証するため、空 = 明確な異常。
+
+    Returns:
+        発火したアラームの details リスト。
+    """
+    fired: list[dict] = []
+    now = datetime.now()
+    week_start = (now - timedelta(days=now.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    week_end = week_start + timedelta(days=7)
+    for char in sqlite.list_characters():
+        if not int(getattr(char, "living_schedule_enabled", 0) or 0):
+            continue
+        entries = sqlite.list_schedule_entries(
+            char.id, since=week_start, until=week_end,
+            statuses=["planned"], origins=["template"],
+        )
+        if not entries:
+            fired.append({
+                "character": char.name,
+                "week_start": week_start.date().isoformat(),
+                "note": "当週の実現層エントリが無い（週次バッチが回っていない疑い）",
+            })
+    return fired
+
+
 def _check_chronicle_backlog(sqlite) -> list[dict]:
     """蒸留漏れを見張る — chronicled_at IS NULL の3日超滞留がないか。
 
@@ -139,6 +172,7 @@ def _check_envelope_integrity(sqlite) -> list[dict]:
 _PATROL_CHECKS = {
     "night_batch_heartbeat": _check_night_batch_heartbeat,
     "usual_slot_completion": _check_usual_slot_completion,
+    "weekly_batch_heartbeat": _check_weekly_batch_heartbeat,
     "chronicle_backlog": _check_chronicle_backlog,
     "envelope_integrity": _check_envelope_integrity,
 }

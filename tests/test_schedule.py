@@ -671,3 +671,523 @@ def _async_return(value):
     async def _stub(*args, **kwargs):
         return value
     return _stub
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: うつつ②導出（シーン選出純関数）
+# ---------------------------------------------------------------------------
+
+from backend.services.schedule import (  # noqa: E402
+    EventEntry,
+    format_scene_framing,
+    max_overlapping_occupancy,
+    parse_event_line,
+    place_weekly_hidden_events,
+    run_pending_sudden_events,
+    select_daily_scenes,
+)
+from backend.services.schedule import events as events_module  # noqa: E402
+
+
+def _fake_entry(entry_id, hour, state="active", occupancy=0.5, label="予定", day=None):
+    """select_daily_scenes 用の軽量エントリスタブを作る。"""
+    base = day or _MON
+    return SimpleNamespace(
+        id=entry_id,
+        start_at=base.replace(hour=hour),
+        end_at=base.replace(hour=hour) + timedelta(hours=2),
+        state=state,
+        occupancy=occupancy,
+        label=label,
+    )
+
+
+class TestSceneSelection:
+    """②導出のシーン選出純関数（select_daily_scenes・§8）を検証する。"""
+
+    def test_offline_excluded(self):
+        """offline（就寝）は体験の題材にならないので選出対象外。"""
+        entries = [
+            _fake_entry("a", 2, state="offline", occupancy=0.5, label="就寝"),
+            _fake_entry("b", 14, state="active", occupancy=0.5, label="ゲーム"),
+        ]
+        got = select_daily_scenes(
+            entries, character_id="c1", day=_MON.date(), scenes_per_day=5,
+        )
+        assert [s.label for s in got] == ["ゲーム"]
+
+    def test_all_when_within_cap(self):
+        """候補数が枠以下なら全採用（起動時刻昇順）。"""
+        entries = [
+            _fake_entry("b", 14, label="午後"),
+            _fake_entry("a", 9, label="午前"),
+        ]
+        got = select_daily_scenes(
+            entries, character_id="c1", day=_MON.date(), scenes_per_day=3,
+        )
+        assert [s.label for s in got] == ["午前", "午後"]  # fire_at 昇順
+        assert all(s.fire_at >= e.start_at for s, e in zip(
+            sorted(got, key=lambda s: s.entry_id), sorted(entries, key=lambda e: e.id)
+        ))
+
+    def test_zero_scenes_per_day_empty(self):
+        """scenes_per_day=0 は空リスト（生活カレンダー有効でもシーン導出しない）。"""
+        entries = [_fake_entry("a", 9)]
+        assert select_daily_scenes(
+            entries, character_id="c1", day=_MON.date(), scenes_per_day=0,
+        ) == []
+
+    def test_top_occupancy_prioritised_and_deterministic(self):
+        """枠超過時は占有圧上位が必ず入り、選出は決定論（同入力＝同結果）。"""
+        entries = [
+            _fake_entry("hi", 9, occupancy=1.0, label="激強"),
+            _fake_entry("mid", 11, occupancy=0.5, label="中"),
+            _fake_entry("lo1", 13, occupancy=0.25, label="弱1"),
+            _fake_entry("lo2", 15, occupancy=0.25, label="弱2"),
+        ]
+        got1 = select_daily_scenes(
+            entries, character_id="c1", day=_MON.date(), scenes_per_day=2,
+        )
+        got2 = select_daily_scenes(
+            entries, character_id="c1", day=_MON.date(), scenes_per_day=2,
+        )
+        labels1 = [s.label for s in got1]
+        assert labels1 == [s.label for s in got2]  # 決定論
+        assert "激強" in labels1  # 占有圧上位（枠の 50%=1枠切り上げ）は必ず入る
+        assert len(got1) == 2
+
+    def test_other_day_entries_ignored(self):
+        """対象日以外に始まるエントリは候補にしない。"""
+        entries = [_fake_entry("tue", 14, day=_MON + timedelta(days=1))]
+        assert select_daily_scenes(
+            entries, character_id="c1", day=_MON.date(), scenes_per_day=3,
+        ) == []
+
+    def test_format_scene_framing(self):
+        """framing OOC はラベルとキャラ名を含む。空ラベルは空文字列。"""
+        text = format_scene_framing("はる", "ゲームに没頭")
+        assert "はる" in text and "ゲームに没頭" in text
+        assert format_scene_framing("はる", "") == ""
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: ③突発（[EVENT] パーサ・伏せ枠配置・轢き判定・発火）
+# ---------------------------------------------------------------------------
+
+class TestEventParser:
+    """[EVENT] 行パーサ（parse_event_line・§5）を検証する。"""
+
+    _DAY = date(2026, 7, 6)
+
+    def test_basic_event(self):
+        """基本形: 時間帯・ラベル・状態・圧が絶対時刻イベントへ展開される。"""
+        e = parse_event_line("[EVENT: 11:00-15:00 | 客先トラブル | busy | 激強]", self._DAY)
+        assert e is not None
+        assert e.start_at == datetime(2026, 7, 6, 11, 0)
+        assert e.end_at == datetime(2026, 7, 6, 15, 0)
+        assert e.state == "busy" and e.occupancy == 1.0
+        assert e.reply_rate is None and e.check_interval is None
+
+    def test_delivery_overrides(self):
+        """末尾の reply= / check= が配達値の個別上書きになる。"""
+        e = parse_event_line(
+            "[EVENT: 20:00-21:00 | 友人が来た | active | 強 | reply=0.2 | check=90]",
+            self._DAY,
+        )
+        assert e.reply_rate == 0.2 and e.check_interval == 90
+
+    def test_free_text_coexists(self):
+        """自由文と混在してよい（最初の [EVENT] 行だけ採用）。"""
+        text = "急に電話が鳴った。\n[EVENT: 13:00-14:00 | 電話対応 | busy | 強]\n以上。"
+        e = parse_event_line(text, self._DAY)
+        assert e is not None and e.label == "電話対応"
+
+    def test_no_event_line(self):
+        """[EVENT] 行が無ければ None。"""
+        assert parse_event_line("ただの説明文", self._DAY) is None
+
+    def test_invalid_pressure_skipped(self):
+        """未知の圧ラベルはパース不能（None）。"""
+        assert parse_event_line("[EVENT: 11:00-15:00 | x | busy | 超激強]", self._DAY) is None
+
+
+class TestHiddenEventPlacement:
+    """③伏せ枠の確率配置（place_weekly_hidden_events・§3）を検証する。"""
+
+    def _usual_scenario(self, sqlite_store, char, prob, cats):
+        """イベント設定付きのうつつシナリオを作る。"""
+        sqlite_store.create_scenario(
+            scenario_id=str(uuid.uuid4()),
+            title="うつつ",
+            owner_character_id=char.id,
+            usual_config={
+                "enabled": True,
+                "event_categories": cats,
+                "event_probability": prob,
+            },
+        )
+
+    def test_places_pending_seeds_not_in_availability(self, sqlite_store):
+        """伏せ枠は status=pending で置かれ、availability（planned のみ）には出ない。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        self._usual_scenario(sqlite_store, char, prob=1.0, cats=["残業", "来客"])
+        placed = place_weekly_hidden_events(sqlite_store, char, _WEEK)
+        assert placed == 7  # prob=1.0 なので全曜日に1件
+        # pending なので get_active には出ない（availability を侵さない）
+        all_rows = sqlite_store.list_schedule_entries(char.id)
+        assert all(r.status == "pending" and r.origin == "adhoc" for r in all_rows)
+        # 週内のどこかの伏せ枠時刻を取り、その時刻の get_active が空であることを確認
+        seed = all_rows[0]
+        assert sqlite_store.get_active_schedule_entries(char.id, seed.start_at) == []
+
+    def test_deterministic(self, sqlite_store):
+        """同じキャラ・同じ週なら配置は決定論（再配置で同じ時刻集合）。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        self._usual_scenario(sqlite_store, char, prob=0.5, cats=["残業"])
+        place_weekly_hidden_events(sqlite_store, char, _WEEK)
+        first = sorted(r.start_at for r in sqlite_store.list_schedule_entries(char.id))
+        # 再配置（未発火 pending を消して置き直す）— 同じ結果
+        place_weekly_hidden_events(sqlite_store, char, _WEEK)
+        second = sorted(r.start_at for r in sqlite_store.list_schedule_entries(char.id))
+        assert first == second
+
+    def test_no_categories_places_nothing(self, sqlite_store):
+        """カテゴリ／確率が無ければ0件（伏せ枠を置かない）。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        self._usual_scenario(sqlite_store, char, prob=0.0, cats=[])
+        assert place_weekly_hidden_events(sqlite_store, char, _WEEK) == 0
+
+    def test_replacement_preserves_fired_events(self, sqlite_store):
+        """再配置は未発火 pending だけ消し、発火済み（planned）実イベントは温存する。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        self._usual_scenario(sqlite_store, char, prob=1.0, cats=["残業"])
+        # 発火済みの実イベント（planned adhoc）を週内に置く
+        sqlite_store.create_schedule_entry(
+            character_id=char.id,
+            start_at=datetime(2026, 7, 8, 11, 0), end_at=datetime(2026, 7, 8, 15, 0),
+            origin="adhoc", status="planned", occupancy=1.0, label="発火済み突発",
+        )
+        place_weekly_hidden_events(sqlite_store, char, _WEEK)
+        labels = {r.label for r in sqlite_store.list_schedule_entries(char.id)}
+        assert "発火済み突発" in labels  # planned は消えない
+
+
+class TestMaxOverlappingOccupancy:
+    """轢き判定の下請け（max_overlapping_occupancy・§4）を検証する。"""
+
+    def test_returns_max_of_overlaps(self, sqlite_store):
+        """重なる planned の占有圧最大を返す。重なりなしは 0.0。"""
+        char = _make_character(sqlite_store)
+        sqlite_store.create_schedule_entry(
+            character_id=char.id, start_at=_MON.replace(hour=9),
+            end_at=_MON.replace(hour=12), status="planned", occupancy=0.5,
+        )
+        sqlite_store.create_schedule_entry(
+            character_id=char.id, start_at=_MON.replace(hour=10),
+            end_at=_MON.replace(hour=11), status="planned", occupancy=0.75,
+        )
+        assert max_overlapping_occupancy(
+            sqlite_store, char.id, _MON.replace(hour=10, minute=30),
+            _MON.replace(hour=10, minute=45),
+        ) == 0.75
+        # 重ならない時間帯は 0.0
+        assert max_overlapping_occupancy(
+            sqlite_store, char.id, _MON.replace(hour=20), _MON.replace(hour=21),
+        ) == 0.0
+
+
+def _make_event_state(sqlite_store):
+    """③発火テスト用の app.state スタブ（sqlite + chat_service スタブ）。"""
+    return SimpleNamespace(
+        sqlite=sqlite_store, memory_manager=None, working_memory_manager=None,
+        chat_service=SimpleNamespace(),
+    )
+
+
+class TestFireSuddenEvent:
+    """③発火（run_pending_sudden_events）の轢き判定・上限・聖域化を検証する。
+
+    GM 具体化・シーン実行・玉突き裁定はモックし、insert 可否（§4）を純粋に検証する。
+    """
+
+    def _seed(self, sqlite_store, char, fire_at, category="残業"):
+        """未発火の伏せ枠を1件仕込む。"""
+        return sqlite_store.create_schedule_entry(
+            character_id=char.id, start_at=fire_at,
+            end_at=fire_at + timedelta(hours=1),
+            origin="adhoc", source="world", status="pending", occupancy=0.0,
+            label=category,
+            payload={"kind": "sudden_event_seed", "category": category},
+        )
+
+    def _patch_gm_and_scene(self, monkeypatch, event_text):
+        """GM 具体化と後続（シーン・玉突き）をモックする。"""
+        monkeypatch.setattr(
+            events_module, "_ask_gm_to_concretize", _async_return(event_text),
+        )
+        monkeypatch.setattr(
+            events_module, "_run_event_scene", _async_return({"error": None}),
+        )
+        import backend.services.schedule.dilemma as dilemma_module
+        monkeypatch.setattr(
+            dilemma_module, "run_collision_ruling",
+            _async_return({"status": "skipped"}),
+        )
+
+    async def test_override_inserts_event(self, sqlite_store, monkeypatch):
+        """占有圧が既存を上回れば突発を insert する（轢く）。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        fire = _MON.replace(hour=13)
+        self._seed(sqlite_store, char, fire)
+        # 既存の中(0.5)予定に、激強(1.0)の突発が入る
+        sqlite_store.create_schedule_entry(
+            character_id=char.id, start_at=_MON.replace(hour=12),
+            end_at=_MON.replace(hour=15), status="planned", occupancy=0.5, label="ゲーム",
+        )
+        self._patch_gm_and_scene(
+            monkeypatch, "[EVENT: 13:00-15:00 | 客先トラブル | busy | 激強]",
+        )
+        await run_pending_sudden_events(_make_event_state(sqlite_store), fire)
+        planned = sqlite_store.list_schedule_entries(char.id, statuses=["planned"])
+        labels = {e.label for e in planned}
+        assert "客先トラブル" in labels  # 轢いて insert された
+
+    async def test_equal_or_lower_does_not_insert(self, sqlite_store, monkeypatch):
+        """占有圧が既存以下なら insert しない（本人の予定が僅差で守られる）。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        fire = _MON.replace(hour=13)
+        self._seed(sqlite_store, char, fire)
+        # 既存の強(0.75)予定に、中(0.5)の突発は轢けない
+        sqlite_store.create_schedule_entry(
+            character_id=char.id, start_at=_MON.replace(hour=12),
+            end_at=_MON.replace(hour=15), status="planned", occupancy=0.75, label="仕事",
+        )
+        self._patch_gm_and_scene(
+            monkeypatch, "[EVENT: 13:00-15:00 | 雑談の誘い | active | 中]",
+        )
+        await run_pending_sudden_events(_make_event_state(sqlite_store), fire)
+        planned = sqlite_store.list_schedule_entries(char.id, statuses=["planned"])
+        assert "雑談の誘い" not in {e.label for e in planned}
+        # 伏せ枠は発火試行済み（done）
+        seeds = sqlite_store.list_schedule_entries(char.id, statuses=["pending"])
+        assert seeds == []
+
+    async def test_face_to_face_holds_seed(self, sqlite_store, monkeypatch):
+        """対面中は発火を保留（伏せ枠は pending のまま・done にしない）。"""
+        char = _make_character(
+            sqlite_store, living_schedule_enabled=1, face_to_face_mode=1,
+        )
+        fire = _MON.replace(hour=13)
+        self._seed(sqlite_store, char, fire)
+        self._patch_gm_and_scene(
+            monkeypatch, "[EVENT: 13:00-15:00 | x | busy | 激強]",
+        )
+        await run_pending_sudden_events(_make_event_state(sqlite_store), fire)
+        # 保留: pending のまま残る
+        assert len(sqlite_store.list_schedule_entries(char.id, statuses=["pending"])) == 1
+
+    async def test_daily_cap_discards(self, sqlite_store, monkeypatch):
+        """日次上限に達したら発火せず捨てる（done・insert なし）。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        fire = _MON.replace(hour=13)
+        self._seed(sqlite_store, char, fire)
+        sqlite_store.set_setting("sudden_event_daily_cap", "0")
+        self._patch_gm_and_scene(
+            monkeypatch, "[EVENT: 13:00-15:00 | x | busy | 激強]",
+        )
+        await run_pending_sudden_events(_make_event_state(sqlite_store), fire)
+        assert sqlite_store.list_schedule_entries(char.id, statuses=["planned"]) == []
+        assert sqlite_store.list_schedule_entries(char.id, statuses=["pending"]) == []
+
+    async def test_grace_window_discards_stale(self, sqlite_store, monkeypatch):
+        """発火猶予を超えた古い伏せ枠は発火せず捨てる（生活は流れる）。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        fire = _MON.replace(hour=1)
+        self._seed(sqlite_store, char, fire)
+        self._patch_gm_and_scene(
+            monkeypatch, "[EVENT: 01:00-02:00 | x | busy | 激強]",
+        )
+        # 10時間後に評価 → 猶予(6h)超過
+        await run_pending_sudden_events(
+            _make_event_state(sqlite_store), fire + timedelta(hours=10),
+        )
+        assert sqlite_store.list_schedule_entries(char.id, statuses=["planned"]) == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: 玉突き裁定
+# ---------------------------------------------------------------------------
+
+from backend.services.schedule import dilemma as dilemma_module  # noqa: E402
+from backend.services.schedule.dilemma import (  # noqa: E402
+    _find_disrupted_entries,
+    _parse_ruling,
+    run_collision_ruling,
+)
+
+
+class TestCollisionRulingHelpers:
+    """玉突き裁定の下請け（轢かれた予定の抽出・タグパース）を検証する。"""
+
+    def test_find_disrupted_excludes_offline_and_higher(self, sqlite_store):
+        """轢かれた予定 = 重なる template・低占有圧・非 offline のみ。"""
+        char = _make_character(sqlite_store)
+        span = dict(start_at=_MON.replace(hour=12), end_at=_MON.replace(hour=15))
+        # 轢かれる: 中(0.5) の active 予定
+        low = sqlite_store.create_schedule_entry(
+            character_id=char.id, origin="template", status="planned",
+            occupancy=0.5, state="active", label="ゲーム", **span,
+        )
+        # 轢かれない: 高占有圧（激強と同等）
+        sqlite_store.create_schedule_entry(
+            character_id=char.id, origin="template", status="planned",
+            occupancy=1.0, state="busy", label="重要", **span,
+        )
+        # 轢かれない: offline（就寝は裁定対象外）
+        sqlite_store.create_schedule_entry(
+            character_id=char.id, origin="template", status="planned",
+            occupancy=0.25, state="offline", label="就寝", **span,
+        )
+        event = SimpleNamespace(
+            id="ev", start_at=_MON.replace(hour=13), end_at=_MON.replace(hour=14),
+            occupancy=1.0,
+        )
+        disrupted = _find_disrupted_entries(sqlite_store, char.id, event)
+        assert [e.label for e in disrupted] == ["ゲーム"]
+        assert disrupted[0].id == low.id
+
+    def test_parse_ruling_filters_unknown_ids(self):
+        """設問で提示していない id のタグは捨てる（id は UUID 形の16進）。"""
+        text = (
+            "[GIVE_UP: aa11bb]\n[RESCHEDULE: cc22dd | 19:00-21:00]\n"
+            "[DISSATISFIED: aa11bb | もやもやする]\n[GIVE_UP: ee33ff]"
+        )
+        parsed = _parse_ruling(text, {"aa11bb", "cc22dd"})
+        assert parsed["give_up"] == ["aa11bb"]
+        assert parsed["reschedule"] == [{"id": "cc22dd", "range": "19:00-21:00"}]
+        assert parsed["dissatisfied"] == [{"id": "aa11bb", "words": "もやもやする"}]
+
+
+class TestRunCollisionRuling:
+    """玉突き裁定本体（run_collision_ruling・§6）を検証する。"""
+
+    def _setup(self, sqlite_store):
+        """轢かれた予定1件＋轢いた突発イベントを用意する。"""
+        char = _make_character(sqlite_store, ghost_model="preset-1")
+        disrupted = sqlite_store.create_schedule_entry(
+            character_id=char.id, origin="template", status="planned",
+            occupancy=0.5, state="active", label="ゲーム",
+            start_at=_MON.replace(hour=12), end_at=_MON.replace(hour=15),
+        )
+        event = sqlite_store.create_schedule_entry(
+            character_id=char.id, origin="adhoc", source="world", status="planned",
+            occupancy=1.0, state="busy", label="客先トラブル",
+            start_at=_MON.replace(hour=13), end_at=_MON.replace(hour=14),
+        )
+        return char, disrupted, event
+
+    async def test_give_up_cancels(self, sqlite_store, monkeypatch):
+        """[GIVE_UP] で轢かれた予定が cancelled になる（見送り）。"""
+        char, disrupted, event = self._setup(sqlite_store)
+        monkeypatch.setattr(
+            dilemma_module, "ask_character_with_tools",
+            _async_return(f"しゃーない。[GIVE_UP: {disrupted.id}]"),
+        )
+        result = await run_collision_ruling(
+            _make_event_state(sqlite_store), char, event,
+        )
+        assert result["given_up"] == 1
+        rows = sqlite_store.list_schedule_entries(char.id, statuses=["cancelled"])
+        assert disrupted.id in {r.id for r in rows}
+
+    async def test_reschedule_inserts_new(self, sqlite_store, monkeypatch):
+        """[RESCHEDULE] で旧を cancel し新しい時間帯へ④ adhoc を insert する。"""
+        char, disrupted, event = self._setup(sqlite_store)
+        monkeypatch.setattr(
+            dilemma_module, "ask_character_with_tools",
+            _async_return(f"夜にずらす。[RESCHEDULE: {disrupted.id} | 20:00-22:00]"),
+        )
+        result = await run_collision_ruling(
+            _make_event_state(sqlite_store), char, event,
+        )
+        assert result["rescheduled"] == 1
+        planned = sqlite_store.list_schedule_entries(char.id, statuses=["planned"])
+        moved = [e for e in planned if e.origin == "adhoc" and e.label == "ゲーム"]
+        assert len(moved) == 1 and moved[0].start_at == _MON.replace(hour=20)
+        # 旧予定は cancelled
+        assert disrupted.id in {
+            r.id for r in sqlite_store.list_schedule_entries(char.id, statuses=["cancelled"])
+        }
+
+    async def test_dissatisfied_sours_intent(self, sqlite_store, monkeypatch):
+        """[DISSATISFIED] で意図を作って soured にする（不満圧へ転化）。"""
+        char, disrupted, event = self._setup(sqlite_store)
+        monkeypatch.setattr(
+            dilemma_module, "ask_character_with_tools",
+            _async_return(f"納得いかない。[DISSATISFIED: {disrupted.id} | 楽しみにしてたのに]"),
+        )
+        result = await run_collision_ruling(
+            _make_event_state(sqlite_store), char, event,
+        )
+        assert result["soured"] == 1
+        soured = sqlite_store.list_intents(char.id, status="soured")
+        assert len(soured) == 1
+
+    async def test_no_disrupted_skips(self, sqlite_store, monkeypatch):
+        """轢かれた予定が無ければ問い合わせずスキップ（LLM を呼ばない）。"""
+        char = _make_character(sqlite_store, ghost_model="preset-1")
+        event = sqlite_store.create_schedule_entry(
+            character_id=char.id, origin="adhoc", status="planned",
+            occupancy=1.0, state="busy", label="突発",
+            start_at=_MON.replace(hour=13), end_at=_MON.replace(hour=14),
+        )
+        called = {"n": 0}
+
+        async def _spy(*a, **k):
+            called["n"] += 1
+            return ""
+
+        monkeypatch.setattr(dilemma_module, "ask_character_with_tools", _spy)
+        result = await run_collision_ruling(
+            _make_event_state(sqlite_store), char, event,
+        )
+        assert result["status"] == "skipped" and called["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: 計器（weekly_batch_heartbeat）
+# ---------------------------------------------------------------------------
+
+from backend.services.instruments.tier1 import (  # noqa: E402
+    _check_weekly_batch_heartbeat,
+)
+
+
+class TestWeeklyBatchHeartbeat:
+    """Tier 1 計器 weekly_batch_heartbeat（§13）を検証する。"""
+
+    def test_fires_when_no_current_week_entries(self, sqlite_store):
+        """有効キャラに当週の template エントリが無ければ発火する。"""
+        _make_character(sqlite_store, living_schedule_enabled=1)
+        fired = _check_weekly_batch_heartbeat(sqlite_store)
+        assert len(fired) == 1
+
+    def test_silent_when_entries_exist(self, sqlite_store):
+        """当週に template planned エントリがあれば発火しない。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        now = datetime.now()
+        week_start = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        sqlite_store.create_schedule_entry(
+            character_id=char.id,
+            start_at=week_start.replace(hour=9),
+            end_at=week_start.replace(hour=17),
+            origin="template", status="planned", occupancy=0.75, label="仕事",
+        )
+        assert _check_weekly_batch_heartbeat(sqlite_store) == []
+
+    def test_disabled_char_ignored(self, sqlite_store):
+        """生活カレンダー無効キャラは対象外（発火しない）。"""
+        _make_character(sqlite_store)  # living_schedule_enabled=0
+        assert _check_weekly_batch_heartbeat(sqlite_store) == []
