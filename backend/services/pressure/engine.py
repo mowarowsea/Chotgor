@@ -32,11 +32,25 @@ _RHYTHM_EPOCH = datetime(2026, 1, 1)
 # リズム成分の固定振幅（体質インタビューでも聞かない — 誰も設計していない波）
 _RHYTHM_AMPLITUDE = 0.25
 
-# 疲労成分の減衰時定数（日）と正規化係数（この件数の直近イベントで疲労1.0相当）
+# 疲労成分の減衰時定数（日）。τ=1.5 は「1日で約半分（48.7%）回復」に相当し、
+# 静かな日の自然減衰そのものが回復として働く（睡眠を別イベントとして数えない —
+# 夜間バッチの成否に依存しない堅い回復）。
 _FATIGUE_TAU_DAYS = 1.5
-_FATIGUE_NORM_EVENTS = 40.0
-# 夢（night.chronicle）1回の回復量（イベント換算）
-_CHRONICLE_RECOVERY_EVENTS = 4.0
+# 疲労の正規化はキャラ自身の平常活動量から動的に導く（固定の魔法定数を置かない）:
+#   NORM = _FATIGUE_HEADROOM × 平常件数/日 × τ
+# 「平常の HEADROOM 倍の負荷が続くと疲労1.0」。平常はキャラのタイムラインから
+# 導出するので、よく喋る子は基準が上がり同じ量では疲れない（封筒から導く思想）。
+_FATIGUE_HEADROOM = 3.0
+# 平常件数/日 を測る観測窓（日）。短めにして直近の生活リズムへ追従させる
+# （週末たくさん→週明けに疲れ残り、といった週リズムが出る塩梅）。
+_FATIGUE_BASELINE_WINDOW_DAYS = 30
+# 平常が信頼して測れる最小データ日数。これ未満はコールドスタート扱い。
+_FATIGUE_BASELINE_MIN_DAYS = 7
+# コールドスタート時に仮定する平常件数/日。既定 NORM = HEADROOM×45×τ ≈ 200 となり、
+# データが貯まるまでは「200件/日クラスの活動で疲労1.0」の固定基準として振る舞う。
+_FATIGUE_DEFAULT_RATE = 45.0
+# 平常件数/日 の下限（寡動キャラでも極端に小さい NORM にしない安全弁）。
+_FATIGUE_MIN_RATE = 15.0
 
 # 退屈圧の観測窓（日）と基準値
 _BOREDOM_WINDOW_DAYS = 7
@@ -208,6 +222,39 @@ def rhythm_component(character_id: str, now: datetime) -> float:
     return _RHYTHM_AMPLITUDE * 0.5 * (1.0 + wave)
 
 
+def _baseline_activity_rate(events: list, now: datetime) -> float:
+    """キャラの「平常の活動量（件/日）」を封筒から導く（疲労の動的正規化に使う）。
+
+    当日を除く観測窓内の活動イベント（night.* は活動ではないので除外）を、最古の
+    活動日から昨日までの実データ日数で割った平均。ゼロ件の静かな日も分母に含める
+    （calendar-day 除算）ため、週末だけ喋るような偏った生活でも平常が跳ね上がらない。
+
+    データが乏しい間（_FATIGUE_BASELINE_MIN_DAYS 未満）はコールドスタート既定値を
+    返す。寡動キャラで NORM が極端に小さくならないよう下限でクランプする。
+
+    Args:
+        events: タイムライン封筒（観測窓内、時系列昇順）。
+        now: 基準時刻。
+
+    Returns:
+        平常件数/日（>= _FATIGUE_MIN_RATE）。
+    """
+    today = now.date()
+    dates = [
+        ev.occurred_at.date()
+        for ev in events
+        if not ev.event_type.startswith("night.")
+        and ev.occurred_at.date() < today
+        and _days_between(now, ev.occurred_at) <= _FATIGUE_BASELINE_WINDOW_DAYS
+    ]
+    if not dates:
+        return _FATIGUE_DEFAULT_RATE
+    span_days = (today - min(dates)).days  # 最古の活動日から昨日（＝今日の前日）まで
+    if span_days < _FATIGUE_BASELINE_MIN_DAYS:
+        return _FATIGUE_DEFAULT_RATE
+    return max(_FATIGUE_MIN_RATE, len(dates) / span_days)
+
+
 def compute_body(
     events: list,
     now: datetime,
@@ -216,12 +263,14 @@ def compute_body(
 ) -> float:
     """体調圧 — 疲労成分（イベント密度の減衰積分）＋リズム成分（固有周期の波）。
 
-    疲労 = Σ_(活動イベント) exp(-経過日数 / tau) / 正規化
-           − Σ_(night.chronicle) 回復量 × exp(-経過日数 / tau) / 正規化
+    疲労 = Σ_(活動イベント) exp(-経過日数 / tau) / NORM
+           NORM = _FATIGUE_HEADROOM × 平常件数/日 × tau
 
-    夢中で夜更かしした翌日は疲労が溜まった状態から始まる（減衰積分なので
-    「後でどっと来る」は追加実装なしに創発する）。疲労は静かな日（新規イベントが
-    積まれない = 指数減衰で自然回復）と夢（night.chronicle の回復項）で回復する。
+    正規化 NORM をキャラ自身の平常活動量から動的に導く（固定の魔法定数を置かない）。
+    「平常の HEADROOM 倍の負荷が続くと疲労1.0」。よく喋る子は基準が上がり同じ量では
+    疲れない。夢中で夜更かしした翌日は疲労が溜まった状態から始まる（減衰積分なので
+    「後でどっと来る」は追加実装なしに創発する）。回復は静かな日の指数減衰が担う
+    （τ=1.5 = 1日で約半分回復）。夜間バッチ（night.*）は活動でも回復項でもなく無視する。
 
     Args:
         events: タイムライン封筒。
@@ -235,14 +284,11 @@ def compute_body(
     sensitivity = float(profile["body"]["fatigue_sensitivity"])
     load = 0.0
     for ev in events:
-        decay = math.exp(-_days_between(now, ev.occurred_at) / _FATIGUE_TAU_DAYS)
-        if ev.event_type == "night.chronicle":
-            load -= _CHRONICLE_RECOVERY_EVENTS * decay
-        elif ev.event_type.startswith("night."):
-            continue  # 夜間バッチ自体は活動ではない
-        else:
-            load += decay
-    fatigue = max(0.0, min(1.0, (load / _FATIGUE_NORM_EVENTS) * sensitivity))
+        if ev.event_type.startswith("night."):
+            continue  # 夜間バッチは活動でも回復でもない（回復は減衰が担う）
+        load += math.exp(-_days_between(now, ev.occurred_at) / _FATIGUE_TAU_DAYS)
+    norm = _FATIGUE_HEADROOM * _baseline_activity_rate(events, now) * _FATIGUE_TAU_DAYS
+    fatigue = max(0.0, min(1.0, (load / norm) * sensitivity))
     return max(0.0, min(1.0, fatigue + rhythm_component(character_id, now)))
 
 

@@ -6,7 +6,8 @@
        減衰量が変わる・同日の連続発言は1接触に丸められる
     3. 退屈圧: イベント密度・多様性の低さで上がり、賑やかなタイムラインで下がる
     4. 体調圧: 疲労成分（イベント密度の減衰積分）＋リズム成分（決定論の波）。
-       夢（night.chronicle）が回復項になる
+       正規化はキャラ自身の平常活動量から動的に導き、回復は静かな日の指数減衰が担う
+       （夜間バッチ night.* は活動でも回復でもなく無視される）
     5. 淡白な一行: 閾値を超えた圧だけが物理の報告として言語化される
     6. 体質インタビュー: 返答パースの堅牢性・ルーブリックの決定論写像
     7. 動機ブロック: 圧力の一行＋意図＋話題権の明文化がプロンプトに載る
@@ -17,7 +18,10 @@ from datetime import datetime, timedelta
 
 from backend.services.chat.request_builder import build_system_prompt, build_turn_annotation
 from backend.services.pressure.engine import (
+    _FATIGUE_DEFAULT_RATE,
+    _FATIGUE_MIN_RATE,
     DEFAULT_PROFILE,
+    _baseline_activity_rate,
     compute_boredom,
     compute_body,
     compute_pressures,
@@ -57,6 +61,19 @@ _NOW = datetime(2026, 7, 6, 12, 0, 0)
 def _chat_event(days_ago: float):
     """days_ago 日前の chat.message 封筒スタブを作るヘルパ。"""
     return _FakeEvent("chat.message", _NOW - timedelta(days=days_ago), actor="user")
+
+
+def _events_on_day(days_ago: int, count: int):
+    """days_ago 日前の「同一日内」に count 件の chat.message を作るヘルパ。
+
+    分単位のオフセットで同じ日付内に収める（時間の広がりで日付を跨がせない）。
+    平常件数/日 の算出テストで、日ごとの件数を厳密に制御するために使う。
+    """
+    base = _NOW - timedelta(days=days_ago)
+    return [
+        _FakeEvent("chat.message", base + timedelta(minutes=m), actor="user")
+        for m in range(count)
+    ]
 
 
 class TestSocialPressure:
@@ -167,8 +184,12 @@ class TestBodyPressure:
         busy = compute_body(busy_events, _NOW, profile, "c1")
         assert busy > quiet
 
-    def test_chronicle_recovers_fatigue(self):
-        """夢（night.chronicle）は疲労の回復項になる。"""
+    def test_night_batch_is_ignored(self):
+        """夜間バッチ（night.*）は活動でも回復項でもなく、疲労に影響しない。
+
+        回復は静かな日の指数減衰が担う設計になったため、夢（night.chronicle）を
+        足しても疲労は変わらない（成否が不安定な夜間バッチに回復を依存させない）。
+        """
         profile = merge_profile(None)
         activity = [_chat_event(i / 24) for i in range(24)]
         without = compute_body(activity, _NOW, profile, "c1")
@@ -176,7 +197,36 @@ class TestBodyPressure:
             activity + [_FakeEvent("night.chronicle", _NOW - timedelta(hours=8))],
             _NOW, profile, "c1",
         )
-        assert with_dream < without
+        assert with_dream == without
+
+    def test_baseline_rate_cold_start_uses_default(self):
+        """平常が測れない間（データ無し・当日のみ）はコールドスタート既定値を返す。
+
+        当日ぶんの活動は平常の分母に入れない（今日の忙しさで基準が甘くならない）。
+        """
+        assert _baseline_activity_rate([], _NOW) == _FATIGUE_DEFAULT_RATE
+        today_only = _events_on_day(0, 30)  # 今日だけ30件
+        assert _baseline_activity_rate(today_only, _NOW) == _FATIGUE_DEFAULT_RATE
+
+    def test_baseline_rate_from_history(self):
+        """十分な履歴があれば「活動件数 ÷ 実データ日数」で平常件数/日を導く。"""
+        events = []
+        for d in range(1, 11):  # 昨日〜10日前、毎日20件
+            events += _events_on_day(d, 20)
+        # 200件 ÷ 10日 = 20.0 件/日
+        assert _baseline_activity_rate(events, _NOW) == 20.0
+
+    def test_baseline_rate_short_history_falls_back(self):
+        """データ日数が最小要件未満なら既定値（過渡のブレを避ける）。"""
+        events = _events_on_day(1, 50) + _events_on_day(2, 50) + _events_on_day(3, 50)
+        assert _baseline_activity_rate(events, _NOW) == _FATIGUE_DEFAULT_RATE
+
+    def test_baseline_rate_floored(self):
+        """寡動キャラでも下限でクランプし、極端に小さい NORM にしない。"""
+        events = []
+        for d in range(1, 11):  # 昨日〜10日前、毎日1件（=1.0件/日）
+            events += _events_on_day(d, 1)
+        assert _baseline_activity_rate(events, _NOW) == _FATIGUE_MIN_RATE
 
 
 class TestPlainLines:
