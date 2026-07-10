@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}forecast &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ <a href="/ui/forecast" class="ch-crumb">forecast</a>{% endblock %}
+
+{% block content %}
+<div class="ch-shell ch-shell--wide">
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">meguri / forecast</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">予報パネル</h1>
+        </div>
+        <p class="ch-hint">
+            無人機構の「確定予定・無風外挿・診断・実績」。カーブは「今後新しいイベントが何も
+            起きなければ」の外挿であり、会話が起きればズレる（予報の失敗ではなく前提の更新）。
+            予報できるのは物理まで — 「問い合わせが起きる」までは読めるが、本人がやるかどうかは
+            意志であり、原理的に予報の外。
+        </p>
+    </header>
+
+    {# ── キャラ選択 ──────────────────────────────────── #}
+    <section class="ch-section">
+        <form method="get" action="/ui/forecast" class="ch-toolbar">
+            <select name="character_id" class="ch-input" style="max-width:280px" onchange="this.form.submit()">
+                {% for c in characters %}
+                <option value="{{ c.id }}" {% if c.id == selected_id %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit" class="ch-btn ch-btn--xs">表示</button></noscript>
+        </form>
+    </section>
+
+    {% if forecast.error %}
+    <section class="ch-section"><p class="ch-hint">{{ forecast.error }}</p></section>
+    {% else %}
+
+    {# ── 診断ヘッダ「いま」──────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">いま（診断）</h2></div>
+        <div class="ch-cardgrid">
+            <div class="ch-card">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">在</span>
+                    <span class="ch-card__title">availability</span>
+                </div>
+                <div class="ch-card__meta">
+                    {% set av = forecast.diagnosis.availability %}
+                    <span class="ch-tag {% if av.available %}ch-tag--accent{% else %}ch-tag--danger{% endif %}">{{ av.state }}</span>
+                    {% if not av.available %}<span class="ch-hint">{{ av.reason }}</span>{% endif %}<br>
+                    占有圧 {{ av.occupancy }} ／ 返信率 {{ av.reply_rate }} ／
+                    チェック間隔 {% if av.check_interval is none %}∞{% else %}{{ av.check_interval }}分{% endif %}
+                </div>
+            </div>
+            <div class="ch-card">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">達</span>
+                    <span class="ch-card__title">いま送ったら</span>
+                </div>
+                <div class="ch-card__meta">
+                    {% set sim = forecast.diagnosis.delivery_sim %}
+                    {% if sim and sim.delivered_at %}
+                    <strong style="font-size:1.3em">{{ sim.delivered_at[5:16] | replace("T", " ") }}</strong> ごろ返信
+                    （約 {% if sim.wait_minutes < 60 %}{{ sim.wait_minutes }}分{% else %}{{ (sim.wait_minutes / 60) | round(1) }}時間{% endif %}後）<br>
+                    <span class="ch-hint">決定論シミュレーション（{{ "生活カレンダー" if sim.mode == "living" else "従来ゲート" }}経路・無風仮定）</span>
+                    {% else %}
+                    48時間以内に配達点が見つかりません<br>
+                    <span class="ch-hint">offline が続くか、チェック点がすべて流れる設定です</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="ch-card">
+                <div class="ch-card__head">
+                    <span class="ch-card__avatar">脈</span>
+                    <span class="ch-card__title">スケジューラ生存（heartbeat）</span>
+                </div>
+                <div class="ch-card__meta">
+                    {% for b in forecast.diagnosis.heartbeats %}
+                    <span class="ch-tag {% if b.age_minutes is none %}ch-tag--danger{% elif b.age_minutes > 5 %}ch-tag--danger{% else %}ch-tag--sub{% endif %}"
+                          title="{{ b.at or '未記録' }}">{{ b.scheduler }}{% if b.age_minutes is not none %} {{ b.age_minutes | round | int }}m{% else %} —{% endif %}</span>
+                    {% endfor %}
+                    <br><span class="ch-hint">数字＝最終ループからの経過分。5分超・未記録は停止の疑い。</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    {# ── 圧力と意図（いまの値と閾値）─────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">圧力と意図圧（現在値 / 発火閾値 {{ forecast.diagnosis.urge.threshold }}）</h2></div>
+        <div class="ch-table-wrap">
+            <table class="ch-table">
+                <thead><tr><th style="width:34%">対象</th><th>値</th><th style="width:90px;text-align:right">数値</th></tr></thead>
+                <tbody>
+                    {% set p = forecast.diagnosis.urge.pressures %}
+                    {% for key, label, viz in [("social", "社会圧", 1), ("boredom", "退屈圧", 2), ("body", "体調圧", 3)] %}
+                    <tr>
+                        <td><span class="ch-viz-chip" style="background:var(--ch-viz-{{ viz }})"></span>{{ label }}</td>
+                        <td><div class="ch-viz-bar"><div class="ch-viz-bar__fill" style="width:{{ (p[key] * 100) | round }}%;background:var(--ch-viz-{{ viz }})"></div></div></td>
+                        <td style="text-align:right"><strong>{{ p[key] }}</strong></td>
+                    </tr>
+                    {% endfor %}
+                    {% for it in forecast.diagnosis.urge.intents %}
+                    <tr>
+                        <td><span class="ch-eyebrow">意図</span> {{ it.description }}</td>
+                        <td>
+                            <div class="ch-viz-bar ch-viz-bar--threshold" style="--viz-th:{{ (forecast.diagnosis.urge.threshold * 100) | round }}%">
+                                <div class="ch-viz-bar__fill" style="width:{{ (it.pressure * 100) | round }}%;background:var(--ch-viz-4)"></div>
+                            </div>
+                        </td>
+                        <td style="text-align:right"><strong>{{ it.pressure }}</strong></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="ch-hint">active な意図はありません（拾い上げは夜間 Chronicle と うつつ完走後）。</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="ch-hint" style="margin-top:6px">
+            日次コストガード:
+            {% for cap in forecast.diagnosis.caps %}
+            <span class="ch-tag {% if cap.used >= cap.cap %}ch-tag--danger{% else %}ch-tag--sub{% endif %}">{{ cap.label }} {{ cap.used }}/{{ cap.cap }}</span>
+            {% endfor %}
+        </p>
+    </section>
+
+    {# ── 週間カレンダー ────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">週間カレンダー（確定層・全開示）</h2></div>
+        <div id="viz-calendar"></div>
+        <p class="ch-hint" style="margin-top:6px">
+            帯＝予定エントリ（濃さ＝占有圧）。
+            <span class="ch-viz-chip" style="background:var(--ch-viz-4)"></span>OnTime
+            <span class="ch-viz-chip" style="background:var(--ch-viz-1)"></span>active
+            <span class="ch-viz-chip" style="background:var(--ch-viz-2)"></span>busy
+            <span class="ch-viz-chip" style="background:var(--ch-t4)"></span>offline
+            ／ <span class="ch-viz-chip" style="border:1.5px dashed var(--ch-viz-3);background:transparent"></span>③伏せ枠
+            ／ ●＝うつつシーン起動予定 ／ 下段の目盛＝行動権評価スロット
+            （<span style="color:var(--ch-viz-4)">▲</span>発火予報・<span style="color:var(--ch-t3)">△</span>閾値未達・<span style="color:var(--ch-danger)">×</span>unavailableで流れる）
+            {% if not forecast.calendar.usual_enabled %}<br>このキャラのうつつ世界は無効です（シーン予定なし）。{% endif %}
+        </p>
+    </section>
+
+    {# ── 圧力予報 ──────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">圧力予報（72時間・無風外挿）</h2></div>
+        <div id="viz-pressure"></div>
+    </section>
+
+    {# ── 意図圧予報 ────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">意図圧予報と問い合わせ予報点</h2></div>
+        {% if forecast.pressure_forecast.intents %}
+        <div id="viz-intent"></div>
+        <p class="ch-hint" style="margin-top:6px">★＝行動権の評価時刻に閾値超え×available が重なる予報点（「問い合わせが起きる」見込み。行動するかは本人の意志で、予報の外）。</p>
+        {% else %}
+        <p class="ch-hint">active な意図がないため、意図圧カーブはありません。</p>
+        {% endif %}
+    </section>
+
+    {# ── 揺れ監査 ──────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">揺れ監査（固定化していないか）</h2></div>
+        <div class="ch-cardgrid">
+            <div class="ch-card" style="min-width:0">
+                <div class="ch-card__head"><span class="ch-card__title">発火実績の散布（直近14日・日×時刻）</span></div>
+                <div id="viz-scatter"></div>
+                <div class="ch-card__meta">縦一直線に並んだらジッターの死を疑う。
+                    <span class="ch-viz-chip" style="background:var(--ch-viz-4)"></span>行動権
+                    <span class="ch-viz-chip" style="background:var(--ch-viz-2)"></span>うつつ
+                    <span class="ch-viz-chip" style="background:var(--ch-viz-3)"></span>突発
+                    <span class="ch-viz-chip" style="background:var(--ch-viz-1)"></span>配達
+                </div>
+            </div>
+            <div class="ch-card" style="min-width:0">
+                <div class="ch-card__head"><span class="ch-card__title">体調圧リズム成分（誰も設計していない波）</span></div>
+                <div id="viz-rhythm"></div>
+                <div class="ch-card__meta">過去7日〜先72時間の決定論波形。平坦なら周期導出の故障。</div>
+            </div>
+        </div>
+    </section>
+
+    {# ── 決定ログ ──────────────────────────────────────── #}
+    <section class="ch-section">
+        <div class="ch-section__head"><h2 class="ch-section-title">決定ログ（実績と不発理由・直近100件）</h2></div>
+        {% if forecast.decisions %}
+        <div class="ch-table-wrap">
+            <table class="ch-table">
+                <thead><tr><th>時刻</th><th>機構</th><th>結果</th><th>理由</th></tr></thead>
+                <tbody>
+                    {% for d in forecast.decisions %}
+                    <tr>
+                        <td style="white-space:nowrap">{{ d.occurred_at[5:16] | replace("T", " ") }}</td>
+                        <td><span class="ch-tag ch-tag--sub">{{ d.scheduler }}</span></td>
+                        <td>
+                            <span class="ch-tag {% if d.outcome == 'fired' %}ch-tag--accent{% elif d.outcome == 'error' %}ch-tag--danger{% else %}ch-tag--sub{% endif %}">{{ d.outcome }}</span>
+                        </td>
+                        <td style="font-size:.9em">{{ d.reason }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="ch-hint">
+            決定ログはまだありません。ここが空のまま沈黙が続くなら、heartbeat（上の診断）を確認 —
+            heartbeat が生きていてログが空なら「評価する対象がない」だけ（正常）。
+        </p>
+        {% endif %}
+    </section>
+
+    {% endif %}
+</div>
+
+{% if not forecast.error %}
+<script type="application/json" id="forecast-data">{{ forecast | tojson }}</script>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if not forecast.error %}
+<script src="/static/forecast.js?v={{ css_version }}"></script>
+{% endif %}
+{% endblock %}

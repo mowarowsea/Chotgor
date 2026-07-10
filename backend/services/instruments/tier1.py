@@ -132,6 +132,49 @@ def _check_weekly_batch_heartbeat(sqlite) -> list[dict]:
     return fired
 
 
+def _check_scheduler_heartbeat(sqlite) -> list[dict]:
+    """無人ループの停止を見張る — scheduler_heartbeat_* の鮮度が保たれているか。
+
+    main.py の各スケジューラはループ1周（60秒）ごとに settings キー
+    scheduler_heartbeat_{name} を上書きする（_beat_scheduler）。巡回時点で
+    どれかの鮮度が1時間を超えていたら、そのループは例外死・ハング等で
+    止まっている疑い（発火機会の少なさでは説明できない — 決定ログと違い
+    heartbeat は評価対象ゼロでも毎分打たれる）。
+
+    一度も記録が無いキーは発火しない（機能未使用・旧バージョンからの起動直後を許容）。
+
+    Returns:
+        発火したアラームの details リスト。
+    """
+    fired: list[dict] = []
+    now = datetime.now()
+    schedulers = [
+        "action", "usual_days", "sudden_event", "escrow_delivery",
+        "weekly_schedule", "chronicle", "forget", "instruments",
+    ]
+    for name in schedulers:
+        raw = sqlite.get_setting(f"scheduler_heartbeat_{name}", "")
+        if not raw or not isinstance(raw, str):
+            continue  # 未記録は「未使用」— 停止とは区別できないので発火しない
+        try:
+            at = datetime.fromisoformat(raw)
+        except ValueError:
+            fired.append({
+                "scheduler": name, "heartbeat": raw,
+                "note": "heartbeat が時刻として読めない（記録の破損疑い）",
+            })
+            continue
+        age_minutes = (now - at).total_seconds() / 60.0
+        if age_minutes > 60:
+            fired.append({
+                "scheduler": name,
+                "last_beat": raw,
+                "age_minutes": round(age_minutes),
+                "note": "スケジューラループが1時間以上沈黙している（停止疑い）",
+            })
+    return fired
+
+
 def _check_chronicle_backlog(sqlite) -> list[dict]:
     """蒸留漏れを見張る — chronicled_at IS NULL の3日超滞留がないか。
 
@@ -173,6 +216,7 @@ _PATROL_CHECKS = {
     "night_batch_heartbeat": _check_night_batch_heartbeat,
     "usual_slot_completion": _check_usual_slot_completion,
     "weekly_batch_heartbeat": _check_weekly_batch_heartbeat,
+    "scheduler_heartbeat": _check_scheduler_heartbeat,
     "chronicle_backlog": _check_chronicle_backlog,
     "envelope_integrity": _check_envelope_integrity,
 }

@@ -585,6 +585,32 @@ class MeterSnapshot(Base):
     details = Column(JSON, nullable=True)
 
 
+class SchedulerDecision(Base):
+    """スケジューラ決定ログ — 無人機構の「評価1回ごとの結果と理由」の追記型記録。
+
+    予報パネル（docs/planned/forecast_panel_plan.md）の材料。alarms（異常）・
+    meter_snapshots（傾向）とは意味論が異なる**正常運転の記録**であり、
+    「発火しなかった沈黙」が『正常な閾値未達』なのか『機構の死』なのかを
+    事後に区別できるようにする。
+
+    記録するのは決定であって内容ではない — 本人の言葉・シーン本文は
+    既存テーブル（chat / scenario / timeline_events）が正本のまま。
+    剪定はしない（ログ的データの肥大は許容する方針）。
+    """
+
+    __tablename__ = "scheduler_decisions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    character_id = Column(String, nullable=True, index=True)   # 対象キャラ（全体系の決定は NULL）
+    # どの無人機構の決定か: action / usual_days / sudden_event / escrow_delivery / weekly_schedule
+    scheduler = Column(String, nullable=False, index=True)
+    occurred_at = Column(DateTime, nullable=False, default=lambda: datetime.now(), index=True)
+    # 結果: fired（発火・実行した）/ declined（本人が見送った）/ skipped（物理で流れた）/ error
+    outcome = Column(String, nullable=False)
+    reason = Column(String, nullable=True)         # 不発・見送りの短い理由（「閾値未達 0.52/0.7」等）
+    details = Column(JSON, nullable=True)          # 評価文脈（圧力値・候補意図・スロット時刻など）
+
+
 class TimelineEvent(Base):
     """タイムライン封筒 — キャラクターの身に起きた出来事の「存在・順序・相手・時刻」の正本。
 

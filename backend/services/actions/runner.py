@@ -81,6 +81,44 @@ def evaluate_action_urge(sqlite, character_id: str, now: datetime | None = None)
     return [i for _, i in hot[:_MAX_CANDIDATES]]
 
 
+def action_urge_snapshot(sqlite, character_id: str, now: datetime | None = None) -> dict:
+    """閾値評価の全景を返す（決定ログ・予報パネル共用の観測用純関数）。
+
+    evaluate_action_urge が「閾値超えだけ」を返すのに対し、こちらは active 意図
+    すべての意図圧と現在圧力を返す。「閾値未達 0.52/0.7」のような不発理由の材料と、
+    予報パネルの診断ヘッダの両方がこれを使う。LLM 不使用・副作用なし。
+
+    Args:
+        sqlite: SQLiteStore。
+        character_id: 対象キャラクター。
+        now: 基準時刻。None なら現在時刻。
+
+    Returns:
+        {"threshold": float, "pressures": {social/boredom/body: float},
+         "intents": [{"intent_id", "description", "source_kind", "pressure"}...]}
+        （intents は意図圧降順）。
+    """
+    active = sqlite.list_intents(character_id, status="active")
+    pressures = compute_pressures(sqlite, character_id, now=now)
+    scored = sorted(
+        (
+            {
+                "intent_id": str(i.id),
+                "description": i.description,
+                "source_kind": i.source_kind,
+                "pressure": round(intent_pressure(i, pressures, now=now), 3),
+            }
+            for i in active
+        ),
+        key=lambda d: -d["pressure"],
+    )
+    return {
+        "threshold": _URGE_THRESHOLD,
+        "pressures": {k: round(float(v), 3) for k, v in pressures.items()},
+        "intents": scored,
+    }
+
+
 def _enabled_menu(char) -> dict:
     """キャラの行動メニュー設定（ON のものだけ）を返す。"""
     menu = getattr(char, "action_menu", None) or {}
@@ -292,24 +330,47 @@ async def run_action_cycle(
     Returns:
         {"status": "skipped"|"declined"|"executed"|"error", ...} の集計 dict。
     """
+    def _record(outcome: str, reason: str | None = None, details: dict | None = None) -> None:
+        # 決定ログ（予報パネルの「正常な沈黙」と「壊れた沈黙」の区別材料）。
+        # 記録失敗で行動サイクル本体を巻き添えにしない。
+        try:
+            sqlite.record_scheduler_decision(
+                "action", outcome, character_id=character_id,
+                reason=reason, details=details, occurred_at=now,
+            )
+        except Exception:
+            logger.exception("行動権: 決定ログの記録に失敗 char=%s", character_id)
+
     char = sqlite.get_character(character_id)
     if char is None:
         return {"status": "error", "error": f"キャラクターが見つかりません: {character_id}"}
     ghost_model = getattr(char, "ghost_model", None)
     if not ghost_model:
+        _record("skipped", "ghost_model 未設定")
         return {"status": "skipped", "reason": "ghost_model 未設定"}
     preset = sqlite.get_model_preset(ghost_model)
     if preset is None:
+        _record("error", f"プリセットが見つかりません: {ghost_model}")
         return {"status": "error", "error": f"プリセットが見つかりません: {ghost_model}"}
     menu = _enabled_menu(char)
     if not menu:
+        _record("skipped", "行動メニューが全て OFF")
         return {"status": "skipped", "reason": "行動メニューが全て OFF"}
     if memory_manager is None:
+        _record("skipped", "memory_manager なし（ツール問い合わせ不可）")
         return {"status": "skipped", "reason": "memory_manager なし（ツール問い合わせ不可）"}
 
     # 1. 閾値評価（無料）
     candidates = evaluate_action_urge(sqlite, character_id, now=now)
     if not candidates:
+        # 不発理由に全景を残す — 「閾値未達 0.52/0.7」が予報パネルの安心材料になる
+        snap = action_urge_snapshot(sqlite, character_id, now=now)
+        if snap["intents"]:
+            top = snap["intents"][0]["pressure"]
+            reason = f"閾値未達 {top:.2f}/{snap['threshold']}"
+        else:
+            reason = "active 意図なし"
+        _record("skipped", reason, details=snap)
         return {"status": "skipped", "reason": "閾値超えの意図なし"}
 
     # 2. 日次コストガード（問い合わせ）
@@ -320,6 +381,7 @@ async def run_action_cycle(
     exec_key = f"action_exec_count_{today_str}"
     inquiries = int(sqlite.get_setting(inquiry_key, "0") or 0)
     if inquiries >= inquiry_cap:
+        _record("skipped", f"問い合わせ日次上限（{inquiries}/{inquiry_cap}）")
         return {"status": "skipped", "reason": "問い合わせ日次上限"}
     sqlite.set_setting(inquiry_key, str(inquiries + 1))
 
@@ -338,17 +400,25 @@ async def run_action_cycle(
         return_response=True,
     )
     if response is None:
+        _record("error", "本人からの返答が取得できませんでした")
         return {"status": "error", "error": "本人からの返答が取得できませんでした"}
 
     choice = _parse_action_choice(response)
     valid_ids = {i.id for i in candidates}
     if choice is None or choice["intent_id"] not in valid_ids:
         # 見送りも本人の選択（穴は開かない — 保守的になるだけ）
+        _record("declined", "本人が見送り", details={
+            "candidates": [
+                {"intent_id": str(i.id), "description": i.description}
+                for i in candidates
+            ],
+        })
         return {"status": "declined"}
 
     # 4. 実行コストガード
     execs = int(sqlite.get_setting(exec_key, "0") or 0)
     if execs >= exec_cap:
+        _record("skipped", f"実行日次上限（{execs}/{exec_cap}）")
         return {"status": "skipped", "reason": "実行日次上限"}
     sqlite.set_setting(exec_key, str(execs + 1))
 
@@ -357,6 +427,7 @@ async def run_action_cycle(
     try:
         if menu_key == "push" and menu.get("push"):
             if not choice["body"]:
+                _record("declined", "push 本文なし")
                 return {"status": "declined", "reason": "push 本文なし"}
             result = await _execute_push(
                 sqlite, char, preset, choice["body"],
@@ -368,9 +439,11 @@ async def run_action_cycle(
         elif menu_key == "scene" and menu.get("impromptu_scene"):
             result = await _execute_scene(sqlite, char, settings, chat_service)
         else:
+            _record("declined", f"無効なメニュー: {menu_key}")
             return {"status": "declined", "reason": f"無効なメニュー: {menu_key}"}
     except Exception as e:
         logger.exception("行動実行に失敗 char=%s menu=%s", char.name, menu_key)
+        _record("error", f"行動実行に失敗: {e}")
         return {"status": "error", "error": str(e)}
 
     # 5. action.performed 封筒（意図の消費・結果の帰還を正本に載せる）
@@ -426,6 +499,12 @@ async def run_action_cycle(
         "行動サイクル完了 char=%s menu=%s intent=%s fulfilled=%s",
         char.name, menu_key, intent.id, fulfilled,
     )
+    _record("fired", f"{menu_key} 実行", details={
+        "menu": menu_key,
+        "intent_id": str(intent.id),
+        "summary": result.get("summary"),
+        "fulfilled": fulfilled,
+    })
     return {
         "status": "executed",
         "menu": menu_key,

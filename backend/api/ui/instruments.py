@@ -22,6 +22,7 @@ _INVARIANT_LABELS = {
     "embedding_degraded": "記憶の縮退（embedding 障害）",
     "night_batch_heartbeat": "夜の営みの停止",
     "usual_slot_completion": "生活の連続性",
+    "scheduler_heartbeat": "無人ループの停止（heartbeat 鮮度）",
     "chronicle_backlog": "蒸留漏れ",
     "envelope_integrity": "正本性の破れ（封筒突合）",
     "judgement_patrol": "判定巡回（Tier 3）",

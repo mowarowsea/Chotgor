@@ -157,6 +157,10 @@ async def run_pending_escrow_deliveries(state, now: datetime | None = None) -> N
             await _maybe_deliver_session(state, session, now, oldest_at)
         except Exception:
             logger.exception("能動配達に失敗 session=%s", session.id)
+            state.sqlite.record_scheduler_decision(
+                "escrow_delivery", "error",
+                reason="配達処理で例外", details={"session_id": session.id},
+            )
 
 
 async def _maybe_deliver_session(
@@ -242,6 +246,16 @@ async def _maybe_deliver_session(
         logger.warning(
             "能動配達: 日次上限 %d 到達。当日はスキップ session=%s", cap, session.id,
         )
+        # 配達due なのに cap で止まる状態は毎分続くため、決定ログは日に1回だけ残す
+        # （ノイズで決定タイムラインを埋めない — 生存確認は heartbeat が担う）
+        mark_key = f"escrow_cap_decision_{session.id}_{today_str}"
+        if not sqlite.get_setting(mark_key, ""):
+            sqlite.set_setting(mark_key, "1")
+            sqlite.record_scheduler_decision(
+                "escrow_delivery", "skipped", character_id=char.id,
+                reason=f"日次上限（{delivered_today}/{cap}）",
+                details={"session_id": session.id},
+            )
         return
 
     # 配達確定 — カウンタを進め、従来経路なら ready マーカーを消費してから配達する
@@ -249,6 +263,10 @@ async def _maybe_deliver_session(
         sqlite.set_setting(f"escrow_ready_{session.id}", "")
     sqlite.set_setting(count_key, str(delivered_today + 1))
     await _deliver_session(state, session, char)
+    sqlite.record_scheduler_decision(
+        "escrow_delivery", "fired", character_id=char.id,
+        reason="能動配達を実行", details={"session_id": session.id},
+    )
 
 
 async def _deliver_session(state, session, char) -> None:

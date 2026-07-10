@@ -132,10 +132,19 @@ async def run_pending_weekly_batches(state, now: datetime | None = None) -> None
             # 冪等キーは実行前に立てる（失敗しても毎分 LLM を叩かない）
             sqlite.set_setting(done_key, week_key(target))
             try:
-                await run_weekly_schedule_batch(state, char, target)
+                summary = await run_weekly_schedule_batch(state, char, target)
+                sqlite.record_scheduler_decision(
+                    "weekly_schedule", "fired", character_id=char.id,
+                    reason=f"週次バッチ完了（{week_key(target)}）",
+                    details={"week": week_key(target), **(summary or {})},
+                )
             except Exception:
                 logger.exception(
                     "週次バッチ失敗 char=%s week=%s", char.name, week_key(target),
+                )
+                sqlite.record_scheduler_decision(
+                    "weekly_schedule", "error", character_id=char.id,
+                    reason="週次バッチで例外", details={"week": week_key(target)},
                 )
 
 

@@ -187,12 +187,23 @@ async def run_pending_sudden_events(state, now: datetime | None = None) -> None:
                     "③発火: 猶予超過につき伏せ枠を捨てる char=%s label=%s start=%s",
                     char.name, seed.label, seed.start_at,
                 )
+                sqlite.record_scheduler_decision(
+                    "sudden_event", "skipped", character_id=char.id,
+                    reason=f"発火猶予{_EVENT_FIRE_GRACE_HOURS}h超過で捨てた",
+                    details={"seed_id": seed.id, "label": seed.label,
+                             "start_at": seed.start_at.isoformat()},
+                )
                 continue
             # 日次上限（§8）: 超過分は捨てる（done 済みなので再発火しない）
             if fired_today >= cap:
                 logger.warning(
                     "③発火: 日次上限 %d 到達につき捨てる char=%s label=%s",
                     cap, char.name, seed.label,
+                )
+                sqlite.record_scheduler_decision(
+                    "sudden_event", "skipped", character_id=char.id,
+                    reason=f"日次上限（{fired_today}/{cap}）で捨てた",
+                    details={"seed_id": seed.id, "label": seed.label},
                 )
                 continue
             fired_today += 1
@@ -202,6 +213,11 @@ async def run_pending_sudden_events(state, now: datetime | None = None) -> None:
             except Exception:
                 logger.exception(
                     "③発火に失敗 char=%s seed=%s", char.name, seed.id,
+                )
+                sqlite.record_scheduler_decision(
+                    "sudden_event", "error", character_id=char.id,
+                    reason="発火処理で例外",
+                    details={"seed_id": seed.id, "label": seed.label},
                 )
 
 
@@ -221,11 +237,20 @@ async def _fire_sudden_event(state, char, seed, now: datetime) -> None:
     text = await _ask_gm_to_concretize(state, char, category, seed.start_at)
     if not text:
         logger.warning("③発火: GM 具体化が空 char=%s category=%s", char.name, category)
+        sqlite.record_scheduler_decision(
+            "sudden_event", "error", character_id=char.id,
+            reason="GM 具体化が空", details={"seed_id": seed.id, "category": category},
+        )
         return
     event = parse_event_line(text, seed.start_at.date())
     if event is None:
         logger.warning(
             "③発火: [EVENT] 行が取れず発火中止 char=%s category=%s", char.name, category,
+        )
+        sqlite.record_scheduler_decision(
+            "sudden_event", "error", character_id=char.id,
+            reason="[EVENT] 行のパース不能で発火中止",
+            details={"seed_id": seed.id, "category": category},
         )
         return
 
@@ -237,6 +262,11 @@ async def _fire_sudden_event(state, char, seed, now: datetime) -> None:
         logger.info(
             "③発火: 轢けず流れる char=%s event=%s occ=%.2f<=既存%.2f",
             char.name, event.label, event.occupancy, existing_max,
+        )
+        sqlite.record_scheduler_decision(
+            "sudden_event", "skipped", character_id=char.id,
+            reason=f"轢けず流れた（占有圧 {event.occupancy:.2f} <= 既存 {existing_max:.2f}）",
+            details={"seed_id": seed.id, "label": event.label},
         )
         return
 
@@ -262,6 +292,19 @@ async def _fire_sudden_event(state, char, seed, now: datetime) -> None:
 
     # シーン実行（③発火 = うつつシーン）。世界の突発が生活に割り込む場面を GM が回す。
     result = await _run_event_scene(state, char, event, category)
+    sqlite.record_scheduler_decision(
+        "sudden_event",
+        "error" if (result is not None and result.get("error")) else "fired",
+        character_id=char.id,
+        reason=(
+            f"シーン中断: {result['error']}"
+            if (result is not None and result.get("error"))
+            else f"発火・insert（{event.label}）"
+        ),
+        details={"seed_id": seed.id, "label": event.label,
+                 "occupancy": event.occupancy,
+                 "entry_id": entry.id if entry is not None else None},
+    )
 
     # Phase 6: 玉突き裁定（轢かれた予定を本人が裁く＋内圧確認）。シーン完走時のみ。
     if result is not None and not result.get("error"):

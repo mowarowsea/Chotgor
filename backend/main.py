@@ -136,11 +136,32 @@ async def lifespan(app: FastAPI):
     _log.info("Chotgor backend 終了")
 
 
+def _beat_scheduler(sqlite, name: str) -> None:
+    """スケジューラの生存痕を settings に上書き記録する（ループ1周ごと）。
+
+    決定ログ（scheduler_decisions）は「意味のある評価」だけを追記するため、
+    発火機会が乏しい機構では最終行が古くなり「死んでいる」と区別できない。
+    生存確認はこの settings キー（scheduler_heartbeat_*）の鮮度で行う
+    （上書きなので行は増えない）。予報パネルの診断ヘッダと Tier 1
+    `scheduler_heartbeat` インバリアントが読む。
+
+    Args:
+        sqlite: SQLiteStore。
+        name: 機構名（action / usual_days / sudden_event / escrow_delivery /
+            weekly_schedule / chronicle / forget / instruments）。
+    """
+    try:
+        sqlite.set_setting(f"scheduler_heartbeat_{name}", datetime.now().isoformat())
+    except Exception:
+        logging.getLogger(__name__).exception("heartbeat 記録に失敗 name=%s", name)
+
+
 async def _chronicle_scheduler(app: FastAPI) -> None:
     """Background task: 毎日設定時刻に chronicle を実行する。"""
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "chronicle")
         now = datetime.now()
         chronicle_time_str = app.state.sqlite.get_setting("chronicle_time", "03:00")
         try:
@@ -178,6 +199,7 @@ async def _instruments_scheduler(app: FastAPI) -> None:
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "instruments")
         now = datetime.now()
         patrol_time_str = app.state.sqlite.get_setting("instruments_patrol_time", "05:00")
         try:
@@ -231,6 +253,7 @@ async def _action_scheduler(app: FastAPI) -> None:
     period_minutes = 120
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "action")
         try:
             sqlite = app.state.sqlite
             now = datetime.now()
@@ -264,6 +287,12 @@ async def _action_scheduler(app: FastAPI) -> None:
                     _log.debug(
                         "行動権: unavailable のためスロットを流す char=%s reason=%s",
                         char.name, availability.reason,
+                    )
+                    # 「流れたスロット」も決定ログへ — 飽和（評価機会の枯渇）を予報パネルで可視化する
+                    sqlite.record_scheduler_decision(
+                        "action", "skipped", character_id=char.id,
+                        reason=f"unavailable: {availability.reason}",
+                        details={"slot": slot_start.isoformat()},
                     )
                     continue
                 result = await run_action_cycle(
@@ -429,11 +458,21 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                     "うつつ: 対面モード中につきスキップ owner=%s slot=%s",
                     owner_id, slot,
                 )
+                sqlite.record_scheduler_decision(
+                    "usual_days", "skipped", character_id=owner_id,
+                    reason="対面モード中（聖域化・通過分は捨てる）",
+                    details={"slot": slot},
+                )
                 continue
             if ran_today >= daily_cap:
                 _log.warning(
                     "うつつ: 日次上限 %d 到達。当日は以降スキップ owner=%s slot=%s",
                     daily_cap, owner_id, slot,
+                )
+                sqlite.record_scheduler_decision(
+                    "usual_days", "skipped", character_id=owner_id,
+                    reason=f"日次上限（{ran_today}/{daily_cap}）",
+                    details={"slot": slot},
                 )
                 return
             session = ensure_usual_session(sqlite, scenario)
@@ -441,6 +480,10 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
             sqlite.set_setting(key, today_str)
             if session is None:
                 _log.error("うつつ: セッション未解決のためスキップ owner=%s", owner_id)
+                sqlite.record_scheduler_decision(
+                    "usual_days", "error", character_id=owner_id,
+                    reason="セッション未解決", details={"slot": slot},
+                )
                 continue
             elapsed_note = usual_elapsed_note(sqlite, session.id, now)
             # 経過時間メモ＋題材 framing（②導出時のみ非空）を結合して GM へ渡す。
@@ -469,6 +512,12 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                         result.get("fired_responses", 0), result.get("fired_turns", 0),
                         result["error"],
                     )
+                    sqlite.record_scheduler_decision(
+                        "usual_days", "error", character_id=owner_id,
+                        reason=f"シーン中断: {result['error']}",
+                        details={"slot": slot,
+                                 "turns": result.get("fired_turns", 0)},
+                    )
                 else:
                     _log.info(
                         "うつつ: シーン完了 owner=%s slot=%s responses=%d turns=%d scene_closed=%s",
@@ -476,8 +525,19 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                         result.get("fired_responses", 0), result.get("fired_turns", 0),
                         result.get("scene_closed"),
                     )
+                    sqlite.record_scheduler_decision(
+                        "usual_days", "fired", character_id=owner_id,
+                        reason="シーン完了",
+                        details={"slot": slot,
+                                 "turns": result.get("fired_turns", 0),
+                                 "scene_closed": result.get("scene_closed")},
+                    )
             except Exception:
                 _log.exception("うつつ: シーン実行エラー owner=%s slot=%s", owner_id, slot)
+                sqlite.record_scheduler_decision(
+                    "usual_days", "error", character_id=owner_id,
+                    reason="シーン実行例外", details={"slot": slot},
+                )
 
 
 async def _usual_days_scheduler(app: FastAPI) -> None:
@@ -489,6 +549,7 @@ async def _usual_days_scheduler(app: FastAPI) -> None:
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "usual_days")
         try:
             await _run_due_usual_scenes(app)
         except Exception:
@@ -508,6 +569,7 @@ async def _escrow_delivery_scheduler(app: FastAPI) -> None:
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "escrow_delivery")
         try:
             await run_pending_escrow_deliveries(app.state)
         except Exception:
@@ -527,6 +589,7 @@ async def _weekly_schedule_scheduler(app: FastAPI) -> None:
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "weekly_schedule")
         try:
             await run_pending_weekly_batches(app.state)
         except Exception:
@@ -545,6 +608,7 @@ async def _sudden_event_scheduler(app: FastAPI) -> None:
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "sudden_event")
         try:
             await run_pending_sudden_events(app.state)
         except Exception:
@@ -556,6 +620,7 @@ async def _forget_scheduler(app: FastAPI) -> None:
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, "forget")
         now = datetime.now()
         # デフォルト 04:00（chronicle 実行後）
         h, m = 4, 0
