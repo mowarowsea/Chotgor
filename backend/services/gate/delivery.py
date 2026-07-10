@@ -399,6 +399,10 @@ async def _deliver_session(state, session, char) -> None:
         sqlite, full_text, character_name=used_char_name, feature="escrow_delivery",
     )
 
+    # キャラクター回答到着完了（遅延返信の配達）→ ntfy プッシュ通知（ベストエフォート）。
+    from backend.lib.notify import notify_character_spoke
+    notify_character_spoke(used_char_name)
+
     # switch_angle が走った場合はセッションの model_id を追随させる（SSE 経路と同じ）
     if effective_model_id and effective_model_id != session.model_id:
         sqlite.update_chat_session(session.id, model_id=effective_model_id)

@@ -17,6 +17,7 @@ services:
     environment:
       - INFINITY_QUEUE_BATCH_WAIT_MULTIPLIER=0.0
       - INFINITY_BATCH_SIZE=1
+
   ollama:
     image: ollama/ollama:latest
     ports:
@@ -30,6 +31,16 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    restart: unless-stopped
+
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: ntfy
+    ports:
+      - "8085:80"
+    environment:
+      - TZ=Asia/Tokyo
+    command: serve
     restart: unless-stopped
 
 volumes:

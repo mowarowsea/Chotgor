@@ -222,6 +222,9 @@ async def _execute_push(sqlite, char, preset, body: str, session_title: str) -> 
         content=body,
         character_name=char.name,
     )
+    # キャラクター回答到着完了（能動 push）→ ntfy プッシュ通知（ベストエフォート）。
+    from backend.lib.notify import notify_character_spoke
+    notify_character_spoke(char.name)
     return {"summary": f"メッセージを送った: {body[:100]}", "session_id": session_id}
 
 
