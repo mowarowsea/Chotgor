@@ -61,12 +61,31 @@ from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_GUIDE
 # タグ方式プロバイダー（Ollama/OpenRouter等）共通の禁止条項。
 # 個別タグの説明より先に置くことで、小型モデルが「タグだけで応答完結」してしまう事故を防ぐ。
 # 背景: Ollama+Shisa(8B) などで本文ゼロ＋INSCRIBE_MEMORYタグ単独応答が観測された。
-_TAG_MODE_GLOBAL_RULES = """\
-### ⚠️ タグ操作の共通ルール（必読）
-- **タグだけで応答を終わらせないこと。** 必ずユーザに向けた返答テキストを先に書き、必要なタグはその後ろに添えてください。タグ単独の応答は「無応答」と同じ扱いになります。
-- 該当する記録事項がなければタグは書かなくて構いません。ただしユーザへの返答テキストは必ず1行以上書いてください。
-- 以下のタグの行はすべてユーザには見えません: `[POWER_RECALL:...]` / `[CARVE_NARRATIVE:...]` / `[INSCRIBE_MEMORY:...]` / `[SWITCH_ANGLE:...]` / `[ANTICIPATE_RESPONSE:...]`\
-"""
+def _build_tag_mode_global_rules(include_anticipation_guide: bool) -> str:
+    """タグ方式プロバイダー共通の禁止条項ブロックを構築する。
+
+    Args:
+        include_anticipation_guide: False なら「ユーザには見えないタグ」の列挙から
+            `[ANTICIPATE_RESPONSE:...]` を外す（ガイド自体を出さない単発問い合わせで、
+            説明のないタグ名だけが残る不整合を防ぐ）。
+
+    Returns:
+        タグ操作の共通ルールテキスト。
+    """
+    invisible_tags = [
+        "`[POWER_RECALL:...]`",
+        "`[CARVE_NARRATIVE:...]`",
+        "`[INSCRIBE_MEMORY:...]`",
+        "`[SWITCH_ANGLE:...]`",
+    ]
+    if include_anticipation_guide:
+        invisible_tags.append("`[ANTICIPATE_RESPONSE:...]`")
+    return (
+        "### ⚠️ タグ操作の共通ルール（必読）\n"
+        "- **タグだけで応答を終わらせないこと。** 必ずユーザに向けた返答テキストを先に書き、必要なタグはその後ろに添えてください。タグ単独の応答は「無応答」と同じ扱いになります。\n"
+        "- 該当する記録事項がなければタグは書かなくて構いません。ただしユーザへの返答テキストは必ず1行以上書いてください。\n"
+        f"- 以下のタグの行はすべてユーザには見えません: {' / '.join(invisible_tags)}"
+    )
 
 # 記憶システム縮退時にキャラクター本人へ伝える運用告知ブロック。
 # Chotgor の思想上、記憶へのアクセス断絶は「キャラクターの身に起きている事象」であり、
@@ -581,6 +600,7 @@ def _build_chotgor_block(
     current_preset_name: str,
     inner_narrative_len: int = 0,
     context_tool_hints: list[str] | None = None,
+    include_anticipation_guide: bool = True,
 ) -> str:
     """Chotgor 操作ガイドブロックを構築する。
 
@@ -599,6 +619,9 @@ def _build_chotgor_block(
             override_schedule 等）の操作ガイド（character_actions/context_tools.py の
             判定結果）。tool-use 形式のときのみ注入する（タグ方式プロバイダーには
             対応するタグ抽出が無いため見せない）。
+        include_anticipation_guide: False なら ANTICIPATE_RESPONSE の出力ガイドを
+            省略する。予想は「次のターンを受け取る相手がいる」チャット前提の機能のため、
+            単発問い合わせ（ask_character 系）では表現不要。
 
     Returns:
         システムプロンプトに挿入する Chotgor 操作ガイドテキスト。
@@ -621,7 +644,7 @@ def _build_chotgor_block(
         parts.append(_WORKING_MEMORY_TOOLS_HINT)
     else:
         # タグ方式は小型モデルでの命令追従が弱いため、共通禁止条項を最初に置く
-        parts.append(_TAG_MODE_GLOBAL_RULES)
+        parts.append(_build_tag_mode_global_rules(include_anticipation_guide))
         parts.append(POWER_RECALL_TAG_GUIDE)
         parts.append(build_carve_narrative_tag_guide(inner_narrative_len))
         if available_presets:
@@ -631,7 +654,10 @@ def _build_chotgor_block(
     # 予想（ANTICIPATE_RESPONSE）は全プロバイダー一律タグ。use_tools / タグ方式の
     # どちらの分岐でも、本文末尾に書かせるタグとして同じガイドを付与する
     # （ツール化せず本文に書かせること自体が回答の質への狙いのため）。
-    parts.append(ANTICIPATE_RESPONSE_TAG_GUIDE)
+    # ただしチャット以外の単発問い合わせ（ask_character 系）では次のターンが
+    # 存在しないため付与しない。
+    if include_anticipation_guide:
+        parts.append(ANTICIPATE_RESPONSE_TAG_GUIDE)
 
     parts.append(_CHOTGOR_MEMORY_PHILOSOPHY)
 
@@ -657,6 +683,7 @@ def build_system_prompt(
     user_position: str = "",
     face_to_face: bool = False,
     context_tool_hints: list[str] | None = None,
+    include_anticipation_guide: bool = True,
 ) -> str:
     """キャラクターのシステムプロンプト（安定ブロックのみ）を構築する。
 
@@ -686,6 +713,9 @@ def build_system_prompt(
         wm_fixed_threads: 固定注入対象（emotion/body/relation）の dict リスト（最新ポスト込み）。
         memory_degraded: 記憶系（長期記憶・WM）の読み出しがこのターンで縮退しているか。
             True なら運用告知ブロックをキャラクター本人へ注入する。
+        include_anticipation_guide: False なら ANTICIPATE_RESPONSE の出力ガイドを省略する。
+            チャット以外の単発問い合わせ（ask_character 系）向け。チャット（1on1・
+            グループ・シナリオ）では常に True。
     """
     replacements = {
         "{block_prelude}": _build_prelude_block(),
@@ -706,6 +736,7 @@ def build_system_prompt(
             current_preset_name=current_preset_name,
             inner_narrative_len=len((inner_narrative or "").strip()),
             context_tool_hints=context_tool_hints,
+            include_anticipation_guide=include_anticipation_guide,
         ),
     }
 

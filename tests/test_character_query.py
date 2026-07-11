@@ -207,6 +207,27 @@ class TestAskCharacterSuccess:
         system_prompt, _ = provider.generate.call_args[0]
         assert "inner_narrativeの内容" in system_prompt
 
+    @pytest.mark.asyncio
+    async def test_system_prompt_omits_anticipate_guide(self, sqlite_store, char_id, preset_id):
+        """生成されたシステムプロンプトに ANTICIPATE_RESPONSE ガイドが含まれないこと。
+
+        予想（ANTICIPATE_RESPONSE）は「次のターンを受け取る相手がいる」チャット前提の
+        機能。ask_character は Chronicle/Forget 等の単発問い合わせ向けであり、次の
+        ターンが存在しないため、出力ガイド自体をプロンプトへ入れない
+        （include_anticipation_guide=False で build_system_prompt を呼ぶ）。
+        """
+        provider = _mock_provider("")
+        with patch("backend.services.character_query.create_provider", return_value=provider):
+            await ask_character(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+            )
+        system_prompt, _ = provider.generate.call_args[0]
+        assert "ANTICIPATE_RESPONSE" not in system_prompt
+
 
 # ─── recall_query — 記憶想起のオン・オフ ─────────────────────────────────────
 
@@ -466,6 +487,28 @@ class TestAskCharacterWithTools:
         provider.generate_with_tools.assert_called_once()
         _, call_messages, _ = provider.generate_with_tools.call_args[0]
         assert call_messages == input_messages
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_omits_anticipate_guide(self, sqlite_store, char_id, preset_id):
+        """tool-use 経路のシステムプロンプトにも ANTICIPATE_RESPONSE ガイドが含まれないこと。
+
+        ask_character_with_tools は forget 蒸留等の単発問い合わせ向け。予想
+        （ANTICIPATE_RESPONSE）はチャット前提の機能であり、use_tools=True の分岐でも
+        include_anticipation_guide=False によりガイドが省かれることを検証する。
+        """
+        provider = _mock_tools_provider()
+        with patch("backend.services.character_query.create_provider", return_value=provider), \
+             patch("backend.character_actions.executor.ToolExecutor"):
+            await ask_character_with_tools(
+                character_id=char_id,
+                preset_id=preset_id,
+                messages=[{"role": "user", "content": "蒸留テスト"}],
+                sqlite=sqlite_store,
+                settings={},
+                memory_manager=MagicMock(),
+            )
+        system_prompt, _, _ = provider.generate_with_tools.call_args[0]
+        assert "ANTICIPATE_RESPONSE" not in system_prompt
 
     @pytest.mark.asyncio
     async def test_llm_api_error_returns_false(self, sqlite_store, char_id, preset_id):

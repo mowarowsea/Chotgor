@@ -91,11 +91,30 @@ def test_build_system_prompt_anticipate_guide_present_both_modes():
 
     予想タグは全プロバイダー一律でテキストタグとして書かせる方針のため、
     use_tools の真偽にかかわらずガイドが入っていなければならない。
+    （チャット経路のデフォルト。単発問い合わせでの抑制は次のテストを参照。）
     """
     prompt_tags = build_system_prompt("You are a cat.", use_tools=False)
     prompt_tools = build_system_prompt("You are a cat.", use_tools=True)
     assert "ANTICIPATE_RESPONSE" in prompt_tags
     assert "ANTICIPATE_RESPONSE" in prompt_tools
+
+
+def test_build_system_prompt_anticipate_guide_suppressed():
+    """include_anticipation_guide=False のとき ANTICIPATE_RESPONSE ガイドが省かれること。
+
+    予想は「次のターンを受け取る相手がいる」チャット前提の機能。
+    Chronicle/Forget 等の単発問い合わせ（ask_character 系）では次のターンが
+    存在しないため、ガイド自体をプロンプトに入れない。tool-use / タグ方式の
+    両分岐で抑制されることを検証する。
+    """
+    prompt_tags = build_system_prompt(
+        "You are a cat.", use_tools=False, include_anticipation_guide=False
+    )
+    prompt_tools = build_system_prompt(
+        "You are a cat.", use_tools=True, include_anticipation_guide=False
+    )
+    assert "ANTICIPATE_RESPONSE" not in prompt_tags
+    assert "ANTICIPATE_RESPONSE" not in prompt_tools
 
 
 def test_build_system_prompt_memories_guide_points_to_annotation():

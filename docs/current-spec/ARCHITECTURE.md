@@ -72,7 +72,7 @@
 | `services/group_chat/` | グループチャット。`director.py`（司会が次の発言者を決定）→ `service.py`（指名キャラを順にストリーミング生成） |
 | `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py` |
 | `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`reindex_service.py`（embedding変更時の全再構築） |
-| `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる） |
+| `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる）。ANTICIPATE_RESPONSE ガイドは付与しない（予想は次ターンを受け取る相手がいるチャット前提の機能のため） |
 | `services/timeline/` | **めぐり（巡り / Aliveness）の投影層＋予報層**。封筒正本（timeline_events）を観測者クラス（self / world_frame / user_ui）別の可視性ポリシーでフィルタする `projector.py`。GM への「現実の接触の記録」ブロックもここ。`forecast.py` は予報パネルの集約純関数（診断・カレンダー・圧力の無風外挿・配達シミュレータ。LLM 不使用） |
 | `services/instruments/` | 計器（監査層）。Tier 1 巡回インバリアント・Tier 2 スメル検知器（正規表現）・Tier 3 判定巡回（LLM サンプリング）。アラームは `lib/instrument_recorder.py` 経由でどこからでも発火できる |
 | `services/pressure/` | 圧力（社会圧・退屈圧・体調圧）。封筒の導関数として毎回計算する純関数（保存しない）＋体質インタビュー（`pressure_profile` 初期化） |
