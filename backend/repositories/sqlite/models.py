@@ -112,10 +112,8 @@ class Character(Base):
     ghost_model = Column(String, nullable=True)  # chronicle/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
     switch_angle_enabled = Column(Integer, nullable=False, default=0)  # 1=ON, 0=OFF
-    # 自己参照ループ設定
-    self_reflection_mode = Column(String, nullable=False, default="disabled")  # disabled/local_trigger/always
-    self_reflection_preset_id = Column(String, nullable=True)   # 契機判断モデルプリセットID（local_trigger 時）
-    self_reflection_n_turns = Column(Integer, nullable=False, default=5)  # 自己参照に使う直近Nターン数
+    # 別れ検出（farewell）の judge LLM に使うモデルプリセットID
+    judge_preset_id = Column(String, nullable=True)
     # キャラクター自己更新フィールド: chronicle 処理で更新される
     self_history = Column(Text, nullable=False, default="")       # これまでの経緯と現在の状態
     relationship_state = Column(Text, nullable=False, default="") # ユーザ・他キャラとの関係
@@ -127,7 +125,7 @@ class Character(Base):
     # 旧 web_search キーは廃止（外部情報取得は Chotgor MCP の web_search ツールに一本化）。
     allowed_tools = Column(JSON, nullable=False, default=dict)
     # このキャラが対話する「ユーザ」の人物像。1on1 チャット・全バッチ処理（chronicle/forget/
-    # self_reflection/うつつ headless）すべてのシステムプロンプトに「あなたが対話する相手」
+    # うつつ headless）すべてのシステムプロンプトに「あなたが対話する相手」
     # ブロックとして注入される。
     # - user_label: キャラがユーザを呼ぶ呼称。空なら Settings の user_name にフォールバック。
     # - user_position: ユーザの位置づけ（役職・関係・接触の仕方など短文）。空なら呼称のみ注入。

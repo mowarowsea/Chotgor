@@ -1,6 +1,6 @@
 """「キャラクターに聞く」共通サービス。
 
-通常チャット以外（自己参照・バッチ処理など）でキャラクターへ問い合わせる際の
+通常チャット以外（バッチ処理など）でキャラクターへ問い合わせる際の
 共通エントリポイント。プリセット解決・システムプロンプト構築・LLMコールを一本化する。
 
 システムプロンプトは 1on1 チャット基準に統一する。
@@ -42,7 +42,7 @@ def _resolve_user_info(char, settings: dict) -> tuple[str, str]:
 
     優先順位: キャラ別 user_label > Settings の user_name > 空。
     user_position はキャラ別の値のみ採用（Settings には対応する位置づけは存在しない）。
-    1on1 チャットと全バッチ処理（chronicle/forget/self_reflection/うつつ headless）で
+    1on1 チャットと全バッチ処理（chronicle/forget/うつつ headless）で
     共通の解決ロジックを使うためのヘルパー。
 
     Args:

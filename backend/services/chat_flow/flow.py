@@ -17,7 +17,7 @@ Flow:
   5. 応答からタグを抽出して ToolExecutor.apply_*_tags() 経由で実行
      （inscribe_memory / carve_narrative / switch_angle 各タグの解析と execute() 経由実行を集約）
   6. switch_angle / power_recall の再帰
-  7. self_reflection / farewell をバックグラウンドタスクとして起動（session_id 有時のみ）
+  7. farewell（別れ検出）をバックグラウンドタスクとして起動（session_id 有時のみ）
   8. デバッグログ
 
 後方互換: `backend.services.chat.service.ChatService` は本クラスの別名として
@@ -57,7 +57,6 @@ from backend.character_actions.executor import ToolExecutor
 from backend.lib.web_fetch import fetch_urls, find_urls
 from backend.services.chat.models import ChatRequest, Message
 from backend.character_actions.recaller import Recaller, format_power_recall_turn
-from backend.character_actions.reflector import SelfReflector
 from backend.character_actions.farewell_detector import FarewellDetector
 
 
@@ -822,30 +821,11 @@ class ChatFlow:
                 "anticipate_response", {"content": anticipation}, source="anticipation",
             )
 
-        # FrontOutput は reflector タスク起動より前にログする。
+        # FrontOutput は farewell タスク起動より前にログする。
         # asyncio.create_task はコンテキストをコピーするため、
-        # FrontOutput のカウンターインクリメントが反映された状態で reflector を起動する。
+        # FrontOutput のカウンターインクリメントが反映された状態で farewell を起動する。
         logger.log_front_output(clean_text)
         self._log_debug("CHAT stream", request, ctx.messages, clean_text)
-
-        # 自己参照ループ: ストリーム完了後にバックグラウンドタスクとして起動する。
-        # ユーザーへの応答は既に完了しているため、SSE接続をブロックしない。
-        if request.self_reflection_mode != "disabled" and request.session_id:
-            # キャラクター応答を末尾に追加して渡す。ウィンドウ切り出しは reflector 内で行う。
-            reflection_messages = [*ctx.messages, {"role": "assistant", "content": clean_text}]
-            reflector = SelfReflector(self.memory_manager, self.working_memory_manager)
-            asyncio.create_task(
-                reflector.run(
-                    request_mode=request.self_reflection_mode,
-                    trigger_preset_id=request.self_reflection_preset_id,
-                    n_turns=request.self_reflection_n_turns,
-                    settings=request.settings,
-                    messages=reflection_messages,
-                    character_id=request.character_id,
-                    session_id=request.session_id,
-                    current_preset_id=request.current_preset_id,
-                )
-            )
 
         # 別れ検出: ストリーム完了後にバックグラウンドタスクとして起動する。
         # 結果はDBに保存し、次リクエスト時の already_exited チェックで検知される。
@@ -854,7 +834,7 @@ class ChatFlow:
         if request.session_id:
             if (
                 request.farewell_config
-                and request.self_reflection_preset_id
+                and request.judge_preset_id
                 and request.farewell_relationship_status != "estranged"
             ):
                 farewell_messages = [*ctx.messages, {"role": "assistant", "content": clean_text}]
@@ -865,7 +845,7 @@ class ChatFlow:
                         character_id=request.character_id,
                         character_name=request.character_name,
                         session_id=request.session_id,
-                        preset_id=request.self_reflection_preset_id,
+                        preset_id=request.judge_preset_id,
                         farewell_config=request.farewell_config,
                         messages=farewell_messages,
                         settings=request.settings,

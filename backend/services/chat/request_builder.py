@@ -257,7 +257,7 @@ def _build_user_block(user_label: str, user_position: str) -> str:
     """相手（ユーザ）の人物像ブロックを返す（呼称・位置づけ）。
 
     キャラから見た「ユーザは誰か」を伝えるブロック。1on1 チャットと全バッチ処理
-    （chronicle/forget/self_reflection/うつつ headless）すべてのシステムプロンプトで
+    （chronicle/forget/うつつ headless）すべてのシステムプロンプトで
     共通して使われる。呼び出し側は character_query._resolve_user_info で
     キャラ別 user_label > Settings user_name > 空 の優先順位を解決済みの値を渡す。
 

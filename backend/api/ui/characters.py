@@ -18,24 +18,6 @@ from backend.services.character_query import ask_character
 router = APIRouter(prefix="/ui", tags=["ui"])
 
 
-def _extract_self_reflection_params(form) -> tuple:
-    """フォームから自己参照ループパラメータを抽出する。
-
-    create_character・update_character の両方で使用する。
-
-    Args:
-        form: FastAPI のフォームデータ。
-
-    Returns:
-        (self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns) のタプル。
-    """
-    return (
-        form.get("self_reflection_mode") or "disabled",
-        form.get("self_reflection_preset_id") or None,
-        int(form.get("self_reflection_n_turns") or 5),
-    )
-
-
 def _build_allowed_tools(form) -> dict:
     """フォームから allowed_tools 辞書を構築する。
 
@@ -141,9 +123,7 @@ async def create_character(request: Request):
     char_id = str(uuid.uuid4())
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = bool(form.get("switch_angle_enabled"))
-    self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns = (
-        _extract_self_reflection_params(form)
-    )
+    judge_preset_id = form.get("judge_preset_id") or None
 
     request.app.state.sqlite.create_character(
         character_id=char_id,
@@ -153,9 +133,7 @@ async def create_character(request: Request):
         ghost_model=ghost_model,
         image_data=image_data,
         switch_angle_enabled=switch_angle_enabled,
-        self_reflection_mode=self_reflection_mode,
-        self_reflection_preset_id=self_reflection_preset_id,
-        self_reflection_n_turns=self_reflection_n_turns,
+        judge_preset_id=judge_preset_id,
         allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),
         user_position=(form.get("user_position") or "").strip(),
@@ -213,18 +191,14 @@ async def update_character(request: Request, character_id: str):
 
     ghost_model = form.get("ghost_model") or None
     switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
-    self_reflection_mode, self_reflection_preset_id, self_reflection_n_turns = (
-        _extract_self_reflection_params(form)
-    )
+    judge_preset_id = form.get("judge_preset_id") or None
 
     update_kwargs: dict = dict(
         system_prompt_block1=form.get("system_prompt_block1", ""),
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         switch_angle_enabled=switch_angle_enabled,
-        self_reflection_mode=self_reflection_mode,
-        self_reflection_preset_id=self_reflection_preset_id,
-        self_reflection_n_turns=self_reflection_n_turns,
+        judge_preset_id=judge_preset_id,
         allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),
         user_position=(form.get("user_position") or "").strip(),

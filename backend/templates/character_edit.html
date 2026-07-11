@@ -128,7 +128,7 @@
         </section>
 
         {# ── user ・ 相手の人物像 ── #}
-        {# 1on1・全バッチ処理（chronicle/forget/self_reflection/うつつ headless）すべてで、
+        {# 1on1・全バッチ処理（chronicle/forget/うつつ headless）すべてで、
            キャラのシステムプロンプトに「あなたが対話する相手」ブロックとして注入される。
            うつつでは pc_slots[user] にも同期保存され GM プロンプトにも反映される。 #}
         <section class="ch-section">
@@ -499,51 +499,24 @@
             </div>
         </section>
 
-        {# ── reflection ・ 自己参照 ── #}
+        {# ── farewell ・ 別れ検出の judge プリセット ── #}
         <section class="ch-section">
             <div class="ch-section__head">
-                <h3 class="ch-section-title">reflection <small>・ 自己参照</small></h3>
+                <h3 class="ch-section-title">farewell <small>・ 別れ検出</small></h3>
             </div>
-            <div class="ch-field">
-                <label class="ch-label" for="self_reflection_mode">Self Reflection
-                    <span class="ch-hint">返答生成後に自己参照ループを実行するか</span>
+            <div class="ch-field" style="margin-bottom:0">
+                <label class="ch-label" for="judge_preset_id">judge モデル
+                    <span class="ch-hint">退席判定に使う judge LLM プリセット（未設定なら疲労離席の縮退のみ）</span>
                 </label>
-                <select id="self_reflection_mode" name="self_reflection_mode" class="ch-select"
-                    onchange="toggleSelfReflectionOptions(this.value)">
-                    <option value="disabled"
-                        {% if not character or character.self_reflection_mode == 'disabled' %}selected{% endif %}>Disabled</option>
-                    <option value="local_trigger"
-                        {% if character and character.self_reflection_mode == 'local_trigger' %}selected{% endif %}>Local Trigger（Ollamaで契機判断 → パブリックLLMで自己参照）</option>
-                    <option value="always"
-                        {% if character and character.self_reflection_mode == 'always' %}selected{% endif %}>Always（毎ターン パブリックLLMで自己参照）</option>
+                <select id="judge_preset_id" name="judge_preset_id" class="ch-select">
+                    <option value="">(未設定)</option>
+                    {% for preset in model_presets %}
+                    <option value="{{ preset.id }}"
+                        {% if character and character.judge_preset_id == preset.id %}selected{% endif %}>
+                        {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                    </option>
+                    {% endfor %}
                 </select>
-            </div>
-
-            <div id="self_reflection_options"
-                style="{% if not character or character.self_reflection_mode == 'disabled' %}display:none{% endif %}">
-                <div class="ch-field" id="self_reflection_preset_group"
-                    style="{% if not character or character.self_reflection_mode != 'local_trigger' %}display:none{% endif %}">
-                    <label class="ch-label" for="self_reflection_preset_id">契機判断モデル
-                        <span class="ch-hint">Ollama プリセットを選択（Local Trigger 時）</span>
-                    </label>
-                    <select id="self_reflection_preset_id" name="self_reflection_preset_id" class="ch-select">
-                        <option value="">(未設定)</option>
-                        {% for preset in model_presets %}
-                        <option value="{{ preset.id }}"
-                            {% if character and character.self_reflection_preset_id == preset.id %}selected{% endif %}>
-                            {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="ch-field" style="margin-bottom:0">
-                    <label class="ch-label" for="self_reflection_n_turns">直近Nターン
-                        <span class="ch-hint">自己参照に使う会話ターン数</span>
-                    </label>
-                    <input type="number" id="self_reflection_n_turns" name="self_reflection_n_turns"
-                        class="ch-input ch-input--mono" min="1" max="20" style="max-width:120px"
-                        value="{{ character.self_reflection_n_turns if character else 5 }}">
-                </div>
             </div>
         </section>
 
@@ -775,14 +748,6 @@
         } else {
             el.removeAttribute('aria-invalid');
         }
-    }
-
-    /** 自己参照ループのオプション表示を切り替える。 */
-    function toggleSelfReflectionOptions(mode) {
-        var opts = document.getElementById('self_reflection_options');
-        var presetGroup = document.getElementById('self_reflection_preset_group');
-        opts.style.display = (mode === 'disabled') ? 'none' : '';
-        presetGroup.style.display = (mode === 'local_trigger') ? '' : 'none';
     }
 
     /** アコーディオンを開閉する（初期表示は閉、グリフ ▸/▾ も連動）。 */

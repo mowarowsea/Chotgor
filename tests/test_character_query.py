@@ -543,7 +543,7 @@ class TestResolveUserInfo:
 class TestAskCharacterInjectsUserBlock:
     """ask_character() がシステムプロンプトに「相手（ユーザ）」ブロックを注入することを検証する。
 
-    1on1 経路だけでなく、バッチ処理（chronicle/forget/self_reflection 等）でも同じ
+    1on1 経路だけでなく、バッチ処理（chronicle/forget 等）でも同じ
     character_query 経由なので、ここを通せば全経路で注入される確認になる。
     """
 

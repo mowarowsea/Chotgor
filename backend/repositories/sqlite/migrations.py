@@ -1224,3 +1224,50 @@ class SQLiteMigrationsMixin:
                         "ADD COLUMN living_schedule_enabled INTEGER NOT NULL DEFAULT 0"
                     )
 
+    def _migrate_drop_self_reflection(self) -> None:
+        """自己参照ループ（reflector.py）撤去に伴う characters カラムの整理。
+
+        - `self_reflection_preset_id` は別れ検出（farewell）の judge プリセットとして
+          流用されていたため、列を捨てず `judge_preset_id` にリネームして残す。
+        - 自己参照専用だった `self_reflection_mode` / `self_reflection_n_turns` は削除する。
+
+        SQLite 3.25+ の RENAME COLUMN・3.35+ の DROP COLUMN を使う。
+        新規DBは ORM 定義で既に `judge_preset_id` のみを持つため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            # preset_id は judge_preset_id へリネーム（farewell が使い続ける）。
+            # 旧列があり新列がまだ無いときだけ実行する。
+            if "self_reflection_preset_id" in cols and "judge_preset_id" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters "
+                    "RENAME COLUMN self_reflection_preset_id TO judge_preset_id"
+                )
+            elif "self_reflection_preset_id" in cols and "judge_preset_id" in cols:
+                # 万一両方存在する異常状態では、旧列を捨てて新列に一本化する。
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters DROP COLUMN self_reflection_preset_id"
+                )
+            # 自己参照専用の残り2列は物理削除する。
+            if "self_reflection_mode" in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters DROP COLUMN self_reflection_mode"
+                )
+            if "self_reflection_n_turns" in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters DROP COLUMN self_reflection_n_turns"
+                )
+

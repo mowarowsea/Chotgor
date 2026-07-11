@@ -87,7 +87,7 @@ class SakuraProvider(OpenAIProvider):
     def supports_tools_for_preset(cls, model_id: str) -> bool:
         """指定モデルIDで tool-use を使えるかをインスタンス生成なしで判定する。
 
-        reflector など、プリセット情報からのみ判定したいケースで使う。
+        プリセット情報からのみ tool 方式/タグ方式を判定したいケースで使う。
         静的リスト未登録モデルは True（楽観的）にフォールバックする。
         """
         return _SAKURA_TOOL_SUPPORT.get(model_id, True)

@@ -52,9 +52,7 @@
 * `ghost_model` (String) : バックグラウンドでの記憶整理（Chronicle/forget）などで使用されるLLMモデル（プリセットID）※nullable
 * `image_data` (Text) : Base64エンコードされたアバター画像 ※nullable
 * `switch_angle_enabled` (Integer) : 視点切り替え機能の有効化フラグ（1: ON, 0: OFF）
-* `self_reflection_mode` (String) : 自己参照ループ設定（disabled / local_trigger / always）
-* `self_reflection_preset_id` (String) : 契機判断モデルプリセットID（local_trigger時）※nullable
-* `self_reflection_n_turns` (Integer) : 自己参照に使う直近Nターン数
+* `judge_preset_id` (String) : 別れ検出（farewell）の judge LLM に使うモデルプリセットID ※nullable
 * `self_history` (Text) : これまでの経緯と現在の状態（Chronicle処理で自己更新）
 * `relationship_state` (Text) : ユーザ・他キャラとの関係性（Chronicle処理で更新）
 * `farewell_config` (JSON) : 感情閾値や退席設定などを定義するJSON ※nullable。以下の**構造を持つ**。

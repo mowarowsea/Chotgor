@@ -146,7 +146,7 @@ class BaseLLMProvider:
         モデルごとに tool-use サポートが分かれるプロバイダー（さくらの AI Engine など）は
         本メソッドをオーバーライドして model_id を見て判定する。
 
-        プロバイダーインスタンスを生成せずに判定できるため、reflector など
+        プロバイダーインスタンスを生成せずに判定できるため、
         「準備フェーズで tool 方式 / タグ方式の分岐を決めたい」用途で使う。
         """
         return cls.SUPPORTS_TOOLS

@@ -135,6 +135,7 @@ class SQLiteStore(
         self._migrate_add_gate_columns()
         self._migrate_backfill_timeline_events()
         self._migrate_add_living_schedule()
+        self._migrate_drop_self_reflection()
 
     def get_session(self) -> Session:
         """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""

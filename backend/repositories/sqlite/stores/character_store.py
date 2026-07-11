@@ -18,9 +18,7 @@ class CharacterStoreMixin:
         ghost_model: str | None = None,
         image_data: str | None = None,
         switch_angle_enabled: bool = False,
-        self_reflection_mode: str = "disabled",
-        self_reflection_preset_id: str | None = None,
-        self_reflection_n_turns: int = 5,
+        judge_preset_id: str | None = None,
         farewell_config: dict | None = None,
         relationship_status: str = "active",
         allowed_tools: dict | None = None,
@@ -33,9 +31,7 @@ class CharacterStoreMixin:
         Args:
             self_history: chronicle で更新されるキャラクターの歴史・経緯。
             relationship_state: chronicle で更新されるユーザ・他キャラとの現在の関係。
-            self_reflection_mode: 自己参照ループの動作モード。disabled/local_trigger/always。
-            self_reflection_preset_id: 契機判断モデルプリセットID（local_trigger 時に使用）。
-            self_reflection_n_turns: 自己参照に使う直近ターン数。
+            judge_preset_id: 別れ検出（farewell）の judge LLM に使うモデルプリセットID。
             farewell_config: chronicle で更新される感情閾値・退席設定JSON。
             relationship_status: 関係ステータス。"active" または "estranged"。
             allowed_tools: 外部ツール許可設定。{google_calendar, gmail, google_drive} の bool dict。
@@ -59,9 +55,7 @@ class CharacterStoreMixin:
                 ghost_model=ghost_model,
                 image_data=image_data,
                 switch_angle_enabled=1 if switch_angle_enabled else 0,
-                self_reflection_mode=self_reflection_mode,
-                self_reflection_preset_id=self_reflection_preset_id,
-                self_reflection_n_turns=self_reflection_n_turns,
+                judge_preset_id=judge_preset_id,
                 farewell_config=farewell_config,
                 relationship_status=relationship_status,
                 allowed_tools=allowed_tools or {},
