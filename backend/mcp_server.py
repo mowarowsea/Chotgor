@@ -169,8 +169,23 @@ def _http_get_json(path: str) -> tuple[bool, dict | str]:
 
 
 def _fetch_tool_list() -> list[dict]:
-    """backend から MCP ツール定義リストを取得する。失敗時は空リスト。"""
-    ok, payload = _http_get_json("/api/mcp/tools")
+    """backend から MCP ツール定義リストを取得する。失敗時は空リスト。
+
+    キャラクターコンテキスト（character_id / origin / session_id）をクエリで伝え、
+    backend 側（api/mcp_tools.py → character_actions/context_tools.py）が文脈に応じた
+    追加ツール（reach_out / visit_user / override_schedule 等）を出し分けられるようにする。
+    """
+    from urllib.parse import urlencode
+
+    params = {}
+    if CHARACTER_ID:
+        params["character_id"] = CHARACTER_ID
+    if SESSION_ID:
+        params["session_id"] = SESSION_ID
+    if DEFAULT_ORIGIN:
+        params["origin"] = DEFAULT_ORIGIN
+    query = f"?{urlencode(params)}" if params else ""
+    ok, payload = _http_get_json(f"/api/mcp/tools{query}")
     if not ok:
         _log(f"tools/list 取得失敗: {payload}")
         return []

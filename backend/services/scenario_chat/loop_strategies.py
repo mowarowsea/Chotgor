@@ -89,6 +89,10 @@ class ScenarioLoopState:
     # SCENE_CLOSE を抑止したターンの直後は、次のルーティングを強制 @ALL にフォールバックする。
     # （Executor 側で True にセットされ、Router 側で消費する）
     scene_close_suppressed: bool = False
+    # 主人公 PC が reach_out（現実へのメッセージ送信）を執行した → 本人の発言終了後に
+    # シーンを一時停止する（Executor 側で True にセットされ、stop_condition が停止する）。
+    # 再開（15分後に GM へターンを渡す）はスケジューラ（main.py）の領分。
+    push_paused: bool = False
 
 
 class ScenarioRouter:
@@ -102,6 +106,11 @@ class ScenarioRouter:
           かつ主人公 PC が一度でも発話していれば停止（早すぎる SCENE_CLOSE は Executor 側で抑止）
         """
         sc: ScenarioLoopState = state.context["scenario_state"]
+
+        # reach_out によるポーズ要求（うつつ）。本人の発言終了直後に停止し、
+        # 現実の15分をおいてスケジューラが GM へターンを渡す。
+        if sc.push_paused:
+            return True, "push_pause"
 
         if sc.fired_responses >= sc.max_responses:
             return True, "max_responses"
@@ -451,6 +460,25 @@ class ScenarioTurnExecutor:
         sc.fired_responses += 1
         # キャラ PC が実際に発話した → 以降の GM SCENE_CLOSE は正規に受理される。
         sc.pc_responses += 1
+
+        # うつつ無人ループ: この PC ターン中に reach_out（現実へのメッセージ送信）が
+        # 執行されていたらポーズ要求キーが立っている。本人の発言終了＝ここで検知し、
+        # stop_condition にシーン停止を伝える（再開はスケジューラの領分）。
+        # ツール実行は MCP 経由だと別 HTTP リクエストの ToolExecutor で行われるため、
+        # in-process の状態ではなく settings キー経由で検知する（プロセス越境リレーの流儀）。
+        if sc.is_headless:
+            try:
+                from backend.character_actions.messenger import read_push_pause
+
+                owner_id = getattr(sc.scenario, "owner_character_id", None)
+                if owner_id and read_push_pause(sc.sqlite, owner_id) is not None:
+                    sc.push_paused = True
+                    logger.info(
+                        "うつつ: reach_out を検知、本人の発言終了でシーンを一時停止"
+                        " session=%s pc=%s", sc.session_id, pc.name,
+                    )
+            except Exception:
+                logger.exception("うつつ: ポーズ要求の検知に失敗 session=%s", sc.session_id)
 
         yield ("turn_result", TurnResult(text=full_text, raw=full_text))
 

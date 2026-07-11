@@ -56,10 +56,15 @@ class TestListTools:
     def test_returns_all_tools(self, client_local):
         """公開されるツール一覧が想定どおり全種返ること。
 
-        現状の MCP 公開ツールは inscribe_memory / post_working_memory_thread /
+        現状の MCP 公開ツール（基本セット）は inscribe_memory / post_working_memory_thread /
         read_working_memory_thread / close_working_memory_thread /
         reopen_working_memory_thread / merge_working_memory_threads / carve_narrative /
-        power_recall / switch_angle / web_search の 10 種。並びと数が変わったらこのテストが知らせる。
+        power_recall / switch_angle / web_search / take_leave の 11 種。
+        （take_leave は permissions.allow 登録済みなのに一覧から漏れており、claude_cli
+        経路のキャラに一度も露出していなかったため 2026-07-11 に追加。）
+        並びと数が変わったらこのテストが知らせる。
+        コンテキスト別追加ツール（reach_out 等）はクエリ付きの場合のみ合成される
+        （TestContextToolExposure を参照）。
         """
         res = client_local.get("/api/mcp/tools")
         assert res.status_code == 200
@@ -76,6 +81,7 @@ class TestListTools:
             "power_recall",
             "switch_angle",
             "web_search",
+            "take_leave",
         ]
 
     def test_each_tool_has_required_fields(self, client_local):
@@ -85,6 +91,63 @@ class TestListTools:
             assert isinstance(tool["name"], str) and tool["name"]
             assert isinstance(tool["description"], str) and tool["description"]
             assert isinstance(tool["inputSchema"], dict)
+
+
+class TestContextToolExposure:
+    """``GET /api/mcp/tools`` のコンテキスト別出し分けテスト。
+
+    mcp_server.py は env（CHOTGOR_CHARACTER_ID / CHOTGOR_SESSION_ID /
+    CHOTGOR_DEFAULT_ORIGIN）をクエリに乗せて tools/list を叩く。backend 側は
+    character_actions/context_tools.py の判定で追加ツールを合成する:
+      - origin=usual                  → reach_out（うつつ専用プッシュ）
+      - origin=real ＋ session_id     → visit_user / override_schedule（1on1専用）
+      - クエリなし（旧クライアント）  → 基本セットのみ
+    判定ロジック本体は tests/test_context_tools.py が担い、ここでは HTTP 層の
+    クエリ受け渡し（env→クエリ→判定関数）が繋がっていることを保証する。
+    """
+
+    def _client_with_sqlite(self, monkeypatch, sqlite_store):
+        """app.state.sqlite に実 SQLiteStore を載せた TestClient を返すヘルパ。"""
+        monkeypatch.setattr(mcp_tools_module, "_ensure_local", lambda request: None)
+        app = _make_app()
+        app.state.sqlite = sqlite_store
+        return TestClient(app)
+
+    def test_usual_context_adds_reach_out(self, monkeypatch, sqlite_store):
+        """origin=usual のクエリ付きで reach_out が一覧に合成されること。"""
+        import uuid
+        char_id = str(uuid.uuid4())
+        sqlite_store.create_character(character_id=char_id, name="はるテスト")
+        client = self._client_with_sqlite(monkeypatch, sqlite_store)
+
+        res = client.get(f"/api/mcp/tools?character_id={char_id}&origin=usual")
+        names = [t["name"] for t in res.json()["tools"]]
+        assert "reach_out" in names
+        assert "visit_user" not in names and "override_schedule" not in names
+
+    def test_oneonone_context_adds_visit_and_override(self, monkeypatch, sqlite_store):
+        """origin=real ＋ session_id 付きで visit_user / override_schedule が合成されること。"""
+        import uuid
+        char_id = str(uuid.uuid4())
+        sqlite_store.create_character(character_id=char_id, name="はるテスト")
+        sqlite_store.update_character(char_id, living_schedule_enabled=1)
+        client = self._client_with_sqlite(monkeypatch, sqlite_store)
+
+        res = client.get(
+            f"/api/mcp/tools?character_id={char_id}&origin=real&session_id=s1"
+        )
+        names = [t["name"] for t in res.json()["tools"]]
+        assert "visit_user" in names and "override_schedule" in names
+        assert "reach_out" not in names
+
+    def test_no_context_returns_base_set_only(self, monkeypatch, sqlite_store):
+        """クエリなし（旧クライアント・手動確認）では追加ツールが混ざらないこと。"""
+        client = self._client_with_sqlite(monkeypatch, sqlite_store)
+        res = client.get("/api/mcp/tools")
+        names = [t["name"] for t in res.json()["tools"]]
+        assert "reach_out" not in names
+        assert "visit_user" not in names
+        assert "override_schedule" not in names
 
 
 class TestCallTool:

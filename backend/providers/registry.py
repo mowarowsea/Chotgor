@@ -73,8 +73,12 @@ def create_provider(provider_id: str, model: str, settings: dict, **kwargs) -> B
         **kwargs: from_config() に転送する追加引数。
     """
     preset_name: str = kwargs.pop("preset_name", "")
+    # コンテキスト別追加ツール（Anthropic 形式）。from_config には流さず、
+    # 生成後のインスタンス属性として注入する（preset_name と同じ流儀）。
+    extra_tools: list = kwargs.pop("extra_tools", None) or []
     cls = PROVIDER_REGISTRY.get(provider_id, ClaudeCliProvider)
     instance = cls.from_config(model=model, settings=settings, **kwargs)
     if preset_name:
         instance.preset_name = preset_name
+    instance.extra_tools = list(extra_tools)
     return instance

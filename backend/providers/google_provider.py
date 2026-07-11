@@ -13,7 +13,12 @@ import base64
 import json
 import re
 
-from backend.character_actions.executor import OPENAI_TOOLS, ToolCall, ToolTurnResult
+from backend.character_actions.executor import (
+    OPENAI_TOOLS,
+    ToolCall,
+    ToolTurnResult,
+    to_openai_tools,
+)
 from backend.providers.base import BaseLLMProvider, safe_loop_call
 
 try:
@@ -516,13 +521,14 @@ class GoogleProvider(BaseLLMProvider):
 
         # OPENAI_TOOLS 形式の function["parameters"] は JSON Schema 形式であり
         # Gemini の function_declarations でもそのまま利用できる
+        # （基本セット＋コンテキスト別追加ツール。context_tools.py の判定結果）
         function_declarations = [
             {
                 "name": t["function"]["name"],
                 "description": t["function"]["description"],
                 "parameters": t["function"]["parameters"],
             }
-            for t in OPENAI_TOOLS
+            for t in OPENAI_TOOLS + to_openai_tools(self.extra_tools or [])
         ]
 
         # tools 指定時は thinking_config が除外される（_build_generate_config 内で排他制御）

@@ -129,6 +129,11 @@ class BaseLLMProvider:
     # True のプロバイダーは _tool_turn() と _extend_messages_with_results() を実装し、
     # タグ方式ではなくtool-use（function calling）で記憶・DRIFTを操作する。
     SUPPORTS_TOOLS: bool = False
+    # コンテキスト別追加ツール（Anthropic 形式・character_actions/context_tools.py の判定結果）。
+    # create_provider() がインスタンスへ代入で注入する（クラス属性は既定の空。
+    # in-place で mutate しないこと — 全インスタンス共有のため）。
+    # tool-use プロバイダーは _tool_turn() で基本セットへ連結して使う。
+    extra_tools: list[dict] = []
     # _api_guard / _api_guard_tool_turn デコレータがエラーメッセージで参照するキー名。
     # サブクラスで上書きすることで、継承先でも正しいキー名のエラーが出る。
     _API_SETTINGS_KEY: str = "api_key"

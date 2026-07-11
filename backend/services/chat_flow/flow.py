@@ -440,6 +440,30 @@ class ChatFlow:
                 except Exception:
                     pass
 
+        # --- コンテキスト別追加ツール（reach_out / visit_user / override_schedule）---
+        # 文脈（origin / session_id）に応じてキャラへ露出するツールと、その操作ガイドを
+        # 単一判定点（character_actions/context_tools.py）から取得する。
+        # in-process tool-use プロバイダーには extra_tools として渡し、claude_cli は
+        # MCP tools/list（env→クエリ経路）側で同じ判定が効く。失敗しても会話は止めない。
+        context_extra_tools: list[dict] = []
+        context_tool_hints: list[str] = []
+        try:
+            from backend.character_actions.context_tools import (
+                resolve_context_tool_hints,
+                resolve_context_tools,
+            )
+            _ct_sqlite = getattr(self.memory_manager, "sqlite", None)
+            context_extra_tools = resolve_context_tools(
+                _ct_sqlite, request.character_id,
+                origin=request.default_origin, session_id=request.session_id or None,
+            )
+            context_tool_hints = resolve_context_tool_hints(
+                _ct_sqlite, request.character_id,
+                origin=request.default_origin, session_id=request.session_id or None,
+            )
+        except Exception:
+            _log.exception("コンテキストツール判定に失敗 char=%s", request.character_id)
+
         # --- プロバイダーを決定（use_tools フラグに使用） ---
         # PowerRecall 再帰呼び出し中は power_recalled が非空
         feature = "power_recall" if request.power_recalled else "chat"
@@ -455,6 +479,7 @@ class ChatFlow:
             session_id=request.session_id or "",
             allowed_tools=request.allowed_tools,
             timeout_seconds=request.timeout_seconds,
+            extra_tools=context_extra_tools,
         )
 
         # --- 動機ブロック（めぐり）: 圧力の淡白な一行＋active な意図を毎ターン
@@ -477,6 +502,21 @@ class ChatFlow:
         except Exception:
             _log.exception("圧力計算に失敗 char=%s", request.character_id)
 
+        # --- 予定コンテキスト（生活カレンダー）: 現在の予定・次の予定・意志上書きの超過 ---
+        # 1on1 とうつつ PC の両方で、本人が「この後の予定」を認知できるようにする
+        # （2026-07-11 要件③）。ランダムイベント（伏せ枠）はネタバレ防止のため含まれない
+        # （awareness 側で構造的に除外）。失敗しても会話は止めない。
+        schedule_lines: list[str] | None = None
+        try:
+            from backend.services.schedule.awareness import build_schedule_lines
+            _sched_sqlite = getattr(self.memory_manager, "sqlite", None)
+            if _sched_sqlite is not None and request.character_id:
+                schedule_lines = build_schedule_lines(
+                    _sched_sqlite, request.character_id
+                ) or None
+        except Exception:
+            _log.exception("予定コンテキスト構築に失敗 char=%s", request.character_id)
+
         # --- システムプロンプト構築（安定ブロックのみ） ---
         # 毎ターン変動する情報はターン注釈として最新 user メッセージ側へ付加する
         # （プロンプトキャッシュ対応。docs/planned/prompt_cache_plan.md A案）。
@@ -494,6 +534,7 @@ class ChatFlow:
             user_label=request.user_label,
             user_position=request.user_position,
             face_to_face=request.face_to_face,
+            context_tool_hints=context_tool_hints or None,
         )
 
         # --- ターン注釈（変動ブロック）を最新 user メッセージへ付加 ---
@@ -509,6 +550,7 @@ class ChatFlow:
             wm_recalled_threads=wm_recalled_threads,
             motive_lines=motive_lines,
             active_intents=active_intents,
+            schedule_lines=schedule_lines,
             previous_anticipation=request.previous_anticipation,
         )
         messages = append_turn_annotation(messages, annotation)

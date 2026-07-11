@@ -439,6 +439,13 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
         # （次のスロット時刻まで自然に待ち、そこからスケジュールどおりに再開する）。
         owner_char = sqlite.get_character(owner_id) if owner_id else None
         owner_in_face_to_face = bool(getattr(owner_char, "face_to_face_mode", 0)) if owner_char else False
+        # reach_out によるポーズ待機中は新規シーンを起動しない（再開は
+        # _run_pending_push_resumes の領分。二重進行で物語が枝分かれする事故を防ぐ）。
+        if owner_id:
+            from backend.character_actions.messenger import read_push_pause
+            if read_push_pause(sqlite, owner_id) is not None:
+                _log.info("うつつ: push待機中のため新規シーンを起動しない owner=%s", owner_id)
+                continue
         # 生活カレンダー有効キャラは②導出、無効キャラは従来 slots でシーンを起動する。
         living_enabled = bool(
             owner_char and int(getattr(owner_char, "living_schedule_enabled", 0) or 0)
@@ -540,16 +547,138 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                 )
 
 
+async def _run_pending_push_resumes(app: FastAPI) -> None:
+    """reach_out で一時停止したうつつシーンを、待ち時間経過後に GM 継続で再開する。
+
+    本人がうつつの中から現実へメッセージを送る（reach_out）と、シーンは本人の発言
+    終了で一時停止し、ポーズ要求キー（usual_push_pause_{character_id}）が立つ。
+    ここでは resume_at の到来を待って GM へターンを渡す — 「連絡してから15分経った」
+    という現実の時間経過を GM に伝え、その間にユーザからの返事が**あったかどうかは
+    既存の履歴合流（external シーン統合・不在ユーザブロック）から GM が読み取る**。
+
+    - 対面モード ON（reach_out visit=true / ユーザ操作）の間は再開しない — 対面は
+      聖域（うつつを走らせない既存方針）。キーは消して自然消滅させる。
+    - 日次上限（usual_days_daily_cap）到達時も再開を見送る（キーは消す）。物語は
+      次のスロットのシーンが同一セッションで自然に続きを拾う。
+    """
+    from backend.character_actions.messenger import clear_push_pause, read_push_pause
+    from backend.services.scenario_chat.service import (
+        ensure_usual_session,
+        run_usual_days_scene,
+    )
+
+    _log = logging.getLogger(__name__)
+    sqlite = app.state.sqlite
+    now = datetime.now()
+    today_str = now.date().isoformat()
+
+    for scenario in sqlite.list_usual_scenarios():
+        cfg = getattr(scenario, "usual_config", None) or {}
+        if not cfg.get("enabled"):
+            continue
+        owner_id = getattr(scenario, "owner_character_id", None)
+        if not owner_id:
+            continue
+        pause = read_push_pause(sqlite, owner_id)
+        if pause is None:
+            continue
+        try:
+            resume_at = datetime.fromisoformat(str(pause.get("resume_at", "")))
+            sent_at = datetime.fromisoformat(str(pause.get("sent_at", "")))
+        except (TypeError, ValueError):
+            # 壊れたポーズ要求は捨てる（永久ポーズを防ぐ）
+            _log.warning("うつつ: ポーズ要求が不正のため破棄 owner=%s raw=%r", owner_id, pause)
+            clear_push_pause(sqlite, owner_id)
+            continue
+        if now < resume_at:
+            continue  # まだ待ち時間内（本人の連絡から15分待つ）
+
+        # 再開確定 or 見送り確定 — どちらでもキーは消す（毎分の再評価を止める）
+        clear_push_pause(sqlite, owner_id)
+
+        owner_char = sqlite.get_character(owner_id)
+        if owner_char is not None and int(getattr(owner_char, "face_to_face_mode", 0) or 0):
+            # 会いに行った（visit）/ユーザが対面を開いた — 対面は聖域、シーンは再開しない
+            sqlite.record_scheduler_decision(
+                "usual_days", "skipped", character_id=owner_id,
+                reason="push再開: 対面モード中（聖域化）",
+            )
+            continue
+
+        daily_cap = int(sqlite.get_setting("usual_days_daily_cap", "24") or 24)
+        count_key = f"usual_days_scene_count_{today_str}"
+        ran_today = int(sqlite.get_setting(count_key, "0") or 0)
+        if ran_today >= daily_cap:
+            sqlite.record_scheduler_decision(
+                "usual_days", "skipped", character_id=owner_id,
+                reason=f"push再開: 日次上限（{ran_today}/{daily_cap}）",
+            )
+            continue
+
+        session = ensure_usual_session(sqlite, scenario)
+        if session is None:
+            sqlite.record_scheduler_decision(
+                "usual_days", "error", character_id=owner_id,
+                reason="push再開: セッション未解決",
+            )
+            continue
+
+        minutes = max(1, int((now - sent_at).total_seconds() // 60))
+        char_name = getattr(owner_char, "name", None) or "本人"
+        resume_ooc = (
+            f"（{char_name}が約{minutes}分前にユーザへメッセージを送った。"
+            "その後この時間が経過している。ユーザからの返事があったかどうかは"
+            "これまでの履歴に現れている（履歴に無ければ返事はまだ来ていない）。"
+            "その事実を踏まえて場面の続きを描写すること。"
+            "ユーザの言動を捏造してはならない）"
+        )
+        sqlite.set_setting(count_key, str(ran_today + 1))
+        _log.info(
+            "うつつ: push再開 owner=%s session=%s 経過=%d分", owner_id, session.id, minutes,
+        )
+        try:
+            result = await run_usual_days_scene(
+                session_id=session.id,
+                sqlite=sqlite,
+                settings=sqlite.get_all_settings(),
+                chat_service=app.state.chat_service,
+                extra_first_gm_ooc=resume_ooc,
+                slot="push_resume",
+            )
+            sqlite.record_scheduler_decision(
+                "usual_days",
+                "error" if result.get("error") else "fired",
+                character_id=owner_id,
+                reason=(
+                    f"push再開: シーン中断: {result['error']}" if result.get("error")
+                    else f"push再開（連絡から{minutes}分後にGM継続）"
+                ),
+                details={"turns": result.get("fired_turns", 0),
+                         "scene_closed": result.get("scene_closed")},
+            )
+        except Exception:
+            _log.exception("うつつ: push再開の実行エラー owner=%s", owner_id)
+            sqlite.record_scheduler_decision(
+                "usual_days", "error", character_id=owner_id,
+                reason="push再開: 実行例外",
+            )
+
+
 async def _usual_days_scheduler(app: FastAPI) -> None:
     """Background task: 有効なうつつ世界を各スロット時刻に1シーンずつ無人進行させる。
 
     _chronicle_scheduler と同型（while True: sleep(60)）。冪等キーを日付+スロットにして
     1日複数スロットへ対応する。SSE 配信は不要なので run_usual_days_scene を await 回収する。
+    reach_out による一時停止シーンの再開（_run_pending_push_resumes）も同じ周期で面倒を見る。
     """
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
         _beat_scheduler(app.state.sqlite, "usual_days")
+        try:
+            await _run_pending_push_resumes(app)
+        except Exception:
+            _log.exception("うつつ push再開スケジューラー 実行エラー")
         try:
             await _run_due_usual_scenes(app)
         except Exception:

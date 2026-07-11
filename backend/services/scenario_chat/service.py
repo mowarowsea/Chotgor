@@ -790,6 +790,8 @@ async def run_usual_days_scene(
         {"saved_turn_ids": [...], "fired_responses": int, "fired_turns": int,
          "scene_closed": bool, "error": str | None} の集計 dict。
         fired_responses は LLM 呼出回数（GM + PC）、fired_turns は scenario_turns 行数（=話者ブロック数）。
+        本人の reach_out でシーンが一時停止した場合は "paused_for_push": True が付く
+        （蒸留・封筒・意図拾い上げはスキップされ、再開はスケジューラの領分）。
     """
     saved_turn_ids: list[str] = []
     fired_responses = 0
@@ -833,6 +835,29 @@ async def run_usual_days_scene(
         if _gate_owner_id:
             from backend.services.gate import mark_usual_scene_running
             mark_usual_scene_running(sqlite, _gate_owner_id, False)
+
+    # reach_out ポーズ検知: 本人がシーン中に現実へメッセージを送った場合、ループは
+    # 本人の発言終了で停止している（loop_strategies）。ポーズ要求キーが立っていれば
+    # このシーンは「完走」ではなく「一時停止」— 蒸留・封筒・意図拾い上げは行わず、
+    # スケジューラ（main.py）による再開（GM 継続）を待つ。
+    paused_for_push = False
+    if _gate_owner_id:
+        from backend.character_actions.messenger import read_push_pause
+        paused_for_push = read_push_pause(sqlite, _gate_owner_id) is not None
+    if paused_for_push:
+        logger.info(
+            "うつつ: reach_out によりシーン一時停止 session=%s fired=%d",
+            session_id, fired_responses,
+        )
+        return {
+            "saved_turn_ids": saved_turn_ids,
+            "fired_responses": fired_responses,
+            "fired_turns": len(saved_turn_ids),
+            "scene_closed": False,
+            "paused_for_push": True,
+            "error": error,
+        }
+
     # シーンが GM の [SCENE_CLOSE] で閉じたかは、最終 GM ターン（話者ブロック）の生出力から判定する。
     for turn in reversed(sqlite.list_scenario_turns(session_id)):
         if getattr(turn, "speaker_type", "") in {"narrator", "npc"}:

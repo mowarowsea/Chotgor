@@ -193,11 +193,13 @@ def _parse_action_choice(text: str) -> dict | None:
     }
 
 
-async def _execute_push(sqlite, char, preset, body: str, session_title: str) -> dict:
-    """push を執行する — 新規セッションを立ててキャラ発メッセージを置く。
+def execute_push(sqlite, char, preset, body: str, session_title: str) -> dict:
+    """push を執行する — 新規セッションを立ててキャラ発メッセージを置く（同期・共通実装）。
 
     既存セッションへの追記は文脈カーブ事故のもとになるため不採用（spec 判断）。
     chat.message(actor=character) 封筒が dual-write で載り、社会圧も減衰する。
+    行動権サイクル（_execute_push）と reach_out ツール（character_actions/messenger.py）が
+    共有する唯一の push 実装。
 
     Args:
         sqlite: SQLiteStore。
@@ -226,6 +228,14 @@ async def _execute_push(sqlite, char, preset, body: str, session_title: str) -> 
     from backend.lib.notify import notify_character_spoke
     notify_character_spoke(char.name)
     return {"summary": f"メッセージを送った: {body[:100]}", "session_id": session_id}
+
+
+async def _execute_push(sqlite, char, preset, body: str, session_title: str) -> dict:
+    """行動権サイクル用の async 入口（実体は execute_push へ委譲）。
+
+    run_action_cycle の実行ディスパッチ（await 前提）との互換のために残す薄いラッパ。
+    """
+    return execute_push(sqlite, char, preset, body, session_title)
 
 
 def _execute_research(sqlite, query: str) -> dict:

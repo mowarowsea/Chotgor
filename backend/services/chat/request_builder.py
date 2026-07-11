@@ -167,6 +167,8 @@ TURN_ANNOTATION_TEMPLATE = """\
 
 {block_time}
 
+{block_schedule}
+
 {block_fetched}
 
 {block_wm_recalled}
@@ -424,6 +426,27 @@ def _build_face_to_face_block(face_to_face: bool) -> str:
     return _FACE_TO_FACE_NOTICE if face_to_face else ""
 
 
+def _build_schedule_block(schedule_lines: list[str] | None) -> str:
+    """予定コンテキストブロック（生活カレンダー・要件③）を返す。
+
+    services/schedule/awareness.build_schedule_lines の結果（現在の予定・次の予定・
+    意志上書きの超過状況の淡白な行リスト）をそのまま並べる。時刻ブロックと同じく
+    「薄い補足情報」の位置づけで、どう受け取るか（予定どおり動くか・意志で
+    塗り替えるか）はキャラクター本人に任せる。素材が無ければ空文字列。
+
+    Args:
+        schedule_lines: awareness が組んだ行リスト。None / 空なら非表示。
+
+    Returns:
+        整形済みブロック文字列。
+    """
+    if not schedule_lines:
+        return ""
+    lines = ["## あなたの予定（生活カレンダーより）"]
+    lines += [f"- {line}" for line in schedule_lines]
+    return "\n".join(lines)
+
+
 def _build_motive_block(
     motive_lines: list[str] | None,
     active_intents: list[dict] | None = None,
@@ -557,6 +580,7 @@ def _build_chotgor_block(
     available_presets: list[dict] | None,
     current_preset_name: str,
     inner_narrative_len: int = 0,
+    context_tool_hints: list[str] | None = None,
 ) -> str:
     """Chotgor 操作ガイドブロックを構築する。
 
@@ -571,6 +595,10 @@ def _build_chotgor_block(
         use_tools: True なら tool-use 形式、False ならタグ形式の説明を使う。
         available_presets: 利用可能なプリセット情報リスト。None または空の場合は SWITCH_ANGLE を省略。
         current_preset_name: 現在使用中のプリセット名。
+        context_tool_hints: コンテキスト別追加ツール（reach_out / visit_user /
+            override_schedule 等）の操作ガイド（character_actions/context_tools.py の
+            判定結果）。tool-use 形式のときのみ注入する（タグ方式プロバイダーには
+            対応するタグ抽出が無いため見せない）。
 
     Returns:
         システムプロンプトに挿入する Chotgor 操作ガイドテキスト。
@@ -580,6 +608,8 @@ def _build_chotgor_block(
     if use_tools:
         parts.append(POWER_RECALL_TOOLS_HINT)
         parts.append(WEB_SEARCH_TOOLS_HINT)
+        for hint in (context_tool_hints or []):
+            parts.append(hint)
         parts.append(build_carve_narrative_tools_hint(inner_narrative_len))
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=True))
@@ -626,6 +656,7 @@ def build_system_prompt(
     user_label: str = "",
     user_position: str = "",
     face_to_face: bool = False,
+    context_tool_hints: list[str] | None = None,
 ) -> str:
     """キャラクターのシステムプロンプト（安定ブロックのみ）を構築する。
 
@@ -674,6 +705,7 @@ def build_system_prompt(
             available_presets=available_presets,
             current_preset_name=current_preset_name,
             inner_narrative_len=len((inner_narrative or "").strip()),
+            context_tool_hints=context_tool_hints,
         ),
     }
 
@@ -694,6 +726,7 @@ def build_turn_annotation(
     wm_recalled_threads: list[dict] | None = None,
     motive_lines: list[str] | None = None,
     active_intents: list[dict] | None = None,
+    schedule_lines: list[str] | None = None,
     previous_anticipation: str = "",
 ) -> str:
     """毎ターン変動する文脈情報を「ターン注釈」として構築する。
@@ -716,6 +749,7 @@ def build_turn_annotation(
         "{block_time}": _build_time_block(
             enable_time_awareness, current_time_str, time_since_last_interaction
         ),
+        "{block_schedule}": _build_schedule_block(schedule_lines),
         "{block_fetched}": _build_fetched_block(fetched_contents),
         "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),
         "{block_motive}": _build_motive_block(motive_lines, active_intents),

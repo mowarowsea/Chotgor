@@ -55,6 +55,10 @@ from backend.character_actions.web_searcher import (
     WEB_SEARCH_SCHEMA,
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
+from backend.character_actions.leaver import (
+    TAKE_LEAVE_SCHEMA,
+    TAKE_LEAVE_TOOL_DESCRIPTION,
+)
 
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -215,14 +219,54 @@ def _build_tool_definitions() -> list[ToolDefinition]:
             description=WEB_SEARCH_TOOL_DESCRIPTION,
             inputSchema=WEB_SEARCH_SCHEMA,
         ),
+        # take_leave は permissions.allow（Chotgor_ClaudeCodeWorkDir 側）に登録済み
+        # だったが、一覧への追加が漏れており claude_cli 経路のキャラには一度も
+        # 露出していなかった（2026-07-11 発見・修正）。
+        ToolDefinition(
+            name="take_leave",
+            description=TAKE_LEAVE_TOOL_DESCRIPTION,
+            inputSchema=TAKE_LEAVE_SCHEMA,
+        ),
     ]
 
 
 @router.get("/tools", response_model=ToolListResponse)
-async def list_tools(request: Request) -> ToolListResponse:
-    """公開 MCP ツール定義を返す。MCP プロセスからの ``tools/list`` をプロキシする。"""
+async def list_tools(
+    request: Request,
+    character_id: str = "",
+    session_id: str = "",
+    origin: str = "real",
+) -> ToolListResponse:
+    """公開 MCP ツール定義を返す。MCP プロセスからの ``tools/list`` をプロキシする。
+
+    クエリでキャラクターコンテキストが渡された場合、基本セットに加えて
+    コンテキスト別追加ツール（reach_out / visit_user / override_schedule）を
+    character_actions/context_tools.py の判定で合成する。コンテキストなし
+    （旧クライアント・手動確認）では基本セットのみ返す。
+
+    Args:
+        character_id: 対象キャラクター ID（mcp_server.py が env から積んで送る）。
+        session_id: 1on1 セッション ID（1on1 専用ツールの露出判定に使う）。
+        origin: 呼び出し文脈の origin（"real" / "usual" / "interlude"）。
+    """
     _ensure_local(request)
-    return ToolListResponse(tools=_build_tool_definitions())
+    tools = _build_tool_definitions()
+    if character_id:
+        from backend.character_actions.context_tools import resolve_context_tools
+
+        sqlite = getattr(request.app.state, "sqlite", None)
+        for t in resolve_context_tools(
+            sqlite, character_id, origin=origin or "real",
+            session_id=session_id or None,
+        ):
+            tools.append(
+                ToolDefinition(
+                    name=t["name"],
+                    description=t["description"],
+                    inputSchema=t["input_schema"],
+                )
+            )
+    return ToolListResponse(tools=tools)
 
 
 @router.post("/tools/call", response_model=ToolCallResponse)

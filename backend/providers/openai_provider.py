@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from backend.character_actions.executor import OPENAI_TOOLS, ToolCall, ToolTurnResult
+from backend.character_actions.executor import (
+    OPENAI_TOOLS,
+    ToolCall,
+    ToolTurnResult,
+    to_openai_tools,
+)
 from backend.providers.base import BaseLLMProvider, _api_guard, _api_guard_tool_turn, safe_loop_call
 
 # thinking_level → reasoning_effort 変換テーブル
@@ -259,7 +264,8 @@ class OpenAIProvider(BaseLLMProvider):
             call_kwargs: dict = {
                 "model": self.model,
                 "messages": all_messages,
-                "tools": OPENAI_TOOLS,
+                # 基本セット＋コンテキスト別追加ツール（context_tools.py の判定結果）
+                "tools": OPENAI_TOOLS + to_openai_tools(self.extra_tools or []),
                 "tool_choice": "auto",
             }
             if effort:

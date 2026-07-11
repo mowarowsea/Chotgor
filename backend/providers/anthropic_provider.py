@@ -260,7 +260,8 @@ class AnthropicProvider(BaseLLMProvider):
         params: dict = {
             "model": self.model,
             "system": system_prompt,
-            "tools": ANTHROPIC_TOOLS,
+            # 基本セット＋コンテキスト別追加ツール（context_tools.py の判定結果）
+            "tools": ANTHROPIC_TOOLS + list(self.extra_tools or []),
             "messages": messages,
             "max_tokens": 4096,
             **_build_thinking_params(self.model, self.thinking_level),

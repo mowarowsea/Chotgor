@@ -65,6 +65,8 @@ from backend.character_actions.leaver import (
     TAKE_LEAVE_SCHEMA,
     TAKE_LEAVE_TOOL_DESCRIPTION,
 )
+from backend.character_actions.messenger import Messenger
+from backend.character_actions.rescheduler import Rescheduler
 
 # Anthropic形式のツール定義リスト
 ANTHROPIC_TOOLS: list[dict] = [
@@ -125,18 +127,27 @@ ANTHROPIC_TOOLS: list[dict] = [
     },
 ]
 
+def to_openai_tools(anthropic_tools: list[dict]) -> list[dict]:
+    """Anthropic 形式のツール定義リストを OpenAI 形式へ変換する。
+
+    OPENAI_TOOLS（基本セット）と、コンテキスト別追加ツール（context_tools.py 経由で
+    プロバイダーへ渡る extra_tools）の両方がこの変換を共有する。
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in anthropic_tools
+    ]
+
+
 # OpenAI形式のツール定義リスト（Anthropic形式から変換）
-OPENAI_TOOLS: list[dict] = [
-    {
-        "type": "function",
-        "function": {
-            "name": t["name"],
-            "description": t["description"],
-            "parameters": t["input_schema"],
-        },
-    }
-    for t in ANTHROPIC_TOOLS
-]
+OPENAI_TOOLS: list[dict] = to_openai_tools(ANTHROPIC_TOOLS)
 
 
 @dataclass
@@ -246,6 +257,7 @@ class ToolExecutor:
         self._switcher = Switcher()
         self._web_searcher = WebSearcher(_sqlite)
         self._leaver = Leaver(character_id, session_id, _sqlite)
+        self._rescheduler = Rescheduler(character_id, _sqlite)
 
     @property
     def switch_request(self) -> tuple[str, str] | None:
@@ -468,8 +480,48 @@ class ToolExecutor:
                 reason=str(tool_input.get("reason", "")),
                 hours=tool_input.get("hours"),
             )
+        if tool_name == "reach_out":
+            # うつつ専用: 相手へ現実のメッセージを送る（context_tools.py が露出を制御）。
+            # Messenger は現在の default_origin（execute() の origin 上書き込み）で
+            # 都度生成する — うつつ経路判定とポーズ要求の書き込みに origin が要るため。
+            try:
+                return self._messenger().reach_out(
+                    message=str(tool_input.get("message", "")),
+                    visit=bool(tool_input.get("visit", False)),
+                )
+            except Exception as e:
+                self.logger.exception("reach_out エラー char=%s", self.character_id)
+                return f"[reach_out error: {e}]"
+        if tool_name == "visit_user":
+            # 1on1 専用: 本人の意志で対面モードへ切り替える。
+            try:
+                return self._messenger().visit_user(
+                    reason=str(tool_input.get("reason", "")),
+                )
+            except Exception as e:
+                self.logger.exception("visit_user エラー char=%s", self.character_id)
+                return f"[visit_user error: {e}]"
+        if tool_name == "override_schedule":
+            # 1on1 専用: 当日予定の一時上書き（呼ばれたら必ず執行される権利）。
+            return self._override_schedule(
+                until=str(tool_input.get("until", "")),
+                reason=str(tool_input.get("reason", "")),
+            )
         self.logger.warning("未知のツール name=%s", tool_name)
         return f"[Unknown tool: {tool_name}]"
+
+    def _messenger(self) -> Messenger:
+        """現在の default_origin を束ねた Messenger を生成する（reach_out / visit_user 用）。"""
+        _sqlite = self.memory_manager.sqlite if self.memory_manager is not None else None
+        return Messenger(self.character_id, _sqlite, default_origin=self.default_origin)
+
+    def _override_schedule(self, until: str, reason: str) -> str:
+        """override_schedule ツールの実装。Rescheduler.override_schedule() に委譲する。"""
+        try:
+            return self._rescheduler.override_schedule(until=until, reason=reason)
+        except Exception as e:
+            self.logger.exception("override_schedule エラー char=%s", self.character_id)
+            return f"[override_schedule error: {e}]"
 
     def _inscribe_memory(self, content: str, category: str, impact: float) -> str:
         """inscribe_memory ツールの実装。Inscriber.inscribe_memory() に委譲して記憶を LanceDB + SQLite に書き込む。
