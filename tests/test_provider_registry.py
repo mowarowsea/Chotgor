@@ -5,7 +5,6 @@ import pytest
 from backend.providers.anthropic_provider import AnthropicProvider
 from backend.providers.claude_cli_provider import (
     ClaudeCliProvider,
-    invoke_claude_cli,
     _parse_stream_json,
     _clean_env,
 )
@@ -228,9 +227,3 @@ class TestParseStreamJson:
             '{"type":"assistant","message":{"content":[{"type":"text","text":"Bar"}]}}'
         )
         assert _parse_stream_json(raw) == "FooBar"
-
-
-class TestInvokeClaudeCliImportable:
-    def test_invoke_claude_cli_is_callable(self):
-        import asyncio
-        assert callable(invoke_claude_cli)

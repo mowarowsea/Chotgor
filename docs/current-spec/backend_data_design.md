@@ -49,7 +49,7 @@
     }
   }
   ```
-* `ghost_model` (String) : バックグラウンドでの記憶整理（digest/forget）などで使用されるLLMモデル（プリセットID）※nullable
+* `ghost_model` (String) : バックグラウンドでの記憶整理（Chronicle/forget）などで使用されるLLMモデル（プリセットID）※nullable
 * `image_data` (Text) : Base64エンコードされたアバター画像 ※nullable
 * `switch_angle_enabled` (Integer) : 視点切り替え機能の有効化フラグ（1: ON, 0: OFF）
 * `self_reflection_mode` (String) : 自己参照ループ設定（disabled / local_trigger / always）

@@ -320,7 +320,7 @@ chronicle_job / forget_job / reflector など
 | `/api/group` | `api/group_chat.py` | グループチャット |
 | `/api/scenario_chat` | `api/scenario_chat/` | シナリオ（scenarios / sessions / stream） |
 | `/api/characters` | `api/characters.py` | キャラクターCRUD |
-| `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・digest 手動実行 |
+| `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行 |
 | `/api/mcp` | `api/mcp_tools.py` | MCPプロキシ用ツール定義・実行（内部API） |
 | `/api/translate` | `api/translation.py` | 翻訳 |
 | `/api/logs` | `api/logs_ui/` | デバッグログ JSON |

@@ -36,9 +36,9 @@
 
 ## 3. その他の補助機能
 
-### デイリー・ダイジェスト ([digest.py](file:///c:/Users/seamo/Chotgor/backend/core/memory/digest.py))
-*   一日の終わりに（または必要に応じて）、その日の細かい記憶を Claude（内省モデル）が要約し、1つの「ダイジェスト記憶」として統合します。
-*   元の細かい記憶を削除する設定（`digest_delete_originals`）も可能です。
+### Chronicle（旧デイリー・ダイジェスト） ([chronicle_job.py](file:///c:/Users/seamo/Chotgor/backend/batch/chronicle_job.py))
+*   一日の終わり（または必要に応じて）、その日のチャットをキャラクター本人（`ask_character`）が振り返り、ワーキングメモリスレッドの要約・更新や新規ポストとして統合します。
+*   処理済みメッセージは `chronicled_at` でマークされ、未処理分のみが対象になります（旧 digest 機能から移行済み）。
 
 ### 忘却候補の抽出 ([get_forgotten_candidates](file:///c:/Users/seamo/Chotgor/backend/core/memory/manager.py#53-71))
 *   [decayed_score](file:///c:/Users/seamo/Chotgor/backend/core/memory/manager.py#16-52) が閾値（デフォルト 0.3）を下回った記憶を、忘却（削除）の候補としてリストアップできます。

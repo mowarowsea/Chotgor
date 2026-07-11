@@ -175,7 +175,7 @@ docker-compose up -d openwebui
 
 **Chronicle（日次更新）の手動実行:**
 ```
-POST /api/inscribed_memories/{character_id}/digest
+POST /api/inscribed_memories/{character_id}/chronicle
 ```
 
 ### グループチャット

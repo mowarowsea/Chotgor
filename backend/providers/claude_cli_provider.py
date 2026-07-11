@@ -1,12 +1,6 @@
 """Claude Code CLI プロバイダー。
 
 `claude` CLI を asyncio.to_thread 経由のサブプロセスとして呼び出す（Windows 対応）。
-
-パブリックヘルパー
-------------------
-invoke_claude_cli(system_prompt, input_text) -> str
-    digest.py / forget.py が共用するシングルターン CLI 呼び出し。
-    終了コードが非ゼロの場合は RuntimeError を送出する。
 """
 
 import asyncio
@@ -241,34 +235,6 @@ def _extract_switch_angle_from_stream_json(raw: str) -> tuple[str, str] | None:
             if preset_name:
                 return preset_name, self_instruction
     return None
-
-
-async def invoke_claude_cli(system_prompt: str, input_text: str) -> str:
-    """Invoke Claude CLI with a system prompt and stdin input; return assistant text.
-
-    Used by digest.py and forget.py for batch / scheduled tasks.
-    Raises RuntimeError if the CLI exits with a non-zero return code.
-    """
-    env = _clean_env()
-
-    def run():
-        return subprocess.run(
-            _build_cli_args(system_prompt),
-            input=input_text.encode("utf-8"),
-            capture_output=True,
-            env=env,
-            cwd=_CLAUDE_CWD_READY,
-        )
-
-    result = await asyncio.to_thread(run)
-
-    if result.returncode != 0:
-        err = result.stderr.decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Claude CLI exited with code {result.returncode}: {err[:500]}"
-        )
-
-    return _parse_stream_json(result.stdout.decode("utf-8", errors="replace"))
 
 
 class ClaudeCliProvider(BaseLLMProvider):

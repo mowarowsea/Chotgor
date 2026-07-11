@@ -246,7 +246,7 @@
 
             <div class="ch-field">
                 <span class="ch-label">利用モデル
-                    <span class="ch-hint">有効にしたモデルがモデルリストに表示される。ghost スイッチでダイジェスト・忘却処理に使うモデル（Ghost Model）を1つ選べる</span>
+                    <span class="ch-hint">有効にしたモデルがモデルリストに表示される。ghost スイッチでChronicle・忘却処理に使うモデル（Ghost Model）を1つ選べる</span>
                 </span>
 
                 <div class="accordion" id="model-accordion">
@@ -259,7 +259,7 @@
                             <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▸</button>
                             <strong>{{ preset.name }}</strong>
                             <span class="ch-tag ch-tag--accent">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
-                            <label class="ghost-pick" title="Ghost Model（ダイジェスト・忘却処理に使うモデル）に設定する">
+                            <label class="ghost-pick" title="Ghost Model（Chronicle・忘却処理に使うモデル）に設定する">
                                 <span class="ghost-pick__label">ghost</span>
                                 <span class="ch-toggle">
                                     <input type="radio" name="ghost_model" value="{{ preset.id }}"
@@ -872,7 +872,7 @@
             <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
             <strong>${name}</strong>
             <span class="ch-tag ch-tag--accent">${providerLabel}</span>
-            <label class="ghost-pick" title="Ghost Model（ダイジェスト・忘却処理に使うモデル）に設定する">
+            <label class="ghost-pick" title="Ghost Model（Chronicle・忘却処理に使うモデル）に設定する">
                 <span class="ghost-pick__label">ghost</span>
                 <span class="ch-toggle">
                     <input type="radio" name="ghost_model" value="${presetId}">

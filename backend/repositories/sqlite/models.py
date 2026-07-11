@@ -109,7 +109,7 @@ class Character(Base):
     inner_narrative = Column(Text, nullable=False, default="")  # 内的叙述（キャラクター自身の自己物語テキスト）
     cleanup_config = Column(JSON, nullable=False, default=dict)
     enabled_providers = Column(JSON, nullable=False, default=dict)
-    ghost_model = Column(String, nullable=True)  # digest/forget に使うプリセットID
+    ghost_model = Column(String, nullable=True)  # chronicle/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
     switch_angle_enabled = Column(Integer, nullable=False, default=0)  # 1=ON, 0=OFF
     # 自己参照ループ設定

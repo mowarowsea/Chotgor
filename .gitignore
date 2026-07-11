@@ -234,7 +234,6 @@ Chotgor.zip
 # Claude Code 指示ファイル
 AGENTS.md
 CLAUDE.md
-docs/ARCHITECTURE.md
 
 # ビルドキャッシュ
 frontend/tsconfig.tsbuildinfo
