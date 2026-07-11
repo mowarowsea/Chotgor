@@ -101,6 +101,9 @@ def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default"
         "--tools", tools_str,
         "--no-session-persistence",
         "--system-prompt", system_prompt,
+        "--thinking", "adaptive", # thinking blockが出ない問題対応。効かないかも。（ClaudeCodeCLI Issueに記載あり）
+        "--thinking-display", "summarized", # thinking blockが出ない問題対応。効かないかも。（ClaudeCodeCLI Issueに記載あり）
+        "--include-partial-messages", # 出力のストリーム化。効いてないっぽい。
     ]
     if model:
         args.extend(["--model", model])
