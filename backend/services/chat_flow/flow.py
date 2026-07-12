@@ -1,4 +1,4 @@
-"""ChatFlow — 1キャラ1ターン分のLLM呼び出し+ツール実行+後処理の共通骨。
+"""ChatFlow — 1キャラ1ターン分のLLM呼び出し+ツール実行の経路オーケストレーション。
 
 旧 ChatService の処理本体を 1on1 / シナリオ PC モード / うつつ PC ターンで
 共通利用できる形に抽出した。「次のターンが誰か」「履歴をどう持つか」は
@@ -8,17 +8,10 @@
 Architecture:
   Adapter / Scenario Loop → ChatFlow → LLM provider
 
-Flow:
-  1. 記憶を想起 (長期記憶 RAG)
-  1b. ワーキングメモリ（スレッド）を取得
-  2. URL自動fetch
-  3. システムプロンプト構築
-  4. プロバイダーへディスパッチ
-  5. 応答からタグを抽出して ToolExecutor.apply_*_tags() 経由で実行
-     （inscribe_memory / carve_narrative / switch_angle 各タグの解析と execute() 経由実行を集約）
-  6. switch_angle / power_recall の再帰
-  7. farewell（別れ検出）をバックグラウンドタスクとして起動（session_id 有時のみ）
-  8. デバッグログ
+パッケージ内の分業:
+  - preparation.py  : ターン前処理（想起・WM・URL fetch・プロンプト構築）→ PreparedContext
+  - flow.py（本体） : tool-use 経路／タグ経路のディスパッチ、switch_angle / power_recall の再帰
+  - farewell_flow.py: ターン完了後の別れ検出・疲労離席の起動
 
 後方互換: `backend.services.chat.service.ChatService` は本クラスの別名として
 そのまま使える（services/chat/service.py が再エクスポート）。
@@ -28,226 +21,40 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from dataclasses import replace
 
 _log = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from backend.character_actions.executor import ToolExecutor
-
 from backend.lib.debug_logger import logger
-from backend.lib.log_context import current_log_feature
 from backend.character_actions.anticipator import extract_anticipation
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
-from backend.repositories.lance.store import EmbeddingError
 from backend.providers.base import LLMApiError
-from backend.providers.registry import create_provider
-from backend.services.chat.request_builder import (
-    append_turn_annotation,
-    build_system_prompt,
-    build_turn_annotation,
-)
 from backend.lib.tag_parser import StreamingTagStripper
 from backend.lib.tool_event_recorder import record_tool_event
 from backend.character_actions.executor import ToolExecutor
-from backend.lib.web_fetch import fetch_urls, find_urls
 from backend.services.chat.models import ChatRequest, Message
 from backend.character_actions.recaller import Recaller, format_power_recall_turn
-from backend.character_actions.farewell_detector import FarewellDetector
+from backend.services.chat_flow.preparation import (
+    PreparedContext,
+    extract_text_content,
+    prepare_context,
+)
+from backend.services.chat_flow.farewell_flow import (
+    launch_farewell_tasks,
+    run_farewell_detection,
+)
 
+# 後方互換の別名（services/chat/service.py・既存テストが参照する旧名）
+_run_farewell_detection = run_farewell_detection
 
-def extract_text_content(content: str | list | None) -> str:
-    """メッセージの content (str or list) からプレーンテキストのみを抽出する。"""
-    if not content:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                if part.get("type") == "text":
-                    parts.append(part.get("text", ""))
-            elif isinstance(part, str):
-                parts.append(part)
-        return "".join(parts)
-    return ""
-
-
-async def _run_farewell_detection(
-    detector: "FarewellDetector",
-    character_id: str,
-    character_name: str,
-    session_id: str,
-    preset_id: str,
-    farewell_config: dict,
-    messages: list[dict],
-    settings: dict,
-    vector_store=None,
-) -> None:
-    """FarewellDetectorをバックグラウンドで実行し、退席判定をDBに保存するコルーチン。
-
-    退席確定の場合のみセッションの exited_chars を更新する。
-    疎遠化確定時は SQLite に加えてベクトルストアの定義 embedding も "estranged" に更新する。
-    SSEストリームは既に終了しているため、イベント送信は行わない。
-    次リクエスト時の already_exited チェックで自動検知される。
-
-    Args:
-        detector: FarewellDetectorインスタンス。
-        character_id: キャラクターID。
-        character_name: キャラクター名。
-        session_id: 対象セッションID。
-        preset_id: judge LLM に使用するプリセットID。
-        farewell_config: キャラクターのfarewell_config辞書。
-        messages: 判定に使用する会話履歴（最新の応答を含む）。
-        settings: グローバル設定辞書。
-        vector_store: LanceStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
-    """
-    try:
-        result = await detector.detect(
-            character_id=character_id,
-            session_id=session_id,
-            preset_id=preset_id,
-            farewell_config=farewell_config,
-            messages=messages,
-            settings=settings,
-        )
-    except Exception:
-        _log.exception("FarewellDetector実行エラー char=%s session=%s", character_name, session_id)
-        return
-
-    # judge の採点結果を該当ターン（最新キャラ発話）の封筒 payload に残す
-    # （Tier 3 サンプリングの材料を兼ねる。めぐり Phase 5）。best-effort。
-    if result is not None:
-        try:
-            detector.sqlite.attach_payload_to_latest_chat_event(
-                character_id, session_id,
-                {
-                    "judge": {
-                        "emotions": result.emotions,
-                        "engagement": result.engagement,
-                    }
-                },
-            )
-        except Exception:
-            _log.exception("judge採点の封筒添付に失敗 char=%s", character_name)
-
-    # 疲労離席（めぐり Phase 5）: 物理の発火式が終わりを決める。
-    # judge の没入度で閾値が持ち上がる（夢中は疲労を忘れさせるが消さない）。
-    # farewell（感情閾値）で退席が確定するターンでは二重離席を避けるためスキップ。
-    if result is None or not result.should_exit:
-        try:
-            from backend.services.gate import check_fatigue_leave
-            check_fatigue_leave(
-                detector.sqlite,
-                character_id=character_id,
-                character_name=character_name,
-                session_id=session_id,
-                farewell_config=farewell_config,
-                engagement=result.engagement if result is not None else 0.5,
-            )
-        except Exception:
-            _log.exception("疲労離席チェックに失敗 char=%s", character_name)
-
-    if result is None or not result.should_exit:
-        return
-
-    _log.info(
-        "別れ検出: セッション退席 char=%s session=%s type=%s emotions=%s",
-        character_name, session_id, result.farewell_type, result.emotions,
-    )
-
-    # セッションの exited_chars に退席エントリを追記する
-    try:
-        sqlite = detector.sqlite
-        session = sqlite.get_chat_session(session_id)
-        if session is None:
-            return
-        exited_chars: list[dict] = getattr(session, "exited_chars", None) or []
-        # 重複チェック: 既に退席済みなら何もしない
-        if any(e.get("char_name") == character_name for e in exited_chars):
-            return
-
-        # ネガティブ退席時: 累積回数を確認し、閾値超過なら estranged に移行する
-        reason = result.reason
-        if result.farewell_type == "negative":
-            estrangement = farewell_config.get("estrangement", {})
-            lookback_days = estrangement.get("lookback_days", 30)
-            threshold = estrangement.get("negative_exit_threshold", 5)
-            from datetime import timedelta
-            since = datetime.now() - timedelta(days=lookback_days)
-            prev_count = sqlite.get_negative_exit_count(character_name, since)
-            total_count = prev_count + 1  # 今回の退席を含む合計
-
-            if total_count >= threshold:
-                # 閾値到達: relationship_status を estranged に変更する
-                sqlite.update_character(character_id, relationship_status="estranged")
-                _log.info(
-                    "別れ決断: 閾値到達 char=%s total=%d threshold=%d → estranged",
-                    character_name, total_count, threshold,
-                )
-                # ベクトルストアの定義 embedding も estranged に更新する（類似キャラ登録ブロックに必要）
-                if vector_store is not None:
-                    try:
-                        vector_store.mark_definition_estranged(character_id)
-                    except Exception:
-                        _log.exception("ベクトルストア 疎遠化マーク失敗 char=%s", character_name)
-                farewell_messages = farewell_config.get("farewell_message") or {}
-                estranged_msg = farewell_messages.get("estranged", "")
-                reason = estranged_msg if estranged_msg else reason
-            else:
-                warning = (
-                    f"過去{lookback_days}日間で{total_count}回、"
-                    f"{character_name}は嫌がって会話を打ち切りました。\n"
-                    f"{lookback_days}日間に{threshold}回これが続けば、"
-                    f"{character_name}はあなたとの別れを決断するでしょう。"
-                )
-                reason = f"{reason}\n{warning}" if reason else warning
-
-        exited_chars = [*exited_chars, {
-            "char_name": character_name,
-            "reason": reason,
-            "farewell_type": result.farewell_type,
-        }]
-        sqlite.update_chat_session(session_id, exited_chars=exited_chars)
-        # タイムライン封筒（chat.farewell）: 退席という出来事を正本に載せる。
-        # 中身（理由・種別）は payload（chat_sessions.exited_chars と重複するが、
-        # exited_chars は上書き更新される JSON なので封筒側にも凍結して残す）。
-        sqlite.record_timeline_event(
-            character_id=character_id,
-            event_type="chat.farewell",
-            actor="character",
-            counterpart="user",
-            origin="real",
-            session_id=session_id,
-            source_table="chat_sessions",
-            source_id=session_id,
-            payload={
-                "reason": reason,
-                "farewell_type": result.farewell_type,
-            },
-        )
-    except Exception:
-        _log.exception("退席DB保存エラー char=%s session=%s", character_name, session_id)
-
-
-@dataclass
-class _Context:
-    """_prepare_context() が返す前処理済みデータ。"""
-
-    messages: list[dict]
-    recalled_identity: list[dict]
-    recalled: list[dict]
-    wm_fixed: list[dict]
-    wm_recalled: list[dict]
-    provider_impl: object
-    system_prompt: str
-    # 記憶想起に失敗したときの UI 表示用メッセージ（成功時は None）。
-    recall_error: str | None = None
+__all__ = [
+    "ChatFlow",
+    "PreparedContext",
+    "extract_text_content",
+    "prepare_context",
+    "_run_farewell_detection",
+]
 
 
 class ChatFlow:
@@ -336,235 +143,6 @@ class ChatFlow:
             timeout_seconds=preset.get("timeout_seconds", 300),
         )
 
-    async def _prepare_context(self, request: ChatRequest) -> _Context:
-        """execute() / execute_stream() 共通の前処理を実行する。
-
-        以下を順番に行い、_Context にまとめて返す:
-          1. 長期記憶の想起
-          1b. ワーキングメモリ（スレッド）の取得
-          2. URLの自動fetch
-          3（4）. プロバイダー決定とシステムプロンプト構築
-
-        Returns:
-            _Context: 以降の処理で必要な全データ。
-        """
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
-
-        # --- 1. 記憶の想起 ---
-        # XML タグ（グループチャットの <user>...</user> 等）を除去してから想起クエリにする。
-        last_user_msg = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                raw = extract_text_content(m.get("content"))
-                last_user_msg = re.sub(r"<[^>]+>", "", raw).strip()
-                break
-
-        recalled_identity: list[dict] = []
-        recalled: list[dict] = []
-        recall_error: str | None = None
-        # 記憶系（長期記憶・WM）の読み出しがこのターンで縮退しているか。
-        # True なら build_system_prompt が運用告知ブロックをキャラクター本人へ注入する
-        # （recall_error はユーザ向け UI 通知、こちらはキャラクター向け通知と役割を分ける）。
-        memory_degraded = False
-        if last_user_msg:
-            try:
-                recalled_identity, recalled = self.memory_manager.recall_with_identity(
-                    request.character_id, last_user_msg
-                )
-            except EmbeddingError as e:
-                # embedding サーバ（infinity 等）に接続できないケース。原因が分かるよう専用メッセージにする。
-                _log.warning("記憶想起失敗（embedding）char=%s error=%s", request.character_id, e)
-                recall_error = "記憶の想起に失敗しました（embedding接続エラー）"
-                memory_degraded = True
-                # 計器 Tier 1（embedding_degraded）: 記憶の縮退は幻想の穴（既存の
-                # 縮退通知二系統 = recall_error / memory_notice に加え、監査記録を残す）。
-                from backend.lib.instrument_recorder import fire_alarm
-                fire_alarm("embedding_degraded", details={
-                    "where": "recall_with_identity",
-                    "character_id": request.character_id,
-                    "error": str(e),
-                })
-            except Exception as e:
-                _log.warning("記憶想起失敗 char=%s error=%s", request.character_id, e)
-                recall_error = "記憶の想起に失敗しました"
-                memory_degraded = True
-
-        # --- 1b. ワーキングメモリ（スレッド）を取得 ---
-        # 全スレッド一覧（self_history 代替）／emotion・body・relation の固定注入／
-        # task・topic の heat 上位想起、の3系統を取得する。
-        wm_all_threads: list[dict] | None = None
-        wm_fixed_threads: list[dict] | None = None
-        wm_recalled_threads: list[dict] | None = None
-        if self.working_memory_manager:
-            try:
-                wm_all_threads = (
-                    self.working_memory_manager.list_all_threads(request.character_id) or None
-                )
-                wm_fixed_threads = (
-                    self.working_memory_manager.get_fixed_threads(request.character_id) or None
-                )
-                if last_user_msg:
-                    wm_recalled_threads = (
-                        self.working_memory_manager.recall_threads(
-                            request.character_id, last_user_msg
-                        )
-                        or None
-                    )
-            except EmbeddingError as e:
-                # heat 想起（recall_threads）の embedding 失敗。一覧・固定注入は取得済みのまま残る。
-                _log.warning("ワーキングメモリ取得失敗（embedding）char=%s error=%s", request.character_id, e)
-                memory_degraded = True
-                if recall_error is None:
-                    recall_error = "ワーキングメモリの取得に失敗しました（embedding接続エラー）"
-                # 計器 Tier 1（embedding_degraded）: 監査記録（縮退通知二系統とは別枠）。
-                from backend.lib.instrument_recorder import fire_alarm
-                fire_alarm("embedding_degraded", details={
-                    "where": "recall_threads",
-                    "character_id": request.character_id,
-                    "error": str(e),
-                })
-            except Exception as e:
-                _log.warning("ワーキングメモリ取得失敗 char=%s error=%s", request.character_id, e)
-                memory_degraded = True
-                if recall_error is None:
-                    recall_error = "ワーキングメモリの取得に失敗しました"
-
-        # --- 2. URLの自動fetch ---
-        fetched_contents = []
-        if last_user_msg:
-            urls = find_urls(last_user_msg)
-            if urls:
-                try:
-                    fetched_contents = await fetch_urls(urls)
-                except Exception:
-                    pass
-
-        # --- コンテキスト別追加ツール（reach_out / visit_user / override_schedule）---
-        # 文脈（origin / session_id）に応じてキャラへ露出するツールと、その操作ガイドを
-        # 単一判定点（character_actions/context_tools.py）から取得する。
-        # in-process tool-use プロバイダーには extra_tools として渡し、claude_cli は
-        # MCP tools/list（env→クエリ経路）側で同じ判定が効く。失敗しても会話は止めない。
-        context_extra_tools: list[dict] = []
-        context_tool_hints: list[str] = []
-        try:
-            from backend.character_actions.context_tools import (
-                resolve_context_tool_hints,
-                resolve_context_tools,
-            )
-            _ct_sqlite = getattr(self.memory_manager, "sqlite", None)
-            context_extra_tools = resolve_context_tools(
-                _ct_sqlite, request.character_id,
-                origin=request.default_origin, session_id=request.session_id or None,
-            )
-            context_tool_hints = resolve_context_tool_hints(
-                _ct_sqlite, request.character_id,
-                origin=request.default_origin, session_id=request.session_id or None,
-            )
-        except Exception:
-            _log.exception("コンテキストツール判定に失敗 char=%s", request.character_id)
-
-        # --- プロバイダーを決定（use_tools フラグに使用） ---
-        # PowerRecall 再帰呼び出し中は power_recalled が非空
-        feature = "power_recall" if request.power_recalled else "chat"
-        current_log_feature.set(feature)
-        provider_impl = create_provider(
-            request.provider, request.model, request.settings,
-            thinking_level=request.thinking_level,
-            preset_name=request.current_preset_name or "",
-            # character_name は claude_cli の conversation 整形（<キャラ名>...</キャラ名>）に使う。
-            # 未指定だと <character> へフォールバックして「自分の発話」感が薄れるため必ず渡す。
-            character_name=request.character_name or "",
-            character_id=request.character_id,
-            session_id=request.session_id or "",
-            allowed_tools=request.allowed_tools,
-            timeout_seconds=request.timeout_seconds,
-            extra_tools=context_extra_tools,
-        )
-
-        # --- 動機ブロック（めぐり）: 圧力の淡白な一行＋active な意図を毎ターン
-        # 読み取り時計算する。圧力は保存されない純関数（封筒の導関数）。
-        # 失敗しても会話は止めない。
-        motive_lines: list[str] | None = None
-        active_intents: list[dict] | None = None
-        try:
-            from backend.services.pressure import compute_pressures, pressure_plain_lines
-            sqlite_store = getattr(self.memory_manager, "sqlite", None)
-            if sqlite_store is not None and request.character_id:
-                pressures = compute_pressures(sqlite_store, request.character_id)
-                motive_lines = pressure_plain_lines(pressures)
-                active_intents = [
-                    {"description": i.description, "target": i.target}
-                    for i in sqlite_store.list_intents(
-                        request.character_id, status="active"
-                    )
-                ] or None
-        except Exception:
-            _log.exception("圧力計算に失敗 char=%s", request.character_id)
-
-        # --- 予定コンテキスト（生活カレンダー）: 現在の予定・次の予定・意志上書きの超過 ---
-        # 1on1 とうつつ PC の両方で、本人が「この後の予定」を認知できるようにする
-        # （2026-07-11 要件③）。ランダムイベント（伏せ枠）はネタバレ防止のため含まれない
-        # （awareness 側で構造的に除外）。失敗しても会話は止めない。
-        schedule_lines: list[str] | None = None
-        try:
-            from backend.services.schedule.awareness import build_schedule_lines
-            _sched_sqlite = getattr(self.memory_manager, "sqlite", None)
-            if _sched_sqlite is not None and request.character_id:
-                schedule_lines = build_schedule_lines(
-                    _sched_sqlite, request.character_id
-                ) or None
-        except Exception:
-            _log.exception("予定コンテキスト構築に失敗 char=%s", request.character_id)
-
-        # --- システムプロンプト構築（安定ブロックのみ） ---
-        # 毎ターン変動する情報はターン注釈として最新 user メッセージ側へ付加する
-        # （プロンプトキャッシュ対応。docs/planned/prompt_cache_plan.md A案）。
-        system_prompt = build_system_prompt(
-            character_system_prompt=request.character_system_prompt,
-            inner_narrative=request.inner_narrative,
-            provider_additional_instructions=request.provider_additional_instructions,
-            wm_all_threads=wm_all_threads,
-            wm_fixed_threads=wm_fixed_threads,
-            use_tools=provider_impl.SUPPORTS_TOOLS,
-            available_presets=request.available_presets or None,
-            current_preset_name=request.current_preset_name,
-            memory_degraded=memory_degraded,
-            usual_days_enabled=request.usual_days_enabled,
-            user_label=request.user_label,
-            user_position=request.user_position,
-            face_to_face=request.face_to_face,
-            context_tool_hints=context_tool_hints or None,
-        )
-
-        # --- ターン注釈（変動ブロック）を最新 user メッセージへ付加 ---
-        # 注釈は LLM リクエストにのみ乗り、DB 保存の履歴には残らない
-        # （messages はここでコピーへ差し替わるため、元リストは汚れない）。
-        annotation = build_turn_annotation(
-            recalled_memories=recalled or None,
-            recalled_identity_memories=recalled_identity or None,
-            enable_time_awareness=request.enable_time_awareness,
-            current_time_str=request.current_time_str,
-            time_since_last_interaction=request.time_since_last_interaction,
-            fetched_contents=fetched_contents,
-            wm_recalled_threads=wm_recalled_threads,
-            motive_lines=motive_lines,
-            active_intents=active_intents,
-            schedule_lines=schedule_lines,
-            previous_anticipation=request.previous_anticipation,
-        )
-        messages = append_turn_annotation(messages, annotation)
-
-        return _Context(
-            messages=messages,
-            recalled_identity=recalled_identity,
-            recalled=recalled,
-            wm_fixed=wm_fixed_threads or [],
-            wm_recalled=wm_recalled_threads or [],
-            provider_impl=provider_impl,
-            system_prompt=system_prompt,
-            recall_error=recall_error,
-        )
-
     def _log_debug(self, label: str, request: ChatRequest, messages: list[dict], clean_text: str) -> None:
         """LLM呼び出しの操作ログを出力する。char_label は {name}@{preset} 形式で出力する。"""
         char_label = f"{request.character_name}@{request.current_preset_name or request.provider}"
@@ -582,7 +160,7 @@ class ChatFlow:
         退席タグ・ツールが検出された場合も、退席メッセージをテキストに含めてそのまま返す。
         （OpenWebUI non-stream 向け: セッション終了の永続化はここでは行わない）
         """
-        ctx = await self._prepare_context(request)
+        ctx = await prepare_context(self.memory_manager, self.working_memory_manager, request)
 
         # ツール実行の唯一の関門。SUPPORTS_TOOLS=True なら provider 内 tool-use ループから、
         # False ならタグ抽出後の apply_* メソッドから呼ばれ、どちらも同じ execute() を通って
@@ -614,9 +192,7 @@ class ChatFlow:
                 return f"[Error: {type(e).__name__}: {e}]"
 
             # タグ方式は抽出だけして、実行は tool_executor.execute() 経由で記録までまとめて行う。
-            clean_text = tool_executor.apply_inscribe_memory_tags(response_text)
-            clean_text = tool_executor.apply_carve_narrative_tags(clean_text)
-            clean_text = tool_executor.apply_switch_angle_tags(clean_text)
+            clean_text = tool_executor.apply_all_tags(response_text)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -645,7 +221,7 @@ class ChatFlow:
                 ("thinking",      str)                  : 思考ブロック（リアルタイム）
                 ("text",          str)                  : クリーンな応答テキスト（最後に1回）
         """
-        ctx = await self._prepare_context(request)
+        ctx = await prepare_context(self.memory_manager, self.working_memory_manager, request)
 
         # 想起した記憶を最初にyield
         all_recalled = ctx.recalled_identity + ctx.recalled
@@ -786,9 +362,7 @@ class ChatFlow:
             # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み・アングル切替）
             # テキスト表示は済んでいるため、clean_text は副作用処理とログ用途にのみ使う。
             # タグ抽出後の実行は tool_executor 経由（記録まで一元化）。
-            clean_text = tool_executor.apply_inscribe_memory_tags(full_text)
-            clean_text = tool_executor.apply_carve_narrative_tags(clean_text)
-            clean_text = tool_executor.apply_switch_angle_tags(clean_text)
+            clean_text = tool_executor.apply_all_tags(full_text)
 
         clean_text, switch_info = self._extract_switch_info(
             tool_executor, clean_text, bool(request.available_presets)
@@ -829,50 +403,7 @@ class ChatFlow:
 
         # 別れ検出: ストリーム完了後にバックグラウンドタスクとして起動する。
         # 結果はDBに保存し、次リクエスト時の already_exited チェックで検知される。
-        # farewell_config / farewell_relationship_status はリクエスト構築時にキャッシュ済みのため
-        # ここでは get_character() を呼ばない。
-        if request.session_id:
-            if (
-                request.farewell_config
-                and request.judge_preset_id
-                and request.farewell_relationship_status != "estranged"
-            ):
-                farewell_messages = [*ctx.messages, {"role": "assistant", "content": clean_text}]
-                detector = FarewellDetector(self.memory_manager.sqlite)
-                asyncio.create_task(
-                    _run_farewell_detection(
-                        detector=detector,
-                        character_id=request.character_id,
-                        character_name=request.character_name,
-                        session_id=request.session_id,
-                        preset_id=request.judge_preset_id,
-                        farewell_config=request.farewell_config,
-                        messages=farewell_messages,
-                        settings=request.settings,
-                        vector_store=self.memory_manager.vector_store,
-                    )
-                )
-            elif (
-                request.farewell_config
-                and isinstance(request.farewell_config.get("fatigue"), dict)
-            ):
-                # judge プリセット未設定でも疲労離席は動かす（engagement=0.5 縮退。
-                # めぐり Phase 5 — 出口は物理が握る）。
-                def _fatigue_only() -> None:
-                    """judge 不在時の疲労離席チェック（バックグラウンドスレッド実行）。"""
-                    try:
-                        from backend.services.gate import check_fatigue_leave
-                        check_fatigue_leave(
-                            self.memory_manager.sqlite,
-                            character_id=request.character_id,
-                            character_name=request.character_name,
-                            session_id=request.session_id,
-                            farewell_config=request.farewell_config,
-                            engagement=0.5,
-                        )
-                    except Exception:
-                        _log.exception("疲労離席チェックに失敗 char=%s", request.character_name)
-                asyncio.create_task(asyncio.to_thread(_fatigue_only))
+        launch_farewell_tasks(self.memory_manager, request, ctx.messages, clean_text)
 
         if clean_text and not text_already_streamed:
             yield ("text", clean_text)

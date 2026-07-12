@@ -89,8 +89,9 @@
 
 | パス | 責務 |
 |---|---|
-| `services/chat/` | 1on1チャット本流。`service.py`（フロー制御）、`request_builder.py`（安定ブロック＝システムプロンプト＋変動ブロック＝ターン注釈の二層組み立て）、`request_factory.py`、`content.py`、`indexer.py`（履歴を LanceDB `chat_turns` へ upsert）、`models.py` |
-| `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py` |
+| `services/chat/` | 1on1チャット本流。`service.py`（ChatFlow の再エクスポート）、`request_builder.py`（安定ブロック＝システムプロンプト＋変動ブロック＝ターン注釈の二層組み立て）、`request_factory.py`、`content.py`、`indexer.py`（履歴を LanceDB `chat_turns` へ upsert）、`models.py` |
+| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・switch_angle / power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`farewell_flow.py`（別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象） |
+| `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py`、`scene_close.py`（[SCENE_CLOSE] 検出・除去）、`usual_days.py`（うつつのセッション管理・演出素材・シーン駆動） |
 | `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`reindex_service.py`（embedding変更時の全再構築） |
 | `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる）。ANTICIPATE_RESPONSE ガイドは付与しない（予想は次ターンを受け取る相手がいるチャット前提の機能のため） |
 | `services/timeline/` | **めぐり（巡り / Aliveness）の投影層＋予報層**。封筒正本（timeline_events）を観測者クラス（self / world_frame / user_ui）別の可視性ポリシーでフィルタする `projector.py`。GM への「現実の接触の記録」ブロックもここ。`forecast.py` は予報パネルの集約純関数（診断・カレンダー・圧力の無風外挿・配達シミュレータ。LLM 不使用） |
@@ -190,7 +191,7 @@ frontend useScenarioChat → /api/scenario_chat/... (api/scenario_chat/)
 
 ```
 main.py うつつ tick（_run_every_minute 同乗・冪等キー=日付+スロット）
-  → services/scenario_chat/service.run_usual_days_scene(session)
+  → services/scenario_chat/usual_days.run_usual_days_scene(session)
     → run_scenario_turn(headless=True): GM↔キャラPC を [SCENE_CLOSE] か上限ターンまで無人連鎖
       - GMプロンプトに time_context（曜日/時間帯/季節）＋偶発イベント（混合抽選）＋
         ソフト収束ヒントを注入（prompt_builder の time_context/gm_ooc_appendix）

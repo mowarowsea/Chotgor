@@ -79,9 +79,9 @@ async def test_chat_service_execute_returns_text():
     fake_provider.generate = AsyncMock(return_value="Hi there!")
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -108,9 +108,9 @@ async def test_chat_service_execute_provider_error_returns_error_string():
     fake_provider.generate = AsyncMock(side_effect=RuntimeError("oops"))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -142,9 +142,9 @@ async def test_chat_service_execute_with_tools_returns_text():
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi via tools!", ""))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -173,9 +173,9 @@ async def test_chat_service_execute_with_tools_error_returns_error_string():
     fake_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("tools oops"))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -247,9 +247,9 @@ async def test_execute_with_tools_calls_memory_manager_via_inscribe_memory():
     ])
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -288,9 +288,9 @@ async def test_execute_with_tools_calls_carve_narrative_via_tool_executor():
     ])
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -333,9 +333,9 @@ async def test_execute_with_tools_creates_thread_via_post_working_memory_thread(
     ])
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(
             memory_manager=memory_manager, working_memory_manager=working_memory_manager
@@ -380,9 +380,9 @@ async def test_execute_with_tools_adds_post_via_post_working_memory_thread():
     ])
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(
             memory_manager=memory_manager, working_memory_manager=working_memory_manager
@@ -418,9 +418,9 @@ async def test_execute_without_tools_does_not_call_generate_with_tools():
     fake_provider.generate_with_tools = AsyncMock(side_effect=AssertionError("呼ばれてはいけない"))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         result = await service.execute(request)
@@ -472,9 +472,9 @@ async def test_execute_stream_yields_recall_error_on_embedding_failure():
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         events = await _collect_stream_events(service, request)
@@ -511,9 +511,9 @@ async def test_execute_stream_yields_generic_recall_error_on_other_failure():
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         events = await _collect_stream_events(service, request)
@@ -540,9 +540,9 @@ async def test_execute_stream_no_recall_error_on_success():
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         events = await _collect_stream_events(service, request)
@@ -577,9 +577,9 @@ async def test_execute_stream_yields_anticipation_event():
     )
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         events = await _collect_stream_events(service, request)
@@ -619,9 +619,9 @@ async def test_prepare_context_passes_memory_degraded_on_recall_embedding_failur
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys") as mock_build,
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         await _collect_stream_events(service, request)
@@ -662,9 +662,9 @@ async def test_prepare_context_passes_memory_degraded_on_wm_embedding_failure():
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys") as mock_build,
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(
             memory_manager=memory_manager,
@@ -695,9 +695,9 @@ async def test_prepare_context_memory_degraded_false_on_success():
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
-        patch("backend.services.chat_flow.flow.create_provider", return_value=fake_provider),
-        patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys") as mock_build,
-        patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys") as mock_build,
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
     ):
         service = ChatService(memory_manager=memory_manager)
         await _collect_stream_events(service, request)

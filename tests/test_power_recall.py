@@ -319,9 +319,9 @@ class TestChatServicePowerRecallLoop:
         provider = self._make_stream_provider("思い出してみる\n[POWER_RECALL:前に話した内容|3]")
 
         with (
-            patch("backend.services.chat_flow.flow.create_provider", return_value=provider),
-            patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-            patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+            patch("backend.services.chat_flow.preparation.create_provider", return_value=provider),
+            patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+            patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
             patch("backend.services.chat_flow.flow.asyncio.to_thread", new=AsyncMock(
                 return_value={"inscribed_memories": [], "chat_turns": []}
             )),
@@ -356,9 +356,9 @@ class TestChatServicePowerRecallLoop:
         provider = self._make_stream_provider("思い出してみる\n[POWER_RECALL:もっと調べる|3]")
 
         with (
-            patch("backend.services.chat_flow.flow.create_provider", return_value=provider),
-            patch("backend.services.chat_flow.flow.build_system_prompt", return_value="sys"),
-            patch("backend.services.chat_flow.flow.find_urls", return_value=[]),
+            patch("backend.services.chat_flow.preparation.create_provider", return_value=provider),
+            patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+            patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
         ):
             service = ChatService(memory_manager=mm)
             events = [e async for e in service.execute_stream(request)]

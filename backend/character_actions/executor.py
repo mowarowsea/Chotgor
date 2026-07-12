@@ -259,6 +259,22 @@ class ToolExecutor:
                 "タグ方式 %s 失敗 char=%s args=%r", tool_name, self.character_id, args,
             )
 
+    def apply_all_tags(self, text: str) -> str:
+        """LLM応答テキストから全ツールタグ（inscribe / carve / switch_angle）を抽出・実行する。
+
+        タグ方式経路の標準の後処理。3種のタグを順に処理し、マーカーを除去した
+        クリーンなテキストを返す。
+
+        Args:
+            text: LLM応答テキスト。
+
+        Returns:
+            タグマーカーを除去したクリーンなテキスト。
+        """
+        clean = self.apply_inscribe_memory_tags(text)
+        clean = self.apply_carve_narrative_tags(clean)
+        return self.apply_switch_angle_tags(clean)
+
     def apply_inscribe_memory_tags(self, text: str) -> str:
         """LLM応答テキストから [INSCRIBE_MEMORY:...] タグを抽出し、execute() 経由で実行する。
 

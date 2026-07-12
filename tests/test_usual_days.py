@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 import backend.main as mainmod
 import backend.services.scenario_chat.pc_runner as pc_runner_mod
 import backend.services.scenario_chat.service as svc
+import backend.services.scenario_chat.usual_days as usual_days_mod
 from backend.api.ui.characters import _parse_usual_form, _usual_time_grid_text
 from backend.lib.log_context import current_log_feature
 from backend.services.chat.request_builder import build_system_prompt
@@ -287,7 +288,7 @@ def _install_mocks(monkeypatch, gm_script: list[str], pc_calls: list[dict]):
     async def fake_synopsis(*a, **k):
         return None
 
-    monkeypatch.setattr(svc, "maybe_update_auto_synopsis", fake_synopsis)
+    monkeypatch.setattr(usual_days_mod, "maybe_update_auto_synopsis", fake_synopsis)
 
 
 class TestHeadlessLoop:
@@ -409,7 +410,7 @@ class TestHeadlessLoop:
             synopsis_calls.append(kwargs)
             return None
 
-        monkeypatch.setattr(svc, "maybe_update_auto_synopsis", rec_synopsis)
+        monkeypatch.setattr(usual_days_mod, "maybe_update_auto_synopsis", rec_synopsis)
 
         asyncio.run(svc.run_usual_days_scene(
             session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
@@ -570,7 +571,7 @@ class TestUsualUserPc:
         async def fake_synopsis(*a, **k):
             return None
 
-        monkeypatch.setattr(svc, "maybe_update_auto_synopsis", fake_synopsis)
+        monkeypatch.setattr(usual_days_mod, "maybe_update_auto_synopsis", fake_synopsis)
 
         asyncio.run(svc.run_usual_days_scene(
             session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
@@ -1691,7 +1692,7 @@ class TestUsualErrorHandling:
         async def fake_synopsis(*a, **k):
             return None
 
-        monkeypatch.setattr(svc, "maybe_update_auto_synopsis", fake_synopsis)
+        monkeypatch.setattr(usual_days_mod, "maybe_update_auto_synopsis", fake_synopsis)
 
         result = asyncio.run(svc.run_usual_days_scene(
             session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
