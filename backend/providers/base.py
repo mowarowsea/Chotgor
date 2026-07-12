@@ -127,7 +127,7 @@ class BaseLLMProvider:
     DEFAULT_MODEL: str = ""
     REQUIRES_API_KEY: bool = True
     # True のプロバイダーは _tool_turn() と _extend_messages_with_results() を実装し、
-    # タグ方式ではなくtool-use（function calling）で記憶・DRIFTを操作する。
+    # タグ方式ではなくtool-use（function calling）で記憶を操作する。
     SUPPORTS_TOOLS: bool = False
     # コンテキスト別追加ツール（Anthropic 形式・character_actions/context_tools.py の判定結果）。
     # create_provider() がインスタンスへ代入で注入する（クラス属性は既定の空。
@@ -249,7 +249,7 @@ class BaseLLMProvider:
         messages: list[dict],
         tool_executor: "ToolExecutor",
     ) -> tuple[str, str]:
-        """tool-use（function calling）を使って記憶・DRIFTを操作しながら生成する。
+        """tool-use（function calling）を使って記憶を操作しながら生成する。
 
         SUPPORTS_TOOLS = True のプロバイダーは _tool_turn() と
         _extend_messages_with_results() を実装することで、このループを利用できる。

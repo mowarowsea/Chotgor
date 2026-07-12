@@ -2,7 +2,6 @@
 
 画像のアップロード・配信を担当する。
 セッション管理・メッセージ送信: chat.py
-SELF_DRIFT: chat_drifts.py
 """
 
 import os

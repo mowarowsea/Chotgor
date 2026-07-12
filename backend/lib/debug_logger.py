@@ -244,7 +244,7 @@ class ChotgorLogger:
         if feature in _MAIN_SOURCE_TYPES:
             self._update_main_entry_preset(preset_name)
         else:
-            # farewell / trigger / reflection 等はサブ行を INSERT する
+            # farewell 等はサブ行を INSERT する
             self._insert_sub_entry(feature, preset_name)
 
     def _update_main_entry_preset(self, preset_name: str) -> None:

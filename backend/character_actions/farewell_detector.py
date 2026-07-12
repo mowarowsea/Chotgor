@@ -193,8 +193,8 @@ def _parse_judge_response(response_text: str) -> dict | None:
     """
     text = response_text.strip()
     # ```json ... ``` または ``` ... ``` のコードブロックを除去
+    # 1本目の re.sub が ```/```json をすべて除去するため、これだけで足りる。
     text = re.sub(r"```(?:json)?\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
     text = text.strip()
     try:
         return json.loads(text)

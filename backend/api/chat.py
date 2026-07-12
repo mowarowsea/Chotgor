@@ -4,7 +4,6 @@
 セッション管理 + LLM呼び出しを担当する。
 
 画像管理: chat_images.py
-SELF_DRIFT: chat_drifts.py
 """
 
 import asyncio

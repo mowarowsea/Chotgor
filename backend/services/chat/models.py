@@ -25,10 +25,8 @@ class ChatRequest:
     enable_time_awareness: bool = False
     current_time_str: str = ""
     time_since_last_interaction: str = ""
-    # SELF_DRIFT: セッションIDと現在有効なdrift指針テキスト一覧。
-    # session_id が空の場合はdrift処理をスキップする。
+    # セッションID。ツール実行（carve_narrative 等）の source 文脈として ToolExecutor へ渡る。
     session_id: str = ""
-    active_drifts: list = field(default_factory=list)
     # switch_angle: このキャラクターが切り替え可能なプリセット一覧。
     # 各エントリは {preset_id, preset_name, provider, model_id, additional_instructions,
     #               thinking_level, when_to_switch} を持つ dict。

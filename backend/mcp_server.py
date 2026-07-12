@@ -6,15 +6,15 @@ Claude Code CLI がスポーンする MCP サーバーとして機能する。
 power_recall / web_search / working memory スレッド操作 など）を公開する。
 
 このプロセスは **Chotgor backend (uvicorn) の薄いプロキシ** として動作する。
-LanceStore / InscribedMemoryManager / DriftManager は backend が保持する単一インスタンスを
-利用するため、本プロセスはベクトルストアを一切開かない（構造的欠陥 A 対策）。
+LanceStore / InscribedMemoryManager は backend が保持する単一インスタンスを
+利用するため、本プロセスはベクトルストアを一切開かない（アプリ全体で単一インスタンスに集約する設計）。
 
 登録方法（一度だけ実行）:
     claude mcp add chotgor -s user -- python C:/Users/seamo/Chotgor/backend/mcp_server.py
 
 環境変数:
     CHOTGOR_CHARACTER_ID  : 操作対象キャラクターID（必須）
-    CHOTGOR_SESSION_ID    : セッションID（SELF_DRIFT 操作に使用）
+    CHOTGOR_SESSION_ID    : セッションID（ツール実行時のセッション文脈。carve_narrative 等の source 記録に使う）
     CHOTGOR_BACKEND_URL   : Chotgor backend のベース URL（省略時は http://127.0.0.1:8000）
     CHOTGOR_BATCH_CONTEXT : バッチ処理が ToolExecutor の挙動を切り替えるためのフラグ群 (JSON)。
                              例: '{"force_insert_memory": true}'。forget 蒸留バッチが

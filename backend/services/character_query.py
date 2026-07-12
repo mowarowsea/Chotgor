@@ -130,7 +130,7 @@ async def ask_character(
         memory_manager: 記憶想起に使用するマネージャー。recall_query が None の場合は不要。
         recall_query: 記憶想起クエリ。指定するとLanceDB検索を実行してシステムプロンプトに注入する。
                       None の場合は想起をスキップする。
-        feature_label: ログ識別用のフィーチャーラベル（例: "chronicle", "forget", "reflection"）。
+        feature_label: ログ識別用のフィーチャーラベル（例: "chronicle", "forget"）。
         working_memory_manager: ワーキングメモリのマネージャー。指定すると 1on1 チャットと
                           同じ形で全スレッド一覧（Block 6）・emotion/body/relation 固定注入
                           （Block 7）をシステムプロンプトへ入れる。recall_query も併せて
