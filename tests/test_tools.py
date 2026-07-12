@@ -1,7 +1,7 @@
 """ToolExecutor・ToolCall・ToolTurnResult・ツールスキーマのテスト。
 
 ツール呼び出しの正規化・記憶の書き込み（inscribe_memory）・inner_narrative の彫り込み（carve_narrative）・
-SELF_DRIFT 操作・switch_angle が InscribedMemoryManager / DriftManager を通じて正しく実行されるかを検証する。
+switch_angle が InscribedMemoryManager を通じて正しく実行されるかを検証する。
 """
 
 import asyncio

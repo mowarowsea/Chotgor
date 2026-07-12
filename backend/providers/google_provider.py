@@ -2,7 +2,7 @@
 
 tool-use（function calling）に対応している。SUPPORTS_TOOLS = True を設定しており、
 _tool_turn / _extend_messages_with_results を実装することで
-inscribe_memory・drift・carve_narrative 等の操作を tool-use で行う。
+inscribe_memory・carve_narrative 等の操作を tool-use で行う。
 
 multi-turn の tool-use ループでは types.Content オブジェクトのリストを
 messages として受け渡す（最初のターンのみ dict → Content 変換を行う）。

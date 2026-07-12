@@ -10,7 +10,7 @@ GM ターン後にメンションで指名された Chotgor キャラを「PC」
 - 自分発話の判定は ``speaker_type=="pc"`` かつ ``speaker_id == character_id``。
 - ``ChatRequest.default_origin = "interlude"`` で記憶/スレッドを ``origin='interlude'``
   として保存する（``ToolExecutor.default_origin`` と Inscriber に流れる）。
-- ``session_id`` は空文字列で渡す。farewell / drift / session-scoped working memory の
+- ``session_id`` は空文字列で渡す。farewell / session-scoped working memory の
   ような chat 固有機構を PC モード中は無効化するため（シナリオセッション ID を
   入れると chat_session 前提の lookup が失敗するリスクがある）。
 - 配役名（role_name）を system prompt へ追加注入し、キャラに「いま劇中で誰を

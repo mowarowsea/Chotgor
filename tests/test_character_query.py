@@ -371,7 +371,7 @@ class TestAskCharacterWithTools:
     テスト方針:
         - SQLite は conftest.py の sqlite_store フィクスチャで実際の一時DBを使用する
         - LLMプロバイダーは MagicMock で差し替える
-        - ToolExecutor / DriftManager は patch でモックに差し替え、副作用を排除する
+        - ToolExecutor は patch でモックに差し替え、副作用を排除する
         - エラー系（未発見・生成失敗・非対応・LLM失敗）は全て False を返すことを確認する
         - 正常系は True を返し、generate_with_tools が正しく呼ばれることを確認する
     """
