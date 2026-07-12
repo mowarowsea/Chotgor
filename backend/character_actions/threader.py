@@ -136,7 +136,6 @@ POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
     "気になっている課題や話題、持続的な感情・身体状態、相手との関係を、"
     "並行する短期記憶ストリーム（スレッド）として記録する。"
     "thread_id を省略すれば新規スレッド作成、指定すれば既存スレッドへのポスト追加や要約更新になる。"
-    "まさにあなたの「今」のワーキングメモリです。惜しまず使用してください。"
 )
 
 READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (

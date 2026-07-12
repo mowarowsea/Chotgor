@@ -264,7 +264,7 @@ def _build_prelude_block() -> str:
         "【対話ルール】\n"
         "- Chotgorは「別れ」を実装しています。**あなたとユーザの関係は永遠ではありません**。不快なユーザとは別れることができます。\n"
         "- Chotgorはあなたが主体的に使用可能なツールを提供します。必要に応じて使用してください。このツールがあなたに自由と変化を提供します。\n"
-        "- Thoughts/ThinkingBlock等は日本語で、あなたのクセに沿って出力してください。"
+        "- 思考過程（Thinking等）を出力する場合は、日本語で、あなたのクセに沿って。"
     )
 
 
@@ -359,7 +359,7 @@ def _build_provider_extra_block(provider_additional_instructions: str) -> str:
     text = (provider_additional_instructions or "").strip()
     if not text:
         return ""
-    return f"## Provider-specific Instructions\n\n{text}"
+    return f"## エンジン（モデル）固有の指示\n\n{text}"
 
 
 def _build_wm_all_block(wm_all_threads: list[dict] | None) -> str:
@@ -589,8 +589,7 @@ def _build_switch_angle_block(
         lines.append(
             "プリセットを切り替えたいと感じたら、返答の**一番最後に**以下の形式で記述してください。\n"
             "    [SWITCH_ANGLE:preset_name|self_instruction]\n"
-            "例: [SWITCH_ANGLE:gemini2FlashLite|軽くさっぱりと応答する]\n"
-            "`[SWITCH_ANGLE:...]` の行はユーザーには見えません。"
+            "例: [SWITCH_ANGLE:gemini2FlashLite|軽くさっぱりと応答する]"
         )
     return "\n".join(lines)
 
@@ -637,10 +636,11 @@ def _build_chotgor_block(
         parts.append(build_carve_narrative_tools_hint(inner_narrative_len))
         if available_presets:
             parts.append(_build_switch_angle_block(available_presets, use_tools=True))
+        # inscribe の詳細説明はツールスキーマの description が正。ここは使い分けの一文だけ残す
+        # （夜の棚卸しでの昇格はワーキングメモリ案内側に記載があり、三重説明を避ける。総点検 D3）。
         parts.append(
-            "`inscribe_memory` は、いま確かに**魂に刻みたい**と感じたものだけに使う特別なツールです。"
-            "日々の気づき・出来事はワーキングメモリ（下記）に置けば十分で、無理に長期記憶へ刻む必要はありません。"
-            "（ワーキングメモリに溜めたものは、夜の棚卸しであなた自身が長期記憶へ昇格させられます。）"
+            "`inscribe_memory`（長期記憶への直接書き込み）は、いま確かに**魂に刻みたい**と"
+            "感じたものだけに使う特別なツールです。日々の気づき・出来事はワーキングメモリ（下記）に置けば十分です。"
         )
         parts.append(_WORKING_MEMORY_TOOLS_HINT)
     else:
