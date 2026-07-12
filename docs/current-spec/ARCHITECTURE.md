@@ -188,7 +188,7 @@ frontend useScenarioChat → /api/scenario_chat/... (api/scenario_chat/)
 何を経験し選ぶかはキャラが決める。得た体験は `origin="usual"` の記憶として残る。
 
 ```
-main.py _usual_days_scheduler（60秒ループ・冪等キー=日付+スロット）
+main.py うつつ tick（_run_every_minute 同乗・冪等キー=日付+スロット）
   → services/scenario_chat/service.run_usual_days_scene(session)
     → run_scenario_turn(headless=True): GM↔キャラPC を [SCENE_CLOSE] か上限ターンまで無人連鎖
       - GMプロンプトに time_context（曜日/時間帯/季節）＋偶発イベント（混合抽選）＋
@@ -304,17 +304,21 @@ chronicle_job / forget_job など
   のみ・active/busy/offline は escrow →能動配達がチェック間隔格子×決定論 reply_rate で配達
   （busy 中もチェック点で配達しうる）。うつつシーンは有効キャラで②固定予定から導出（手動
   slots は無効キャラのみ）。対面は起動ガード＋聖域化（対面中は③④保留・②シーンは捨てる）
-行動: services/actions — 2時間格子＋決定論ジッターで評価（main.py の _action_scheduler）、
+行動: services/actions — 2時間格子＋決定論ジッターで評価（main.py の action tick）、
   push / research / 臨時うつつ（characters.action_menu トグル）、帰還で fulfilled 宣言
 ダイヤル: characters.timeline_dial（0〜3）を /ui/timeline で適用・切替
 ```
 
-スケジューラは `main.py` に追加系: `_instruments_scheduler`（05:00 巡回）・
-`_action_scheduler`（60秒ループ・2時間格子）・`_escrow_delivery_scheduler`（毎分・能動配達）・
-`_weekly_schedule_scheduler`（毎分判定・日曜夜 `weekly_schedule_time` 既定 20:00 に翌週分、
-コールドスタートは当週分即時）・`_sudden_event_scheduler`（毎分・③伏せ枠の発火＝GM 具体化→
-轢き判定→シーン→玉突き裁定。日次上限 `sudden_event_daily_cap` 既定3）、Chronicle / Forget /
-うつつは既存。うつつ `_usual_days_scheduler` は生活カレンダー有効キャラで②導出シーンへ切替。
+スケジューラは `main.py` の共通ループ2本に集約されている:
+`_run_daily`（毎日 HH:MM に1回。設定キーで時刻変更可・冪等キー=`{name}_last_run_date`）と
+`_run_every_minute`(60秒周期)。どちらも heartbeat（`scheduler_heartbeat_{name}`）を毎周上書きする。
+各機構は tick 関数（実行内容と冪等キーだけ）を渡して起動する:
+- 日次: chronicle（`chronicle_time` 既定 03:00）・forget（04:00 固定）・
+  instruments（`instruments_patrol_time` 既定 05:00 巡回）
+- 毎分: action（2時間格子＋ジッター評価）・usual_days（うつつシーン＋push再開）・
+  escrow_delivery（能動配達）・weekly_schedule（日曜夜 `weekly_schedule_time` 既定 20:00 に
+  翌週分、コールドスタートは当週分即時）・sudden_event（③伏せ枠の発火＝GM 具体化→
+  轢き判定→シーン→玉突き裁定。日次上限 `sudden_event_daily_cap` 既定3）
 
 ### 夜間バッチ
 

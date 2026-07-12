@@ -120,14 +120,25 @@ async def lifespan(app: FastAPI):
 
     _log.info("Chotgor backend 起動 sqlite=%s", SQLITE_DB_PATH)
 
-    asyncio.create_task(_chronicle_scheduler(app))
-    asyncio.create_task(_forget_scheduler(app))
-    asyncio.create_task(_usual_days_scheduler(app))
-    asyncio.create_task(_instruments_scheduler(app))
-    asyncio.create_task(_action_scheduler(app))
-    asyncio.create_task(_escrow_delivery_scheduler(app))
-    asyncio.create_task(_weekly_schedule_scheduler(app))
-    asyncio.create_task(_sudden_event_scheduler(app))
+    # 日次スケジューラ（毎日 HH:MM に1回。冪等キー={name}_last_run_date）
+    asyncio.create_task(_run_daily(
+        app, name="chronicle", label="chronicle", fn=_chronicle_batch,
+        default_time="03:00", time_setting_key="chronicle_time",
+    ))
+    asyncio.create_task(_run_daily(
+        app, name="forget", label="forget", fn=_forget_batch,
+        default_time="04:00",
+    ))
+    asyncio.create_task(_run_daily(
+        app, name="instruments", label="計器巡回", fn=_instruments_patrol,
+        default_time="05:00", time_setting_key="instruments_patrol_time",
+    ))
+    # 毎分スケジューラ（冪等キーの管理は各 tick の責務）
+    asyncio.create_task(_run_every_minute(app, name="usual_days", label="うつつ", fn=_usual_days_tick))
+    asyncio.create_task(_run_every_minute(app, name="action", label="行動権", fn=_action_tick))
+    asyncio.create_task(_run_every_minute(app, name="escrow_delivery", label="能動配達", fn=_escrow_delivery_tick))
+    asyncio.create_task(_run_every_minute(app, name="weekly_schedule", label="週次スケジュール", fn=_weekly_schedule_tick))
+    asyncio.create_task(_run_every_minute(app, name="sudden_event", label="突発イベント", fn=_sudden_event_tick))
 
     yield
 
@@ -156,37 +167,88 @@ def _beat_scheduler(sqlite, name: str) -> None:
         logging.getLogger(__name__).exception("heartbeat 記録に失敗 name=%s", name)
 
 
-async def _chronicle_scheduler(app: FastAPI) -> None:
-    """Background task: 毎日設定時刻に chronicle を実行する。"""
+async def _run_daily(
+    app: FastAPI,
+    *,
+    name: str,
+    label: str,
+    fn,
+    default_time: str,
+    time_setting_key: str | None = None,
+) -> None:
+    """毎日 HH:MM に1回 fn(app) を実行する日次スケジューラの共通ループ。
+
+    - 60秒周期で判定し、heartbeat（scheduler_heartbeat_{name}）を毎周上書きする。
+    - 実行時刻は time_setting_key の設定値（未指定・パース不能時は default_time）。
+    - 冪等キーは {name}_last_run_date。実行を試みた時点で当日日付を立てる
+      （失敗しても当日は再実行しない）。
+
+    Args:
+        name: 機構名（heartbeat・冪等キーの接頭辞になる英名）。
+        label: ログ表示名。
+        fn: 実行内容 ``async fn(app)``。
+        default_time: "HH:MM"。設定が無い・壊れているときの実行時刻。
+        time_setting_key: 実行時刻を保持する settings キー（None なら固定時刻）。
+    """
     _log = logging.getLogger(__name__)
     while True:
         await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "chronicle")
+        _beat_scheduler(app.state.sqlite, name)
         now = datetime.now()
-        chronicle_time_str = app.state.sqlite.get_setting("chronicle_time", "03:00")
+        time_str = (
+            app.state.sqlite.get_setting(time_setting_key, default_time)
+            if time_setting_key
+            else default_time
+        )
         try:
-            h, m = map(int, chronicle_time_str.split(":"))
+            h, m = map(int, str(time_str).split(":"))
         except Exception:
-            h, m = 3, 0
+            h, m = map(int, default_time.split(":"))
         scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
         today_str = now.date().isoformat()
-        last_run = app.state.sqlite.get_setting("chronicle_last_run_date", "")
+        last_run = app.state.sqlite.get_setting(f"{name}_last_run_date", "")
         if now >= scheduled and last_run != today_str:
-            _log.info("chronicle スケジューラー 起動 設定時刻=%s", chronicle_time_str)
-            app.state.sqlite.set_setting("chronicle_last_run_date", today_str)
+            _log.info("%s スケジューラー 起動 設定時刻=%02d:%02d", label, h, m)
+            app.state.sqlite.set_setting(f"{name}_last_run_date", today_str)
             try:
-                await run_pending_chronicles(
-                    app.state.sqlite,
-                    vector_store=app.state.vector_store,
-                    memory_manager=app.state.memory_manager,
-                    working_memory_manager=app.state.working_memory_manager,
-                )
+                await fn(app)
             except Exception:
-                _log.exception("chronicle スケジューラー 実行エラー")
+                _log.exception("%s スケジューラー 実行エラー", label)
 
 
-async def _instruments_scheduler(app: FastAPI) -> None:
-    """Background task: 毎日 05:00（設定可）に計器の巡回チェックを実行する。
+async def _run_every_minute(app: FastAPI, *, name: str, label: str, fn) -> None:
+    """60秒周期で fn(app) を実行する常時巡回スケジューラの共通ループ。
+
+    heartbeat（scheduler_heartbeat_{name}）を毎周上書きし、fn の例外は
+    ログへ残してループを継続する。冪等キーの管理は fn 側の責務。
+    """
+    _log = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(60)
+        _beat_scheduler(app.state.sqlite, name)
+        try:
+            await fn(app)
+        except Exception:
+            _log.exception("%s スケジューラー 実行エラー", label)
+
+
+async def _chronicle_batch(app: FastAPI) -> None:
+    """chronicle 日次バッチの実行内容（_run_daily から呼ばれる）。"""
+    await run_pending_chronicles(
+        app.state.sqlite,
+        vector_store=app.state.vector_store,
+        memory_manager=app.state.memory_manager,
+        working_memory_manager=app.state.working_memory_manager,
+    )
+
+
+async def _forget_batch(app: FastAPI) -> None:
+    """forget 日次バッチの実行内容（_run_daily から呼ばれる。04:00 固定＝chronicle 後）。"""
+    await run_pending_forget(app.state.sqlite, app.state.memory_manager)
+
+
+async def _instruments_patrol(app: FastAPI) -> None:
+    """計器の日次巡回チェック（_run_daily から呼ばれる）。
 
     巡回時刻は Chronicle（03:00）→ Forget（04:00）の後に置く
     （night_batch_heartbeat が当日の夜間バッチ完了を前提とするため）。
@@ -194,48 +256,34 @@ async def _instruments_scheduler(app: FastAPI) -> None:
         - Tier 1 巡回インバリアント（run_patrol_checks）
         - Tier 2 肥大メーターの日次スナップショット（record_bloat_meters）
         - Tier 3 判定巡回（run_judgement_patrol。判定プリセット未設定ならスキップ）
-    冪等キーは chronicle スケジューラと同型（日付文字列）。
     """
+    from backend.services.instruments import (
+        record_bloat_meters,
+        run_judgement_patrol,
+        run_patrol_checks,
+    )
+    from backend.services.pressure import record_pressure_meters
+
     _log = logging.getLogger(__name__)
-    while True:
-        await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "instruments")
-        now = datetime.now()
-        patrol_time_str = app.state.sqlite.get_setting("instruments_patrol_time", "05:00")
-        try:
-            h, m = map(int, patrol_time_str.split(":"))
-        except Exception:
-            h, m = 5, 0
-        scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        today_str = now.date().isoformat()
-        last_run = app.state.sqlite.get_setting("instruments_last_run_date", "")
-        if now >= scheduled and last_run != today_str:
-            _log.info("計器巡回スケジューラー 起動 設定時刻=%s", patrol_time_str)
-            app.state.sqlite.set_setting("instruments_last_run_date", today_str)
-            try:
-                from backend.services.instruments import (
-                    record_bloat_meters,
-                    run_judgement_patrol,
-                    run_patrol_checks,
-                )
-                from backend.services.pressure import record_pressure_meters
-                summary = run_patrol_checks(app.state.sqlite)
-                meters = record_bloat_meters(app.state.sqlite)
-                # 圧力は保存しない純関数だが、傾向観測の日次スナップショットだけ残す
-                pressure_meters = record_pressure_meters(app.state.sqlite)
-                judge_result = await run_judgement_patrol(
-                    app.state.sqlite, app.state.sqlite.get_all_settings()
-                )
-                _log.info(
-                    "計器巡回 完了 patrol=%s meters=%d pressure=%d judge=%s",
-                    summary, meters, pressure_meters, judge_result.get("status"),
-                )
-            except Exception:
-                _log.exception("計器巡回スケジューラー 実行エラー")
+    summary = run_patrol_checks(app.state.sqlite)
+    meters = record_bloat_meters(app.state.sqlite)
+    # 圧力は保存しない純関数だが、傾向観測の日次スナップショットだけ残す
+    pressure_meters = record_pressure_meters(app.state.sqlite)
+    judge_result = await run_judgement_patrol(
+        app.state.sqlite, app.state.sqlite.get_all_settings()
+    )
+    _log.info(
+        "計器巡回 完了 patrol=%s meters=%d pressure=%d judge=%s",
+        summary, meters, pressure_meters, judge_result.get("status"),
+    )
 
 
-async def _action_scheduler(app: FastAPI) -> None:
-    """Background task: 会話外行動権の周期評価（めぐり Phase 6）。
+# 行動権評価の格子幅（分）。2時間格子＋キャラ別ジッターで評価する。
+_ACTION_PERIOD_MINUTES = 120
+
+
+async def _action_tick(app: FastAPI) -> None:
+    """会話外行動権の周期評価（めぐり Phase 6。_run_every_minute から呼ばれる）。
 
     行動メニューが1つでも ON のキャラクターについて、2時間格子＋キャラ別ジッター
     （決定論・乱数は世界に置く）のタイミングで評価する:
@@ -250,61 +298,54 @@ async def _action_scheduler(app: FastAPI) -> None:
     from backend.services.gate import check_availability, is_usual_scene_running
 
     _log = logging.getLogger(__name__)
-    period_minutes = 120
-    while True:
-        await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "action")
-        try:
-            sqlite = app.state.sqlite
-            now = datetime.now()
-            # 現在のスロット開始時刻（period_minutes 格子に床合わせ）
-            minutes_of_day = now.hour * 60 + now.minute
-            slot_index = minutes_of_day // period_minutes
-            slot_start = now.replace(
-                hour=(slot_index * period_minutes) // 60,
-                minute=(slot_index * period_minutes) % 60,
-                second=0, microsecond=0,
+    sqlite = app.state.sqlite
+    now = datetime.now()
+    # 現在のスロット開始時刻（_ACTION_PERIOD_MINUTES 格子に床合わせ）
+    minutes_of_day = now.hour * 60 + now.minute
+    slot_index = minutes_of_day // _ACTION_PERIOD_MINUTES
+    slot_start = now.replace(
+        hour=(slot_index * _ACTION_PERIOD_MINUTES) // 60,
+        minute=(slot_index * _ACTION_PERIOD_MINUTES) % 60,
+        second=0, microsecond=0,
+    )
+    for char in sqlite.list_characters():
+        menu = getattr(char, "action_menu", None) or {}
+        if not isinstance(menu, dict) or not any(
+            menu.get(k) for k in ("push", "research", "impromptu_scene")
+        ):
+            continue
+        key = f"action_eval_{char.id}"
+        if sqlite.get_setting(key, "") == slot_start.isoformat():
+            continue  # このスロットは評価済み
+        if now < jittered_slot_time(char.id, slot_start):
+            continue  # ジッター時刻がまだ来ていない
+        # 評価を試みた時点で冪等キーを立てる（unavailable でも流す）
+        sqlite.set_setting(key, slot_start.isoformat())
+        availability = check_availability(
+            char, now,
+            usual_scene_running=is_usual_scene_running(sqlite, char.id, now),
+            sqlite=sqlite,
+        )
+        if not availability.available:
+            _log.debug(
+                "行動権: unavailable のためスロットを流す char=%s reason=%s",
+                char.name, availability.reason,
             )
-            for char in sqlite.list_characters():
-                menu = getattr(char, "action_menu", None) or {}
-                if not isinstance(menu, dict) or not any(
-                    menu.get(k) for k in ("push", "research", "impromptu_scene")
-                ):
-                    continue
-                key = f"action_eval_{char.id}"
-                if sqlite.get_setting(key, "") == slot_start.isoformat():
-                    continue  # このスロットは評価済み
-                if now < jittered_slot_time(char.id, slot_start):
-                    continue  # ジッター時刻がまだ来ていない
-                # 評価を試みた時点で冪等キーを立てる（unavailable でも流す）
-                sqlite.set_setting(key, slot_start.isoformat())
-                availability = check_availability(
-                    char, now,
-                    usual_scene_running=is_usual_scene_running(sqlite, char.id, now),
-                    sqlite=sqlite,
-                )
-                if not availability.available:
-                    _log.debug(
-                        "行動権: unavailable のためスロットを流す char=%s reason=%s",
-                        char.name, availability.reason,
-                    )
-                    # 「流れたスロット」も決定ログへ — 飽和（評価機会の枯渇）を予報パネルで可視化する
-                    sqlite.record_scheduler_decision(
-                        "action", "skipped", character_id=char.id,
-                        reason=f"unavailable: {availability.reason}",
-                        details={"slot": slot_start.isoformat()},
-                    )
-                    continue
-                result = await run_action_cycle(
-                    char.id, sqlite, sqlite.get_all_settings(),
-                    chat_service=app.state.chat_service,
-                    memory_manager=app.state.memory_manager,
-                    working_memory_manager=app.state.working_memory_manager,
-                )
-                if result.get("status") in ("executed", "declined", "error"):
-                    _log.info("行動権: char=%s result=%s", char.name, result)
-        except Exception:
-            _log.exception("行動権スケジューラー 実行エラー")
+            # 「流れたスロット」も決定ログへ — 飽和（評価機会の枯渇）を予報パネルで可視化する
+            sqlite.record_scheduler_decision(
+                "action", "skipped", character_id=char.id,
+                reason=f"unavailable: {availability.reason}",
+                details={"slot": slot_start.isoformat()},
+            )
+            continue
+        result = await run_action_cycle(
+            char.id, sqlite, sqlite.get_all_settings(),
+            chat_service=app.state.chat_service,
+            memory_manager=app.state.memory_manager,
+            working_memory_manager=app.state.working_memory_manager,
+        )
+        if result.get("status") in ("executed", "declined", "error"):
+            _log.info("行動権: char=%s result=%s", char.name, result)
 
 
 def _parse_slot_time(now: datetime, slot: str) -> datetime | None:
@@ -664,105 +705,56 @@ async def _run_pending_push_resumes(app: FastAPI) -> None:
             )
 
 
-async def _usual_days_scheduler(app: FastAPI) -> None:
-    """Background task: 有効なうつつ世界を各スロット時刻に1シーンずつ無人進行させる。
+async def _usual_days_tick(app: FastAPI) -> None:
+    """うつつの毎分処理（_run_every_minute から呼ばれる）: push再開 → 到来済みシーンの無人進行。
 
-    _chronicle_scheduler と同型（while True: sleep(60)）。冪等キーを日付+スロットにして
-    1日複数スロットへ対応する。SSE 配信は不要なので run_usual_days_scene を await 回収する。
-    reach_out による一時停止シーンの再開（_run_pending_push_resumes）も同じ周期で面倒を見る。
+    冪等キーは日付+スロットで1日複数スロットへ対応する。SSE 配信は不要なので
+    run_usual_days_scene を await 回収する。push再開の例外はここで握って
+    シーン起動を続行する（片方の事故でもう片方を止めない）。
     """
-    _log = logging.getLogger(__name__)
-    while True:
-        await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "usual_days")
-        try:
-            await _run_pending_push_resumes(app)
-        except Exception:
-            _log.exception("うつつ push再開スケジューラー 実行エラー")
-        try:
-            await _run_due_usual_scenes(app)
-        except Exception:
-            _log.exception("うつつスケジューラー 実行エラー")
+    try:
+        await _run_pending_push_resumes(app)
+    except Exception:
+        logging.getLogger(__name__).exception("うつつ push再開スケジューラー 実行エラー")
+    await _run_due_usual_scenes(app)
 
 
-async def _escrow_delivery_scheduler(app: FastAPI) -> None:
-    """Background task: 預かり（escrow）メッセージの能動配達（めぐり §5.1 フォローアップ）。
+async def _escrow_delivery_tick(app: FastAPI) -> None:
+    """預かり（escrow）メッセージの能動配達（めぐり §5.1 フォローアップ）。
 
-    毎分、未配達メッセージ（delivered_at=NULL）を持つセッションを走査し、
+    未配達メッセージ（delivered_at=NULL）を持つセッションを走査し、
     キャラの availability が戻っていれば決定論ジッター（0〜10分）を挟んで
     本人へ配達し、返信を生成・保存する。判定・ガードの詳細は
     services/gate/delivery.py 参照。
     """
     from backend.services.gate.delivery import run_pending_escrow_deliveries
 
-    _log = logging.getLogger(__name__)
-    while True:
-        await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "escrow_delivery")
-        try:
-            await run_pending_escrow_deliveries(app.state)
-        except Exception:
-            _log.exception("能動配達スケジューラー 実行エラー")
+    await run_pending_escrow_deliveries(app.state)
 
 
-async def _weekly_schedule_scheduler(app: FastAPI) -> None:
-    """Background task: 生活カレンダーの週次バッチ①②（schedule_plan.md §3 / Phase 3）。
+async def _weekly_schedule_tick(app: FastAPI) -> None:
+    """生活カレンダーの週次バッチ①②（schedule_plan.md §3 / Phase 3）。
 
-    毎分、生活カレンダー有効キャラを走査し、未生成の週があればバッチを実行する。
+    生活カレンダー有効キャラを走査し、未生成の週があればバッチを実行する。
     日曜夜（weekly_schedule_time・既定 20:00）に翌週分、コールドスタート
     （機能有効化・取りこぼし復旧）では当週分を即時生成する。
     冪等キー = キャラごとの対象 ISO 週（判定の詳細は services/schedule/weekly_batch.py）。
     """
     from backend.services.schedule import run_pending_weekly_batches
 
-    _log = logging.getLogger(__name__)
-    while True:
-        await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "weekly_schedule")
-        try:
-            await run_pending_weekly_batches(app.state)
-        except Exception:
-            _log.exception("週次スケジュールスケジューラー 実行エラー")
+    await run_pending_weekly_batches(app.state)
 
 
-async def _sudden_event_scheduler(app: FastAPI) -> None:
-    """Background task: 生活カレンダーの③世界突発イベントの発火（schedule_plan.md §5 / Phase 5）。
+async def _sudden_event_tick(app: FastAPI) -> None:
+    """生活カレンダーの③世界突発イベントの発火（schedule_plan.md §5 / Phase 5）。
 
-    毎分、生活カレンダー有効キャラの未発火伏せ枠（週次バッチで確率配置済み）を走査し、
+    生活カレンダー有効キャラの未発火伏せ枠（週次バッチで確率配置済み）を走査し、
     発火時刻が到来したものを GM 具体化 → 轢き判定 → insert → シーン → 玉突き裁定の順で
     処理する。判定・ガードの詳細は services/schedule/events.py 参照。
     """
     from backend.services.schedule import run_pending_sudden_events
 
-    _log = logging.getLogger(__name__)
-    while True:
-        await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "sudden_event")
-        try:
-            await run_pending_sudden_events(app.state)
-        except Exception:
-            _log.exception("突発イベントスケジューラー 実行エラー")
-
-
-async def _forget_scheduler(app: FastAPI) -> None:
-    """Background task: 毎日 04:00 に forget プロセスを実行する。"""
-    _log = logging.getLogger(__name__)
-    while True:
-        await asyncio.sleep(60)
-        _beat_scheduler(app.state.sqlite, "forget")
-        now = datetime.now()
-        # デフォルト 04:00（chronicle 実行後）
-        h, m = 4, 0
-        scheduled = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        today_str = now.date().isoformat()
-        last_run = app.state.sqlite.get_setting("forget_last_run_date", "")
-        if now >= scheduled and last_run != today_str:
-            _log.info("forget スケジューラー 起動 設定時刻=%02d:%02d", h, m)
-            app.state.sqlite.set_setting("forget_last_run_date", today_str)
-            try:
-                await run_pending_forget(app.state.sqlite, app.state.memory_manager)
-            except Exception:
-                _log.exception("forget スケジューラー 実行エラー")
+    await run_pending_sudden_events(app.state)
 
 
 app = FastAPI(
