@@ -5,7 +5,28 @@
 
 > **鮮度について**: この文書は実装変更で腐る。ディレクトリ構成・処理フローを変える
 > 変更を入れたら、この文書も同じコミットで更新すること。
-> 最終更新: 2026-07-10（予報パネル・決定ログ・heartbeat 計器／ntfy 通知）
+> 最終更新: 2026-07-12（グループチャット撤去の反映・用語対訳・データ設計書アーカイブ）
+
+---
+
+## 0. 用語対訳（キャラ由来の命名 → 一言の意味）
+
+固有名は思想上の重要語なので変えない。読解を速くするための対訳のみ置く。
+
+| 語 | 意味（1行） |
+|---|---|
+| うつつ（Usual Days） | ユーザ不在時にキャラが自律的に「生活」し続ける無人シーンモード |
+| めぐり（巡り / Aliveness） | タイムライン正本＋動機経済（圧力・意図・ゲート・行動権）の総称 |
+| 封筒（envelope） | `timeline_events` の1行（存在・順序・相手・時刻。中身は source_table/source_id で JOIN） |
+| 生活カレンダー（Living Schedule） | `schedule_entries` による週次予定。読み取り時に占有圧最大が勝つ |
+| ②導出 | 週次バッチが固定予定からうつつシーンを選出する段 |
+| ③突発 / 伏せ枠 | 世界起点の突発予定。pending 配置→発火時に GM が具体化（未来予定としては出さない＝ネタバレ防止） |
+| 轢き判定 | ③突発の発火時、占有圧最大の予定が既存予定を上書きする裁定 |
+| 玉突き裁定（dilemma） | ③に轢かれた予定を本人が cancel/reschedule/不満化する処理 |
+| 聖域化 | 対面中は③④を保留し②シーンを捨てる保護 |
+| 計器（instruments） | 監査層（Tier 1 インバリアント / Tier 2 スメル / Tier 3 判定巡回） |
+| 決定ログ | `scheduler_decisions`。無人機構の評価1回ごとの結果と理由（追記型） |
+| ダイヤル | `characters.timeline_dial`（0〜3）。めぐり機構の強度切替 |
 
 ---
 
@@ -54,7 +75,7 @@
 | `api/` | HTTPエンドポイント層（ルーター）。下の「APIルーティング一覧」参照 |
 | `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。characters / memories / presets / scenarios / settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル） |
 | `api/logs_ui/` | デバッグログ閲覧UI（`/ui/logs`）と JSON API（`/api/logs`） |
-| `services/` | ビジネスロジック層。チャット・グループ・シナリオ・記憶・キャラクター問い合わせ |
+| `services/` | ビジネスロジック層。チャット・シナリオ・記憶・キャラクター問い合わせ |
 | `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / xai の7実装。`registry.py` が生成・ディスパッチ |
 | `repositories/` | 永続化層。`sqlite/`（ORM・migration・機能別 store mixin）と `lance/`（ベクトルストア、テーブル別 ops）、`embeddings.py`（embedding プロバイダー） |
 | `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / switch / WMスレッド操作…）の定義・タグ抽出・実行 |
@@ -69,7 +90,6 @@
 | パス | 責務 |
 |---|---|
 | `services/chat/` | 1on1チャット本流。`service.py`（フロー制御）、`request_builder.py`（安定ブロック＝システムプロンプト＋変動ブロック＝ターン注釈の二層組み立て）、`request_factory.py`、`content.py`、`indexer.py`（履歴を LanceDB `chat_turns` へ upsert）、`models.py` |
-| `services/group_chat/` | グループチャット。`director.py`（司会が次の発言者を決定）→ `service.py`（指名キャラを順にストリーミング生成） |
 | `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py` |
 | `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`reindex_service.py`（embedding変更時の全再構築） |
 | `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる）。ANTICIPATE_RESPONSE ガイドは付与しない（予想は次ターンを受け取る相手がいるチャット前提の機能のため） |
@@ -89,7 +109,7 @@
 | `inscriber.py` | `inscribe_memory` — 長期記憶への刻み込み |
 | `recaller.py` | `power_recall` — 能動的記憶検索 |
 | `carver.py` | `carve_narrative` — inner_narrative の自己書き換え |
-| `threader.py` | `post_working_memory_thread` / `open_working_memory_thread` — WMスレッド操作（最高頻度） |
+| `threader.py` | `post` / `read` / `close` / `reopen` / `merge`_working_memory_thread(s) — WMスレッド操作（最高頻度。post は thread_id 省略で新規作成） |
 | `switcher.py` | `switch_angle` — プリセット（エンジン）切り替え |
 | `web_searcher.py` | `web_search` — Tavily 経由の外部検索 |
 | `leaver.py` | `take_leave` — 本人宣言の離席（away 設定＋chat.farewell 封筒） |
@@ -107,7 +127,7 @@
 |---|---|
 | `App.tsx` | ルートコンポーネント（状態はフックへ抽出済み） |
 | `api/` | backend 呼び出し層。`chat.ts` / `scenario.ts` / `logs.ts` / `translate.ts` / `sse.ts`（SSE共通処理） |
-| `hooks/` | 状態管理フック。`useSessions` / `useChat` / `useGroupChat` / `useScenarioChat` ほか |
+| `hooks/` | 状態管理フック。`useSessions` / `useChat` / `useScenarioChat` ほか |
 | `components/` | UI。`ChatBubbles/` と `ScenarioChatView/` は責務別ディレクトリに分割済み |
 
 ### data/（gitignore対象）
@@ -129,7 +149,8 @@ frontend useChat
       1.  長期記憶を想起（RAG）→ Block 2（ターン注釈側）
       1b. ワーキングメモリ取得 → Block 6-7（システム）/ Block 8（ターン注釈側）
       2.  メッセージ内URLの自動fetch → Block 4（ターン注釈側）
-      3.  request_builder が二層で組み立て（プロンプトキャッシュ対応 docs/planned/prompt_cache_plan.md）:
+      3.  request_builder が二層で組み立て（プロンプトキャッシュ対応。二層化の根拠は
+          request_builder.py モジュール docstring）:
           - build_system_prompt: 安定ブロックのみ（前提/キャラ/ユーザ像/WM一覧・固定/inner_narrative/ガイド）
           - build_turn_annotation + append_turn_annotation: 変動ブロック（想起記憶/時刻/fetched/
             WM heat想起/圧力・意図/前回期待）を最新userメッセージ末尾へ注釈として付加
@@ -150,14 +171,6 @@ frontend useChat
   生ログの逆解析（`api/logs_ui/tag_extract.py`）は 2026-06-11 以前の過去ログ互換
   フォールバックに降格済み。claude_cli の MCP 経路はプロセス越境で ContextVar が
   届かないため、`CHOTGOR_LOG_CONTEXT` env → HTTP のリレーで request_id を伝搬する。
-
-### グループチャット
-
-```
-frontend useGroupChat → /api/group/... (api/group_chat.py)
-  → director.py が司会プリセットに次の発言者を問い合わせ（失敗時はユーザーターンへ）
-  → service.py が指名キャラクターを順に1on1相当でストリーミング生成
-```
 
 ### シナリオチャット
 
@@ -316,7 +329,6 @@ chronicle_job / forget_job など
 | prefix | ファイル | 用途 |
 |---|---|---|
 | `/api/chat` | `api/chat.py`, `api/chat_images.py` | 1on1セッション・ストリーミング・画像 |
-| `/api/group` | `api/group_chat.py` | グループチャット |
 | `/api/scenario_chat` | `api/scenario_chat/` | シナリオ（scenarios / sessions / stream） |
 | `/api/characters` | `api/characters.py` | キャラクターCRUD |
 | `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行 |
@@ -334,8 +346,7 @@ chronicle_job / forget_job など
 | ドキュメント | 内容 |
 |---|---|
 | `CLAUDE.md` | 開発規範（哲学・命名規則・LanceDB運用・CSS規約・提案スタンス） |
-| `docs/explain/README.md` | ユーザー向け紹介（※2026-06-10時点で一部記述が古い。整理予定） |
-| `docs/current-spec/backend_data_design.md` | SQLite 全テーブル・全カラム定義 |
+| `docs/explain/README.md` | ユーザー向け紹介（※歴史的紹介文。現仕様は本 ARCHITECTURE.md が正） |
 | `docs/current-spec/memory_recall_algorithm.md` | 記憶想起のハイブリッド・スコアリング（類似度×時間減衰重要度） |
 | `docs/current-spec/character_resident_rules.md` | キャラクター向け仕様書（記憶・日次処理がどう扱われるか） |
 | `docs/planned/usual_days_plan.md` | うつつ（Usual Days — 無人生活モード）の設計・実装計画 |

@@ -3,8 +3,9 @@
 組み立ては **テンプレート + 整形済みブロック差し込み** 方式で行う。
 区切りは `## 見出し` ベース（旧 `---` 区切りは廃止）。
 
-プロンプトキャッシュ対応（docs/planned/prompt_cache_plan.md A案）のため、構成要素は
-**安定ブロック（システムプロンプト）** と **変動ブロック（ターン注釈）** の二層に分かれる。
+プロンプトキャッシュ対応のため、構成要素は
+**安定ブロック（システムプロンプト）** と **変動ブロック（ターン注釈）** の二層に分かれる
+（二層に分ける理由は下記「二層に分ける理由」を参照）。
 
 安定ブロック — システムプロンプト（テンプレ上の差し込み順）:
   Block 1:  キャラクター設定（何者かを確立 — 前提 + character_system_prompt）
@@ -40,7 +41,7 @@ Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配
   2. CARVE_NARRATIVE（内的叙述更新・たまに）
   3. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
   4. INSCRIBE_MEMORY（魂に刻むときだけ・低頻度の特別手段）
-  5. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（記憶の中心・最高頻度）
+  5. POST_WORKING_MEMORY_THREAD ほか（read/close/reopen/merge・記憶の中心・最高頻度）
 
 テンプレート置換は `str.replace` ベースで行う（`str.format` は採用しない）。
 理由: ブロック本文に markdown の `{}` などが混じっても誤爆しないため。
@@ -609,7 +610,7 @@ def _build_chotgor_block(
         2. CARVE_NARRATIVE
         3. SWITCH_ANGLE（available_presets が非空の場合のみ）
         4. INSCRIBE_MEMORY
-        5. POST_WORKING_MEMORY_THREAD / OPEN_WORKING_MEMORY_THREAD（ワーキングメモリ・tool-use 時のみ）
+        5. POST_WORKING_MEMORY_THREAD ほか（read/close/reopen/merge・ワーキングメモリ・tool-use 時のみ）
 
     Args:
         use_tools: True なら tool-use 形式、False ならタグ形式の説明を使う。

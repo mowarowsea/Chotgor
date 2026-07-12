@@ -1,5 +1,10 @@
 # Chotgor
 
+> **【歴史的紹介文・2026-07-12 時点で一部古い】** これはプロジェクト初期のユーザー向け紹介文です。
+> `web_search` 未実装・グループチャット・OpenWebUI 前提・`drift`/`end_session` ツールなど、
+> 現状と異なる記述を含みます。**現仕様は `docs/current-spec/ARCHITECTURE.md` が正**。
+> 思想・世界観の導入としてのみ参照してください。
+
 ---
 
 ## Overview

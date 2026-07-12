@@ -1,5 +1,13 @@
 # Chotgor Backend データ設計まとめ（詳細版）
 
+> **【アーカイブ・2026-07-12】この文書は陳腐化しており、現仕様の参照に使ってはいけません。**
+> 撤去済みテーブル（§6 SessionDrift 等）を現役として記載し、`group_director_preset_id`・
+> memory_category の旧値 `general` を含み、めぐり（Aliveness）以降の新テーブル
+> （timeline_events / schedule_entries / intents / alarms / scheduler_decisions /
+> tool_call_events ほか）を一切含みません。
+> **現行のテーブル定義は `backend/repositories/sqlite/models.py` と `migrations.py` が正**です。
+> 経緯確認のため残しています。
+
 デザインチーム向けに、Backendの主要なデータ設計（テーブル定義）をまとめました。チャット履歴などセッション依存の強いデータは除外していますが、提示するテーブルについては全カラムと外部キー（FK）を網羅しています。
 ※ JSON型のカラムについては、単純なキーバリューの場合は「KeyValue」、そうでない場合はその構造を明記しています。
 
