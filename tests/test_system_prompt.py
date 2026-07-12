@@ -3,7 +3,7 @@
 build_system_prompt()（安定ブロックのみ）と build_turn_annotation()（毎ターン
 変動ブロック＝ターン注釈）、append_turn_annotation()（注釈のメッセージ付加）を検証する。
 
-プロンプトキャッシュ対応（docs/planned/prompt_cache_plan.md A案）により、想起記憶・時刻・
+プロンプトキャッシュ対応（request_builder.py モジュール docstring「二層に分ける理由」参照）により、想起記憶・時刻・
 fetched・WM heat 想起・前回の期待はシステムプロンプトから外れ、ターン注釈として
 最新 user メッセージの末尾へ付加される二層構成になった。本テストは
 「安定ブロックがシステムプロンプトに残り、変動ブロックが注釈側へ移っている」
@@ -243,7 +243,7 @@ def test_turn_annotation_with_memories():
 
     見出し（## Relevant Memories from Past Conversations）はシステムプロンプト
     時代と同一であること — 現れる場所だけが変わり、キャラクターに見える情報の
-    中身・形式は変えないという A案 の設計を文言レベルで保証する。
+    中身・形式は変えないという二層分離の設計を文言レベルで保証する。
     """
     memories = [{"content": "User likes fish", "metadata": {"category": "user"}}]
     annotation = build_turn_annotation(recalled_memories=memories)

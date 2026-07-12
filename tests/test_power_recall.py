@@ -198,12 +198,20 @@ class TestSystemPromptPowerRecalled:
 
     検索結果は system_prompt ではなく Chotgor ユーザーターン（messages）として注入するため、
     build_system_prompt は power_recalled を受け取らず、結果ブロックを生成しない。
+    ※ タグ方式ガイドは「結果は【Chotgor】POWER_RECALL COMPLETE のメッセージとして届く」と
+      マーカー名を**言及**する（総点検 D1）。ここで検証するのは結果ブロック本体
+      （format_power_recall_turn の出力）の非混入であり、ガイドの言及は許容する。
     """
 
-    def test_システムプロンプトにPOWER_RECALL_COMPLETEブロックが含まれない(self):
-        """build_system_prompt は POWER_RECALL COMPLETE ブロックを生成しないこと。"""
+    def test_システムプロンプトに検索結果ブロックが含まれない(self):
+        """build_system_prompt が検索結果ブロック本体を生成しないこと。
+
+        結果ブロック固有のヘッダ行（「— 再検索禁止」付き）と結果本文の定型文で判定する。
+        ガイド文中のマーカー名言及と衝突しないよう、ヘッダ全文で検証する。
+        """
         prompt = build_system_prompt("キャラ設定")
-        assert "POWER_RECALL COMPLETE" not in prompt
+        assert "【Chotgor】POWER_RECALL COMPLETE — 再検索禁止" not in prompt
+        assert "の検索結果です。" not in prompt
 
 
 class TestFormatPowerRecallTurn:
