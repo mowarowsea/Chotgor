@@ -12,7 +12,6 @@ import type { LogTag, LogToolCall } from "../../api";
 export const TAG_COLORS: Record<string, string> = {
   "tag-memory":     "bg-violet-950/60 text-violet-300",
   "tag-narrative":  "bg-blue-950/60 text-blue-300",
-  "tag-drift":      "bg-amber-950/60 text-amber-300",
   "tag-switch":     "bg-teal-950/60 text-teal-300",
   "tag-recall":     "bg-rose-950/60 text-rose-300",
   "tag-anticipate": "bg-fuchsia-950/60 text-fuchsia-300",

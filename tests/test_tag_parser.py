@@ -13,11 +13,11 @@ from backend.lib.tag_parser import StreamingTagStripper, TagMatch, parse_tags
 def test_no_tags_returns_original_text():
     """タグが存在しない場合、clean_text は元のテキストと同一で matches は空リストであること。"""
     text = "普通のテキストです。タグはありません。"
-    clean, matches = parse_tags(text, ["MEMORY", "DRIFT"])
+    clean, matches = parse_tags(text, ["MEMORY", "MARK"])
 
     assert clean == text
     assert matches["MEMORY"] == []
-    assert matches["DRIFT"] == []
+    assert matches["MARK"] == []
 
 
 def test_empty_string():
@@ -44,12 +44,12 @@ def test_single_content_tag():
 
 def test_fixed_marker():
     """固定マーカー [TAG] が正しく抽出されること。"""
-    text = "全部リセットします。[DRIFT_RESET]これからよろしく。"
-    clean, matches = parse_tags(text, ["DRIFT_RESET", "DRIFT"])
+    text = "全部リセットします。[MARK_RESET]これからよろしく。"
+    clean, matches = parse_tags(text, ["MARK_RESET", "MARK"])
 
-    assert len(matches["DRIFT_RESET"]) == 1
-    assert matches["DRIFT_RESET"][0].body == ""
-    assert "[DRIFT_RESET]" not in clean
+    assert len(matches["MARK_RESET"]) == 1
+    assert matches["MARK_RESET"][0].body == ""
+    assert "[MARK_RESET]" not in clean
     assert "全部リセットします。" in clean
 
 
@@ -72,15 +72,15 @@ def test_multiple_tag_types():
     """複数タイプのタグが混在する場合、それぞれ正しく抽出されること。
     タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
-    text = "[MEMORY:user|1.0|ユーザ情報]\n[DRIFT:クールに話す]\n普通のテキスト"
-    clean, matches = parse_tags(text, ["MEMORY", "DRIFT"])
+    text = "[MEMORY:user|1.0|ユーザ情報]\n[MARK:クールに話す]\n普通のテキスト"
+    clean, matches = parse_tags(text, ["MEMORY", "MARK"])
 
     assert len(matches["MEMORY"]) == 1
-    assert len(matches["DRIFT"]) == 1
+    assert len(matches["MARK"]) == 1
     assert matches["MEMORY"][0].body == "user|1.0|ユーザ情報"
-    assert matches["DRIFT"][0].body == "クールに話す"
+    assert matches["MARK"][0].body == "クールに話す"
     assert "[MEMORY:" not in clean
-    assert "[DRIFT:" not in clean
+    assert "[MARK:" not in clean
     assert "普通のテキスト" in clean
 
 
@@ -140,11 +140,11 @@ def test_nested_bracket_in_content():
 
 def test_nested_bracket_tag_body_preserved():
     """ネストした括弧がコンテンツに含まれる場合、外側タグの body が完全に取得されること。"""
-    text = "[DRIFT:[重要] これを守ること]普通のテキスト"
-    clean, matches = parse_tags(text, ["DRIFT"])
+    text = "[MARK:[重要] これを守ること]普通のテキスト"
+    clean, matches = parse_tags(text, ["MARK"])
 
-    assert len(matches["DRIFT"]) == 1
-    assert "[重要] これを守ること" in matches["DRIFT"][0].body
+    assert len(matches["MARK"]) == 1
+    assert "[重要] これを守ること" in matches["MARK"][0].body
     assert "普通のテキスト" in clean
 
 
@@ -164,12 +164,12 @@ def test_multiple_tags_with_nested_content():
     """複数のタグそれぞれに角括弧が含まれる場合も正しく処理されること。
     タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
-    text = "[MEMORY:fact|1.0|[DRIFT:]の内容A]\n[MEMORY:user|0.5|[他の括弧]B]\nテキスト"
+    text = "[MEMORY:fact|1.0|[MARK:]の内容A]\n[MEMORY:user|0.5|[他の括弧]B]\nテキスト"
     clean, matches = parse_tags(text, ["MEMORY"])
 
     assert len(matches["MEMORY"]) == 2
     bodies = [m.body for m in matches["MEMORY"]]
-    assert any("[DRIFT:]の内容A" in b for b in bodies)
+    assert any("[MARK:]の内容A" in b for b in bodies)
     assert any("[他の括弧]B" in b for b in bodies)
 
 
@@ -224,24 +224,24 @@ def test_tagmatch_position_fields():
 
 
 def test_prefix_collision_resolved_by_auto_sort():
-    """[DRIFT_RESET] が [DRIFT:...] として誤抽出されないこと。
+    """[MARK_RESET] が [MARK:...] として誤抽出されないこと。
 
     呼び出し側が列挙順を意識しなくても、内部の長さ降順ソートで正しく照合されること。
     どちらの順序で渡しても結果が同じであることを両方向で検証する。
     タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
-    text = "[DRIFT_RESET]\n[DRIFT:新しい指針]"
+    text = "[MARK_RESET]\n[MARK:新しい指針]"
 
-    # DRIFT を先に渡しても正しく処理されること
-    clean1, matches1 = parse_tags(text, ["DRIFT", "DRIFT_RESET"])
-    assert len(matches1["DRIFT_RESET"]) == 1
-    assert len(matches1["DRIFT"]) == 1
-    assert matches1["DRIFT"][0].body == "新しい指針"
+    # MARK を先に渡しても正しく処理されること
+    clean1, matches1 = parse_tags(text, ["MARK", "MARK_RESET"])
+    assert len(matches1["MARK_RESET"]) == 1
+    assert len(matches1["MARK"]) == 1
+    assert matches1["MARK"][0].body == "新しい指針"
 
-    # DRIFT_RESET を先に渡しても結果が同じであること
-    clean2, matches2 = parse_tags(text, ["DRIFT_RESET", "DRIFT"])
-    assert len(matches2["DRIFT_RESET"]) == 1
-    assert len(matches2["DRIFT"]) == 1
+    # MARK_RESET を先に渡しても結果が同じであること
+    clean2, matches2 = parse_tags(text, ["MARK_RESET", "MARK"])
+    assert len(matches2["MARK_RESET"]) == 1
+    assert len(matches2["MARK"]) == 1
 
 
 def test_auto_sort_with_longer_shared_prefix():
@@ -314,7 +314,7 @@ def test_clean_text_preserves_internal_whitespace():
 
 # ─── 任意タグ（将来追加されるタグの汎用性検証） ────────────────────────────────
 #
-# 以下のテストは MEMORY / DRIFT など現在定義済みのタグを一切使わない。
+# 以下のテストは特定のツールタグ名に依存しない。
 # parse_tags() がタグ名に依存せず任意の名前で動作することを証明する。
 
 
@@ -505,7 +505,7 @@ def test_stripper_marker_split_across_many_chunks():
 
     1文字ずつ分割した極端なケース。
     """
-    text = "[DRIFT:常に敬語を使う]"
+    text = "[INSCRIBE_MEMORY:contextual|1.0|常に敬語を使う]"
     result = _feed_all(list(text))
 
     assert result == ""
@@ -527,13 +527,6 @@ def test_stripper_text_before_split_marker_is_yielded_immediately():
 # ─── 固定マーカー（']' で終わるプレフィックス） ─────────────────────────────────
 
 
-def test_stripper_fixed_marker_drift_reset():
-    """固定マーカー [DRIFT_RESET] が正しく除去されること。"""
-    result = _feed_all(["本文[DRIFT_RESET]続き"])
-
-    assert result == "本文続き"
-
-
 def test_stripper_fixed_marker_end_session():
     """固定マーカー [END_SESSION] が正しく除去されること。"""
     result = _feed_all(["さようなら[END_SESSION]"])
@@ -550,7 +543,7 @@ def test_stripper_end_session_with_reason():
 
 def test_stripper_fixed_marker_split():
     """固定マーカーがチャンク境界で分割されても正しく除去されること。"""
-    result = _feed_all(["本文[DRIFT_RE", "SET]続き"])
+    result = _feed_all(["本文[END_SESS", "ION]続き"])
 
     assert result == "本文続き"
 
@@ -561,7 +554,7 @@ def test_stripper_fixed_marker_split():
 def test_stripper_multiple_markers_in_single_chunk():
     """1チャンク内に複数のマーカーが含まれる場合、すべて除去されること。"""
     result = _feed_all(
-        ["本文[INSCRIBE_MEMORY:contextual|1.0|内容A][DRIFT:新しい指針]続き"]
+        ["本文[INSCRIBE_MEMORY:contextual|1.0|内容A][CARVE_NARRATIVE:append|新しい指針]続き"]
     )
 
     assert result == "本文続き"
@@ -587,13 +580,11 @@ def test_stripper_all_known_markers():
     result = _feed_all([
         "A[INSCRIBE_MEMORY:contextual|1.0|x]"
         "B[CARVE_NARRATIVE:append|y]"
-        "C[DRIFT:z]"
-        "D[DRIFT_RESET]"
         "E[END_SESSION:理由]"
         "F"
     ])
 
-    assert result == "ABCDEF"
+    assert result == "ABEF"
 
 
 # ─── マーカーではない '[' ────────────────────────────────────────────────────────

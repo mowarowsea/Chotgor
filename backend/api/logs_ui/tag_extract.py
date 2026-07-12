@@ -122,13 +122,9 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
         # body 全体がキャラクター本人の予想・期待テキスト
         fields["予想"] = body
 
-    elif tag_name in ("DRIFT", "POWER_RECALL", "END_SESSION"):
+    elif tag_name in ("POWER_RECALL", "END_SESSION"):
         # body がそのまま内容
         fields["内容"] = body
-
-    elif tag_name in ("DRIFT_RESET",):
-        # 固定マーカー、body は空
-        fields["内容"] = "(リセット)"
 
     # preview: "内容" / "予想" → SWITCH_ANGLE は "コンテキスト" → 最終フォールバックは body
     preview = (
@@ -339,8 +335,8 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
         return anticipation_tags
 
     # 全タグを (start位置, tag_name, body) フラットリストにしてから位置順にソートする。
-    # タグ種別ごとに固める（INSCRIBE→DRIFT→...）のではなく、
-    # ファイル内の出現順（DRIFT→INSCRIBE のような順序）を保持するため。
+    # タグ種別ごとに固める（INSCRIBE→CARVE→...）のではなく、
+    # ファイル内の出現順（CARVE→INSCRIBE のような順序）を保持するため。
     flat: list[tuple[int, str, str]] = []
     for tag_name in _KNOWN_TAG_NAMES:
         for m in matches.get(tag_name, []):

@@ -282,8 +282,6 @@ class StreamingTagStripper:
     KNOWN_PREFIXES: list[str] = [
         "[INSCRIBE_MEMORY:",
         "[CARVE_NARRATIVE:",
-        "[DRIFT_RESET]",    # 固定マーカー
-        "[DRIFT:",
         "[END_SESSION]",    # 固定マーカー
         "[END_SESSION:",
         "[SWITCH_ANGLE:",  # マーカー前テキストはUIへ流すが、タグ自体は除去する。

@@ -274,8 +274,7 @@ class TestBuildSwitchedRequest:
     def test_self_instruction_folded_into_additional_instructions(self):
         """self_instruction はプロバイダー固有追記（Block 5）の末尾に畳み込まれる。
 
-        ワーキングメモリ移行で SELF_DRIFT / active_drifts は廃止され、
-        切り替え後モデルへの自己指針は additional_instructions に統合される。
+        切り替え後モデルへの自己指針（self_instruction）は additional_instructions に畳み込まれる。
         """
         service = self._make_service()
         request = _make_request(available_presets=_SAMPLE_PRESETS)

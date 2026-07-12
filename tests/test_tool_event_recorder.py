@@ -227,7 +227,7 @@ class TestResultLooksLikeError:
         "[power_recall error: embedding接続エラー]",
         "[carve_narrative error: DB死亡]",
         "[Error: ValueError: bad input]",
-        "[Unknown tool: drift]",
+        "[Unknown tool: foobar]",
         "  [web_search error: APIキー未設定]",  # 先頭空白も許容
     ])
     def test_error_results_detected(self, text):

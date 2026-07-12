@@ -19,12 +19,12 @@ import re
 logger = logging.getLogger(__name__)
 
 # --- フォーマット残骸: タグ方式ツールタグの痕跡（tool_tags.py のタグ名を流用）---
-# 過去タグ（DRIFT）も検知対象に含める（残骸はどの時代のものでも残骸）。
+# 応答本文にツールタグが生テキストとして漏れていたら残骸として検知する。
 _TAG_NAMES = (
     "INSCRIBE_MEMORY", "CARVE_NARRATIVE", "POWER_RECALL", "SWITCH_ANGLE",
     "ANTICIPATE_RESPONSE", "POST_WORKING_MEMORY_THREAD", "READ_WORKING_MEMORY_THREAD",
     "CLOSE_WORKING_MEMORY_THREAD", "REOPEN_WORKING_MEMORY_THREAD",
-    "MERGE_WORKING_MEMORY_THREADS", "DRIFT", "DRIFT_RESET", "SCENE_CLOSE",
+    "MERGE_WORKING_MEMORY_THREADS", "SCENE_CLOSE",
 )
 _FORMAT_DEBRIS_PATTERNS = [
     re.compile(r"\[(?:" + "|".join(_TAG_NAMES) + r")\b", re.IGNORECASE),

@@ -7,8 +7,8 @@
         {tag_name, meta, fields, preview} 辞書に変換する
 
 テスト方針:
-    - 全 6 種の既知ツール（inscribe_memory / carve_narrative / drift / drift_reset /
-      switch_angle / power_recall）を個別に検証する
+    - 既知ツール（inscribe_memory / carve_narrative / switch_angle / power_recall /
+      working memory 操作群）を個別に検証する
     - 未知ツール名のフォールバック動作を確認する
     - 空引数辞書でも例外を送出しないことを確認する
     - 戻り値辞書は logs_ui.LogTag フロント型と同じ {tag_name, meta, fields, preview} を満たすこと
@@ -33,12 +33,10 @@ class TestToolToTagMapping:
     """
 
     def test_all_expected_tools_present(self):
-        """全 11 種の既知ツールが TOOL_TO_TAG に登録されていること（end_session は廃止済み）。"""
+        """全 9 種の既知ツールが TOOL_TO_TAG に登録されていること。"""
         expected = {
             "inscribe_memory",
             "carve_narrative",
-            "drift",
-            "drift_reset",
             "switch_angle",
             "power_recall",
             "post_working_memory_thread",
@@ -207,43 +205,6 @@ class TestStructuredTagCarveNarrative:
         assert result["fields"]["内容"] == ""
 
 
-class TestStructuredTagDrift:
-    """drift ツールの変換を検証するテストクラス。"""
-
-    def test_fields_and_preview(self):
-        """fields["内容"] に content が入り、preview も同じになること。"""
-        result = tool_call_to_structured_tag("drift", {"content": "新方針テキスト"})
-        _assert_shape(result, "DRIFT")
-        assert result["fields"]["内容"] == "新方針テキスト"
-        assert result["preview"] == "新方針テキスト"
-        assert result["meta"]["cls"] == "tag-drift"
-
-    def test_empty_args(self):
-        """空引数でも例外を送出せず空文字 content で返ること。"""
-        result = tool_call_to_structured_tag("drift", {})
-        assert result["fields"]["内容"] == ""
-
-
-class TestStructuredTagDriftReset:
-    """drift_reset ツールの変換を検証するテストクラス。
-
-    drift_reset は引数なしツールのため、固定マーカー "(リセット)" が表示される。
-    """
-
-    def test_fixed_marker(self):
-        """fields["内容"] が "(リセット)" 固定であること。"""
-        result = tool_call_to_structured_tag("drift_reset", {})
-        _assert_shape(result, "DRIFT_RESET")
-        assert result["fields"]["内容"] == "(リセット)"
-        assert result["preview"] == "(リセット)"
-        assert result["meta"]["cls"] == "tag-drift"
-
-    def test_extra_args_ignored(self):
-        """余分な引数があっても固定マーカーのままになること。"""
-        result = tool_call_to_structured_tag("drift_reset", {"unexpected": "x"})
-        assert result["fields"]["内容"] == "(リセット)"
-
-
 class TestStructuredTagSwitchAngle:
     """switch_angle ツールの変換を検証するテストクラス。"""
 
@@ -381,16 +342,18 @@ class TestMcpPrefixStripping:
         assert result["tag_name"] == "CARVE_NARRATIVE"
         assert result["fields"]["内容"] == "ナラティブ内容"
 
-    def test_mcp_drift_reset_single_underscore(self):
-        """mcp__chotgor__drift_reset の単一アンダースコアが破壊されないこと。
+    def test_mcp_single_underscore_preserved(self):
+        """MCP プレフィックス除去がツール名内の単一アンダースコアを壊さないこと。
 
-        drift_reset はツール名に単一アンダースコア（_）を含むが、
-        プレフィックス除去の区切り文字は二重アンダースコア（__）のため
-        正しく "drift_reset" として扱われることを確認する。
+        プレフィックス除去の区切り文字は二重アンダースコア（__）のため、
+        ツール名に含まれる単一アンダースコア（_）は保持される。
         """
-        result = tool_call_to_structured_tag("mcp__chotgor__drift_reset", {})
-        assert result["tag_name"] == "DRIFT_RESET"
-        assert result["fields"]["内容"] == "(リセット)"
+        result = tool_call_to_structured_tag(
+            "mcp__chotgor__inscribe_memory",
+            {"category": "user", "impact": 1.0, "content": "x"},
+        )
+        assert result["tag_name"] == "INSCRIBE_MEMORY"
+        assert result["fields"]["内容"] == "x"
 
     def test_mcp_unknown_tool_strips_prefix(self):
         """未知の MCP ツールはプレフィックス除去後の名前が大文字化してタグ名になること。

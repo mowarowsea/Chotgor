@@ -21,8 +21,6 @@
 TOOL_TO_TAG: dict[str, str] = {
     "inscribe_memory":               "INSCRIBE_MEMORY",
     "carve_narrative":               "CARVE_NARRATIVE",
-    "drift":                         "DRIFT",
-    "drift_reset":                   "DRIFT_RESET",
     "switch_angle":                  "SWITCH_ANGLE",
     "power_recall":                  "POWER_RECALL",
     "post_working_memory_thread":    "POST_WORKING_MEMORY_THREAD",
@@ -36,8 +34,6 @@ TOOL_TO_TAG: dict[str, str] = {
 TAG_META: dict[str, dict[str, str]] = {
     "INSCRIBE_MEMORY":              {"label": "記憶",            "cls": "tag-memory"},
     "CARVE_NARRATIVE":              {"label": "ナラティブ",      "cls": "tag-narrative"},
-    "DRIFT":                        {"label": "ドリフト",        "cls": "tag-drift"},
-    "DRIFT_RESET":                  {"label": "ドリフトリセット", "cls": "tag-drift"},
     "SWITCH_ANGLE":                 {"label": "アングル切替",    "cls": "tag-switch"},
     "POWER_RECALL":                 {"label": "強想起",          "cls": "tag-recall"},
     "END_SESSION":                  {"label": "セッション終了",  "cls": "tag-end"},
@@ -107,14 +103,6 @@ def tool_call_to_structured_tag(tool_name: str, args: dict) -> dict:
             "内容":   str(args.get("content", "")),
         }
         return _make_tag(tag_name, fields, fields["内容"])
-
-    if tag_name == "DRIFT":
-        fields = {"内容": str(args.get("content", ""))}
-        return _make_tag(tag_name, fields, fields["内容"])
-
-    if tag_name == "DRIFT_RESET":
-        # 引数なしツール。固定マーカーで表示する。
-        return _make_tag(tag_name, {"内容": "(リセット)"}, "(リセット)")
 
     if tag_name == "SWITCH_ANGLE":
         fields = {

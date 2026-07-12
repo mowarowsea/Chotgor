@@ -67,19 +67,6 @@ class TestParseTagBody:
         assert result["fields"]["モード"] == "append"
         assert result["fields"]["内容"] == "A|B"
 
-    def test_drift_body_is_content(self):
-        """DRIFT: body 全体が "内容" フィールドになること。"""
-        result = _parse_tag_body("DRIFT", "新しいキャラクター設計の方針")
-        assert result["fields"]["内容"] == "新しいキャラクター設計の方針"
-        assert result["preview"] == "新しいキャラクター設計の方針"
-        assert result["meta"]["cls"] == "tag-drift"
-
-    def test_drift_reset_fixed_marker(self):
-        """DRIFT_RESET: 固定マーカーで body が空でも "(リセット)" と表示されること。"""
-        result = _parse_tag_body("DRIFT_RESET", "")
-        assert result["fields"]["内容"] == "(リセット)"
-        assert result["preview"] == "(リセット)"
-
     def test_switch_angle_preset_and_context(self):
         """SWITCH_ANGLE: preset|context が分解され、preview は context になること（Bug修正確認）。"""
         result = _parse_tag_body("SWITCH_ANGLE", "Gemma4|ミオとして大胆になったシーン")
@@ -153,41 +140,32 @@ class TestExtractTagsFromFile:
     def test_file_order_preserved(self, tmp_path):
         """複数タグが混在する場合、ファイル内の出現順で返されること（Bug修正確認）。
 
-        ファイル内で DRIFT → INSCRIBE_MEMORY の順で出現した場合、
-        タグ種別のリスト順（INSCRIBE_MEMORY→DRIFT）ではなく、
-        出現順（DRIFT→INSCRIBE_MEMORY）で返されること。
+        ファイル内で CARVE_NARRATIVE → INSCRIBE_MEMORY の順で出現した場合、
+        タグ種別のリスト順（INSCRIBE_MEMORY→CARVE_NARRATIVE）ではなく、
+        出現順（CARVE_NARRATIVE→INSCRIBE_MEMORY）で返されること。
         """
         f = tmp_path / "response.log"
         f.write_text(
-            "テキスト[DRIFT:ドリフト内容]間のテキスト[INSCRIBE_MEMORY:contextual|0.8|記憶内容]終わり",
+            "テキスト[CARVE_NARRATIVE:append|自己認識]間のテキスト[INSCRIBE_MEMORY:contextual|0.8|記憶内容]終わり",
             encoding="utf-8",
         )
         tags = _extract_tags_from_file(f)
         assert len(tags) == 2
-        assert tags[0]["tag_name"] == "DRIFT"
+        assert tags[0]["tag_name"] == "CARVE_NARRATIVE"
         assert tags[1]["tag_name"] == "INSCRIBE_MEMORY"
 
-    def test_multiline_drift_tag(self, tmp_path):
-        """DRIFT タグが複数行にまたがる場合も正しく抽出されること。"""
+    def test_multiline_tag(self, tmp_path):
+        """タグが複数行にまたがる場合も正しく抽出されること。"""
         f = tmp_path / "response.log"
         f.write_text(
-            "応答テキスト[DRIFT:1行目の内容\n2行目の内容\n3行目]終わり",
+            "応答テキスト[INSCRIBE_MEMORY:contextual|1.0|1行目の内容\n2行目の内容\n3行目]終わり",
             encoding="utf-8",
         )
         tags = _extract_tags_from_file(f)
         assert len(tags) == 1
-        assert tags[0]["tag_name"] == "DRIFT"
+        assert tags[0]["tag_name"] == "INSCRIBE_MEMORY"
         assert "1行目の内容" in tags[0]["fields"]["内容"]
         assert "3行目" in tags[0]["fields"]["内容"]
-
-    def test_drift_reset_fixed_marker(self, tmp_path):
-        """[DRIFT_RESET] 固定マーカーが抽出されること。"""
-        f = tmp_path / "response.log"
-        f.write_text("リセットします[DRIFT_RESET]以後よろしく", encoding="utf-8")
-        tags = _extract_tags_from_file(f)
-        assert len(tags) == 1
-        assert tags[0]["tag_name"] == "DRIFT_RESET"
-        assert tags[0]["preview"] == "(リセット)"
 
     def test_no_tags_returns_empty(self, tmp_path):
         """タグが存在しないファイルでは空リストを返すこと。"""
@@ -425,7 +403,7 @@ class TestExtractTagsFromFile:
             "candidates": [
                 {
                     "content": {
-                        "parts": [{"text": "テキスト[DRIFT:感情状態テキスト]終わり"}],
+                        "parts": [{"text": "テキスト[INSCRIBE_MEMORY:contextual|1.0|感情状態テキスト]終わり"}],
                         "role": "model",
                     }
                 }
@@ -439,7 +417,7 @@ class TestExtractTagsFromFile:
         # 注: JSON 文字列フィールド内のタグ（エスケープされた形）は抽出されない場合がある
         # このテストはフォールバックが呼ばれることを確認する（結果は空でも可）
         # JSON として全体はパース成功 → _collect_tool_calls_from_single_json は空 → タグパースへ
-        # ただし JSON テキストに "[DRIFT:...]" が含まれるため、タグパーサはそれを見つけることができる
+        # ただし JSON テキストに "[INSCRIBE_MEMORY:...]" が含まれるため、タグパーサはそれを見つけることができる
         assert isinstance(tags, list)  # 例外なく list が返ること
 
 

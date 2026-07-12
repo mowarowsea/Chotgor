@@ -83,8 +83,8 @@ class TestExtractFunctionCallsFromJson:
                             },
                             {
                                 "function_call": {
-                                    "name": "drift",
-                                    "args": {"content": "ドリフト内容"},
+                                    "name": "carve_narrative",
+                                    "args": {"mode": "append", "content": "ナラティブ内容"},
                                 }
                             },
                         ],
@@ -99,7 +99,7 @@ class TestExtractFunctionCallsFromJson:
         assert len(tags) == 2
         tag_names = {t["tag_name"] for t in tags}
         assert "INSCRIBE_MEMORY" in tag_names
-        assert "DRIFT" in tag_names
+        assert "CARVE_NARRATIVE" in tag_names
 
     def test_anthropic_tool_use(self):
         """Anthropic形式: content[].type == "tool_use" が正しく抽出されること。"""
@@ -344,16 +344,16 @@ class TestExtractFunctionCallsFromJson:
         stream_lines = [
             # system イベント: tool_use に似た構造を持っても無視されること
             json.dumps({"type": "system", "message": {"content": [{"type": "tool_use", "name": "inscribe_memory", "input": {}}]}}),
-            # assistant イベント: drift ツール呼び出しあり → 抽出されること
+            # assistant イベント: carve_narrative ツール呼び出しあり → 抽出されること
             json.dumps({
                 "type": "assistant",
                 "message": {
-                    "content": [{"type": "tool_use", "id": "toolu_01", "name": "drift", "input": {"content": "ドリフト内容"}}],
+                    "content": [{"type": "tool_use", "id": "toolu_01", "name": "carve_narrative", "input": {"mode": "append", "content": "ナラティブ内容"}}],
                     "stop_reason": "tool_use",
                 },
             }),
             # tool イベント: 処理結果を表す行、無視されること
-            json.dumps({"type": "tool", "name": "drift", "input": {"content": "ドリフト内容"}}),
+            json.dumps({"type": "tool", "name": "carve_narrative", "input": {"content": "ナラティブ内容"}}),
             # result イベント: 無視されること
             json.dumps({"type": "result", "subtype": "success", "is_error": False}),
         ]
@@ -361,8 +361,8 @@ class TestExtractFunctionCallsFromJson:
         tags = _extract_function_calls_from_json(text)
 
         assert len(tags) == 1
-        assert tags[0]["tag_name"] == "DRIFT"
-        assert "ドリフト内容" in tags[0]["fields"]["内容"]
+        assert tags[0]["tag_name"] == "CARVE_NARRATIVE"
+        assert "ナラティブ内容" in tags[0]["fields"]["内容"]
 
     def test_claude_cli_stream_json_invalid_lines_skipped(self):
         """Claude CLI stream-json: 不正な行（JSON でない）がある場合も他の行を処理し続けること。"""
@@ -372,7 +372,7 @@ class TestExtractFunctionCallsFromJson:
             json.dumps({
                 "type": "assistant",
                 "message": {
-                    "content": [{"type": "tool_use", "id": "toolu_01", "name": "drift", "input": {"content": "内容"}}],
+                    "content": [{"type": "tool_use", "id": "toolu_01", "name": "carve_narrative", "input": {"mode": "append", "content": "内容"}}],
                     "stop_reason": "tool_use",
                 },
             }),
@@ -381,7 +381,7 @@ class TestExtractFunctionCallsFromJson:
         tags = _extract_function_calls_from_json(text)
 
         assert len(tags) == 1
-        assert tags[0]["tag_name"] == "DRIFT"
+        assert tags[0]["tag_name"] == "CARVE_NARRATIVE"
 
 
 # ─── _parse_entry: tool-use 複数ラウンドトリップ ─────────────────────────────
