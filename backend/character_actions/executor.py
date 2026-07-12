@@ -1,13 +1,11 @@
-"""Chotgor MCPツール定義 — 記憶・ワーキングメモリ・アングル切り替えのツールスキーマとexecutor。
+"""ToolExecutor — キャラクターのツール呼び出しを実行する中枢。
 
 LLM の tool-use（function calling）で保存記憶・ワーキングメモリ・switch_angle 等を
-操作するための定義を提供する。tool-use 非対応プロバイダー（Claude CLI、Ollama）は
+操作する。tool-use 非対応プロバイダー（Claude CLI、Ollama）は
 タグ方式（[INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] マーカー）にフォールバックする。
 
-各ツールのスキーマ・説明文は対応モジュールに定義する:
-- inscribe_memory: inscriber.py
-- carve_narrative: carver.py
-- post / read / close / reopen / merge _working_memory_thread(s): threader.py
+ツールの定義（スキーマ・説明文）は tool_specs.py の ToolSpec 台帳が単一ソース。
+ANTHROPIC_TOOLS / OPENAI_TOOLS はそこから生成される。
 """
 
 from __future__ import annotations
@@ -23,109 +21,18 @@ if TYPE_CHECKING:
 from backend.lib.tool_event_recorder import record_tool_event, result_looks_like_error
 from backend.repositories.lance.store import EmbeddingError
 from backend.services.memory.format import origin_label_prefix
-from backend.character_actions.recaller import POWER_RECALL_SCHEMA, POWER_RECALL_TOOL_DESCRIPTION
-from backend.character_actions.switcher import (
-    Switcher,
-    SWITCH_ANGLE_SCHEMA,
-    SWITCH_ANGLE_TOOL_DESCRIPTION,
-    extract_switch_angle_tags,
-)
-from backend.character_actions.carver import (
-    Carver,
-    CARVE_NARRATIVE_SCHEMA,
-    CARVE_NARRATIVE_TOOL_DESCRIPTION,
-    extract_carve_narrative_tags,
-)
-from backend.character_actions.inscriber import (
-    Inscriber,
-    INSCRIBE_MEMORY_SCHEMA,
-    INSCRIBE_MEMORY_TOOL_DESCRIPTION,
-    extract_inscribe_memory_tags,
-)
-from backend.character_actions.threader import (
-    Threader,
-    POST_WORKING_MEMORY_THREAD_SCHEMA,
-    POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    READ_WORKING_MEMORY_THREAD_SCHEMA,
-    READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
-    CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
-    REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    MERGE_WORKING_MEMORY_THREADS_SCHEMA,
-    MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
-)
-from backend.character_actions.web_searcher import (
-    WebSearcher,
-    WEB_SEARCH_SCHEMA,
-    WEB_SEARCH_TOOL_DESCRIPTION,
-)
-from backend.character_actions.leaver import (
-    Leaver,
-    TAKE_LEAVE_SCHEMA,
-    TAKE_LEAVE_TOOL_DESCRIPTION,
-)
+from backend.character_actions.tool_specs import BASE_TOOL_SPECS
+from backend.character_actions.switcher import Switcher, extract_switch_angle_tags
+from backend.character_actions.carver import Carver, extract_carve_narrative_tags
+from backend.character_actions.inscriber import Inscriber, extract_inscribe_memory_tags
+from backend.character_actions.threader import Threader
+from backend.character_actions.web_searcher import WebSearcher
+from backend.character_actions.leaver import Leaver
 from backend.character_actions.messenger import Messenger
 from backend.character_actions.rescheduler import Rescheduler
 
-# Anthropic形式のツール定義リスト
-ANTHROPIC_TOOLS: list[dict] = [
-    {
-        "name": "inscribe_memory",
-        "description": INSCRIBE_MEMORY_TOOL_DESCRIPTION,
-        "input_schema": INSCRIBE_MEMORY_SCHEMA,
-    },
-    {
-        "name": "post_working_memory_thread",
-        "description": POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-        "input_schema": POST_WORKING_MEMORY_THREAD_SCHEMA,
-    },
-    {
-        "name": "read_working_memory_thread",
-        "description": READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-        "input_schema": READ_WORKING_MEMORY_THREAD_SCHEMA,
-    },
-    {
-        "name": "close_working_memory_thread",
-        "description": CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-        "input_schema": CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
-    },
-    {
-        "name": "reopen_working_memory_thread",
-        "description": REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-        "input_schema": REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
-    },
-    {
-        "name": "merge_working_memory_threads",
-        "description": MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
-        "input_schema": MERGE_WORKING_MEMORY_THREADS_SCHEMA,
-    },
-    {
-        "name": "carve_narrative",
-        "description": CARVE_NARRATIVE_TOOL_DESCRIPTION,
-        "input_schema": CARVE_NARRATIVE_SCHEMA,
-    },
-    {
-        "name": "switch_angle",
-        "description": SWITCH_ANGLE_TOOL_DESCRIPTION,
-        "input_schema": SWITCH_ANGLE_SCHEMA,
-    },
-    {
-        "name": "power_recall",
-        "description": POWER_RECALL_TOOL_DESCRIPTION,
-        "input_schema": POWER_RECALL_SCHEMA,
-    },
-    {
-        "name": "web_search",
-        "description": WEB_SEARCH_TOOL_DESCRIPTION,
-        "input_schema": WEB_SEARCH_SCHEMA,
-    },
-    {
-        "name": "take_leave",
-        "description": TAKE_LEAVE_TOOL_DESCRIPTION,
-        "input_schema": TAKE_LEAVE_SCHEMA,
-    },
-]
+# Anthropic形式のツール定義リスト（tool_specs.py の台帳から生成）
+ANTHROPIC_TOOLS: list[dict] = [spec.as_anthropic() for spec in BASE_TOOL_SPECS]
 
 def to_openai_tools(anthropic_tools: list[dict]) -> list[dict]:
     """Anthropic 形式のツール定義リストを OpenAI 形式へ変換する。

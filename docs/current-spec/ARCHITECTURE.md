@@ -105,7 +105,8 @@
 
 | モジュール | ツール / 役割 |
 |---|---|
-| `executor.py` | ツールスキーマ定義と ToolExecutor（tool-use 実行の中枢） |
+| `tool_specs.py` | **ツール定義の単一ソース（ToolSpec 台帳）**。全文脈共通の BASE_TOOL_SPECS ＋文脈別の CONTEXT_TOOL_SPECS。ここに1件足せば executor.ANTHROPIC_TOOLS / OPENAI_TOOLS・MCP tools/list・context_tools の出し分けへ自動反映される |
+| `executor.py` | ToolExecutor（tool-use 実行の中枢。定義リストは tool_specs.py から生成） |
 | `inscriber.py` | `inscribe_memory` — 長期記憶への刻み込み |
 | `recaller.py` | `power_recall` — 能動的記憶検索 |
 | `carver.py` | `carve_narrative` — inner_narrative の自己書き換え |

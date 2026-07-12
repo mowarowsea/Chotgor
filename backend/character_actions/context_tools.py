@@ -24,51 +24,11 @@
 
 from datetime import datetime
 
-from backend.character_actions.messenger import (
-    REACH_OUT_SCHEMA,
-    REACH_OUT_TOOL_DESCRIPTION,
-    REACH_OUT_TOOLS_HINT,
-    VISIT_USER_SCHEMA,
-    VISIT_USER_TOOL_DESCRIPTION,
-    VISIT_USER_TOOLS_HINT,
-    delivery_cap_reached,
-)
-from backend.character_actions.rescheduler import (
-    OVERRIDE_SCHEDULE_SCHEMA,
-    OVERRIDE_SCHEDULE_TOOL_DESCRIPTION,
-    OVERRIDE_SCHEDULE_TOOLS_HINT,
-)
-
-# ツール名 → (Anthropic 形式定義, プロンプトヒント) の対応表
-_CONTEXT_TOOL_DEFS: dict[str, tuple[dict, str]] = {
-    "reach_out": (
-        {
-            "name": "reach_out",
-            "description": REACH_OUT_TOOL_DESCRIPTION,
-            "input_schema": REACH_OUT_SCHEMA,
-        },
-        REACH_OUT_TOOLS_HINT,
-    ),
-    "visit_user": (
-        {
-            "name": "visit_user",
-            "description": VISIT_USER_TOOL_DESCRIPTION,
-            "input_schema": VISIT_USER_SCHEMA,
-        },
-        VISIT_USER_TOOLS_HINT,
-    ),
-    "override_schedule": (
-        {
-            "name": "override_schedule",
-            "description": OVERRIDE_SCHEDULE_TOOL_DESCRIPTION,
-            "input_schema": OVERRIDE_SCHEDULE_SCHEMA,
-        },
-        OVERRIDE_SCHEDULE_TOOLS_HINT,
-    ),
-}
+from backend.character_actions.messenger import delivery_cap_reached
+from backend.character_actions.tool_specs import CONTEXT_TOOL_SPECS
 
 # コンテキストツール名の全集合（テスト・許可設定の照合用）
-CONTEXT_TOOL_NAMES: frozenset[str] = frozenset(_CONTEXT_TOOL_DEFS)
+CONTEXT_TOOL_NAMES: frozenset[str] = frozenset(CONTEXT_TOOL_SPECS)
 
 
 def resolve_context_tool_names(
@@ -126,7 +86,7 @@ def resolve_context_tools(
     executor.to_openai_tools() で変換する。
     """
     return [
-        _CONTEXT_TOOL_DEFS[name][0]
+        CONTEXT_TOOL_SPECS[name].as_anthropic()
         for name in resolve_context_tool_names(
             sqlite, character_id, origin=origin, session_id=session_id, now=now,
         )
@@ -143,7 +103,7 @@ def resolve_context_tool_hints(
 ) -> list[str]:
     """この文脈でシステムプロンプトへ注入する操作ガイド（ヒント）のリストを返す。"""
     return [
-        _CONTEXT_TOOL_DEFS[name][1]
+        CONTEXT_TOOL_SPECS[name].hint
         for name in resolve_context_tool_names(
             sqlite, character_id, origin=origin, session_id=session_id, now=now,
         )

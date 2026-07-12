@@ -56,13 +56,8 @@ class TestListTools:
     def test_returns_all_tools(self, client_local):
         """公開されるツール一覧が想定どおり全種返ること。
 
-        現状の MCP 公開ツール（基本セット）は inscribe_memory / post_working_memory_thread /
-        read_working_memory_thread / close_working_memory_thread /
-        reopen_working_memory_thread / merge_working_memory_threads / carve_narrative /
-        power_recall / switch_angle / web_search / take_leave の 11 種。
-        （take_leave は permissions.allow 登録済みなのに一覧から漏れており、claude_cli
-        経路のキャラに一度も露出していなかったため 2026-07-11 に追加。）
-        並びと数が変わったらこのテストが知らせる。
+        MCP 公開ツール（基本セット）は tool_specs.BASE_TOOL_SPECS の台帳と
+        同一の並び・同一の 11 種であること。並びと数が変わったらこのテストが知らせる。
         コンテキスト別追加ツール（reach_out 等）はクエリ付きの場合のみ合成される
         （TestContextToolExposure を参照）。
         """
@@ -78,8 +73,8 @@ class TestListTools:
             "reopen_working_memory_thread",
             "merge_working_memory_threads",
             "carve_narrative",
-            "power_recall",
             "switch_angle",
+            "power_recall",
             "web_search",
             "take_leave",
         ]

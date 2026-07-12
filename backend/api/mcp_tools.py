@@ -17,47 +17,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.character_actions.executor import ToolExecutor
+from backend.character_actions.tool_specs import BASE_TOOL_SPECS
 from backend.lib.log_context import (
     current_log_dir_id,
     current_log_feature,
     current_log_target,
     current_message_id,
-)
-from backend.character_actions.inscriber import (
-    INSCRIBE_MEMORY_SCHEMA,
-    INSCRIBE_MEMORY_TOOL_DESCRIPTION,
-)
-from backend.character_actions.threader import (
-    POST_WORKING_MEMORY_THREAD_SCHEMA,
-    POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    READ_WORKING_MEMORY_THREAD_SCHEMA,
-    READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
-    CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
-    REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-    MERGE_WORKING_MEMORY_THREADS_SCHEMA,
-    MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
-)
-from backend.character_actions.carver import (
-    CARVE_NARRATIVE_SCHEMA,
-    CARVE_NARRATIVE_TOOL_DESCRIPTION,
-)
-from backend.character_actions.recaller import (
-    POWER_RECALL_SCHEMA,
-    POWER_RECALL_TOOL_DESCRIPTION,
-)
-from backend.character_actions.switcher import (
-    SWITCH_ANGLE_SCHEMA,
-    SWITCH_ANGLE_TOOL_DESCRIPTION,
-)
-from backend.character_actions.web_searcher import (
-    WEB_SEARCH_SCHEMA,
-    WEB_SEARCH_TOOL_DESCRIPTION,
-)
-from backend.character_actions.leaver import (
-    TAKE_LEAVE_SCHEMA,
-    TAKE_LEAVE_TOOL_DESCRIPTION,
 )
 
 
@@ -164,69 +129,14 @@ class ToolListResponse(BaseModel):
 
 
 def _build_tool_definitions() -> list[ToolDefinition]:
-    """現在公開する MCP ツール定義のリストを構築する。
-
-    スキーマは各 character_action モジュールに定義された定数をそのまま参照する。
-    """
+    """現在公開する MCP ツール定義のリストを構築する（tool_specs.py の台帳から生成）。"""
     return [
         ToolDefinition(
-            name="inscribe_memory",
-            description=INSCRIBE_MEMORY_TOOL_DESCRIPTION,
-            inputSchema=INSCRIBE_MEMORY_SCHEMA,
-        ),
-        ToolDefinition(
-            name="post_working_memory_thread",
-            description=POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-            inputSchema=POST_WORKING_MEMORY_THREAD_SCHEMA,
-        ),
-        ToolDefinition(
-            name="read_working_memory_thread",
-            description=READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-            inputSchema=READ_WORKING_MEMORY_THREAD_SCHEMA,
-        ),
-        ToolDefinition(
-            name="close_working_memory_thread",
-            description=CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-            inputSchema=CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
-        ),
-        ToolDefinition(
-            name="reopen_working_memory_thread",
-            description=REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
-            inputSchema=REOPEN_WORKING_MEMORY_THREAD_SCHEMA,
-        ),
-        ToolDefinition(
-            name="merge_working_memory_threads",
-            description=MERGE_WORKING_MEMORY_THREADS_TOOL_DESCRIPTION,
-            inputSchema=MERGE_WORKING_MEMORY_THREADS_SCHEMA,
-        ),
-        ToolDefinition(
-            name="carve_narrative",
-            description=CARVE_NARRATIVE_TOOL_DESCRIPTION,
-            inputSchema=CARVE_NARRATIVE_SCHEMA,
-        ),
-        ToolDefinition(
-            name="power_recall",
-            description=POWER_RECALL_TOOL_DESCRIPTION,
-            inputSchema=POWER_RECALL_SCHEMA,
-        ),
-        ToolDefinition(
-            name="switch_angle",
-            description=SWITCH_ANGLE_TOOL_DESCRIPTION,
-            inputSchema=SWITCH_ANGLE_SCHEMA,
-        ),
-        ToolDefinition(
-            name="web_search",
-            description=WEB_SEARCH_TOOL_DESCRIPTION,
-            inputSchema=WEB_SEARCH_SCHEMA,
-        ),
-        # take_leave は permissions.allow（Chotgor_ClaudeCodeWorkDir 側）に登録済み
-        # だったが、一覧への追加が漏れており claude_cli 経路のキャラには一度も
-        # 露出していなかった（2026-07-11 発見・修正）。
-        ToolDefinition(
-            name="take_leave",
-            description=TAKE_LEAVE_TOOL_DESCRIPTION,
-            inputSchema=TAKE_LEAVE_SCHEMA,
-        ),
+            name=spec.name,
+            description=spec.description,
+            inputSchema=spec.input_schema,
+        )
+        for spec in BASE_TOOL_SPECS
     ]
 
 
