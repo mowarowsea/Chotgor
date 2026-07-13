@@ -38,7 +38,7 @@ def _make_character(sqlite_store, name="はる予報", **updates):
     return char_id, name
 
 
-def _make_hot_intent(sqlite_store, char_id, description="もわに話したい"):
+def _make_hot_intent(sqlite_store, char_id, description="もわに話したい", now=None):
     """意図圧が閾値を超える（古い×高圧源）active 意図を作るヘルパ。
 
     封筒ゼロなら社会圧は 1.0（最大）なので、source_kind="social" の意図を
@@ -48,9 +48,10 @@ def _make_hot_intent(sqlite_store, char_id, description="もわに話したい")
         char_id, description, target="user", source_kind="social",
     )
     from backend.repositories.sqlite.models import Intent
+    base_now = now or datetime.now()
     with sqlite_store.get_session() as s:
         row = s.get(Intent, intent.id)
-        row.created_at = datetime.now() - timedelta(days=10)
+        row.created_at = base_now - timedelta(days=10)
         s.commit()
     return intent
 
@@ -233,18 +234,18 @@ class TestBuildForecast:
 
     def test_full_structure(self, sqlite_store):
         """全セクションが揃い、格子と系列の長さが一致する。"""
+        now = datetime(2026, 7, 10, 12, 0)
         char_id, name = _make_character(
             sqlite_store, action_menu={"push": True},
         )
-        _make_hot_intent(sqlite_store, char_id)
+        _make_hot_intent(sqlite_store, char_id, now=now)
         sqlite_store.set_setting(
-            "scheduler_heartbeat_action", datetime.now().isoformat(),
+            "scheduler_heartbeat_action", now.isoformat(),
         )
         sqlite_store.record_scheduler_decision(
-            "action", "fired", character_id=char_id, reason="push 実行",
+            "action", "fired", character_id=char_id, reason="push 実行", occurred_at=now,
         )
 
-        now = datetime(2026, 7, 10, 12, 0)
         fc = build_forecast(sqlite_store, char_id, now=now, horizon_hours=24)
 
         assert fc["character"]["name"] == name

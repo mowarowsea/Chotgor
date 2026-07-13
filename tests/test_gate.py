@@ -208,9 +208,9 @@ class TestFatigueLeave:
     体調圧は封筒の純関数なので、封筒を大量投入して高圧状態を作って検証する。
     """
 
-    def _exhaust(self, sqlite_store, char_id, count=200):
+    def _exhaust(self, sqlite_store, char_id, count=300, base=None):
         """直近数時間に大量の活動イベントを積んで体調圧を最大化するヘルパ。"""
-        base = datetime.now()
+        base = base or datetime.now()
         for i in range(count):
             sqlite_store.record_timeline_event(
                 character_id=char_id, event_type="scene.turn",
@@ -220,9 +220,11 @@ class TestFatigueLeave:
     def test_no_fatigue_config_never_fires(self, sqlite_store):
         """farewell_config に fatigue が無ければ発火しない（機能オプトイン）。"""
         char_id, char_name = _make_character(sqlite_store)
-        self._exhaust(sqlite_store, char_id)
+        now = datetime(2026, 7, 10, 12, 0)
+        self._exhaust(sqlite_store, char_id, count=300, base=now)
         fired = check_fatigue_leave(
             sqlite_store, char_id, char_name, "s1", farewell_config={},
+            now=now,
         )
         assert fired is False
 
@@ -231,15 +233,17 @@ class TestFatigueLeave:
         char_id, char_name = _make_character(sqlite_store)
         sid = str(uuid.uuid4())
         sqlite_store.create_chat_session(session_id=sid, model_id=f"{char_name}@d")
-        self._exhaust(sqlite_store, char_id)
+        now = datetime(2026, 7, 10, 12, 0)
+        self._exhaust(sqlite_store, char_id, count=300, base=now)
         fired = check_fatigue_leave(
             sqlite_store, char_id, char_name, sid,
             farewell_config={"fatigue": {"theta_hard": 0.9}},
             engagement=1.0,  # 夢中でも限界は限界
+            now=now,
         )
         assert fired is True
         char = sqlite_store.get_character(char_id)
-        assert char.away_until is not None and char.away_until > datetime.now()
+        assert char.away_until is not None and char.away_until > now
         assert "休息" in char.away_reason
         # 退去挨拶（システムメッセージ）が保存されている
         msgs = sqlite_store.list_chat_messages(sid)
@@ -257,7 +261,8 @@ class TestFatigueLeave:
         sqlite_store.create_chat_session(session_id=sid, model_id=f"{char_name}@d")
         # 体調圧を「θ_base とβ持ち上げの間」に置くための調整はイベント数では難しいので、
         # θ を直接調整して式の分岐だけを検証する（体調圧はこのフィクスチャで最大近く）。
-        self._exhaust(sqlite_store, char_id)
+        now = datetime(2026, 7, 10, 12, 0)
+        self._exhaust(sqlite_store, char_id, count=300, base=now)
         # θ_base=0.5, β=0.6 → engagement=1.0 で閾値 1.1（体調圧 <= 1.0 なので発火しない）
         fired_engaged = check_fatigue_leave(
             sqlite_store, char_id, char_name, sid,
@@ -265,6 +270,7 @@ class TestFatigueLeave:
                 "theta_base": 0.5, "beta": 0.6, "theta_hard": 1.1,
             }},
             engagement=1.0,
+            now=now,
         )
         assert fired_engaged is False
         # engagement=0.0 なら閾値 0.5 → 発火する
@@ -274,6 +280,7 @@ class TestFatigueLeave:
                 "theta_base": 0.5, "beta": 0.6, "theta_hard": 1.1,
             }},
             engagement=0.0,
+            now=now,
         )
         assert fired_bored is True
 
