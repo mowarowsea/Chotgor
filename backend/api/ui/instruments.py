@@ -6,6 +6,7 @@
 このパネルの数字が「窓を閉じてよい」というユーザの確信を支える。
 """
 
+import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request
@@ -39,14 +40,37 @@ _METER_LABELS = {
 }
 
 
+def _format_alarm_details(details: object) -> str:
+    """アラーム details を日本語が読める JSON 文字列に整形する。"""
+    if not details:
+        return "–"
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except json.JSONDecodeError:
+            return details
+    return json.dumps(details, ensure_ascii=False, default=str)
+
+
+def _attach_alarm_details_text(alarms: list) -> list:
+    """テンプレート表示用に details_text を付与する。"""
+    for alarm in alarms:
+        alarm.details_text = _format_alarm_details(alarm.details)
+    return alarms
+
+
 @router.get("/instruments", response_class=HTMLResponse)
 async def instruments_panel(request: Request):
     """計器パネル。静音期間・3層別アラーム・メーターの最新値を表示する。"""
     sqlite = request.app.state.sqlite
     since_30d = datetime.now() - timedelta(days=30)
 
-    alarms = sqlite.list_alarms(severity="alarm", since=since_30d, limit=100)
-    smells = sqlite.list_alarms(severity="smell", since=since_30d, limit=100)
+    alarms = _attach_alarm_details_text(
+        sqlite.list_alarms(severity="alarm", since=since_30d, limit=100)
+    )
+    smells = _attach_alarm_details_text(
+        sqlite.list_alarms(severity="smell", since=since_30d, limit=100)
+    )
     quiet_days = sqlite.quiet_period_days()
     unacknowledged = sum(1 for a in alarms if a.acknowledged_at is None)
 

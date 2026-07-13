@@ -48,7 +48,8 @@ class TestInstrumentsPanel:
         char_id = str(uuid.uuid4())
         sqlite_store.create_character(character_id=char_id, name="はるテスト")
         sqlite_store.fire_alarm(
-            "fabrication_backstop", details={"session_id": "s1"},
+            "fabrication_backstop",
+            details={"session_id": "s1", "note": "夜の営みの停止"},
         )
         sqlite_store.fire_alarm("smell_format_debris", severity="smell")
         sqlite_store.record_meter("wm_thread_count", 3, character_id=char_id)
@@ -57,6 +58,8 @@ class TestInstrumentsPanel:
         assert "GMのユーザ捏造" in resp.text       # invariant ラベル
         assert "WMスレッド数" in resp.text          # メーターラベル
         assert "はるテスト" in resp.text
+        assert "夜の営みの停止" in resp.text
+        assert "\\u591c\\u306e" not in resp.text
 
     def test_acknowledge_alarm(self, instruments_client, sqlite_store):
         """確認済み化 POST がアラームを ack してパネルへリダイレクトする。"""

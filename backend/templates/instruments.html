@@ -21,7 +21,15 @@
             <tr {% if a.acknowledged_at %}style="opacity:.5"{% endif %}>
                 <td style="white-space:nowrap">{{ a.occurred_at.strftime("%m/%d %H:%M") }}</td>
                 <td><span class="ch-tag {% if a.severity == 'alarm' %}ch-tag--danger{% else %}ch-tag--sub{% endif %}">{{ invariant_labels.get(a.invariant_id, a.invariant_id) }}</span></td>
-                <td style="font-size:.85em;word-break:break-all">{{ a.details | tojson if a.details else "–" }}</td>
+                <td style="font-size:.85em;word-break:break-all">
+                    {% if a.details_text is defined %}
+                    {{ a.details_text }}
+                    {% elif a.details %}
+                    {{ a.details }}
+                    {% else %}
+                    –
+                    {% endif %}
+                </td>
                 {% if ack %}
                 <td style="white-space:nowrap">
                     {% if not a.acknowledged_at %}
