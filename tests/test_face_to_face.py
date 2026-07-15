@@ -293,6 +293,128 @@ class TestResolveSinceDt:
         assert since <= close_time + timedelta(seconds=0.1)
 
 
+class TestResolveSinceDtScenesPerDay:
+    """§9 v1.1: scenes_per_day で N 個前の SCENE_CLOSE を起点にする。
+
+    シーン境界（SCENE_CLOSE）単位で窓を切ると、うつつシーン間の 1on1 が
+    沈黙シーンを挟むと消える。N＝1日のシーン回数ぶん遡ることで、
+    直近1日ぶんの生活（うつつシーン群＋その間の1on1）が丸ごと入る。
+    """
+
+    def _make_n_scene_closes(self, sqlite_store, n: int) -> list[datetime]:
+        """うつつセッションに SCENE_CLOSE を含むターンを n 個作り、その created_at を返す。
+
+        時間差を作るために time.sleep を挟む。返却は作った順（古い→新しい）。
+        """
+        import time
+        _make_usual_session(sqlite_store)
+        times: list[datetime] = []
+        for i in range(n):
+            sqlite_store.create_scenario_turn(
+                turn_id=f"sc{i}", session_id="usess", turn_index=i,
+                speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+                content=f"シーン{i} 終了。[SCENE_CLOSE]",
+                raw_response=f"GM{i} [SCENE_CLOSE]",
+            )
+            times.append(datetime.now())
+            if i < n - 1:
+                time.sleep(0.03)
+        return times
+
+    def test_n2_returns_second_latest_close(self, sqlite_store):
+        """scenes_per_day=2 → 2個前（＝直近から2番目）の SCENE_CLOSE 時刻を返す。"""
+        times = self._make_n_scene_closes(sqlite_store, 3)
+        # times[2] が最新、times[1] が2番目、times[0] が最古
+        since = resolve_since_dt(sqlite_store, "char-haru", scenes_per_day=2)
+        # times[1]（2番目に新しい）近傍にあるはず、times[2]（最新）よりは古い
+        assert since < times[2]
+        assert abs((since - times[1]).total_seconds()) < 0.1
+
+    def test_n3_returns_third_latest_close(self, sqlite_store):
+        """scenes_per_day=3 → 3個前の SCENE_CLOSE 時刻（既定 N）。"""
+        times = self._make_n_scene_closes(sqlite_store, 4)
+        since = resolve_since_dt(sqlite_store, "char-haru", scenes_per_day=3)
+        # times[1]（4個中の3番目に新しい = 上から3個目）近傍
+        assert abs((since - times[1]).total_seconds()) < 0.1
+
+    def test_falls_back_to_oldest_when_fewer_scene_closes(self, sqlite_store):
+        """SCENE_CLOSE が N 個未満のとき、あるだけ古い（＝最古の）SCENE_CLOSE を使う。"""
+        times = self._make_n_scene_closes(sqlite_store, 2)  # 2 個しか無い
+        # N=5 を要求 → 最古の SCENE_CLOSE（times[0]）にフォールバック
+        since = resolve_since_dt(sqlite_store, "char-haru", scenes_per_day=5)
+        assert abs((since - times[0]).total_seconds()) < 0.1
+
+    def test_default_n_equals_1_matches_legacy_behavior(self, sqlite_store):
+        """scenes_per_day 未指定は N=1（最新 SCENE_CLOSE）＝旧挙動と一致。"""
+        times = self._make_n_scene_closes(sqlite_store, 3)
+        since_default = resolve_since_dt(sqlite_store, "char-haru")
+        since_n1 = resolve_since_dt(sqlite_store, "char-haru", scenes_per_day=1)
+        assert since_default == since_n1
+        assert abs((since_default - times[2]).total_seconds()) < 0.1
+
+    def test_scene_between_1on1_flows_into_current_scene(self, sqlite_store):
+        """①うつつ→②1on1→③うつつ→④1on1→⑤うつつ で、⑤時点に②の1on1が
+        流れ込むこと（旧仕様＝N=1では②が消えていた回帰）。"""
+        import time
+        _make_usual_session(sqlite_store)
+        # ① うつつシーン閉じ
+        sqlite_store.create_scenario_turn(
+            turn_id="s1", session_id="usess", turn_index=0,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="① 終了。[SCENE_CLOSE]", raw_response="GM1 [SCENE_CLOSE]",
+        )
+        t_close1 = datetime.now()
+        time.sleep(0.03)
+        # ② 1on1 メッセージ（キャラ「はる」のセッション）
+        sqlite_store.create_chat_session("s_1on1_a", "はる@p")
+        _new_chat_message(sqlite_store, "s_1on1_a", "user", "②のメッセージ")
+        time.sleep(0.03)
+        # ③ うつつシーン閉じ
+        sqlite_store.create_scenario_turn(
+            turn_id="s2", session_id="usess", turn_index=1,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="③ 終了。[SCENE_CLOSE]", raw_response="GM2 [SCENE_CLOSE]",
+        )
+        time.sleep(0.03)
+        # ④ 1on1 メッセージ
+        sqlite_store.create_chat_session("s_1on1_b", "はる@p")
+        _new_chat_message(sqlite_store, "s_1on1_b", "user", "④のメッセージ")
+        time.sleep(0.03)
+
+        # ⑤ 時点で N=1（旧仕様）: since = ③のSCENE_CLOSE、②は入らない
+        since_n1 = resolve_since_dt(sqlite_store, "char-haru", scenes_per_day=1)
+        assert since_n1 > t_close1  # ①の閉じ時点より新しい
+
+        # ⑤ 時点で N=2（新仕様の基本）: since = ①のSCENE_CLOSE、②も入る
+        since_n2 = resolve_since_dt(sqlite_store, "char-haru", scenes_per_day=2)
+        assert abs((since_n2 - t_close1).total_seconds()) < 0.1
+
+        # 実際に collect_all_scenes で確かめる: N=2 なら②も④もシーンに含まれる
+        history = sqlite_store.list_scenario_turns("usess")
+        scenes_n2 = collect_all_scenes(
+            sqlite_store, history=history,
+            self_character_id="char-haru", character_name="はる",
+            user_label="太郎", scenes_per_day=2,
+        )
+        contents_n2 = [
+            t.content for sc in scenes_n2 for t in sc.turns
+        ]
+        assert any("②のメッセージ" in c for c in contents_n2)
+        assert any("④のメッセージ" in c for c in contents_n2)
+
+        # N=1 では②は消える（旧仕様＝バグ再現）
+        scenes_n1 = collect_all_scenes(
+            sqlite_store, history=history,
+            self_character_id="char-haru", character_name="はる",
+            user_label="太郎", scenes_per_day=1,
+        )
+        contents_n1 = [
+            t.content for sc in scenes_n1 for t in sc.turns
+        ]
+        assert not any("②のメッセージ" in c for c in contents_n1)
+        assert any("④のメッセージ" in c for c in contents_n1)
+
+
 # ---------------------------------------------------------------------------
 # Phase 5 — シーン構築（_build_usual_scenes / _build_1on1_scenes / etc.）
 # ---------------------------------------------------------------------------

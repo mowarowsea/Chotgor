@@ -169,3 +169,76 @@
 - **コスト/レートリミット**: 無人で積み上がる。ガード（§7）必須。claude_cli は毎回フル課金。
 - **backend 起動はユーザに任せる**（`feedback_no_auto_server_restart`）。動作確認は run.bat 再起動をユーザへ依頼。
 - **構造を変えたら同じコミットで `docs/current-spec/ARCHITECTURE.md` も更新**（CLAUDE.md）。
+
+---
+
+## 9. うつつ履歴窓の再設計（v1.1・2026-07-16 追記）
+
+### 9.1 発覚した問題
+
+`①うつつ→②1on1→③うつつ→④1on1→⑤うつつ` の流れで、
+現行の `resolve_since_dt = 最新SCENE_CLOSE時刻` だと、⑤時点で
+「前回SCENE_CLOSE（＝③）以降」の1on1しか流れ込まない。②の1on1は流入しない。
+④で沈黙（返事なし）だと、⑤時点でキャラから見て「返事が何もない」状態になり、
+「寂しい限界OL復活」が発生する。
+
+思想的には `external_scenes.py` 冒頭の宣言どおり **「うつつ・1on1・TRPG は同じ一本の
+世界軸上で続いている時間」** であるべきで、シーン境界で見えなくなる現行は思想と乖離。
+
+### 9.2 検討した案
+
+**A案：未消化1on1トラッキング（棄却）**
+- `chat_message` に「うつつシーンで一度でも injection されたか」フラグを持たせ、
+  injection 時に立てる。未消化のものは古くても拾う。
+- **棄却理由**: 「消化＝injection された時点」の運用だと、③で②が消化済みになるため、
+  ⑤時点で②を再度出せず現状と変わらない。「消化＝キャラが実際に反応した時」に
+  しないと機能しないが、その判定は重すぎる（キャラは黙って考えているだけかもしれない）。
+
+**B-2案：時間窓＋メッセージ数上限（棄却）**
+- `since_dt = now - N日`、`limit=500` の二段。
+- **棄却理由**: 上限が付けられるのは利点だが、「キャラ設定に沿う自然なN」を
+  定義しづらく、定数チューニングが要る。
+
+**B-3案：SCENE_CLOSE時サマリ生成（保留・将来案）**
+- SCENE_CLOSE時に「そのシーン＋直前1on1」を LLM で要約し蓄積。うつつには
+  「過去サマリ列＋前回SCENE_CLOSE以降の生」を渡す。
+- **保留理由**: 実装重（テーブル追加＋要約LLM）＋キャラの記憶パイプライン
+  （WM→inscribe→narrative）と二重管理感。B-1 の上に将来足せるので今回不採用。
+
+### 9.3 採用：B-1案（N個前のSCENE_CLOSE起点）
+
+- `resolve_since_dt` を変更:
+  - 旧: `since_dt = 最新SCENE_CLOSE時刻`
+  - 新: `since_dt = N個前のSCENE_CLOSE時刻`
+  - **N ＝ `usual_config.scenes_per_day`**（キャラ編集UI「1日のシーン回数（生活カレンダー用）」・既定3）
+- SCENE_CLOSE が N 個未満なら **あるだけ古いSCENE_CLOSE**（＝最古の1件）まで遡る。
+  それも0件なら既存フォールバック（最古うつつターン → `now - 24h`）。
+- 結果：**常に直近1日ぶんの生活（うつつシーン群＋その間の1on1）が丸ごと時系列で並ぶ**。
+
+### 9.4 採用理由
+
+- Chotgor 思想的にもっとも軽い（キャラの記憶自律を侵さず、システム側は「窓を広げるだけ」）。
+- 実装が最小（`_latest_scene_close_time` を `_nth_latest_scene_close_time(n)` へ拡張）。
+- 「N シーンぶん（＝1日ぶん）重複」が思想的にも自然（人間だって前日の会話を翌日も引きずる）。
+- 将来 B-3 が必要になっても B-1 と共存できる（B-1 が土台、深部はサマリで補う）。
+
+### 9.5 トレードオフ（受容）
+
+- 前回うつつシーン本体が毎回入るので **トークンコスト増**。うつつは環境料金
+  （ユーザ課金でない）なので許容範囲。
+- N＝scenes_per_day より昔の 1on1 で、シーン間に沈黙が続くと拾えない事故は残る。
+  頻度は低いと想定。観測次第で B-3（サマリ）追加を検討。
+
+### 9.6 実装箇所
+
+- `backend/services/scenario_chat/external_scenes.py`:
+  - `_latest_scene_close_time(sqlite, character_id)` → `_nth_latest_scene_close_time(sqlite, character_id, n)` へ拡張。
+  - `resolve_since_dt(...)` に `scenes_per_day` 引数追加。
+  - `build_all_scenes` / `build_unified_pc_messages` の呼び出し経路で `scenes_per_day` を伝搬。
+- `backend/services/scenario_chat/pc_runner.py`:
+  - キャラの `usual_config["scenes_per_day"]` を取り出して `build_unified_pc_messages` へ渡す。
+- テスト（`tests/test_usual_days.py` など）:
+  - N＝3 で 3 個前の SCENE_CLOSE 起点になる。
+  - SCENE_CLOSE 数 < N で「あるだけ遡る」フォールバックが動く。
+  - SCENE_CLOSE 0 件で既存フォールバックに落ちる。
+  - ①③⑤（うつつ）＋②④（1on1）シナリオで、⑤時点に②④両方が並ぶ。

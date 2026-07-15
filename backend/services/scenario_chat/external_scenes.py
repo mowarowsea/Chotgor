@@ -41,8 +41,13 @@
       を回避する（claude_cli は messages 長 1 のとき内容を素通しでダンプする）
 
 時間軸（since_dt の決め方）:
-    - 起点: 最新の SCENE_CLOSE 直後（前回うつつシーンが閉じた時刻）
-    - 該当無し: 最古のうつつターン時刻、それも無ければ 24h 前
+    - 起点: **N 個前の SCENE_CLOSE 時刻**（N = キャラの `usual_config.scenes_per_day`、
+      既定 3。=「1日のシーン回数」）。直近1日ぶんの生活（うつつシーン群＋その間の 1on1）が
+      丸ごとオーバーラップして流入するようにする。
+    - SCENE_CLOSE が N 個未満: あるだけ古い（最古の）SCENE_CLOSE まで遡る
+    - SCENE_CLOSE 0 件: 最古のうつつターン時刻、それも無ければ 24h 前
+    - **なぜオーバーラップさせるか**: SCENE_CLOSE 単位で窓を切ると、うつつシーン間の
+      1on1（返事の授受）が沈黙シーンを挟んで消失する（v1.1・§9 で改修）。
 """
 
 from __future__ import annotations
@@ -93,13 +98,23 @@ class Scene:
 
 
 # ---------------------------------------------------------------------------
-# 起点時刻の解決（最新 SCENE_CLOSE）
+# 起点時刻の解決（N 個前 SCENE_CLOSE）
 # ---------------------------------------------------------------------------
 
 
-def _latest_scene_close_time(sqlite, character_id: str) -> datetime | None:
-    """指定キャラの usual_days セッションで、SCENE_CLOSE を含む最新ターン時刻を返す。"""
+def _nth_latest_scene_close_time(
+    sqlite, character_id: str, n: int
+) -> datetime | None:
+    """指定キャラの usual_days セッションで、SCENE_CLOSE を含む「直近から n 番目」の
+    ターン時刻を返す。
+
+    - n=1 が最新の SCENE_CLOSE。n=2 は「2 個前」（＝直近の1つ前）の SCENE_CLOSE。
+    - n が SCENE_CLOSE の総数を超えるときは、あるだけ古い（＝最古の）SCENE_CLOSE 時刻。
+    - SCENE_CLOSE が 0 件なら None（呼び出し側が別のフォールバックに落ちる）。
+    """
     from backend.repositories.sqlite.store import Scenario, ScenarioSession, ScenarioTurn
+
+    n = max(1, n)
 
     with sqlite.get_session() as session:
         rows = (
@@ -113,11 +128,15 @@ def _latest_scene_close_time(sqlite, character_id: str) -> datetime | None:
             .order_by(ScenarioTurn.created_at.desc())
             .all()
         )
+    scene_closes: list[datetime] = []
     for created_at, raw, content in rows:
         haystack = f"{raw or ''}\n{content or ''}".lower()
         if "[scene_close]" in haystack:
-            return created_at
-    return None
+            scene_closes.append(created_at)
+    if not scene_closes:
+        return None
+    idx = min(n - 1, len(scene_closes) - 1)
+    return scene_closes[idx]
 
 
 def _earliest_usual_turn_time(sqlite, character_id: str) -> datetime | None:
@@ -139,16 +158,29 @@ def _earliest_usual_turn_time(sqlite, character_id: str) -> datetime | None:
         return row[0] if row else None
 
 
-def resolve_since_dt(sqlite, character_id: str, now: datetime | None = None) -> datetime:
+def resolve_since_dt(
+    sqlite,
+    character_id: str,
+    now: datetime | None = None,
+    scenes_per_day: int = 1,
+) -> datetime:
     """external シーン収集の起点時刻を決める。
 
-    優先順: 最新 SCENE_CLOSE → 最古うつつターン → now-24h。
+    優先順: N 個前 SCENE_CLOSE → あるだけ古い SCENE_CLOSE → 最古うつつターン → now-24h。
+
+    N = ``scenes_per_day``（キャラの `usual_config.scenes_per_day`、キャラ編集UIの
+    「1日のシーン回数（生活カレンダー用）」）。直近 1 日ぶんの生活を丸ごとオーバーラップ
+    させることで、うつつシーン間の 1on1（返事の授受）がシーン境界で消失しないようにする。
+
+    デフォルト 1 は「最新 SCENE_CLOSE 起点」＝旧挙動（scenes_per_day 未指定の呼び出し互換）。
+
     PC runner 起動時には「今シーンの GM ターン」が保存済みなので、最大 created_at を
     使ってはいけない（それを使うと当の今シーンが起点になり、external が全て対象外になる）。
     """
-    last_close = _latest_scene_close_time(sqlite, character_id)
-    if last_close is not None:
-        return last_close
+    n = max(1, scenes_per_day or 1)
+    nth_close = _nth_latest_scene_close_time(sqlite, character_id, n)
+    if nth_close is not None:
+        return nth_close
     earliest = _earliest_usual_turn_time(sqlite, character_id)
     if earliest is not None:
         return earliest
@@ -428,14 +460,16 @@ def collect_all_scenes(
     user_label: str,
     narrator_name: str = "Narrator",
     until_dt: datetime | None = None,
+    scenes_per_day: int = 1,
 ) -> list[Scene]:
     """全シーン（うつつ過去+今、external 1on1/Group/TRPG）を時系列でマージして返す。
 
     シーンの順序は started_at 昇順。各シーン内の turns は created_at 昇順。
+    scenes_per_day は起点 SCENE_CLOSE の遡及個数（`resolve_since_dt` 参照）。
     """
     if until_dt is None:
         until_dt = datetime.now()
-    since_dt = resolve_since_dt(sqlite, self_character_id)
+    since_dt = resolve_since_dt(sqlite, self_character_id, scenes_per_day=scenes_per_day)
     usual_scenes = _build_usual_scenes(
         history, self_character_id, character_name, user_label, narrator_name
     )
@@ -517,6 +551,7 @@ def build_unified_pc_messages(
     user_label: str,
     narrator_name: str = "Narrator",
     until_dt: datetime | None = None,
+    scenes_per_day: int = 1,
 ) -> list[dict]:
     """うつつ scenario_turns と external シーンを統合し、scene-wrap 形式の単一メッセージを返す。
 
@@ -535,6 +570,7 @@ def build_unified_pc_messages(
         user_label=user_label,
         narrator_name=narrator_name,
         until_dt=until_dt,
+        scenes_per_day=scenes_per_day,
     )
     if not scenes:
         return []

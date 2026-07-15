@@ -287,6 +287,28 @@ async def stream_pc_response(
         from backend.services.scenario_chat.external_scenes import build_unified_pc_messages
 
         _user_label_for_ext, _ = _resolve_user_info(char, settings)
+        # 起点SCENE_CLOSE遡及個数 N = usual_config.scenes_per_day（キャラ編集UI「1日のシーン回数」）。
+        # 直近1日ぶんの生活（うつつ＋その間の1on1）がオーバーラップして流入する（§9）。
+        # 解決失敗時は N=1（旧挙動＝最新SCENE_CLOSE起点）でうつつ自体は止めない。
+        scenes_per_day_n = 1
+        if scenario_session_id:
+            try:
+                _sess = sqlite.get_scenario_session(scenario_session_id)
+                _scen = sqlite.get_scenario(_sess.scenario_id) if _sess else None
+                _usual_cfg = getattr(_scen, "usual_config", None) or {}
+                if isinstance(_usual_cfg, str):
+                    import json as _json
+                    try:
+                        _usual_cfg = _json.loads(_usual_cfg)
+                    except (ValueError, TypeError):
+                        _usual_cfg = {}
+                _n = int(_usual_cfg.get("scenes_per_day", 1) or 1)
+                scenes_per_day_n = max(1, _n)
+            except Exception:
+                logger.exception(
+                    "usual scenes_per_day 解決失敗、N=1 でフォールバック character=%s session=%s",
+                    char.id, scenario_session_id,
+                )
         try:
             raw_messages = build_unified_pc_messages(
                 sqlite,
@@ -295,6 +317,7 @@ async def stream_pc_response(
                 character_name=char.name,
                 self_role_name=pc.name,
                 user_label=_user_label_for_ext or user_alias,
+                scenes_per_day=scenes_per_day_n,
             )
         except Exception:
             # external シーン統合に失敗してもうつつ自体は止めない。フォールバックで既存ロジックへ。
