@@ -400,8 +400,9 @@ async def _deliver_session(state, session, char) -> None:
     )
 
     # キャラクター回答到着完了（遅延返信の配達）→ ntfy プッシュ通知（ベストエフォート）。
+    # 預かり配達もユーザ宛メッセージなので 1on1 扱い（うつつのシーン内発話とは区別する）。
     from backend.lib.notify import notify_character_spoke
-    notify_character_spoke(used_char_name)
+    notify_character_spoke(used_char_name, source="1on1")
 
     # switch_angle が走った場合はセッションの model_id を追随させる（SSE 経路と同じ）
     if effective_model_id and effective_model_id != session.model_id:

@@ -539,7 +539,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
         # キャラクター回答到着完了 → ntfy プッシュ通知（ベストエフォート）。
         from backend.lib.notify import notify_character_spoke
-        notify_character_spoke(used_char_name)
+        notify_character_spoke(used_char_name, source="1on1")
 
         state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)
 

@@ -225,8 +225,9 @@ def execute_push(sqlite, char, preset, body: str, session_title: str) -> dict:
         character_name=char.name,
     )
     # キャラクター回答到着完了（能動 push）→ ntfy プッシュ通知（ベストエフォート）。
+    # 行動権 push / reach_out はうつつ発でも「現実にユーザへ届く」ため 1on1 扱い。
     from backend.lib.notify import notify_character_spoke
-    notify_character_spoke(char.name)
+    notify_character_spoke(char.name, source="1on1")
     return {"summary": f"メッセージを送った: {body[:100]}", "session_id": session_id}
 
 

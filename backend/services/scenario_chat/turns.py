@@ -54,10 +54,12 @@ def _save_turn(
     # キャラクター回答到着完了 → ntfy プッシュ通知（ベストエフォート）。
     # 本人（PC = 常駐キャラクター）の発話のみ対象。GM / Narrator / NPC / user / intro は除外。
     # シナリオの対面プレイとうつつ（無人生活）はどちらもこの共通経路を通るため、
-    # 裏側の生活での本人発話もここで一括して拾える。
+    # セッションの engine_type で通知ラベルを出し分ける（うつつ / シナリオ）。
     if speaker_type == "pc":
         from backend.lib.notify import notify_character_spoke
-        notify_character_spoke(speaker_name)
+        sess = sqlite.get_scenario_session(session_id)
+        is_usual = getattr(sess, "engine_type", "") == "usual_days"
+        notify_character_spoke(speaker_name, source="うつつ" if is_usual else "シナリオ")
     return saved
 def parse_intro_to_turns(
     intro_text: str,

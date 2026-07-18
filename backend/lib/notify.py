@@ -43,7 +43,7 @@ def _send(message: str) -> None:
         _log.warning("ntfy 通知の送信に失敗: %s (%s)", e, url)
 
 
-def notify_character_spoke(character_name: str) -> None:
+def notify_character_spoke(character_name: str, *, source: str) -> None:
     """キャラクターがユーザー宛に発話したことを ntfy へ非同期通知する。
 
     「キャラクター回答到着完了」の各経路（1on1 同期返信・預かり配達の遅延返信・
@@ -52,8 +52,15 @@ def notify_character_spoke(character_name: str) -> None:
 
     Args:
         character_name: 発話したキャラクター名。通知本文に埋め込む。
+        source: 発話経路のラベル。通知本文末尾に付けて「どこでの発話か」を区別する。
+            - "1on1": ユーザ宛メッセージ全般（同期返信・預かり配達・能動 push / reach_out）。
+              ユーザ発への返信とキャラ発の話しかけは区別しない（2026-07-18 裁定）。
+            - "うつつ": 無人日常シーン内の本人発話（ユーザ宛ではない）。
+            - "シナリオ": 対面シナリオプレイの PC 発話。
+            必須キーワード引数にしているのは、将来の呼び出し元追加時に
+            ラベル指定漏れで経路不明の通知が飛ぶのを防ぐため。
     """
     if not NTFY_ENABLED or not character_name:
         return
-    message = f"Chotgor:{character_name}が発話"
+    message = f"Chotgor:{character_name}が発話（{source}）"
     threading.Thread(target=_send, args=(message,), daemon=True).start()
