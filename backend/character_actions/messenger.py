@@ -245,10 +245,7 @@ class Messenger:
         # 行動権 push と同一経路（新規セッション＋キャラ発メッセージ＋ntfy）。
         from backend.services.actions.runner import execute_push
 
-        result = execute_push(
-            self.sqlite_store, char, preset, body,
-            session_title=f"{char.name}より",
-        )
+        result = execute_push(self.sqlite_store, char, preset, body)
 
         # 日次カウンタ消費（預かり配達と共有の予算）
         today_str = now.date().isoformat()

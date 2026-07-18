@@ -21,6 +21,7 @@ from backend.services.actions.runner import (
     _parse_action_choice,
     evaluate_action_urge,
     jittered_slot_time,
+    push_session_title,
     run_action_cycle,
 )
 
@@ -91,6 +92,33 @@ class TestEvaluateUrge:
         char_id, _ = _make_character(sqlite_store)
         sqlite_store.create_intent(char_id, "ふと思っただけ", source_kind="none")
         assert evaluate_action_urge(sqlite_store, char_id) == []
+
+
+class TestPushSessionTitle:
+    """push セッションタイトルの自動生成（push_session_title）を検証するテストクラス。
+
+    「{char_name}より」固定だった旧仕様では reach_out / 行動権 push の連絡が
+    並んだとき区別できなかった（2026-07-18 改修）。本文冒頭を鍵括弧で添える
+    新形式について、次を検証する:
+        1. 冒頭が上限（15字）以内なら全文＋鍵括弧・省略記号なし
+        2. 上限超過なら 15字で切って「…」を付ける
+        3. 改行・連続空白は 1 スペースへ畳まれ、タイトルが 1 行に収まる
+    """
+
+    def test_short_body_no_ellipsis(self):
+        """短い本文はそのまま鍵括弧に入り、省略記号は付かない。"""
+        assert push_session_title("はる", "おはよ") == "はるより「おはよ」"
+
+    def test_long_body_truncated_with_ellipsis(self):
+        """15字を超える本文は冒頭15字＋「…」に切り詰められる。"""
+        body = "ねえ、昨日話してた映画のことなんだけど、続き観たくなってさ"
+        assert push_session_title("はる", body) == f"はるより「{body[:15]}…」"
+
+    def test_whitespace_collapsed_to_single_line(self):
+        """改行・連続空白は畳まれ、タイトルに改行が混入しない。"""
+        title = push_session_title("はる", "おはよ。\n\nあのさ、  今いい？")
+        assert title == "はるより「おはよ。 あのさ、 今いい？」"
+        assert "\n" not in title
 
 
 class TestParseChoice:
@@ -170,8 +198,9 @@ class TestRunActionCycle:
         assert result["status"] == "executed"
         assert result["fulfilled"] is True
         # 新規セッションにキャラ発メッセージが置かれている
+        # （タイトルは「{char_name}より「本文冒頭…」」形式で本文から区別できる）
         sessions = sqlite_store.list_chat_sessions()
-        push_session = next(s for s in sessions if s.title == f"{char_name}より")
+        push_session = next(s for s in sessions if s.title.startswith(f"{char_name}より"))
         msgs = sqlite_store.list_chat_messages(push_session.id)
         assert msgs[0].role == "character"
         assert "声が聞きたくなった" in msgs[0].content

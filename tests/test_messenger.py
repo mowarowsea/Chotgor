@@ -50,10 +50,11 @@ def test_reach_out_usual_creates_session_and_pause(sqlite_store):
     result = messenger.reach_out("おーい、生きてる？")
 
     assert "送った" in result
-    # 新規セッション＋キャラ発メッセージ（行動権 push と同一経路）
+    # 新規セッション＋キャラ発メッセージ（行動権 push と同一経路）。
+    # タイトルは「{name}より「本文冒頭…」」形式（execute_push が一元生成）
     sessions = sqlite_store.list_chat_sessions()
-    assert any(s.title == f"{name}より" for s in sessions)
-    push_session = next(s for s in sessions if s.title == f"{name}より")
+    push_session = next(s for s in sessions if s.title.startswith(f"{name}より"))
+    assert "おーい、生きてる？" in push_session.title
     messages = sqlite_store.list_chat_messages(push_session.id)
     assert len(messages) == 1
     assert messages[0].role == "character"
