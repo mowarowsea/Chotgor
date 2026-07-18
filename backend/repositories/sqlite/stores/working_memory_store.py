@@ -80,6 +80,33 @@ class WorkingMemoryStoreMixin:
                 q = q.filter(WorkingMemoryThread.is_open == (1 if is_open else 0))
             return q.order_by(WorkingMemoryThread.updated_at.desc()).all()
 
+    def find_working_memory_thread_ids_by_prefix(
+        self, character_id: str, prefix: str
+    ) -> list[str]:
+        """ID 前方一致でスレッド ID を検索する（短縮 ID → フル ID の解決用）。
+
+        キャラクター単位にスコープするため、他キャラクターのスレッドには一致しない。
+
+        Args:
+            character_id: 対象キャラクターID。
+            prefix: スレッド ID の先頭部分（短縮表記）。
+
+        Returns:
+            一致したフル ID のリスト（通常 0 or 1 件。衝突時は複数）。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import WorkingMemoryThread
+            rows = (
+                session.query(WorkingMemoryThread.id)
+                .filter(
+                    WorkingMemoryThread.character_id == character_id,
+                    # autoescape=True で prefix 中の % _ をリテラル扱いにする
+                    WorkingMemoryThread.id.startswith(prefix, autoescape=True),
+                )
+                .all()
+            )
+            return [r[0] for r in rows]
+
     def get_working_memory_thread_by_relation(self, character_id: str, relation_target: str):
         """relation 型スレッドを相手識別子で取得する（重複作成防止用）。"""
         with self.get_session() as session:

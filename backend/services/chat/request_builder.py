@@ -59,6 +59,7 @@ from backend.character_actions.carver import (
 )
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_GUIDE
+from backend.services.memory.format import short_thread_id as _short_id
 
 
 # タグ方式プロバイダー（Ollama/OpenRouter等）共通の禁止条項。
@@ -137,7 +138,7 @@ _WORKING_MEMORY_TOOLS_HINT = """\
 
 - `post_working_memory_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
 - `read_working_memory_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
-- `close_working_memory_thread` / `reopen_working_memory_thread`: スレッドを閉じる／再オープンする。task/topic は決着したとき、emotion/body/relation は自然に意識から消えたときに閉じる。後に再燃したら再オープンしてよい。
+- `close_working_memory_thread` / `reopen_working_memory_thread`: スレッドを閉じる／再オープンする。task/topic は決着したとき、emotion/body/relation は自然に意識から消えたときに閉じる。後に再燃したら再オープンしてよい。閉じたスレッドも一覧に1行で残り続けるので、閉じる前に summary を短い見出し（30字程度）へ縮めておくこと。
 - `merge_working_memory_threads`: 「同じ問題の別角度だった」と気づいたスレッドを統合する。from_ids を閉じ、into_id に経緯をポストする。
 
 スレッド種別:
@@ -215,9 +216,10 @@ _TURN_ANNOTATION_HEADER = (
 def _format_thread_index(t: dict) -> str:
     """全スレッド一覧用の1行表現を返す（最新ポストは含めない）。
 
-    形式: ``[id] (type) summary ｜ atmosphere_tag ｜ 重要度0.70``
+    形式: ``[id先頭8桁] (type) summary ｜ atmosphere_tag ｜ 重要度0.70``
+    ID はトークン節約のため短縮表記。ツール側（Threader）が前方一致で解決する。
     """
-    line = f"[{t['id']}] ({t.get('type', '')}) {t.get('summary', '')}"
+    line = f"[{_short_id(t['id'])}] ({t.get('type', '')}) {t.get('summary', '')}"
     extras = []
     atmo = (t.get("atmosphere_tag") or "").strip()
     if atmo:
@@ -227,8 +229,8 @@ def _format_thread_index(t: dict) -> str:
 
 
 def _format_thread_with_post(t: dict) -> str:
-    """固定注入・heat 想起用の表現を返す（最新ポスト本文を含む）。"""
-    head = f"[{t['id']}] ({t.get('type', '')}) {t.get('summary', '')}"
+    """固定注入・heat 想起用の表現を返す（最新ポスト本文を含む）。ID は短縮表記。"""
+    head = f"[{_short_id(t['id'])}] ({t.get('type', '')}) {t.get('summary', '')}"
     atmo = (t.get("atmosphere_tag") or "").strip()
     if atmo:
         head += f"　｜　{atmo}"

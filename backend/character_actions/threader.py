@@ -149,6 +149,8 @@ CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
     "emotion / body / relation なら自然に意識から消えたとき。"
     "閉じたスレッドはあなたの長期記憶へ昇格するわけではなく、"
     "後から read_working_memory_thread で読み返したり、reopen_working_memory_thread で再開できる。"
+    "閉じたスレッドも一覧に1行で残り続けるため、閉じる前に post_working_memory_thread で"
+    "summary を短い見出し（30字程度）へ整えておくとよい。"
 )
 
 REOPEN_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
@@ -185,6 +187,29 @@ class Threader:
         """
         self.character_id = character_id
         self.working_memory_manager = working_memory_manager
+
+    def _resolve_thread_id(
+        self, thread_id: str, tool_name: str
+    ) -> tuple[str | None, str | None]:
+        """短縮 ID をフル ID へ解決する（各ツールの入口で共通に呼ぶ）。
+
+        スレッド一覧は短縮 ID（先頭8桁）で表示されるため、キャラクターからの
+        thread_id 指定は短縮形でも受け付ける。フル ID はそのまま通る。
+
+        Returns:
+            ``(resolved_id, error_message)``。解決できれば error_message は None、
+            失敗すればキャラクターへ返すエラー文字列が入る。
+        """
+        try:
+            resolved = self.working_memory_manager.resolve_thread_id(
+                self.character_id, thread_id
+            )
+        except ValueError as e:
+            return None, f"[{tool_name} error: {e}]"
+        if resolved is None:
+            # "error:" を含める（result_looks_like_error のエラー規約に一致させる）
+            return None, f"[{tool_name} error: スレッド '{thread_id}' が見つかりません]"
+        return resolved, None
 
     def post_working_memory_thread(
         self,
@@ -231,7 +256,10 @@ class Threader:
                 )
                 return f"スレッドを作成した（id={thread['id']}）。"
 
-            # 既存スレッドの更新
+            # 既存スレッドの更新（短縮 ID を許容）
+            thread_id, err = self._resolve_thread_id(thread_id, "post_working_memory_thread")
+            if err:
+                return err
             updated_fields = []
             if summary or atmosphere_tag or importance is not None:
                 wm.update_thread(
@@ -265,6 +293,9 @@ class Threader:
             return "ワーキングメモリは利用できない。"
         if not thread_id:
             return "[read_working_memory_thread error: thread_id が空です]"
+        thread_id, err = self._resolve_thread_id(thread_id, "read_working_memory_thread")
+        if err:
+            return err
         try:
             detail = wm.get_thread_detail(thread_id)
         except Exception as e:
@@ -285,6 +316,9 @@ class Threader:
             return "ワーキングメモリは利用できない。"
         if not thread_id:
             return "[close_working_memory_thread error: thread_id が空です]"
+        thread_id, err = self._resolve_thread_id(thread_id, "close_working_memory_thread")
+        if err:
+            return err
         try:
             ok = wm.set_open(thread_id, False)
         except Exception as e:
@@ -305,6 +339,9 @@ class Threader:
             return "ワーキングメモリは利用できない。"
         if not thread_id:
             return "[reopen_working_memory_thread error: thread_id が空です]"
+        thread_id, err = self._resolve_thread_id(thread_id, "reopen_working_memory_thread")
+        if err:
+            return err
         try:
             ok = wm.set_open(thread_id, True)
         except Exception as e:
@@ -338,8 +375,22 @@ class Threader:
         if not from_ids:
             return "[merge_working_memory_threads error: from_ids が空です]"
 
-        # into_id 自身・重複を取り除いた閉じ対象のリスト。
-        closing = [fid for fid in dict.fromkeys(from_ids) if fid and fid != into_id]
+        # 短縮 ID を先に全件解決する。1本でも解決できなければ何も閉じずにエラーを返す
+        # （部分的な統合で from 側だけ閉じる事故を防ぐ）。
+        into_id, err = self._resolve_thread_id(into_id, "merge_working_memory_threads")
+        if err:
+            return err
+        resolved_from: list[str] = []
+        for fid in from_ids:
+            if not fid:
+                continue
+            rid, err = self._resolve_thread_id(fid, "merge_working_memory_threads")
+            if err:
+                return err
+            resolved_from.append(rid)
+
+        # into_id 自身・重複を取り除いた閉じ対象のリスト（解決後の ID で判定する）。
+        closing = [fid for fid in dict.fromkeys(resolved_from) if fid != into_id]
         if not closing:
             return "[merge_working_memory_threads error: 有効な from_ids がありません（into_id と同一・空のみ）]"
 

@@ -158,6 +158,18 @@ class TestToolExecutorExecute:
             working_memory_manager=wm,
         )
 
+    def _make_wm(self):
+        """WM ツールテスト用の WorkingMemoryManager モックを生成するヘルパー。
+
+        Threader は thread_id を resolve_thread_id()（短縮 ID → フル ID 解決）へ
+        通してから各操作に渡すため、素の MagicMock だと解決結果が MagicMock に
+        なってしまう。恒等関数をスタブし「渡した ID がそのまま解決される」状態を
+        既定とする（解決の失敗系は個別テストで上書きする）。
+        """
+        wm = MagicMock()
+        wm.resolve_thread_id.side_effect = lambda cid, tid: tid
+        return wm
+
     def test_unknown_tool_returns_error(self):
         """未知のツール名に対してエラーメッセージを返す。"""
         executor = self._make_executor()
@@ -284,7 +296,7 @@ class TestToolExecutorExecute:
 
     def test_post_working_memory_thread_existing_calls_add_post(self):
         """post_working_memory_thread ツール（thread_id 指定 + content）が WorkingMemoryManager.add_post() を呼び出す。"""
-        wm = MagicMock()
+        wm = self._make_wm()
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute(
             "post_working_memory_thread",
@@ -295,7 +307,7 @@ class TestToolExecutorExecute:
 
     def test_read_working_memory_thread_calls_get_thread_detail(self):
         """read_working_memory_thread ツールが WorkingMemoryManager.get_thread_detail() を呼び出す。"""
-        wm = MagicMock()
+        wm = self._make_wm()
         wm.get_thread_detail.return_value = {"id": "thread-9", "posts": []}
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute("read_working_memory_thread", {"thread_id": "thread-9"})
@@ -304,7 +316,7 @@ class TestToolExecutorExecute:
 
     def test_close_working_memory_thread_calls_set_open_false(self):
         """close_working_memory_thread ツールが WorkingMemoryManager.set_open(id, False) を呼び出す。"""
-        wm = MagicMock()
+        wm = self._make_wm()
         wm.set_open.return_value = True
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute("close_working_memory_thread", {"thread_id": "thread-9"})
@@ -313,7 +325,7 @@ class TestToolExecutorExecute:
 
     def test_reopen_working_memory_thread_calls_set_open_true(self):
         """reopen_working_memory_thread ツールが WorkingMemoryManager.set_open(id, True) を呼び出す。"""
-        wm = MagicMock()
+        wm = self._make_wm()
         wm.set_open.return_value = True
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute("reopen_working_memory_thread", {"thread_id": "thread-9"})
@@ -322,7 +334,7 @@ class TestToolExecutorExecute:
 
     def test_close_working_memory_thread_missing_returns_error(self):
         """存在しないスレッドの close は set_open が False を返し、エラー文字列になる。"""
-        wm = MagicMock()
+        wm = self._make_wm()
         wm.set_open.return_value = False
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute("close_working_memory_thread", {"thread_id": "missing"})
@@ -330,7 +342,7 @@ class TestToolExecutorExecute:
 
     def test_merge_working_memory_threads_closes_from_ids_and_posts(self):
         """merge ツールが into_id に経緯を post し、from_ids を close することを確認する。"""
-        wm = MagicMock()
+        wm = self._make_wm()
         wm.get_thread_detail.return_value = {"id": "into-1", "posts": []}
         wm.set_open.return_value = True
         executor = self._make_executor(working_memory_manager=wm)
@@ -351,7 +363,7 @@ class TestToolExecutorExecute:
         post の有無に関わらず into_id 存在チェックが先に走るため、存在しない統合先を
         指定したときに統合元だけが宛先なく閉じられる（統合の喪失）ことを防ぐ。
         """
-        wm = MagicMock()
+        wm = self._make_wm()
         wm.get_thread_detail.return_value = None  # 統合先が存在しない
         executor = self._make_executor(working_memory_manager=wm)
         result = executor.execute(
@@ -363,6 +375,105 @@ class TestToolExecutorExecute:
         # from_ids は1本も閉じられていない
         wm.set_open.assert_not_called()
         wm.add_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# ワーキングメモリ短縮 ID 解決のテスト
+# ---------------------------------------------------------------------------
+
+class TestThreadIdResolution:
+    """短縮スレッド ID（先頭8桁）→ フル ID 解決の挙動を検証する。
+
+    システムプロンプトのスレッド一覧はトークン節約のため短縮 ID で表示されるため、
+    キャラクターがツールへ短縮 ID を渡しても正しいスレッドに届くこと、および
+    フル ID がそのまま通ること（Chronicle・UI 等の内部経路の互換）を保証する。
+    実 SQLite（一時 DB）で前方一致検索まで通し、embedding 層のみモックする。
+    """
+
+    _CHAR = "char-resolve"
+
+    def _make_manager(self, sqlite_store):
+        """実 SQLite ＋ モック LanceStore の WorkingMemoryManager を生成するヘルパー。"""
+        from backend.services.memory.working_memory_manager import WorkingMemoryManager
+        return WorkingMemoryManager(sqlite_store, MagicMock())
+
+    def _add_thread(self, sqlite_store, thread_id: str, character_id: str | None = None):
+        """任意のフル ID でスレッドを直接作成するヘルパー（prefix 衝突を再現するため）。"""
+        sqlite_store.add_working_memory_thread(
+            thread_id=thread_id,
+            character_id=character_id or self._CHAR,
+            type="topic",
+            summary="解決テスト用",
+        )
+
+    def test_resolve_full_id_passes_through(self, sqlite_store):
+        """フル ID はそのまま返る（内部経路の互換）。"""
+        wm = self._make_manager(sqlite_store)
+        full = "aabbccdd-0000-4000-8000-000000000001"
+        self._add_thread(sqlite_store, full)
+        assert wm.resolve_thread_id(self._CHAR, full) == full
+
+    def test_resolve_short_prefix_returns_full_id(self, sqlite_store):
+        """先頭8桁の短縮 ID がフル ID に解決される。"""
+        wm = self._make_manager(sqlite_store)
+        full = "aabbccdd-0000-4000-8000-000000000001"
+        self._add_thread(sqlite_store, full)
+        assert wm.resolve_thread_id(self._CHAR, "aabbccdd") == full
+
+    def test_resolve_ambiguous_prefix_raises(self, sqlite_store):
+        """前方一致が複数スレッドに衝突したら ValueError（誤スレッド操作の防止）。"""
+        wm = self._make_manager(sqlite_store)
+        self._add_thread(sqlite_store, "aabbccdd-1111-4000-8000-000000000001")
+        self._add_thread(sqlite_store, "aabbccdd-2222-4000-8000-000000000002")
+        with pytest.raises(ValueError):
+            wm.resolve_thread_id(self._CHAR, "aabbccdd")
+
+    def test_resolve_missing_returns_none(self, sqlite_store):
+        """一致するスレッドがなければ None。"""
+        wm = self._make_manager(sqlite_store)
+        assert wm.resolve_thread_id(self._CHAR, "deadbeef") is None
+
+    def test_resolve_is_scoped_to_character(self, sqlite_store):
+        """他キャラクターのスレッドには前方一致でも届かない（キャラ単位スコープ）。"""
+        wm = self._make_manager(sqlite_store)
+        self._add_thread(sqlite_store, "aabbccdd-0000-4000-8000-000000000001", character_id="other-char")
+        assert wm.resolve_thread_id(self._CHAR, "aabbccdd") is None
+
+    def test_executor_close_with_short_id_closes_thread(self, sqlite_store):
+        """E2E: close ツールに短縮 ID を渡すと該当スレッドが実際に閉じられる。"""
+        wm = self._make_manager(sqlite_store)
+        full = "aabbccdd-0000-4000-8000-000000000001"
+        self._add_thread(sqlite_store, full)
+        executor = ToolExecutor(
+            character_id=self._CHAR,
+            session_id="sess-1",
+            memory_manager=MagicMock(),
+            working_memory_manager=wm,
+        )
+        result = executor.execute("close_working_memory_thread", {"thread_id": "aabbccdd"})
+        assert "閉じた" in result
+        thread = sqlite_store.get_working_memory_thread(full)
+        assert not thread.is_open
+
+    def test_executor_ambiguous_short_id_returns_error(self, sqlite_store):
+        """E2E: 短縮 ID が衝突した場合はエラー文言を返し、どのスレッドも閉じない。"""
+        wm = self._make_manager(sqlite_store)
+        ids = [
+            "aabbccdd-1111-4000-8000-000000000001",
+            "aabbccdd-2222-4000-8000-000000000002",
+        ]
+        for tid in ids:
+            self._add_thread(sqlite_store, tid)
+        executor = ToolExecutor(
+            character_id=self._CHAR,
+            session_id="sess-1",
+            memory_manager=MagicMock(),
+            working_memory_manager=wm,
+        )
+        result = executor.execute("close_working_memory_thread", {"thread_id": "aabbccdd"})
+        assert "複数" in result
+        for tid in ids:
+            assert sqlite_store.get_working_memory_thread(tid).is_open
 
 
 # ---------------------------------------------------------------------------

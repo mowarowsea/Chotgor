@@ -67,7 +67,7 @@
 
 - `post_working_memory_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
 - `read_working_memory_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
-- `close_working_memory_thread` / `reopen_working_memory_thread`: スレッドを閉じる／再オープンする。task/topic は決着したとき、emotion/body/relation は自然に意識から消えたときに閉じる。後に再燃したら再オープンしてよい。
+- `close_working_memory_thread` / `reopen_working_memory_thread`: スレッドを閉じる／再オープンする。task/topic は決着したとき、emotion/body/relation は自然に意識から消えたときに閉じる。後に再燃したら再オープンしてよい。閉じたスレッドも一覧に1行で残り続けるので、閉じる前に summary を短い見出し（30字程度）へ縮めておくこと。
 - `merge_working_memory_threads`: 「同じ問題の別角度だった」と気づいたスレッドを統合する。from_ids を閉じ、into_id に経緯をポストする。
 
 スレッド種別:

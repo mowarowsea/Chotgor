@@ -359,6 +359,8 @@ async def test_execute_with_tools_adds_post_via_post_working_memory_thread():
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
     working_memory_manager = MagicMock()
+    # Threader の短縮 ID 解決を恒等スタブ（渡した ID がそのまま解決される）
+    working_memory_manager.resolve_thread_id.side_effect = lambda cid, tid: tid
 
     request = ChatRequest(
         character_id="char-1",

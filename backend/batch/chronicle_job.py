@@ -50,7 +50,7 @@ from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.character_actions.executor import ToolExecutor
 from backend.character_actions.farewell_detector import FAREWELL_EMOTION_RUBRIC
-from backend.services.memory.format import origin_label_prefix
+from backend.services.memory.format import origin_label_prefix, short_thread_id
 from backend.services.scenario_chat.format_speech import format_xml_speech_line
 
 if TYPE_CHECKING:
@@ -91,7 +91,8 @@ _PROMPT_TEMPLATE = """\
 1. **既存スレッドの更新** (thread_updates): 当日の会話を踏まえ、既存スレッドの
    summary / atmosphere_tag / importance を更新したり、新しいポスト(new_post)を追加する。
    決着・終息したスレッドは is_open を false にする（task/topic は解決したら、
-   その他は自然に意識から消えたら）。
+   その他は自然に意識から消えたら）。閉じたスレッドも一覧に1行で残り続けるため、
+   is_open を false にするときは summary を短い見出し（30字程度）へ縮めて併記すること。
 2. **新規スレッド** (new_threads): 当日の会話から新しい task / topic などが生まれていれば作成する。
 3. **スレッド統合** (merges): 「同じ問題の別角度だった」と気づいたスレッドがあれば、
    from_ids のスレッドを into_id に統合する（from_ids は Close される）。
@@ -420,8 +421,9 @@ def _format_threads(threads: list[dict], empty_label: str = "（スレッドは�
     lines = []
     for t in threads:
         origin_prefix = origin_label_prefix(t.get("origin"))
+        # ID は短縮表記（トークン節約）。応答 JSON の短縮 ID は Threader が前方一致で解決する。
         head = (
-            f"[{t['id']}] {origin_prefix}({t.get('type', '')}) "
+            f"[{short_thread_id(t['id'])}] {origin_prefix}({t.get('type', '')}) "
             f"{t.get('summary', '')} 重要度{float(t.get('importance', 0.0)):.2f}"
         )
         lines.append(head)

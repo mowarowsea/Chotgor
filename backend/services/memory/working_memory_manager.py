@@ -308,6 +308,37 @@ class WorkingMemoryManager:
     # 参照（システムプロンプト注入 / ツール）
     # ------------------------------------------------------------------
 
+    def resolve_thread_id(self, character_id: str, id_or_prefix: str) -> str | None:
+        """短縮 ID（前方一致）をフルスレッド ID へ解決する。
+
+        システムプロンプトのスレッド一覧はトークン節約のため短縮 ID（先頭8桁）で
+        表示される。キャラクターがツールへ短縮 ID を渡してきたとき、この関数で
+        フル ID に復元する。フル ID がそのまま渡された場合も従来どおり通す。
+
+        Args:
+            character_id: 前方一致検索のスコープとなるキャラクター ID。
+            id_or_prefix: フル ID または短縮 ID。
+
+        Returns:
+            解決済みフル ID。該当なしなら None。
+
+        Raises:
+            ValueError: 前方一致が複数スレッドに衝突した場合。
+        """
+        if not id_or_prefix:
+            return None
+        # フル ID の完全一致を優先（Chronicle・UI 等の内部経路は常にこちら）
+        if self.sqlite.get_working_memory_thread(id_or_prefix) is not None:
+            return id_or_prefix
+        matches = self.sqlite.find_working_memory_thread_ids_by_prefix(
+            character_id, id_or_prefix
+        )
+        if len(matches) > 1:
+            raise ValueError(
+                f"ID '{id_or_prefix}' は複数のスレッドに一致します。より長い ID を指定してください"
+            )
+        return matches[0] if matches else None
+
     def list_all_threads(self, character_id: str) -> list[dict]:
         """全スレッド（Open/Close 問わず）を dict リストで返す。
 

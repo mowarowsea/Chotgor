@@ -39,6 +39,16 @@ def origin_label_prefix(origin: str | None) -> str:
     return label
 
 
+def short_thread_id(thread_id: str) -> str:
+    """ワーキングメモリスレッド ID の短縮表記（先頭8桁）を返す。
+
+    プロンプトへのスレッド一覧注入はトークン節約のためフル UUID を出さない。
+    キャラクターが短縮 ID をツールへ渡したときは
+    WorkingMemoryManager.resolve_thread_id() が前方一致でフル ID に解決する。
+    """
+    return (thread_id or "")[:8]
+
+
 def format_recalled_memories(recalled: list) -> str:
     """想起した記憶リストを reasoning / SSE 表示用テキストにフォーマットする。
 
