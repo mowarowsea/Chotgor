@@ -13,6 +13,7 @@ import logging
 import re
 from datetime import datetime
 
+from backend.lib.log_context import current_log_target, new_message_id
 from backend.services.character_query import ask_character
 from backend.services.pressure.engine import DEFAULT_PROFILE
 
@@ -146,6 +147,9 @@ async def run_constitution_interview(
     if not ghost_model:
         return {"status": "error", "error": "ghost_model が未設定のためインタビューできません"}
 
+    # 独立した LLM 呼出なので debug log の ID を切る（ask_visibility と同じパターン）
+    new_message_id()
+    current_log_target.set(char.name)
     response = await ask_character(
         character_id=character_id,
         preset_id=ghost_model,

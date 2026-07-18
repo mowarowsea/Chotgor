@@ -173,6 +173,12 @@ frontend useChat
   生ログの逆解析（`api/logs_ui/tag_extract.py`）は 2026-06-11 以前の過去ログ互換
   フォールバックに降格済み。claude_cli の MCP 経路はプロセス越境で ContextVar が
   届かないため、`CHOTGOR_LOG_CONTEXT` env → HTTP のリレーで request_id を伝搬する。
+- debug ログの ID 採番（`lib/log_context.py`）は二層で保証される:
+  各エントリポイント（チャット・バッチのキャラ/週単位・スケジューラ tick 入口
+  `_run_daily` / `_run_every_minute`）の `new_message_id()` が正で、呼び忘れても
+  `ensure_message_id()` が書き込み直前に lazy 採番して警告を出す（`debug/--------/`
+  への堆積と `request_id="--------"` 行を構造的に防ぐ防御網）。新機能で警告を見たら
+  そのコードパスのエントリポイントに `new_message_id()` を追加する。
 
 ### シナリオチャット
 

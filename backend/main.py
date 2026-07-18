@@ -20,7 +20,7 @@ from backend.api import logs_ui as logs_ui_module
 from backend.api import translation as translation_module
 from backend.api import mcp_tools as mcp_tools_module
 from backend.services.chat.service import ChatService
-from backend.lib.log_context import setup_logging
+from backend.lib.log_context import new_message_id, setup_logging
 from backend.repositories.lance.store import LanceStore
 from backend.batch.chronicle_job import run_pending_chronicles
 from backend.batch.forget_job import run_pending_forget
@@ -211,6 +211,9 @@ async def _run_daily(
             _log.info("%s スケジューラー 起動 設定時刻=%02d:%02d", label, h, m)
             app.state.sqlite.set_setting(f"{name}_last_run_date", today_str)
             try:
+                # 実行ごとに debug log の ID を切る（呼び忘れによる debug/--------/ 堆積の
+                # 構造的防止。fn 側がキャラ・処理単位でさらに切り直すのは自由）。
+                new_message_id()
                 await fn(app)
             except Exception:
                 _log.exception("%s スケジューラー 実行エラー", label)
@@ -227,6 +230,9 @@ async def _run_every_minute(app: FastAPI, *, name: str, label: str, fn) -> None:
         await asyncio.sleep(60)
         _beat_scheduler(app.state.sqlite, name)
         try:
+            # tick ごとに debug log の ID を切る。while ループ内は ContextVar が持続する
+            # ため、これが無いと一度使われた ID が後続 tick まで使い回されてしまう。
+            new_message_id()
             await fn(app)
         except Exception:
             _log.exception("%s スケジューラー 実行エラー", label)

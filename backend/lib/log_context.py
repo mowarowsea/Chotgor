@@ -10,13 +10,17 @@ import os
 import uuid as _uuid_mod
 from contextvars import ContextVar
 
+# 未採番を表すデフォルト ID。この値のままログが書かれると debug/--------/ へ堆積するため、
+# debug_logger は ensure_message_id() で書き込み直前に検出・lazy 採番する。
+UNSET_MESSAGE_ID = "--------"
+
 # リクエスト識別子（チャット1回ごと、chronicle/forgetキャラごとにセット）
 # 再生成時は旧 request_id を引き継ぐためにここだけ上書きされる。
-current_message_id: ContextVar[str] = ContextVar("current_message_id", default="--------")
+current_message_id: ContextVar[str] = ContextVar("current_message_id", default=UNSET_MESSAGE_ID)
 
 # ファイルログフォルダ用 ID — new_message_id() で常に fresh な値にリセット。
 # current_message_id が再利用される再生成でも、ファイルは別フォルダに書き出せる。
-current_log_dir_id: ContextVar[str] = ContextVar("current_log_dir_id", default="--------")
+current_log_dir_id: ContextVar[str] = ContextVar("current_log_dir_id", default=UNSET_MESSAGE_ID)
 
 # 現在のLLM呼び出し機能名（chat / power_recall / farewell / forget / chronicle / scenario_chat / usual_days / usual_days_pc / action）
 current_log_feature: ContextVar[str] = ContextVar("current_log_feature", default="chat")
@@ -60,6 +64,34 @@ def new_message_id() -> str:
     current_log_turn_sequence.set(None)
     current_log_user_message.set(None)
     current_log_db_entry_id.set(None)
+    return msg_id
+
+
+def ensure_message_id() -> str:
+    """未採番のままログ出力が始まった場合の防御網 — lazy 採番して警告する。
+
+    エントリポイントでの new_message_id() 呼び忘れがあっても、debug/--------/ への
+    堆積と debug_log_entries.request_id="--------" を構造的に防ぐ。
+    採番済みならそのまま返す（冪等・警告なし）。
+
+    new_message_id() と違い session_id 等の DB 用 ContextVar には触れない
+    （呼び忘れコンテキストで先にセット済みの値を巻き添えにしないため）。
+
+    Returns:
+        現在の（または lazy 採番した）ファイルログフォルダ用 ID。
+    """
+    dir_id = current_log_dir_id.get()
+    if dir_id != UNSET_MESSAGE_ID:
+        return dir_id
+    msg_id = _uuid_mod.uuid4().hex[:8]
+    current_message_id.set(msg_id)
+    current_log_dir_id.set(msg_id)
+    _log_call_counter.set(0)
+    logging.getLogger(__name__).warning(
+        "log_context 未採番のままログ出力が開始された（feature=%s）— %s を lazy 採番。"
+        "このコードパスのエントリポイントに new_message_id() を追加してください",
+        current_log_feature.get(), msg_id,
+    )
     return msg_id
 
 

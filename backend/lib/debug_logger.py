@@ -84,8 +84,8 @@ class ChotgorLogger:
         """
         if not self.is_debug_enabled():
             return
-        from .log_context import current_log_dir_id, next_log_index
-        msg_id = current_log_dir_id.get()
+        from .log_context import ensure_message_id, next_log_index
+        msg_id = ensure_message_id()  # 未採番なら lazy 採番（debug/--------/ 堆積の防御網）
         idx = next_log_index()
         folder = os.path.join(self.DEBUG_DIR, msg_id)
         os.makedirs(folder, exist_ok=True)
@@ -104,8 +104,8 @@ class ChotgorLogger:
         """
         if not self.is_debug_enabled():
             return None
-        from .log_context import current_log_dir_id
-        return f"{self.DEBUG_DIR}/{current_log_dir_id.get()}"
+        from .log_context import ensure_message_id
+        return f"{self.DEBUG_DIR}/{ensure_message_id()}"
 
     # --- ファイルログメソッド ---
 
@@ -143,7 +143,9 @@ class ChotgorLogger:
             current_log_turn_sequence,
             current_log_user_message,
             current_log_db_entry_id,
+            ensure_message_id,
         )
+        ensure_message_id()  # CHOTGOR_DEBUG=0 でも request_id="--------" 行を作らない
         try:
             entry_id = self._sqlite.insert_debug_log_entry(
                 request_id=current_message_id.get(),
@@ -283,7 +285,9 @@ class ChotgorLogger:
             current_log_session_id,
             current_log_target,
             current_log_turn_sequence,
+            ensure_message_id,
         )
+        ensure_message_id()  # CHOTGOR_DEBUG=0 でも request_id="--------" 行を作らない
         try:
             self._sqlite.insert_debug_log_entry(
                 request_id=current_message_id.get(),

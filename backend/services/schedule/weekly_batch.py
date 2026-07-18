@@ -28,7 +28,7 @@
 import logging
 from datetime import date, datetime, time, timedelta
 
-from backend.lib.log_context import current_log_feature
+from backend.lib.log_context import current_log_feature, current_log_target, new_message_id
 from backend.providers.registry import create_provider
 from backend.services.schedule.plan_parser import (
     PlanEntry,
@@ -168,7 +168,10 @@ async def run_weekly_schedule_batch(state, char, week_start: date) -> dict:
         {"world": 件数, "haru": 件数, "world_mode": 生成経路, "haru_mode": 生成経路}。
     """
     sqlite = state.sqlite
+    # バッチ（キャラ×週）単位で debug log の ID を切る（chronicle/forget と同じパターン）
+    new_message_id()
     current_log_feature.set("weekly_schedule")
+    current_log_target.set(char.name)
     wkey = week_key(week_start)
 
     world_entries, world_mode = await _generate_world_layer(state, char, week_start)
