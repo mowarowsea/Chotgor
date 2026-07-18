@@ -167,6 +167,12 @@ frontend useChat
   `lib/tag_parser.py` による `[TAG:...]` 抽出でツールを実行する（二経路ある点に注意）。
 - claude_cli プロバイダーだけは特殊で、CLI を subprocess 起動し MCP（mcp_server.py）経由で
   ツールが backend に折り返してくる。
+  - **MCP 接続レースガード**: CLI 起動直後に MCP サーバー接続が間に合わないまま
+    リクエストが走ると、そのターンはツールが一切見えず「ツール使用の演技」
+    （擬似構文のテキスト出力）に流れる事故が起きる（実測で約2割が pending 起動）。
+    このため provider は stream-json 先頭の init イベントで `mcp_servers[].status` を
+    検査し、未接続なら CLI プロセスを作り直す（最大3回起動、上限到達時は
+    未接続のまま続行）。全呼び出し経路（stream 2系統＋非stream `_run_claude`）共通。
 - ツール実行は両経路とも `lib/tool_event_recorder.py` が `tool_call_events` テーブルへ
   実行時記録する（tool-use 経路は `ToolExecutor.execute()` の関門で、タグ経路は各
   `*_from_text` で記録）。Logs 画面のツール使用表示はこのイベントを読むだけで、

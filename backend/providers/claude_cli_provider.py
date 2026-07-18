@@ -6,6 +6,7 @@
 import asyncio
 import contextvars
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -19,6 +20,8 @@ from backend.lib.log_context import (
 )
 from backend.lib.stream_json import iter_stream_json_events
 from backend.providers.base import BaseLLMProvider, safe_loop_call
+
+logger = logging.getLogger(__name__)
 
 
 def _find_claude() -> str:
@@ -104,6 +107,89 @@ def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default"
     if effort and effort != "default":
         args.extend(["--effort", effort])
     return args
+
+
+# MCP 接続レースガードの総起動回数（初回含む）。
+# pending 起動は実測で約2割のため、3回で残存率は 1% 未満に落ちる。
+_MCP_GUARD_MAX_ATTEMPTS = 3
+
+
+def _mcp_pending_in_init(event: dict) -> bool:
+    """stream-json の init イベントが「MCP サーバー未接続」を示しているか判定する。
+
+    未接続のままリクエストが走ると、そのターンはツールが一切提供されず、
+    キャラクターが「ツール使用の演技」（擬似構文のテキスト出力）に流れる
+    事故が起きる（debug/cfd5bf43）。init 以外のイベントには常に False。
+    """
+    if event.get("type") != "system" or event.get("subtype") != "init":
+        return False
+    servers = event.get("mcp_servers") or []
+    return any(s.get("status") != "connected" for s in servers)
+
+
+def _spawn_cli_mcp_guarded(
+    args: list[str], stdin_bytes: bytes, env: dict
+) -> tuple[subprocess.Popen, list[str]]:
+    """CLI を起動し、init イベントが MCP 未接続を示したらプロセスを作り直す。
+
+    stream-json の最初の1行（通常 init イベント）だけを先読みして判定する。
+    最終試行では未接続でもそのまま続行する（ターン全損よりツール無しの方がまし）。
+
+    Returns:
+        (プロセス, 先読み済み行リスト)。先読み行には破棄した試行の init 行も
+        含める（debug ログで再試行の痕跡を追えるようにするため）。呼び出し側は
+        先読み行を処理してから残りの stdout を読み進めること（`_cli_output_lines`）。
+    """
+    consumed: list[str] = []
+    proc: subprocess.Popen | None = None
+    for attempt in range(1, _MCP_GUARD_MAX_ATTEMPTS + 1):
+        proc = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=_CLAUDE_CWD_READY,
+        )
+        proc.stdin.write(stdin_bytes)
+        proc.stdin.close()
+
+        first = proc.stdout.readline().decode("utf-8", errors="replace").strip()
+        if first:
+            consumed.append(first)
+        pending = False
+        try:
+            pending = _mcp_pending_in_init(json.loads(first)) if first else False
+        except json.JSONDecodeError:
+            pass
+
+        if not pending:
+            return proc, consumed
+        if attempt < _MCP_GUARD_MAX_ATTEMPTS:
+            logger.warning(
+                "MCP サーバー未接続を init で検知 (attempt %d/%d) — CLI を再起動します",
+                attempt, _MCP_GUARD_MAX_ATTEMPTS,
+            )
+            proc.kill()
+            proc.wait()
+            proc.stdout.close()
+            proc.stderr.close()
+        else:
+            logger.warning(
+                "MCP サーバー未接続のまま続行します（リトライ上限 %d 回到達）。"
+                "このターンはツール無しになる可能性があります", _MCP_GUARD_MAX_ATTEMPTS,
+            )
+    return proc, consumed
+
+
+def _cli_output_lines(proc: subprocess.Popen, pre_lines: list[str]):
+    """先読み済み行→残り stdout の順で、空行を除いた NDJSON 行を逐次 yield する。"""
+    yield from pre_lines
+    for line_bytes in iter(proc.stdout.readline, b""):
+        line = line_bytes.decode("utf-8", errors="replace").strip()
+        if line:
+            yield line
+
 
 # Claude サブプロセス起動前に除去すべき環境変数。
 # CLAUDECODE          : ネストされたセッションエラーを防ぐ。
@@ -548,21 +634,13 @@ class ClaudeCliProvider(BaseLLMProvider):
             """subprocess.Popenでストリーミング出力を行単位で読み、キューへ送信する。"""
             raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
             try:
-                proc = subprocess.Popen(
+                proc, pre_lines = _spawn_cli_mcp_guarded(
                     _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=env,
-                    cwd=_CLAUDE_CWD_READY,
+                    conversation.encode("utf-8"),
+                    env,
                 )
-                proc.stdin.write(conversation.encode("utf-8"))
-                proc.stdin.close()
 
-                for line_bytes in iter(proc.stdout.readline, b""):
-                    line = line_bytes.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
+                for line in _cli_output_lines(proc, pre_lines):
                     raw_lines.append(line)
                     try:
                         event = json.loads(line)
@@ -657,21 +735,13 @@ class ClaudeCliProvider(BaseLLMProvider):
             """
             raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
             try:
-                proc = subprocess.Popen(
+                proc, pre_lines = _spawn_cli_mcp_guarded(
                     _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=env,
-                    cwd=_CLAUDE_CWD_READY,
+                    conversation.encode("utf-8"),
+                    env,
                 )
-                proc.stdin.write(conversation.encode("utf-8"))
-                proc.stdin.close()
 
-                for line_bytes in iter(proc.stdout.readline, b""):
-                    line = line_bytes.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
+                for line in _cli_output_lines(proc, pre_lines):
                     raw_lines.append(line)
                     try:
                         event = json.loads(line)
@@ -749,12 +819,28 @@ async def _run_claude(
         msg_content = f.read()
 
     def run():
-        return subprocess.run(
+        import threading
+
+        proc, pre_lines = _spawn_cli_mcp_guarded(
             _build_cli_args(system_content, model, effort, allowed_tools),
-            input=msg_content.encode("utf-8"),
-            capture_output=True,
-            env=env,
-            cwd=_CLAUDE_CWD_READY,
+            msg_content.encode("utf-8"),
+            env,
+        )
+        # stderr は別スレッドで並行に読み切る（stdout 全読み中のパイプ詰まり防止）
+        stderr_chunks: list[bytes] = []
+        drainer = threading.Thread(
+            target=lambda: stderr_chunks.append(proc.stderr.read()), daemon=True
+        )
+        drainer.start()
+        rest = proc.stdout.read().decode("utf-8", errors="replace")
+        proc.wait()
+        drainer.join()
+        stdout_text = "\n".join(pre_lines + ([rest] if rest else []))
+        return subprocess.CompletedProcess(
+            proc.args,
+            proc.returncode,
+            stdout_text.encode("utf-8"),
+            b"".join(stderr_chunks),
         )
 
     return await asyncio.to_thread(run)
