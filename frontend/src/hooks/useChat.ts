@@ -32,8 +32,6 @@ interface UseChatDeps {
   activeSessionIdRef: MutableRefObject<string | null>;
   /** 選択中モデル ID（再生成時のリクエストモデルに使う）。 */
   selectedModel: string;
-  /** 選択中モデルの setter（switch_angle 完了時に切り替え先へ更新する）。 */
-  setSelectedModel: Dispatch<SetStateAction<string>>;
   /** メッセージ一覧の setter。 */
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   /** セッション一覧の setter。 */
@@ -89,7 +87,6 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     sending,
     activeSessionIdRef,
     selectedModel,
-    setSelectedModel,
     setMessages,
     setSessions,
     setError,
@@ -147,16 +144,6 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       onEvent: (event) => {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
-        } else if (event.type === "clear") {
-          // switch_angle 発動: 第1プロバイダーの表示をクリアして第2プロバイダーを待つ
-          setStreamingContent("");
-          accumulatedReasoning = "";
-          setStreamingReasoning(null);
-        } else if (event.type === "angle_switched") {
-          // switch_angle 完了: selectedModel を切り替え先に更新する。
-          // これを行わないと次ターン以降も元のプリセットでリクエストされ続け、
-          // 切り替えが1ターン限りで消えてしまう。
-          setSelectedModel(event.model_id);
         } else if (event.type === "reasoning") {
           accumulatedReasoning += event.content;
           setStreamingReasoning(accumulatedReasoning);
@@ -209,7 +196,6 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     }
   }, [
     activeSessionIdRef,
-    setSelectedModel,
     setMessages,
     setSessions,
     setError,

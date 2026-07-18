@@ -73,7 +73,6 @@ class TestListTools:
             "reopen_working_memory_thread",
             "merge_working_memory_threads",
             "carve_narrative",
-            "switch_angle",
             "power_recall",
             "web_search",
             "take_leave",

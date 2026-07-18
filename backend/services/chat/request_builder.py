@@ -39,9 +39,8 @@ Chotgor 操作ガイド内のツール説明は低頻度→高頻度の順で配
 保存は夜の Chronicle（棚卸し）で WM スレッドから「昇格」させる設計:
   1. POWER_RECALL（能動検索・レア）
   2. CARVE_NARRATIVE（内的叙述更新・たまに）
-  3. SWITCH_ANGLE（プロバイダー切り替え・状況依存）
-  4. INSCRIBE_MEMORY（魂に刻むときだけ・低頻度の特別手段）
-  5. POST_WORKING_MEMORY_THREAD ほか（read/close/reopen/merge・記憶の中心・最高頻度）
+  3. INSCRIBE_MEMORY（魂に刻むときだけ・低頻度の特別手段）
+  4. POST_WORKING_MEMORY_THREAD ほか（read/close/reopen/merge・記憶の中心・最高頻度）
 
 テンプレート置換は `str.replace` ベースで行う（`str.format` は採用しない）。
 理由: ブロック本文に markdown の `{}` などが混じっても誤爆しないため。
@@ -77,7 +76,6 @@ def _build_tag_mode_global_rules(include_anticipation_guide: bool) -> str:
         "`[POWER_RECALL:...]`",
         "`[CARVE_NARRATIVE:...]`",
         "`[INSCRIBE_MEMORY:...]`",
-        "`[SWITCH_ANGLE:...]`",
     ]
     if include_anticipation_guide:
         invisible_tags.append("`[ANTICIPATE_RESPONSE:...]`")
@@ -556,48 +554,8 @@ def _build_previous_anticipation_block(previous_anticipation: str) -> str:
     return f"## 前回のあなたの期待（予想）\n\n前回あなたは、このあとの展開をこう期待していました：\n\n> {text}"
 
 
-def _build_switch_angle_block(
-    available_presets: list[dict],
-    use_tools: bool,
-) -> str:
-    """switch_angle ツールの説明ブロックを動的に構築する。
-
-    Args:
-        available_presets: 利用可能なプリセット情報リスト。
-        use_tools: True なら tool-use 形式、False ならタグ形式の説明を付与する。
-
-    Returns:
-        システムプロンプトに挿入するテキストブロック。
-    """
-    lines = ["## プリセット切り替え (switch_angle)"]
-    lines.append("切り替え可能なプリセット:")
-    for preset in available_presets:
-        name = preset.get("preset_name", "")
-        when = preset.get("when_to_switch", "").strip()
-        if when:
-            lines.append(f"- **{name}**: {when}")
-        else:
-            lines.append(f"- **{name}**")
-    lines.append("")
-    if use_tools:
-        lines.append(
-            "プリセットを切り替えたいと感じたら `switch_angle` ツールを呼び出してください。\n"
-            "- `preset_name`: 上記リストにあるプリセット名\n"
-            "- `self_instruction`: 切り替え後のプリセットへの自己指針（どのように応答するか）"
-        )
-    else:
-        lines.append(
-            "プリセットを切り替えたいと感じたら、返答の**一番最後に**以下の形式で記述してください。\n"
-            "    [SWITCH_ANGLE:preset_name|self_instruction]\n"
-            "例: [SWITCH_ANGLE:gemini2FlashLite|軽くさっぱりと応答する]"
-        )
-    return "\n".join(lines)
-
-
 def _build_chotgor_block(
     use_tools: bool,
-    available_presets: list[dict] | None,
-    current_preset_name: str,
     inner_narrative_len: int = 0,
     context_tool_hints: list[str] | None = None,
     include_anticipation_guide: bool = True,
@@ -607,14 +565,11 @@ def _build_chotgor_block(
     ツールの説明を低頻度→高頻度の順で配置する:
         1. POWER_RECALL
         2. CARVE_NARRATIVE
-        3. SWITCH_ANGLE（available_presets が非空の場合のみ）
-        4. INSCRIBE_MEMORY
-        5. POST_WORKING_MEMORY_THREAD ほか（read/close/reopen/merge・ワーキングメモリ・tool-use 時のみ）
+        3. INSCRIBE_MEMORY
+        4. POST_WORKING_MEMORY_THREAD ほか（read/close/reopen/merge・ワーキングメモリ・tool-use 時のみ）
 
     Args:
         use_tools: True なら tool-use 形式、False ならタグ形式の説明を使う。
-        available_presets: 利用可能なプリセット情報リスト。None または空の場合は SWITCH_ANGLE を省略。
-        current_preset_name: 現在使用中のプリセット名。
         context_tool_hints: コンテキスト別追加ツール（reach_out / visit_user /
             override_schedule 等）の操作ガイド（character_actions/context_tools.py の
             判定結果）。tool-use 形式のときのみ注入する（タグ方式プロバイダーには
@@ -634,8 +589,6 @@ def _build_chotgor_block(
         for hint in (context_tool_hints or []):
             parts.append(hint)
         parts.append(build_carve_narrative_tools_hint(inner_narrative_len))
-        if available_presets:
-            parts.append(_build_switch_angle_block(available_presets, use_tools=True))
         # inscribe の詳細説明はツールスキーマの description が正。ここは使い分けの一文だけ残す
         # （夜の棚卸しでの昇格はワーキングメモリ案内側に記載があり、三重説明を避ける。総点検 D3）。
         parts.append(
@@ -648,8 +601,6 @@ def _build_chotgor_block(
         parts.append(_build_tag_mode_global_rules(include_anticipation_guide))
         parts.append(POWER_RECALL_TAG_GUIDE)
         parts.append(build_carve_narrative_tag_guide(inner_narrative_len))
-        if available_presets:
-            parts.append(_build_switch_angle_block(available_presets, use_tools=False))
         parts.append(INSCRIBE_MEMORY_TAG_GUIDE)
 
     # 予想（ANTICIPATE_RESPONSE）は全プロバイダー一律タグ。use_tools / タグ方式の
@@ -676,8 +627,6 @@ def build_system_prompt(
     wm_all_threads: list[dict] | None = None,
     wm_fixed_threads: list[dict] | None = None,
     use_tools: bool = False,
-    available_presets: list[dict] | None = None,
-    current_preset_name: str = "",
     memory_degraded: bool = False,
     usual_days_enabled: bool = False,
     user_label: str = "",
@@ -733,8 +682,6 @@ def build_system_prompt(
         "{block_memory_notice}": _build_memory_notice_block(memory_degraded),
         "{block_chotgor_guide}": _build_chotgor_block(
             use_tools=use_tools,
-            available_presets=available_presets,
-            current_preset_name=current_preset_name,
             inner_narrative_len=len((inner_narrative or "").strip()),
             context_tool_hints=context_tool_hints,
             include_anticipation_guide=include_anticipation_guide,

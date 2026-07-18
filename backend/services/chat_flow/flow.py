@@ -10,7 +10,7 @@ Architecture:
 
 パッケージ内の分業:
   - preparation.py  : ターン前処理（想起・WM・URL fetch・プロンプト構築）→ PreparedContext
-  - flow.py（本体） : tool-use 経路／タグ経路のディスパッチ、switch_angle / power_recall の再帰
+  - flow.py（本体） : tool-use 経路／タグ経路のディスパッチ、power_recall の再帰
   - farewell_flow.py: ターン完了後の別れ検出・疲労離席の起動
 
 後方互換: `backend.services.chat.service.ChatService` は本クラスの別名として
@@ -75,74 +75,6 @@ class ChatFlow:
 
     # --- 内部ヘルパー ---
 
-    def _extract_switch_info(
-        self, tool_executor: "ToolExecutor", clean_text: str, has_angle_presets: bool
-    ) -> tuple[str, tuple[str, str] | None]:
-        """switch_angle リクエストを tool_executor.switch_request から取り出す。
-
-        available_presets が空のときは無視する。SUPPORTS_TOOLS プロバイダーは常に
-        switch_angle ツールを LLM に渡すため、presets が未設定でも LLM が誤呼び出しする
-        可能性があり、ここでガードする。
-
-        タグ方式・tool-use 方式 のどちらの経路でも、SWITCH_ANGLE は ToolExecutor.execute()
-        経由で _switcher.switch_angle() が呼ばれて switch_request にセットされる
-        （タグ方式は事前に apply_switch_angle_tags() を呼んでおく）。本メソッドは
-        単に「セット済みの switch_request を読むだけ」になる。
-        """
-        if not has_angle_presets:
-            return clean_text, None
-        return clean_text, tool_executor.switch_request
-
-    def _build_switched_request(
-        self, original: ChatRequest, preset_name: str, self_instruction: str,
-        first_response_text: str = "",
-    ) -> ChatRequest | None:
-        """switch_angle 後の再ディスパッチ用 ChatRequest を構築する。
-
-        Args:
-            original: 元のリクエスト。
-            preset_name: 切り替え先プリセット名。
-            self_instruction: 切り替え後モデルへの自己指針。
-                プロバイダー固有追記（Block 5）に畳み込んで切り替え先に伝える。
-            first_response_text: 第1プロバイダーが生成したテキスト。
-                空でなければ assistant ターンとして messages に追加し、
-                第2プロバイダーが会話の流れを引き継げるようにする。
-        """
-        preset = next(
-            (p for p in original.available_presets if p.get("preset_name") == preset_name),
-            None,
-        )
-        if preset is None:
-            _log.warning("switch_angle プリセット未発見 char=%s@%s preset=%s", original.character_name, original.current_preset_name, preset_name)
-            return None
-
-        # 切り替え後モデルへの自己指針は、プロバイダー固有追記の末尾に畳み込む。
-        extra_instructions = preset.get("additional_instructions", "") or ""
-        if self_instruction:
-            extra_instructions = (
-                f"{extra_instructions}\n\n{self_instruction}".strip()
-                if extra_instructions.strip()
-                else self_instruction
-            )
-
-        # 第1プロバイダーの応答を assistant ターンとして追加し、第2プロバイダーへ文脈を引き継ぐ
-        new_messages = list(original.messages)
-        if first_response_text:
-            new_messages.append(Message(role="assistant", content=first_response_text))
-
-        return replace(
-            original,
-            provider=preset["provider"],
-            model=preset.get("model_id", ""),
-            provider_additional_instructions=extra_instructions,
-            thinking_level=preset.get("thinking_level", "default"),
-            current_preset_name=preset_name,
-            current_preset_id=preset.get("preset_id", ""),
-            available_presets=[],
-            messages=new_messages,
-            timeout_seconds=preset.get("timeout_seconds", 300),
-        )
-
     def _log_debug(self, label: str, request: ChatRequest, messages: list[dict], clean_text: str) -> None:
         """LLM呼び出しの操作ログを出力する。char_label は {name}@{preset} 形式で出力する。"""
         char_label = f"{request.character_name}@{request.current_preset_name or request.provider}"
@@ -193,14 +125,6 @@ class ChatFlow:
 
             # タグ方式は抽出だけして、実行は tool_executor.execute() 経由で記録までまとめて行う。
             clean_text = tool_executor.apply_all_tags(response_text)
-
-        clean_text, switch_info = self._extract_switch_info(
-            tool_executor, clean_text, bool(request.available_presets)
-        )
-        if switch_info:
-            switched = self._build_switched_request(request, *switch_info, first_response_text=clean_text)
-            if switched is not None:
-                return await self.execute(switched)
 
         # 予想（ANTICIPATE_RESPONSE）タグは本文から除去する（この非ストリーミング経路では
         # 保存先が無いため抽出値は捨てるが、ユーザー向けテキストにタグを残さない）。
@@ -359,33 +283,14 @@ class ChatFlow:
                     yield event
                 return
 
-            # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み・アングル切替）
+            # 後処理: マーカーの側効果処理（記憶保存・narrative彫り込み）
             # テキスト表示は済んでいるため、clean_text は副作用処理とログ用途にのみ使う。
             # タグ抽出後の実行は tool_executor 経由（記録まで一元化）。
             clean_text = tool_executor.apply_all_tags(full_text)
 
-        clean_text, switch_info = self._extract_switch_info(
-            tool_executor, clean_text, bool(request.available_presets)
-        )
-        if switch_info:
-            switched = self._build_switched_request(request, *switch_info, first_response_text=clean_text)
-            if switched is not None:
-                # SUPPORTS_TOOLS 方式: 第1プロバイダーのテキストはまだUIに流れていないため先にyieldする。
-                # タグ方式: text_already_streamed=True のためすでにUIに流れている（何もしない）。
-                if not text_already_streamed and clean_text:
-                    yield ("text", clean_text)
-                async for event in self.execute_stream(switched):
-                    yield event
-                yield ("angle_switched", {
-                    "model_id": f"{request.character_name}@{switch_info[0]}",
-                    "preset_id": switched.current_preset_id,
-                    "preset_name": switch_info[0],
-                })
-                return
-
         # 予想（ANTICIPATE_RESPONSE）タグを抽出する。全プロバイダー一律タグのため、
         # tool-use 方式・タグ方式どちらの clean_text からも、この共通地点で1回だけ取り出す。
-        # （switch_angle / power_recall の再帰時は再帰先で抽出済みのため、ここには到達しない）
+        # （power_recall の再帰時は再帰先で抽出済みのため、ここには到達しない）
         clean_text, anticipation = extract_anticipation(clean_text)
         # 予想はここで採用（末尾で yield → API 層が保存・次ターン注入）されるため、
         # 採用が確定したこの地点でツール実行イベントとして記録する。

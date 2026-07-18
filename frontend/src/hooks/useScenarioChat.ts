@@ -444,14 +444,6 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             if (ev.log_message_id) {
               pendingPcLogMessageId = ev.log_message_id;
             }
-          } else if (ev.type === "angle_switched") {
-            // PC が switch_angle した。セッションへの永続化は backend 側未実装のためログのみ
-            console.info(
-              "[scenario_pc] angle switched",
-              ev.character,
-              "→",
-              ev.preset_name,
-            );
           } else if (ev.type === "turn_complete") {
             // ユーザターン完了（GM/PC のレスポンス連鎖が終わり、ユーザ入力待ちへ戻った）。
             // 残った未確定吹き出しは捨てる（turn_end でほぼ消えるはず）。

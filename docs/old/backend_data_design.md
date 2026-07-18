@@ -48,18 +48,14 @@
 * `system_prompt_block1` (Text) : システムプロンプト（基本設定）
 * `inner_narrative` (Text) : 内的叙述（キャラクター自身の自己物語テキスト）。三段階の蒸留パイプラインの最終段であり、Forgetバッチによる昇華・凝縮の書き込み先
 * `cleanup_config` (JSON) : 履歴クリーンアップ用の設定。単純な **KeyValue** 形式（例: `{"days": 30}`）
-* `enabled_providers` (JSON) : 有効化されているLLMプロバイダー設定。以下の**構造を持つ**。
+* `enabled_providers` (JSON) : 有効化されているLLMプロバイダー設定。preset_id をキーとする dict（キー存在＝有効。値は空 dict `{}`）。
   ```json
   {
-    "preset_id": {
-      "additional_instructions": "追加のシステムプロンプト指示",
-      "when_to_switch": "このモデルに切り替えるべき条件・タイミング"
-    }
+    "preset_id": {}
   }
   ```
 * `ghost_model` (String) : バックグラウンドでの記憶整理（Chronicle/forget）などで使用されるLLMモデル（プリセットID）※nullable
 * `image_data` (Text) : Base64エンコードされたアバター画像 ※nullable
-* `switch_angle_enabled` (Integer) : 視点切り替え機能の有効化フラグ（1: ON, 0: OFF）
 * `judge_preset_id` (String) : 別れ検出（farewell）の judge LLM に使うモデルプリセットID ※nullable
 * `self_history` (Text) : これまでの経緯と現在の状態（Chronicle処理で自己更新）
 * `relationship_state` (Text) : ユーザ・他キャラとの関係性（Chronicle処理で更新）

@@ -1,7 +1,7 @@
 """ToolExecutor・ToolCall・ToolTurnResult・ツールスキーマのテスト。
 
-ツール呼び出しの正規化・記憶の書き込み（inscribe_memory）・inner_narrative の彫り込み（carve_narrative）・
-switch_angle が InscribedMemoryManager を通じて正しく実行されるかを検証する。
+ツール呼び出しの正規化・記憶の書き込み（inscribe_memory）・inner_narrative の彫り込み
+（carve_narrative）が InscribedMemoryManager を通じて正しく実行されるかを検証する。
 """
 
 import asyncio
@@ -50,14 +50,13 @@ class TestToolSchemas:
         assert anthropic_names == openai_names
 
     def test_expected_tool_names_present(self):
-        """inscribe_memory / carve_narrative / post_working_memory_thread / read_working_memory_thread / power_recall / switch_angle が存在する。"""
+        """inscribe_memory / carve_narrative / post_working_memory_thread / read_working_memory_thread / power_recall が存在する。"""
         names = {t["name"] for t in ANTHROPIC_TOOLS}
         assert "inscribe_memory" in names
         assert "carve_narrative" in names
         assert "post_working_memory_thread" in names
         assert "read_working_memory_thread" in names
         assert "power_recall" in names
-        assert "switch_angle" in names
 
     def test_inscribe_memory_required_params(self):
         """inscribe_memory ツールが content / category / impact を必須パラメータとして持つ。"""
@@ -364,16 +363,6 @@ class TestToolExecutorExecute:
         # from_ids は1本も閉じられていない
         wm.set_open.assert_not_called()
         wm.add_post.assert_not_called()
-
-    def test_switch_angle_stores_switch_request(self):
-        """switch_angle ツールが executor.switch_request にリクエストを格納する。"""
-        executor = self._make_executor()
-        result = executor.execute(
-            "switch_angle",
-            {"preset_name": "gemini2FlashLite", "self_instruction": "軽やかに話す"},
-        )
-        assert executor.switch_request == ("gemini2FlashLite", "軽やかに話す")
-        assert "gemini2FlashLite" in result
 
 
 # ---------------------------------------------------------------------------

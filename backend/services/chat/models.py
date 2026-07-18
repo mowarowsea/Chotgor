@@ -27,12 +27,7 @@ class ChatRequest:
     time_since_last_interaction: str = ""
     # セッションID。ツール実行（carve_narrative 等）の source 文脈として ToolExecutor へ渡る。
     session_id: str = ""
-    # switch_angle: このキャラクターが切り替え可能なプリセット一覧。
-    # 各エントリは {preset_id, preset_name, provider, model_id, additional_instructions,
-    #               thinking_level, when_to_switch} を持つ dict。
-    # 空の場合は switch_angle ツール・タグを使用不可とする。
-    available_presets: list[dict] = field(default_factory=list)
-    # 現在使用中のプリセット名（システムプロンプトの「現在のアングル」表示に使用）。
+    # 現在使用中のプリセット名（ログの char=name@preset 表示に使用）。
     current_preset_name: str = ""
     # 現在使用中のプリセットID（記憶作成時の出所記録に使用）。
     current_preset_id: str = ""

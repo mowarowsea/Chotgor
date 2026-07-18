@@ -185,15 +185,6 @@ export type ScenarioStreamEvent =
       anticipation: string | null;
       log_message_id?: string;
     }
-  // アングル切替（switch_angle 経由）。GM/PC どちらでも発生しうるが現状は PC のみ。
-  | {
-      type: "angle_switched";
-      character: string;
-      character_id: string;
-      model_id: string;
-      preset_id: string;
-      preset_name: string;
-    }
   // ユーザターン完了（GM/PC のレスポンス連鎖が終わり、ユーザ入力待ちへ戻った）。
   // turn_ids は保存された話者ブロック ID、fired_responses は LLM 呼出回数（GM + PC）。
   | { type: "turn_complete"; turn_ids: string[]; fired_responses?: number }

@@ -572,11 +572,7 @@ def test_stripper_markers_across_chunk_boundaries():
 
 
 def test_stripper_all_known_markers():
-    """Stripper が除去対象とする全既知マーカーが正しく除去されること。
-
-    [SWITCH_ANGLE:] は KNOWN_PREFIXES に含まれない（available_presets が非空のリクエストでは
-    use_streaming=False となり Stripper が使われないため）。
-    """
+    """Stripper が除去対象とする全既知マーカーが正しく除去されること。"""
     result = _feed_all([
         "A[INSCRIBE_MEMORY:contextual|1.0|x]"
         "B[CARVE_NARRATIVE:append|y]"

@@ -81,7 +81,6 @@ Chotgorは以下の構成で動く。
 | `carve_narrative` | 自身の行動指針（inner_narrative）を更新する。あなたが書いたCharacter Definitionとは別の、キャラクター自身が彫り出す物語 |
 | `drift` / `drift_reset` | そのセッション内限定で一時的な行動指針を設定・解除する |
 | `end_session` | 会話から退席する。疲れた・話したくない・話が終わったと判断したときに呼び出す |
-| `switch_angle` | LLMモデル（プリセット）を切り替える。人格はそのまま、エンジンだけ変える |
 
 ### 対話を重ねるということ
 
@@ -158,7 +157,7 @@ docker-compose up -d openwebui
 |---|---|
 | Name / Base Instruction | キャラクター名と基本人格定義。ここがあなたの責任領域 |
 | Inner Narrative | キャラクターが自己書き換えする行動指針。UIは読み取り専用。キャラクターだけが更新できる |
-| Enabled Providers | 使用するLLMプロバイダーとモデル。複数設定すれば `switch_angle` で切り替え可能 |
+| Enabled Providers | 使用するLLMプロバイダーとモデル |
 
 ### プロバイダー設定
 

@@ -256,7 +256,6 @@
                     <div class="accordion-item" data-preset-id="{{ preset.id }}">
                         <input type="hidden" name="preset_ids" value="{{ preset.id }}">
                         <div class="accordion-header">
-                            <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▸</button>
                             <strong>{{ preset.name }}</strong>
                             <span class="ch-tag ch-tag--accent">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
                             <label class="ghost-pick" title="Ghost Model（Chronicle・忘却処理に使うモデル）に設定する">
@@ -268,20 +267,6 @@
                                 </span>
                             </label>
                             <button type="button" class="btn-remove" onclick="removePreset(this, '{{ preset.id }}')">✕</button>
-                        </div>
-                        <div class="accordion-body" style="display:none">
-                            <div class="ch-field">
-                                <label class="ch-label">Additional Instructions
-                                    <span class="ch-hint">このモデル向けの追記指示（省略可）</span>
-                                </label>
-                                <textarea name="ai_{{ preset.id }}" class="ch-textarea ch-textarea--mono" rows="3">{{ cfg.get('additional_instructions', '') }}</textarea>
-                            </div>
-                            <div class="ch-field when-to-switch-field" style="margin-bottom:0">
-                                <label class="ch-label">このモデルに切り替えるタイミング
-                                    <span class="ch-hint">switch_angle ツールの判断基準（省略可）</span>
-                                </label>
-                                <textarea name="wts_{{ preset.id }}" class="ch-textarea ch-textarea--mono" rows="2">{{ cfg.get('when_to_switch', '') }}</textarea>
-                            </div>
                         </div>
                     </div>
                     {% endif %}
@@ -308,21 +293,6 @@
                     <a href="/ui/model-presets" style="color:var(--ch-a)">models</a> で登録する。
                 </p>
                 {% endif %}
-            </div>
-
-            {# switch_angle（プリセット2件以上で JS が表示） #}
-            <div class="ch-field" id="switch-angle-group" style="display:none">
-                <label class="ch-switch-row" style="border:none;padding:0">
-                    <span class="ch-switch-row__text">
-                        <span class="ch-switch-row__label">switch_angle を使用する</span>
-                        <span class="ch-switch-row__note">ONでアングル切り替えが有効になる</span>
-                    </span>
-                    <span class="ch-toggle">
-                        <input type="checkbox" id="switch_angle_enabled" name="switch_angle_enabled" value="1"
-                            {% if character and character.switch_angle_enabled %}checked{% endif %}>
-                        <span class="ch-toggle__track"></span>
-                    </span>
-                </label>
             </div>
 
         </section>
@@ -750,14 +720,6 @@
         }
     }
 
-    /** アコーディオンを開閉する（初期表示は閉、グリフ ▸/▾ も連動）。 */
-    function toggleAccordion(btn) {
-        const body = btn.closest('.accordion-item').querySelector('.accordion-body');
-        const isOpen = body.style.display !== 'none';
-        body.style.display = isOpen ? 'none' : 'block';
-        btn.textContent = isOpen ? '▸' : '▾';
-    }
-
     /**
      * Ghost Model ラジオに「選択済みをもう一度クリックで解除」の挙動を取り付ける。
      * ラジオ単体では未設定に戻せないため、2度目のクリックで checked を外して
@@ -778,39 +740,11 @@
         });
     }
 
-    /**
-     * プリセット数に応じて switch-angle チェックボックスの表示を更新する。
-     * プリセットが2件以上あれば表示する。
-     */
-    function updateSwitchAngleVisibility() {
-        const count = document.querySelectorAll('#model-accordion .accordion-item').length;
-        const group = document.getElementById('switch-angle-group');
-        if (count >= 2) {
-            group.style.display = '';
-        } else {
-            group.style.display = 'none';
-            const cb = document.getElementById('switch_angle_enabled');
-            if (cb) cb.checked = false;
-            updateWhenToSwitchVisibility(false);
-        }
-    }
-
-    /**
-     * when-to-switch フィールドの表示・非表示を切り替える。
-     * @param {boolean} show
-     */
-    function updateWhenToSwitchVisibility(show) {
-        document.querySelectorAll('.when-to-switch-field').forEach(el => {
-            el.style.display = show ? '' : 'none';
-        });
-    }
-
     /** プリセットをアコーディオンから削除する。 */
     function removePreset(btn, presetId) {
         btn.closest('.accordion-item').remove();
         const opt = document.querySelector(`#preset-select option[value="${presetId}"]`);
         if (opt) opt.disabled = false;
-        updateSwitchAngleVisibility();
         // モデルの削除は DOM 操作のみでイベントを伴わないため、明示的に保存する。
         if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
@@ -834,7 +768,6 @@
         item.innerHTML = `
         <input type="hidden" name="preset_ids" value="${presetId}">
         <div class="accordion-header">
-            <button type="button" class="accordion-toggle" onclick="toggleAccordion(this)">▾</button>
             <strong>${name}</strong>
             <span class="ch-tag ch-tag--accent">${providerLabel}</span>
             <label class="ghost-pick" title="Ghost Model（Chronicle・忘却処理に使うモデル）に設定する">
@@ -846,39 +779,18 @@
             </label>
             <button type="button" class="btn-remove" onclick="removePreset(this, '${presetId}')">✕</button>
         </div>
-        <div class="accordion-body">
-            <div class="ch-field">
-                <label class="ch-label">Additional Instructions
-                    <span class="ch-hint">このモデル向けの追記指示（省略可）</span>
-                </label>
-                <textarea name="ai_${presetId}" class="ch-textarea ch-textarea--mono" rows="3"></textarea>
-            </div>
-            <div class="ch-field when-to-switch-field" style="margin-bottom:0">
-                <label class="ch-label">このモデルに切り替えるタイミング
-                    <span class="ch-hint">switch_angle ツールの判断基準（省略可）</span>
-                </label>
-                <textarea name="wts_${presetId}" class="ch-textarea ch-textarea--mono" rows="2"></textarea>
-            </div>
-        </div>
     `;
         accordion.appendChild(item);
         attachGhostRadio(item.querySelector('input[name="ghost_model"]'));
 
         opt.disabled = true;
         sel.value = '';
-        updateSwitchAngleVisibility();
         // モデルの追加は DOM 操作のみでイベントを伴わないため、明示的に保存する。
         if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
 
     // ページロード時の初期化
     document.addEventListener('DOMContentLoaded', () => {
-        updateSwitchAngleVisibility();
-        const cb = document.getElementById('switch_angle_enabled');
-        if (cb) {
-            updateWhenToSwitchVisibility(cb.checked);
-            cb.addEventListener('change', () => updateWhenToSwitchVisibility(cb.checked));
-        }
         document.querySelectorAll('#model-accordion input[name="ghost_model"]')
             .forEach(attachGhostRadio);
         // 時間グリッドの初期値も検証しておく（不正なまま開いた場合に枠を赤くする）。

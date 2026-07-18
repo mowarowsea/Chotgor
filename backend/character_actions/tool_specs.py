@@ -44,10 +44,6 @@ from backend.character_actions.rescheduler import (
     OVERRIDE_SCHEDULE_TOOL_DESCRIPTION,
     OVERRIDE_SCHEDULE_TOOLS_HINT,
 )
-from backend.character_actions.switcher import (
-    SWITCH_ANGLE_SCHEMA,
-    SWITCH_ANGLE_TOOL_DESCRIPTION,
-)
 from backend.character_actions.threader import (
     CLOSE_WORKING_MEMORY_THREAD_SCHEMA,
     CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION,
@@ -121,7 +117,6 @@ BASE_TOOL_SPECS: tuple[ToolSpec, ...] = (
         MERGE_WORKING_MEMORY_THREADS_SCHEMA,
     ),
     ToolSpec("carve_narrative", CARVE_NARRATIVE_TOOL_DESCRIPTION, CARVE_NARRATIVE_SCHEMA),
-    ToolSpec("switch_angle", SWITCH_ANGLE_TOOL_DESCRIPTION, SWITCH_ANGLE_SCHEMA),
     ToolSpec("power_recall", POWER_RECALL_TOOL_DESCRIPTION, POWER_RECALL_SCHEMA),
     ToolSpec("web_search", WEB_SEARCH_TOOL_DESCRIPTION, WEB_SEARCH_SCHEMA),
     ToolSpec("take_leave", TAKE_LEAVE_TOOL_DESCRIPTION, TAKE_LEAVE_SCHEMA),

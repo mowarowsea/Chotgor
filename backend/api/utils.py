@@ -6,7 +6,6 @@ session_to_dict / message_to_dict / char_to_dict を一元管理し、各エン�
 
 from datetime import datetime
 from backend.services.chat.content import build_1on1_history, build_message_content
-from backend.services.chat.request_factory import build_available_presets
 from backend.services.memory.format import format_recalled_memories
 
 __all__ = [
@@ -17,7 +16,6 @@ __all__ = [
     "char_to_dict",
     "format_memories_for_sse",
     "fmt_dt",
-    "build_available_presets",
 ]
 
 

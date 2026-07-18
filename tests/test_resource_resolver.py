@@ -96,13 +96,13 @@ def test_require_preset_raises_404_when_not_found():
 def test_require_model_config_returns_enabled_provider_config():
     character = SimpleNamespace(
         name="Momo",
-        enabled_providers={"preset-1": {"additional_instructions": "be kind"}},
+        enabled_providers={"preset-1": {}},
     )
     preset = SimpleNamespace(id="preset-1", name="default")
 
     config = require_model_config(character, preset)
 
-    assert config == {"additional_instructions": "be kind"}
+    assert config == {}
 
 
 def test_require_model_config_raises_400_when_preset_not_enabled():

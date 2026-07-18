@@ -108,11 +108,6 @@ _WM_FIXED_THREADS = [
     },
 ]
 
-_AVAILABLE_PRESETS = [
-    {"preset_name": "default", "when_to_switch": ""},
-    {"preset_name": "light", "when_to_switch": "軽い雑談で流したいとき"},
-]
-
 _CONTEXT_TOOL_HINTS = [
     "### 外へ働きかける（reach_out）\nテスト用の固定ヒント本文。実際の文言は context_tools.py が組む。",
 ]
@@ -122,8 +117,6 @@ _FULL_KWARGS = dict(
     provider_additional_instructions="このプロバイダーでは簡潔に応答すること。",
     wm_all_threads=_WM_ALL_THREADS,
     wm_fixed_threads=_WM_FIXED_THREADS,
-    available_presets=_AVAILABLE_PRESETS,
-    current_preset_name="default",
     usual_days_enabled=True,
     user_label="もわ",
     user_position="開発者であり、対話の相手",

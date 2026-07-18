@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 # --- フォーマット残骸: タグ方式ツールタグの痕跡（tool_tags.py のタグ名を流用）---
 # 応答本文にツールタグが生テキストとして漏れていたら残骸として検知する。
+# SWITCH_ANGLE は歴史的タグ（機能撤去済み・現在は未定義）だが、幻覚での出力を smell として
+# 検知するため残している。
 _TAG_NAMES = (
     "INSCRIBE_MEMORY", "CARVE_NARRATIVE", "POWER_RECALL", "SWITCH_ANGLE",
     "ANTICIPATE_RESPONSE", "POST_WORKING_MEMORY_THREAD", "READ_WORKING_MEMORY_THREAD",

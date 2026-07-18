@@ -242,7 +242,6 @@ export default function App() {
     sending,
     activeSessionIdRef,
     selectedModel,
-    setSelectedModel,
     setMessages,
     setSessions,
     setError,

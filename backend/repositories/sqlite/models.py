@@ -111,7 +111,6 @@ class Character(Base):
     enabled_providers = Column(JSON, nullable=False, default=dict)
     ghost_model = Column(String, nullable=True)  # chronicle/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
-    switch_angle_enabled = Column(Integer, nullable=False, default=0)  # 1=ON, 0=OFF
     # 別れ検出（farewell）の judge LLM に使うモデルプリセットID
     judge_preset_id = Column(String, nullable=True)
     # キャラクター自己更新フィールド: chronicle 処理で更新される

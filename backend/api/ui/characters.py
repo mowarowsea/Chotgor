@@ -40,22 +40,15 @@ def _build_enabled_providers(form) -> dict:
     """フォームから enabled_providers 辞書を構築する。
 
     create_character・update_character の両方で同じロジックが必要なため一元化する。
-    preset_ids は複数値フォームフィールドで、各 preset_id に対して
-    additional_instructions と when_to_switch を取得して辞書に格納する。
+    キー存在＝有効の判定のみに使うため、値は空 dict とする。
 
     Args:
         form: await request.form() の結果。
 
     Returns:
-        {preset_id: {additional_instructions, when_to_switch}} の辞書。
+        {preset_id: {}} の辞書。
     """
-    enabled_providers = {}
-    for pid in form.getlist("preset_ids"):
-        enabled_providers[pid] = {
-            "additional_instructions": form.get(f"ai_{pid}", ""),
-            "when_to_switch": form.get(f"wts_{pid}", ""),
-        }
-    return enabled_providers
+    return {pid: {} for pid in form.getlist("preset_ids")}
 
 
 def _usual_time_grid_text(usual_config: dict) -> str:
@@ -122,7 +115,6 @@ async def create_character(request: Request):
 
     char_id = str(uuid.uuid4())
     ghost_model = form.get("ghost_model") or None
-    switch_angle_enabled = bool(form.get("switch_angle_enabled"))
     judge_preset_id = form.get("judge_preset_id") or None
 
     request.app.state.sqlite.create_character(
@@ -132,7 +124,6 @@ async def create_character(request: Request):
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         image_data=image_data,
-        switch_angle_enabled=switch_angle_enabled,
         judge_preset_id=judge_preset_id,
         allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),
@@ -190,14 +181,12 @@ async def update_character(request: Request, character_id: str):
     allowed_tools = _build_allowed_tools(form)
 
     ghost_model = form.get("ghost_model") or None
-    switch_angle_enabled = 1 if form.get("switch_angle_enabled") else 0
     judge_preset_id = form.get("judge_preset_id") or None
 
     update_kwargs: dict = dict(
         system_prompt_block1=form.get("system_prompt_block1", ""),
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
-        switch_angle_enabled=switch_angle_enabled,
         judge_preset_id=judge_preset_id,
         allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),

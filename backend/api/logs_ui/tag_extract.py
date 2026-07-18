@@ -112,12 +112,6 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
         fields["モード"] = parts[0] if len(parts) > 0 else ""
         fields["内容"] = parts[1] if len(parts) > 1 else ""
 
-    elif tag_name == "SWITCH_ANGLE":
-        # body: "preset|context"
-        parts = body.split("|", 1)
-        fields["プリセット"] = parts[0] if len(parts) > 0 else ""
-        fields["コンテキスト"] = parts[1] if len(parts) > 1 else ""
-
     elif tag_name == "ANTICIPATE_RESPONSE":
         # body 全体がキャラクター本人の予想・期待テキスト
         fields["予想"] = body
@@ -126,11 +120,10 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
         # body がそのまま内容
         fields["内容"] = body
 
-    # preview: "内容" / "予想" → SWITCH_ANGLE は "コンテキスト" → 最終フォールバックは body
+    # preview: "内容" / "予想" → 最終フォールバックは body
     preview = (
         fields.get("内容")
         or fields.get("予想")
-        or fields.get("コンテキスト")
         or body
     )
 

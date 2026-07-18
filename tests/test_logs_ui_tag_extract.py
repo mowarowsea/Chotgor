@@ -67,23 +67,6 @@ class TestParseTagBody:
         assert result["fields"]["モード"] == "append"
         assert result["fields"]["内容"] == "A|B"
 
-    def test_switch_angle_preset_and_context(self):
-        """SWITCH_ANGLE: preset|context が分解され、preview は context になること（Bug修正確認）。"""
-        result = _parse_tag_body("SWITCH_ANGLE", "Gemma4|ミオとして大胆になったシーン")
-        assert result["fields"]["プリセット"] == "Gemma4"
-        assert result["fields"]["コンテキスト"] == "ミオとして大胆になったシーン"
-        # preview は context（第2フィールド）であること。preset|context の body 全体ではない
-        assert result["preview"] == "ミオとして大胆になったシーン"
-        assert result["meta"]["cls"] == "tag-switch"
-
-    def test_switch_angle_preset_only(self):
-        """SWITCH_ANGLE: context 省略時も preset が取れ、preview は空文字にならないこと。"""
-        result = _parse_tag_body("SWITCH_ANGLE", "Gemma4")
-        assert result["fields"]["プリセット"] == "Gemma4"
-        assert result["fields"]["コンテキスト"] == ""
-        # コンテキストが空 → フォールバックで body（"Gemma4"）が preview になる
-        assert result["preview"] == "Gemma4"
-
     def test_power_recall(self):
         """POWER_RECALL: body が "内容" フィールドになること。"""
         result = _parse_tag_body("POWER_RECALL", "記憶を全て呼び起こせ")

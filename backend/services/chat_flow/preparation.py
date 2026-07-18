@@ -263,8 +263,6 @@ async def prepare_context(
         wm_all_threads=wm_all_threads,
         wm_fixed_threads=wm_fixed_threads,
         use_tools=provider_impl.SUPPORTS_TOOLS,
-        available_presets=request.available_presets or None,
-        current_preset_name=request.current_preset_name,
         memory_degraded=memory_degraded,
         usual_days_enabled=request.usual_days_enabled,
         user_label=request.user_label,

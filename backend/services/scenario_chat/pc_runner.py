@@ -35,10 +35,7 @@ from backend.lib.log_context import (
     new_message_id,
 )
 from backend.services.chat.models import Message
-from backend.services.chat.request_factory import (
-    build_available_presets,
-    build_character_request,
-)
+from backend.services.chat.request_factory import build_character_request
 from backend.services.chat.service import ChatService
 from backend.services.memory.format import format_recalled_memories, format_recalled_threads
 from backend.services.scenario_chat.format_speech import format_xml_speech_line
@@ -221,13 +218,12 @@ async def stream_pc_response(
         ("turn_start",  {"character": role_name, "character_id": cid})  — PC レスポンス開始通知
         ("reasoning",   {"character": role_name, "content": str})       — 想起記憶・WM・思考
         ("chunk",       {"character": role_name, "content": str})       — 応答テキスト
-        ("angle_switched", {"character": role_name, "character_id": cid, ...}) — アングル切替
         ("error",       {"character": role_name, "character_id": cid, "message": str})  — エラー
         ("pc_done",     {"character": role_name, "speaker_id": cid,
                           "full_text": str, "anticipation": str | None,
                           "log_message_id": str | None}) — PC レスポンス完了通知
 
-    event 名は 1on1（chunk/reasoning/error/angle_switched）と互換になっており、
+    event 名は 1on1（chunk/reasoning/error）と互換になっており、
     フロントの SSE 解釈を統一しやすくしている。``pc_done`` は「PC レスポンス完了」を
     示す PC 専用イベントで、その後ループ側で ``turn_end`` が発行される（loop_strategies）。
     """
@@ -337,8 +333,6 @@ async def stream_pc_response(
         )
     messages = [Message(role=m["role"], content=m["content"]) for m in raw_messages]
 
-    available_presets = build_available_presets(char, preset, sqlite)
-
     # ChatRequest を構築。session_id は空（chat_session 前提の機構を無効化）。
     # provider 追記欄の頭に「状況メモ」を差し込み、キャラ既存の追記と合成する。
     # うつつ（default_origin=="usual"）と通常シナリオ PC でテンプレを分岐:
@@ -361,15 +355,10 @@ async def stream_pc_response(
             role_name=pc.name,
             slot_description=slot_desc,
         )
-    model_cfg = (char.enabled_providers or {}).get(preset.id, {})
-    existing_additional = (model_cfg.get("additional_instructions", "") or "").strip()
     merged_additional = preamble.strip()
-    if existing_additional:
-        merged_additional = merged_additional + "\n\n" + existing_additional
 
     request = build_character_request(
         char, preset, messages, "", settings, sqlite,
-        available_presets=available_presets,
         previous_anticipation="",
     )
     # build_character_request は固定引数で provider_additional_instructions を埋めるため、
@@ -406,16 +395,6 @@ async def stream_pc_response(
                 yield ("chunk", {"character": pc.name, "content": content})
         elif chunk_type == "anticipation":
             anticipation_text = content
-        elif chunk_type == "angle_switched":
-            # PC モードでも switch_angle は許容（キャラ本人の判断を尊重）。
-            # 呼び出し元（engine 側）でセッションの preset 反映までは行わない。
-            yield ("angle_switched", {
-                "character": pc.name,
-                "character_id": pc.character_id,
-                "model_id": content["model_id"],
-                "preset_id": content["preset_id"],
-                "preset_name": content["preset_name"],
-            })
 
     # 末尾 ANTICIPATE_RESPONSE タグを本文から剥がす（PC モードでも 1on1 同様に副作用処理）。
     clean_text, parsed_anticipation = extract_anticipation(full_text)

@@ -1224,6 +1224,33 @@ class SQLiteMigrationsMixin:
                         "ADD COLUMN living_schedule_enabled INTEGER NOT NULL DEFAULT 0"
                     )
 
+    def _migrate_drop_switch_angle_enabled(self) -> None:
+        """switch_angle 機能撤去に伴い `characters.switch_angle_enabled` 列を削除する。
+
+        機能自体（Switcher / available_presets / angle_switched SSE）は撤去済みのため、
+        既存 DB にのみ残る有効化フラグ列を物理削除する。
+        SQLite 3.35+ の DROP COLUMN を使う。新規DBには列が無いため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            if "switch_angle_enabled" in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters DROP COLUMN switch_angle_enabled"
+                )
+
     def _migrate_drop_self_reflection(self) -> None:
         """自己参照ループ（reflector.py）撤去に伴う characters カラムの整理。
 

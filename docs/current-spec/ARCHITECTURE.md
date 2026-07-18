@@ -90,7 +90,7 @@
 | パス | 責務 |
 |---|---|
 | `services/chat/` | 1on1チャット本流。`service.py`（ChatFlow の再エクスポート）、`request_builder.py`（安定ブロック＝システムプロンプト＋変動ブロック＝ターン注釈の二層組み立て）、`request_factory.py`、`content.py`、`indexer.py`（履歴を LanceDB `chat_turns` へ upsert）、`models.py` |
-| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・switch_angle / power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`farewell_flow.py`（別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象） |
+| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`farewell_flow.py`（別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象） |
 | `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py`、`scene_close.py`（[SCENE_CLOSE] 検出・除去）、`usual_days.py`（うつつのセッション管理・演出素材・シーン駆動） |
 | `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`reindex_service.py`（embedding変更時の全再構築） |
 | `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる）。ANTICIPATE_RESPONSE ガイドは付与しない（予想は次ターンを受け取る相手がいるチャット前提の機能のため） |
@@ -112,7 +112,6 @@
 | `recaller.py` | `power_recall` — 能動的記憶検索 |
 | `carver.py` | `carve_narrative` — inner_narrative の自己書き換え |
 | `threader.py` | `post` / `read` / `close` / `reopen` / `merge`_working_memory_thread(s) — WMスレッド操作（最高頻度。post は thread_id 省略で新規作成） |
-| `switcher.py` | `switch_angle` — プリセット（エンジン）切り替え |
 | `web_searcher.py` | `web_search` — Tavily 経由の外部検索 |
 | `leaver.py` | `take_leave` — 本人宣言の離席（away 設定＋chat.farewell 封筒） |
 | `messenger.py` | `reach_out`（うつつ専用・現実へのプッシュ送信＋visit=対面ON＋うつつポーズ要求）／ `visit_user`（1on1専用・対面モードON）。push 実体は `services/actions/runner.execute_push` を共有。日次予算は escrow_delivery_daily_cap と共有 |

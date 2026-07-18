@@ -337,7 +337,6 @@ async def _deliver_session(state, session, char) -> None:
     full_text = ""
     accumulated_reasoning = ""
     anticipation_text = ""
-    effective_model_id = session.model_id
     async for event in scene_loop.run(initial_state=loop_state):
         if not (isinstance(event, tuple) and len(event) == 2):
             continue
@@ -354,8 +353,6 @@ async def _deliver_session(state, session, char) -> None:
             full_text += content or ""
         elif chunk_type == "anticipation":
             anticipation_text = content or ""
-        elif chunk_type == "angle_switched":
-            effective_model_id = content["model_id"]
 
     if accumulated_reasoning:
         debug_logger.log_reasoning(accumulated_reasoning)
@@ -369,9 +366,9 @@ async def _deliver_session(state, session, char) -> None:
         return
 
     used_char_name, used_preset_name = (
-        effective_model_id.rsplit("@", 1)
-        if "@" in (effective_model_id or "")
-        else (effective_model_id, None)
+        session.model_id.rsplit("@", 1)
+        if "@" in (session.model_id or "")
+        else (session.model_id, None)
     )
     char_msg = sqlite.create_chat_message(
         message_id=str(uuid.uuid4()),
@@ -403,10 +400,6 @@ async def _deliver_session(state, session, char) -> None:
     # 預かり配達もユーザ宛メッセージなので 1on1 扱い（うつつのシーン内発話とは区別する）。
     from backend.lib.notify import notify_character_spoke
     notify_character_spoke(used_char_name, source="1on1")
-
-    # switch_angle が走った場合はセッションの model_id を追随させる（SSE 経路と同じ）
-    if effective_model_id and effective_model_id != session.model_id:
-        sqlite.update_chat_session(session.id, model_id=effective_model_id)
 
     logger.info(
         "能動配達: 返信を保存 char=%s session=%s chars=%d",

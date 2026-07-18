@@ -17,7 +17,7 @@ Logs 画面のツール使用表示は、生ログの逆解析（tag_extract.py�
     - ContextVar は log_context の set() で直接設定し、テスト後の汚染を避けるため
       contextvars.copy_context() ではなく毎テストで明示的に再設定する
     - ToolExecutor の依存（memory_manager 等）は Mock で代替する
-      （switch_angle / 未知ツールは DB アクセスが発生しないため Mock で完結する）
+      （carve_narrative / 未知ツールは Mock sqlite で完結し実 DB アクセスが発生しない）
 """
 
 import json
@@ -255,7 +255,8 @@ class TestToolExecutorRecording:
 
     execute() は tool-use 方式・MCP プロキシ・バッチの全経路が通る唯一の関門であり、
     ここでの記録がプロバイダー形式に依存しないツール使用表示を成立させている。
-    DB アクセスが発生しない switch_angle / 未知ツールを使って記録動作だけを切り出す。
+    実 DB アクセスが発生しない carve_narrative（Mock sqlite）/ 未知ツールを使って
+    記録動作だけを切り出す。
     """
 
     def _make_executor(self):
@@ -273,13 +274,13 @@ class TestToolExecutorRecording:
         msg_id = new_message_id()
         executor = self._make_executor()
         result = executor.execute(
-            "switch_angle", {"preset_name": "GhostModel", "self_instruction": "静かに"},
+            "carve_narrative", {"mode": "append", "content": "静かに"},
         )
-        assert "GhostModel" in result
+        assert "inner_narrative" in result
         ev = recorder_store.get_tool_call_events_by_dir_ids([msg_id])[msg_id][0]
-        assert ev["tool_name"] == "switch_angle"
+        assert ev["tool_name"] == "carve_narrative"
         assert ev["status"] == "ok"
-        assert ev["arguments"]["preset_name"] == "GhostModel"
+        assert ev["arguments"]["content"] == "静かに"
 
     def test_unknown_tool_recorded_as_error(self, recorder_store):
         """未知ツール（"[Unknown tool: ...]" 返却）が status=error で記録されること。"""
@@ -291,15 +292,14 @@ class TestToolExecutorRecording:
         assert "Unknown tool" in ev["error_message"]
 
     def test_record_false_skips_recording(self, recorder_store):
-        """record=False（claude_cli の switch_angle 転写経路）では記録されないこと。
+        """record=False では実行イベントが記録されないこと。
 
-        MCP プロキシ側で実行・記録済みの switch_angle を in-process executor へ
-        転写する際の二重記録防止を担保する。
+        実行・記録済みのツールを二重記録なしに再適用する経路の担保。
         """
         msg_id = new_message_id()
         executor = self._make_executor()
         executor.execute(
-            "switch_angle", {"preset_name": "A", "self_instruction": ""}, record=False,
+            "carve_narrative", {"mode": "append", "content": "A"}, record=False,
         )
         assert recorder_store.get_tool_call_events_by_dir_ids([msg_id])[msg_id] == []
 

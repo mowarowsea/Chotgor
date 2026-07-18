@@ -21,7 +21,6 @@
 TOOL_TO_TAG: dict[str, str] = {
     "inscribe_memory":               "INSCRIBE_MEMORY",
     "carve_narrative":               "CARVE_NARRATIVE",
-    "switch_angle":                  "SWITCH_ANGLE",
     "power_recall":                  "POWER_RECALL",
     "post_working_memory_thread":    "POST_WORKING_MEMORY_THREAD",
     "read_working_memory_thread":    "READ_WORKING_MEMORY_THREAD",
@@ -34,7 +33,6 @@ TOOL_TO_TAG: dict[str, str] = {
 TAG_META: dict[str, dict[str, str]] = {
     "INSCRIBE_MEMORY":              {"label": "記憶",            "cls": "tag-memory"},
     "CARVE_NARRATIVE":              {"label": "ナラティブ",      "cls": "tag-narrative"},
-    "SWITCH_ANGLE":                 {"label": "アングル切替",    "cls": "tag-switch"},
     "POWER_RECALL":                 {"label": "強想起",          "cls": "tag-recall"},
     "END_SESSION":                  {"label": "セッション終了",  "cls": "tag-end"},
     "ANTICIPATE_RESPONSE":          {"label": "予想",            "cls": "tag-anticipate"},
@@ -103,15 +101,6 @@ def tool_call_to_structured_tag(tool_name: str, args: dict) -> dict:
             "内容":   str(args.get("content", "")),
         }
         return _make_tag(tag_name, fields, fields["内容"])
-
-    if tag_name == "SWITCH_ANGLE":
-        fields = {
-            "プリセット":   str(args.get("preset_name", "")),
-            "コンテキスト": str(args.get("self_instruction", "")),
-        }
-        # preview は文脈の方（コンテキスト）を優先、なければプリセット名にフォールバック。
-        preview = fields["コンテキスト"] or fields["プリセット"]
-        return _make_tag(tag_name, fields, preview)
 
     if tag_name == "POWER_RECALL":
         fields = {

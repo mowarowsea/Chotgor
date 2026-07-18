@@ -24,7 +24,7 @@ from backend.lib.log_context import (
 )
 from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
 from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
-from backend.services.chat.request_factory import build_character_request, build_available_presets, latest_anticipation
+from backend.services.chat.request_factory import build_character_request, latest_anticipation
 from backend.services.chat.content import apply_context_window
 from backend.services.chat_flow.scene_loop import LoopState, SceneLoop
 from backend.services.chat_flow.strategies import OneOnOneExecutor, OneOnOneRouter
@@ -106,7 +106,7 @@ async def build_1on1_chat_request(
 ):
     """セッション情報からChatRequestを構築するヘルパー。
 
-    1on1 固有の処理（コンテキストウィンドウ適用・available_presets 構築）を行った後、
+    1on1 固有の処理（コンテキストウィンドウ適用）を行った後、
     共通ファクトリ build_character_request に委譲する。
     SSE エンドポイントのほか、預かりメッセージの能動配達
     （services/gate/delivery.py — HTTP リクエスト文脈なし）からも呼ばれるため、
@@ -138,7 +138,6 @@ async def build_1on1_chat_request(
     messages = build_1on1_history(windowed, state.sqlite, state.uploads_dir)
     messages.append(Message(role="user", content=user_content))
 
-    available_presets = build_available_presets(character, preset, state.sqlite)
     # 直前のキャラクター応答に含まれていた予想（ANTICIPATE_RESPONSE）を次ターンに注入する
     previous_anticipation = latest_anticipation(history_messages)
 
@@ -148,7 +147,6 @@ async def build_1on1_chat_request(
 
     return build_character_request(
         character, preset, messages, session.id, settings, state.sqlite,
-        available_presets=available_presets,
         previous_anticipation=previous_anticipation,
         face_to_face=face_to_face,
     )
@@ -495,13 +493,6 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                 elif chunk_type == "anticipation":
                     # キャラクターの予想（期待）。UIには本文として流さず、DB保存して次ターンに注入する。
                     anticipation_text = content
-                elif chunk_type == "angle_switched":
-                    effective_model_id = content["model_id"]
-                    # Frontend が selectedModel を更新できるよう SSE で通知する。
-                    # 通知しないと次ターン以降も古い model_id でリクエストされ、
-                    # switch_angle の効果がそのターン限りで消えてしまう。
-                    data = json.dumps({"type": "angle_switched", "model_id": content["model_id"]}, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
         except Exception as e:
             err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
             yield f"data: {err_data}\n\n"

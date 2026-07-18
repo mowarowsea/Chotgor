@@ -15,8 +15,6 @@
     <span class="log-tag-meta">{{ tag.fields.カテゴリ }} / {{ tag.fields.重要度 }}</span>
     {% elif tag.tag_name == "CARVE_NARRATIVE" %}
     <span class="log-tag-meta">{{ tag.fields.モード }}</span>
-    {% elif tag.tag_name == "SWITCH_ANGLE" %}
-    <span class="log-tag-meta">→ {{ tag.fields.プリセット }}</span>
     {% endif %}
     {% if tag.preview %}
     <div class="log-tag-preview">{{ tag.preview[:200] }}{% if tag.preview|length > 200 %}…{% endif %}</div>

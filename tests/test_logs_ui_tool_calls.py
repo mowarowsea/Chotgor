@@ -128,7 +128,7 @@ class TestExtractFunctionCallsFromJson:
 
         arguments は JSON 文字列である点に注意。
         """
-        args_json = json.dumps({"preset_name": "Gemma4", "self_instruction": "大胆に"})
+        args_json = json.dumps({"query": "昔の約束", "top_k": 3})
         data = {
             "choices": [
                 {
@@ -139,7 +139,7 @@ class TestExtractFunctionCallsFromJson:
                                 "id": "call_abc",
                                 "type": "function",
                                 "function": {
-                                    "name": "switch_angle",
+                                    "name": "power_recall",
                                     "arguments": args_json,
                                 },
                             }
@@ -153,8 +153,8 @@ class TestExtractFunctionCallsFromJson:
 
         assert len(tags) == 1
         tag = tags[0]
-        assert tag["tag_name"] == "SWITCH_ANGLE"
-        assert tag["fields"]["プリセット"] == "Gemma4"
+        assert tag["tag_name"] == "POWER_RECALL"
+        assert tag["fields"]["クエリ"] == "昔の約束"
 
     def test_openai_invalid_arguments_json_gracefully_handled(self):
         """OpenAI形式: arguments が不正 JSON の場合も例外を送出せず処理を続けること。"""

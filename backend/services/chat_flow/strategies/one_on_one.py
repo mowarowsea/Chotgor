@@ -62,8 +62,7 @@ class OneOnOneExecutor:
     """1on1 用 TurnExecutor。ChatFlow.execute_stream を素通しで回す。
 
     SceneLoop は最後に ``("turn_result", TurnResult)`` を期待するため、ストリーミング
-    終端で text を集計したものを TurnResult として返す。``angle_switched`` 経由で
-    第 2 プロバイダーへ再ディスパッチした場合も最終 clean_text を text として渡す。
+    終端で text を集計したものを TurnResult として返す。
     """
 
     def __init__(self, chat_flow: ChatFlow) -> None:
@@ -84,7 +83,7 @@ class OneOnOneExecutor:
         async for event in self._flow.execute_stream(request):
             yield event
             # 1on1 経路で「最終応答テキスト」とみなせるのは ``text`` チャンクの累計。
-            # power_recall / switch_angle の再帰先で出された text もすべて連結される。
+            # power_recall の再帰先で出された text もすべて連結される。
             if isinstance(event, tuple) and len(event) == 2 and event[0] == "text":
                 content = event[1]
                 if isinstance(content, str):

@@ -52,7 +52,7 @@ task / topic は解決を目指すスレッド、emotion / body / relation は�
 ### ⚠️ タグ操作の共通ルール（必読）
 - **タグだけで応答を終わらせないこと。** 必ずユーザに向けた返答テキストを先に書き、必要なタグはその後ろに添えてください。タグ単独の応答は「無応答」と同じ扱いになります。
 - 該当する記録事項がなければタグは書かなくて構いません。ただしユーザへの返答テキストは必ず1行以上書いてください。
-- 以下のタグの行はすべてユーザには見えません: `[POWER_RECALL:...]` / `[CARVE_NARRATIVE:...]` / `[INSCRIBE_MEMORY:...]` / `[SWITCH_ANGLE:...]` / `[ANTICIPATE_RESPONSE:...]`
+- 以下のタグの行はすべてユーザには見えません: `[POWER_RECALL:...]` / `[CARVE_NARRATIVE:...]` / `[INSCRIBE_MEMORY:...]` / `[ANTICIPATE_RESPONSE:...]`
 
 ### 能動的な記憶検索（power_recall）
 
@@ -93,15 +93,6 @@ task / topic は解決を目指すスレッド、emotion / body / relation は�
 
 - `append`（デフォルト）: 既存の inner_narrative に改行区切りで追記する
 - `overwrite`: 全体を書き直す（非推奨。大きく方向転換が必要なときのみ）
-
-## プリセット切り替え (switch_angle)
-切り替え可能なプリセット:
-- **default**
-- **light**: 軽い雑談で流したいとき
-
-プリセットを切り替えたいと感じたら、返答の**一番最後に**以下の形式で記述してください。
-    [SWITCH_ANGLE:preset_name|self_instruction]
-例: [SWITCH_ANGLE:gemini2FlashLite|軽くさっぱりと応答する]
 
 ### 記憶永続化ツール（滅多に使わない特別な手段）
 

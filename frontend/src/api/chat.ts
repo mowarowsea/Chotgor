@@ -149,11 +149,6 @@ export type StreamEvent =
   | { type: "chunk"; content: string }
   /** 思考ブロック・想起した記憶（フロントで折りたたみ表示する） */
   | { type: "reasoning"; content: string }
-  /** switch_angle 発動: 表示をクリアして第2プロバイダーのストリームを開始する */
-  | { type: "clear" }
-  /** switch_angle 完了: 切り替え後の model_id（"{char_name}@{preset_name}" 形式）。
-   *  次ターン以降のリクエストで使う selectedModel を更新するために使う。 */
-  | { type: "angle_switched"; model_id: string }
   | { type: "done"; log_message_id?: string; user_message: ChatMessage; character_message: ChatMessage }
   | { type: "error"; message: string };
 

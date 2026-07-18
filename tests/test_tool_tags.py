@@ -7,7 +7,7 @@
         {tag_name, meta, fields, preview} 辞書に変換する
 
 テスト方針:
-    - 既知ツール（inscribe_memory / carve_narrative / switch_angle / power_recall /
+    - 既知ツール（inscribe_memory / carve_narrative / power_recall /
       working memory 操作群）を個別に検証する
     - 未知ツール名のフォールバック動作を確認する
     - 空引数辞書でも例外を送出しないことを確認する
@@ -33,11 +33,10 @@ class TestToolToTagMapping:
     """
 
     def test_all_expected_tools_present(self):
-        """全 9 種の既知ツールが TOOL_TO_TAG に登録されていること。"""
+        """全 8 種の既知ツールが TOOL_TO_TAG に登録されていること。"""
         expected = {
             "inscribe_memory",
             "carve_narrative",
-            "switch_angle",
             "power_recall",
             "post_working_memory_thread",
             "read_working_memory_thread",
@@ -203,44 +202,6 @@ class TestStructuredTagCarveNarrative:
         _assert_shape(result, "CARVE_NARRATIVE")
         assert result["fields"]["モード"] == "append"
         assert result["fields"]["内容"] == ""
-
-
-class TestStructuredTagSwitchAngle:
-    """switch_angle ツールの変換を検証するテストクラス。"""
-
-    def test_fields_extracted(self):
-        """fields にプリセット・コンテキストが分解されて入ること。"""
-        result = tool_call_to_structured_tag(
-            "switch_angle",
-            {"preset_name": "ClaudeCode", "self_instruction": "静かに話せ"},
-        )
-        _assert_shape(result, "SWITCH_ANGLE")
-        assert result["fields"]["プリセット"] == "ClaudeCode"
-        assert result["fields"]["コンテキスト"] == "静かに話せ"
-
-    def test_preview_prefers_context(self):
-        """preview はコンテキスト（self_instruction）が優先されること。"""
-        result = tool_call_to_structured_tag(
-            "switch_angle",
-            {"preset_name": "ClaudeCode", "self_instruction": "静かに話せ"},
-        )
-        assert result["preview"] == "静かに話せ"
-
-    def test_preview_falls_back_to_preset(self):
-        """コンテキストが空のときは preview がプリセット名にフォールバックすること。"""
-        result = tool_call_to_structured_tag(
-            "switch_angle",
-            {"preset_name": "Gemma4"},
-        )
-        assert result["preview"] == "Gemma4"
-
-    def test_empty_args(self):
-        """空引数でも例外を送出せず空文字フィールドで返ること。"""
-        result = tool_call_to_structured_tag("switch_angle", {})
-        _assert_shape(result, "SWITCH_ANGLE")
-        assert result["fields"]["プリセット"] == ""
-        assert result["fields"]["コンテキスト"] == ""
-        assert result["preview"] == ""
 
 
 class TestStructuredTagPowerRecall:

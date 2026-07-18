@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from backend.api.resource_resolver import parse_model_id, resolve_character, resolve_preset, require_model_config
-from backend.api.utils import build_available_presets
 from backend.services.chat.models import ChatRequest, Message
 from backend.services.chat.service import extract_text_content
 from backend.lib.debug_logger import logger
@@ -145,7 +144,8 @@ async def chat_completions(request: Request, body: OAIChatRequest):
     if preset is None:
         raise HTTPException(status_code=404, detail=f"Model preset '{preset_id}' not found")
 
-    model_config = require_model_config(character, preset)
+    # プリセットがキャラクターで有効化されているか検証する（無効なら HTTPException 400）
+    require_model_config(character, preset)
 
     settings = state.sqlite.get_all_settings()
 
@@ -158,8 +158,6 @@ async def chat_completions(request: Request, body: OAIChatRequest):
     messages = [Message(role=m.role, content=m.content) for m in body.messages]
     session_id = _derive_session_id(character.id, messages)
 
-    available_presets = build_available_presets(character, preset, state.sqlite)
-
     chat_request = ChatRequest(
         character_id=character.id,
         character_name=character.name,
@@ -170,7 +168,6 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         self_history=character.self_history,
         relationship_state=character.relationship_state,
         inner_narrative=character.inner_narrative,
-        provider_additional_instructions=model_config.get("additional_instructions", ""),
         thinking_level=preset.thinking_level or "default",
         settings=settings,
         enable_time_awareness=ta.enabled,
@@ -179,7 +176,6 @@ async def chat_completions(request: Request, body: OAIChatRequest):
         session_id=session_id,
         current_preset_name=preset.name,
         current_preset_id=preset.id,
-        available_presets=available_presets,
         judge_preset_id=character.judge_preset_id or "",
         allowed_tools=getattr(character, "allowed_tools", None) or {},
         timeout_seconds=preset.timeout_seconds,

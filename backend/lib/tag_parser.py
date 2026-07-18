@@ -284,8 +284,6 @@ class StreamingTagStripper:
         "[CARVE_NARRATIVE:",
         "[END_SESSION]",    # 固定マーカー
         "[END_SESSION:",
-        "[SWITCH_ANGLE:",  # マーカー前テキストはUIへ流すが、タグ自体は除去する。
-        # full_text（生テキスト）にはタグが残るため、ストリーム終了後に Switcher で検出できる。
         "[POWER_RECALL:",  # マーカー前テキストはUIへ流すが、タグ自体は除去する。
         # full_text（生テキスト）にはタグが残るため、ストリーム終了後に Recaller で検出できる。
         "[ANTICIPATE_RESPONSE:",  # 次ターンの予想（期待）タグ。全プロバイダー一律でストリームから除去する。
