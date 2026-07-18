@@ -40,7 +40,7 @@ def test_build_system_prompt_includes_chotgor_context():
 def test_build_system_prompt_chotgor_context_after_block1():
     """【前提】ブロックはキャラクター設定の直前（前）に挿入されること。
 
-    実装ではChotgor前提を Block 1 の先頭に置き、
+    実装では【前提】ブロックをキャラクター設定ブロックの前に置き、
     その後にキャラクター固有の system_prompt_block1 が続く。
     """
     char_prompt = "You are a cat."
@@ -162,8 +162,9 @@ def test_build_system_prompt_memory_degraded_default_off():
 def test_build_system_prompt_memory_notice_placed_before_guide():
     """運用告知ブロックは inner_narrative の後・Chotgor 操作ガイド（常に末尾）の前に置かれること。
 
-    末尾に近いほどキャラクターへの影響力が強いというテンプレ設計（Block 9-10 が最優先地帯）
-    に基づき、告知が操作ガイド直前という強い位置に差し込まれることを保証する。
+    末尾に近いほどキャラクターへの影響力が強いというテンプレ設計
+    （inner_narrative と Chotgor 操作ガイドが最優先地帯）に基づき、
+    告知が操作ガイド直前という強い位置に差し込まれることを保証する。
     """
     prompt = build_system_prompt(
         "You are a cat.",

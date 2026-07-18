@@ -50,7 +50,7 @@ def test_chat_request_defaults():
     )
     assert req.character_system_prompt == ""
     assert req.inner_narrative == ""
-    assert req.provider_additional_instructions == ""
+    assert req.session_frame_instruction == ""
     assert req.settings == {}
 
 
@@ -635,7 +635,7 @@ async def test_prepare_context_passes_memory_degraded_on_wm_embedding_failure():
     渡り、ユーザ向けには WM 用の recall_error イベントが流れること。
 
     従来は WM 取得失敗が warning ログのみで、ユーザにもキャラクターにも完全に無通知だった
-    （Block 8 が静かに消えるだけ）。本テストは「WM 失敗も縮退として両系統に通知される」
+    （WM heat 想起が静かに消えるだけ）。本テストは「WM 失敗も縮退として両系統に通知される」
     ことを保証する。長期記憶の想起自体は成功しているケースなので、recall 系の
     エラーメッセージではなく WM 専用メッセージが選ばれることも確認する。
     """

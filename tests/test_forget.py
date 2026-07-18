@@ -425,8 +425,8 @@ class TestBuildDistillPrompt:
 async def test_forget_system_prompt_includes_working_memory_threads(sqlite_store):
     """forget のシステムプロンプトが 1on1 基準に統一されていることを確認する。
 
-    emotion 固定注入（Block 7）に加え、Close 済み task スレッドも含む全スレッド一覧
-    （Block 6）がシステムプロンプトに入る。forget は WM スレッドを操作しないが、
+    emotion/body/relation 固定注入（{block_wm_fixed}）に加え、Close 済み task スレッドも
+    含む全スレッド一覧（{block_wm_all}）がシステムプロンプトに入る。forget は WM スレッドを操作しないが、
     「私は過去こういうことがあった」という自己認識はキャラクター造形に必要なため
     1on1 チャットと同じ形で提示する。
     バイナリ判定パス（SUPPORTS_TOOLS=False）で system_prompt を捕捉して検証する。
@@ -469,9 +469,9 @@ async def test_forget_system_prompt_includes_working_memory_threads(sqlite_store
 
     assert result["status"] == "success"
     assert len(captured_system) == 1
-    # Block 7: emotion 固定注入
+    # emotion 固定注入（{block_wm_fixed}）
     assert "穏やかな名残惜しさDEF" in captured_system[0]
-    # Block 6: Close 済み task も含む全スレッド一覧
+    # Close 済み task も含む全スレッド一覧（{block_wm_all}）
     assert "やり遂げた課題JKL" in captured_system[0]
 
 

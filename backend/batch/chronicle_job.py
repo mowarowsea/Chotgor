@@ -25,9 +25,9 @@ Chronicle では inner_narrative の更新（carve）は行わない。
 Chronicle は通常チャットと同じ ask_character() / build_system_prompt() を使う。
 システムプロンプトは 1on1 チャット基準に統一する方針:
 
-  - working_memory_manager を ask_character() に渡し、全スレッド一覧（Block 6・
-    Open/Close 問わず）と emotion/body/relation 固定注入（Block 7）を
-    1on1 と同じ形でシステムプロンプトへ入れる。
+  - working_memory_manager を ask_character() に渡し、全スレッド一覧
+    （{block_wm_all}・Open/Close 問わず）と emotion/body/relation 固定注入
+    （{block_wm_fixed}）を 1on1 と同じ形でシステムプロンプトへ入れる。
   - 加えて Chronicle はユーザメッセージ本文（_PROMPT_TEMPLATE）に「Open スレッド」
     「Close スレッド」を ID 付きの棚卸し専用フォーマットで埋め込む。これは LLM が
     棚卸し JSON でスレッドを操作するための作業データである。

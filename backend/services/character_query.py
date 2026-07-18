@@ -5,8 +5,8 @@
 
 システムプロンプトは 1on1 チャット基準に統一する。
 working_memory_manager を渡せば、1on1 チャットと同じ形でワーキングメモリの
-全スレッド一覧（Block 6）・emotion/body/relation 固定注入（Block 7）が
-システムプロンプトへ入る。recall_query も渡せば heat 想起（Block 8）も入る。
+全スレッド一覧（{block_wm_all}）・emotion/body/relation 固定注入（{block_wm_fixed}）が
+システムプロンプトへ入る。recall_query も渡せば heat 想起（ターン注釈側）も入る。
 バッチ処理側でユーザメッセージにスレッドを別途埋め込んでいても、システム
 プロンプトは 1on1 基準で統一する方針（重複は許容する）。
 
@@ -75,14 +75,14 @@ def _collect_wm_blocks(
     """システムプロンプト用のワーキングメモリ3系統を取得する。
 
     1on1 チャット（ChatService._build_context）と同じ3系統:
-      - 全スレッド一覧（Open/Close 問わず・Block 6）
-      - emotion/body/relation の固定注入（Block 7）
-      - recall_query 指定時のみ heat 上位の task/topic 想起（Block 8）
+      - 全スレッド一覧（Open/Close 問わず・{block_wm_all}）
+      - emotion/body/relation の固定注入（{block_wm_fixed}）
+      - recall_query 指定時のみ heat 上位の task/topic 想起（ターン注釈側の WM heat 想起）
 
     Args:
         working_memory_manager: WM マネージャー。None なら全て None を返す。
         character_id: 対象キャラクターID。
-        recall_query: heat 想起のクエリ。None なら Block 8 をスキップ。
+        recall_query: heat 想起のクエリ。None なら WM heat 想起をスキップ。
 
     Returns:
         (wm_all_threads, wm_fixed_threads, wm_recalled_threads) のタプル。
@@ -132,9 +132,10 @@ async def ask_character(
                       None の場合は想起をスキップする。
         feature_label: ログ識別用のフィーチャーラベル（例: "chronicle", "forget"）。
         working_memory_manager: ワーキングメモリのマネージャー。指定すると 1on1 チャットと
-                          同じ形で全スレッド一覧（Block 6）・emotion/body/relation 固定注入
-                          （Block 7）をシステムプロンプトへ入れる。recall_query も併せて
-                          渡せば heat 想起（Block 8）も入る。None なら WM ブロックは入らない。
+                          同じ形で全スレッド一覧（{block_wm_all}）・emotion/body/relation
+                          固定注入（{block_wm_fixed}）をシステムプロンプトへ入れる。
+                          recall_query も併せて渡せば heat 想起（ターン注釈側）も入る。
+                          None なら WM ブロックは入らない。
 
     Returns:
         LLM の応答テキスト。エラー時は None。
@@ -256,10 +257,10 @@ async def ask_character_with_tools(
         feature_label: ログ識別用のフィーチャーラベル。
         session_id: セッションID。ツール実行のコンテキストとして使用する。
         working_memory_manager: ワーキングメモリのマネージャー。指定すると 1on1 チャットと
-                          同じ形で全スレッド一覧（Block 6）・固定注入（Block 7）を
-                          システムプロンプトへ入れ、ツール実行にもこのインスタンスを使う。
-                          None の場合は内部で生成する。
-        recall_query: heat 想起（Block 8）のクエリ。None ならスキップ。
+                          同じ形で全スレッド一覧（{block_wm_all}）・固定注入
+                          （{block_wm_fixed}）をシステムプロンプトへ入れ、
+                          ツール実行にもこのインスタンスを使う。None の場合は内部で生成する。
+        recall_query: heat 想起（ターン注釈側）のクエリ。None ならスキップ。
         batch_context: バッチ処理由来のツール挙動切り替えフラグ。例えば forget 蒸留バッチは
             ``{"force_insert_memory": True}`` を渡すことで、inscribe_memory ツールが
             類似既存記憶を上書きせず必ず新規 ID で挿入するようになる。通常チャットでは None。

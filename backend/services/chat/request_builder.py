@@ -7,24 +7,27 @@
 **安定ブロック（システムプロンプト）** と **変動ブロック（ターン注釈）** の二層に分かれる
 （二層に分ける理由は下記「二層に分ける理由」を参照）。
 
-安定ブロック — システムプロンプト（テンプレ上の差し込み順）:
-  Block 1:  キャラクター設定（何者かを確立 — 前提 + character_system_prompt）
-  Block 1b: 相手（ユーザ）の人物像（呼称・位置づけ）
-  Block 1c: うつつ（日常生活）注釈
-  Block 1d: プロバイダー固有追記（PC モードでは「いまの場面メモ」も合流。Block 1 系の延長として早めに置く）
-  Block 6:  ワーキングメモリ全スレッド一覧（歩みの記録・self_history 代替）
-  Block 7:  ワーキングメモリ固定注入（emotion/body/relation）
-  Block 9:  inner_narrative（末尾補強・最優先）
-  Block 10: Chotgor 操作ガイド（常に末尾）
-  番号外: {block_memory_notice} — 記憶システム縮退時の運用告知（Block 9 と 10 の間）
+安定ブロック — システムプロンプト（テンプレ上の差し込み順、名前で参照）:
+  {block_prelude}         — Chotgor 世界観・対話ルールの固定文
+  {block_character}       — キャラクター設定（character_system_prompt 本体）
+  {block_user}            — 相手（ユーザ）の呼称・位置づけ
+  {block_face_to_face}    — 対面モード注釈（対面時のみ）
+  {block_usual_days}      — うつつ（日常生活）注釈（うつつ有効時のみ）
+  {block_session_frame}   — シナリオ PC / うつつ PC 向けセッション枠組み
+  {block_wm_all}          — ワーキングメモリ全スレッド一覧（self_history 代替）
+  {block_wm_fixed}        — ワーキングメモリ固定注入（emotion/body/relation）
+  {block_inner_narrative} — キャラクター自身の内的叙述
+  {block_memory_notice}   — 記憶システム縮退時の運用告知（inner_narrative と操作ガイドの間）
+  {block_chotgor_guide}   — Chotgor 操作ガイド（常に末尾）
 
 変動ブロック — ターン注釈（build_turn_annotation。最新 user メッセージの末尾へ付加）:
-  Block 2:  想起された記憶（長期記憶・コンテキスト把握）
-  Block 3:  時刻コンテキスト（薄い補足情報）
-  Block 4:  フェッチしたWebコンテンツ（コンテキスト強め）
-  Block 8:  ワーキングメモリ heat 想起（前景の task/topic）
-  動機:     めぐりの圧力一行＋active intents
-  番号外:   前回の期待（previous_anticipation）
+  {block_memories}              — 想起された長期記憶
+  {block_time}                  — 時刻コンテキスト
+  {block_schedule}              — 予定コンテキスト（生活カレンダー）
+  {block_fetched}               — フェッチした Web コンテンツ
+  {block_wm_recalled}           — ワーキングメモリ heat 想起（前景の task/topic）
+  {block_motive}                — めぐりの圧力一行＋active intents
+  {block_previous_anticipation} — 前回の期待（ANTICIPATE_RESPONSE）
 
 二層に分ける理由: プロンプトキャッシュは先頭からの完全一致プレフィックス単位で効くため、
 毎ターン変動する情報がシステムプロンプト中腹にあると、それ以降（会話履歴含む）が
@@ -161,7 +164,7 @@ DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 
 {block_usual_days}
 
-{block_provider_extra}
+{block_session_frame}
 
 {block_wm_all}
 
@@ -352,12 +355,16 @@ def _build_fetched_block(fetched_contents: list[dict] | None) -> str:
     return "\n".join(lines).strip()
 
 
-def _build_provider_extra_block(provider_additional_instructions: str) -> str:
-    """プロバイダー固有追記ブロックを返す。"""
-    text = (provider_additional_instructions or "").strip()
+def _build_session_frame_block(session_frame_instruction: str) -> str:
+    """シナリオ PC / うつつ PC 向けのセッション枠組みブロックを返す。
+
+    配役や「今はユーザと向き合っていない時間」といった、そのセッション固有の
+    枠組みをキャラに伝える注入口。1on1 では通常は空文字で、ブロックごと消える。
+    """
+    text = (session_frame_instruction or "").strip()
     if not text:
         return ""
-    return f"## エンジン（モデル）固有の指示\n\n{text}"
+    return f"## セッションの枠組み\n\n{text}"
 
 
 def _build_wm_all_block(wm_all_threads: list[dict] | None) -> str:
@@ -623,7 +630,7 @@ def _build_chotgor_block(
 def build_system_prompt(
     character_system_prompt: str,
     inner_narrative: str = "",
-    provider_additional_instructions: str = "",
+    session_frame_instruction: str = "",
     wm_all_threads: list[dict] | None = None,
     wm_fixed_threads: list[dict] | None = None,
     use_tools: bool = False,
@@ -646,19 +653,11 @@ def build_system_prompt(
     前回の期待）はここには含めず、`build_turn_annotation` で最新 user メッセージ
     側へ付加する（プロンプトキャッシュ対応。モジュール docstring 参照）。
 
-    ブロック構成（テンプレ上の配置順）:
-        1.  キャラクター設定（前提 + character_system_prompt）
-        1b. 相手（ユーザ）の人物像（optional）
-        1c. うつつ（日常生活）注釈（optional）
-        1d. プロバイダー固有追記（optional。PC モードでは「いまの場面メモ」が合流）
-        6.  ワーキングメモリ全スレッド一覧（optional）
-        7.  ワーキングメモリ固定注入 emotion/body/relation（optional）
-        9.  inner_narrative（optional）
-        10. Chotgor 操作ガイド（常に末尾）
-
-    番号外の補助ブロック: 記憶縮退の運用告知（9と10の間）。
+    ブロック構成はモジュール docstring 参照。
 
     Args:
+        session_frame_instruction: シナリオ PC / うつつ PC 向けのセッション枠組み文。
+            1on1 では通常は空文字。
         wm_all_threads: 全ワーキングメモリスレッド（Open/Close 問わず）の dict リスト。
         wm_fixed_threads: 固定注入対象（emotion/body/relation）の dict リスト（最新ポスト込み）。
         memory_degraded: 記憶系（長期記憶・WM）の読み出しがこのターンで縮退しているか。
@@ -673,8 +672,8 @@ def build_system_prompt(
         "{block_user}": _build_user_block(user_label, user_position),
         "{block_face_to_face}": _build_face_to_face_block(face_to_face),
         "{block_usual_days}": _build_usual_days_block(usual_days_enabled),
-        "{block_provider_extra}": _build_provider_extra_block(
-            provider_additional_instructions
+        "{block_session_frame}": _build_session_frame_block(
+            session_frame_instruction
         ),
         "{block_wm_all}": _build_wm_all_block(wm_all_threads),
         "{block_wm_fixed}": _build_wm_fixed_block(wm_fixed_threads),

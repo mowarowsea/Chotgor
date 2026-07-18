@@ -147,9 +147,10 @@
 frontend useChat
   → POST /api/chat/sessions/{id}/messages/stream   (api/chat.py)
   → ChatService (services/chat/service.py)
-      1.  長期記憶を想起（RAG）→ Block 2（ターン注釈側）
-      1b. ワーキングメモリ取得 → Block 6-7（システム）/ Block 8（ターン注釈側）
-      2.  メッセージ内URLの自動fetch → Block 4（ターン注釈側）
+      1.  長期記憶を想起（RAG）→ 想起記憶ブロック（ターン注釈側 {block_memories}）
+      1b. ワーキングメモリ取得 → 全スレッド一覧/固定注入（システム {block_wm_all} / {block_wm_fixed}）
+          + heat 想起（ターン注釈側 {block_wm_recalled}）
+      2.  メッセージ内URLの自動fetch → fetched ブロック（ターン注釈側 {block_fetched}）
       3.  request_builder が二層で組み立て（プロンプトキャッシュ対応。二層化の根拠は
           request_builder.py モジュール docstring）:
           - build_system_prompt: 安定ブロックのみ（前提/キャラ/ユーザ像/WM一覧・固定/inner_narrative/ガイド）

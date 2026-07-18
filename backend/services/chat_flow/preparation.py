@@ -259,7 +259,7 @@ async def prepare_context(
     system_prompt = build_system_prompt(
         character_system_prompt=request.character_system_prompt,
         inner_narrative=request.inner_narrative,
-        provider_additional_instructions=request.provider_additional_instructions,
+        session_frame_instruction=request.session_frame_instruction,
         wm_all_threads=wm_all_threads,
         wm_fixed_threads=wm_fixed_threads,
         use_tools=provider_impl.SUPPORTS_TOOLS,

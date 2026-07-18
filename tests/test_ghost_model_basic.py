@@ -273,9 +273,9 @@ async def test_run_chronicle_system_prompt_includes_working_memory_threads(
 ):
     """chronicle のシステムプロンプトが 1on1 基準に統一されていることを確認する。
 
-    emotion 固定注入（Block 7）に加え、Close 済み task スレッドも含む全スレッド一覧
-    （Block 6）がシステムプロンプトに入る。「私は過去こういうことがあった」という
-    自己認識を 1on1 チャットと同じ形で持たせる。
+    emotion/body/relation 固定注入（{block_wm_fixed}）に加え、Close 済み task スレッドも
+    含む全スレッド一覧（{block_wm_all}）がシステムプロンプトに入る。
+    「私は過去こういうことがあった」という自己認識を 1on1 チャットと同じ形で持たせる。
     """
     preset_id = str(uuid.uuid4())
     char_id = str(uuid.uuid4())
@@ -306,9 +306,9 @@ async def test_run_chronicle_system_prompt_includes_working_memory_threads(
         )
 
     assert len(captured_system) == 1
-    # Block 7: emotion 固定注入
+    # emotion 固定注入（{block_wm_fixed}）
     assert "落ち着いた高揚感ABC" in captured_system[0]
-    # Block 6: Close 済み task も含む全スレッド一覧
+    # Close 済み task も含む全スレッド一覧（{block_wm_all}）
     assert "決着済みの課題GHI" in captured_system[0]
 
 

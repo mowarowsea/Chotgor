@@ -3,8 +3,8 @@
 forget バッチもキャラクターへの問い合わせ処理であり、Chronicle と同様に
 ask_character() / ask_character_with_tools() の共通インタフェースを使う。
 システムプロンプトは 1on1 チャット基準に統一する: working_memory_manager を
-渡すことで、全スレッド一覧（Block 6・「私は過去こういうことがあった」）と
-emotion/body/relation 固定注入（Block 7）が 1on1 と同じ形で入る。
+渡すことで、全スレッド一覧（{block_wm_all}・「私は過去こういうことがあった」）と
+emotion/body/relation 固定注入（{block_wm_fixed}）が 1on1 と同じ形で入る。
 キャラクター造形のため、操作しないスレッドも自己認識として提示する。
 
 --- 三段階の蒸留パイプライン上の位置づけ ---
@@ -91,7 +91,7 @@ async def run_forget_process(
         return {"status": "skipped", "reason": "No forgotten candidates found"}
 
     # WM マネージャーを1つ生成し、システムプロンプトを 1on1 チャット基準に統一する
-    # （全スレッド一覧 Block 6・固定注入 Block 7 が ask_character 系の内部で入る）。
+    # （全スレッド一覧 {block_wm_all}・固定注入 {block_wm_fixed} が ask_character 系の内部で入る）。
     wm = WorkingMemoryManager(sqlite=sqlite, vector_store=memory_manager.vector_store)
 
     # tool-use対応プロバイダーは昇華方式（MCPループ）で処理する。

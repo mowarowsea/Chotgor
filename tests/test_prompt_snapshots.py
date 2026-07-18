@@ -114,7 +114,7 @@ _CONTEXT_TOOL_HINTS = [
 
 _FULL_KWARGS = dict(
     inner_narrative=_INNER_NARRATIVE,
-    provider_additional_instructions="このプロバイダーでは簡潔に応答すること。",
+    session_frame_instruction="このプロバイダーでは簡潔に応答すること。",
     wm_all_threads=_WM_ALL_THREADS,
     wm_fixed_threads=_WM_FIXED_THREADS,
     usual_days_enabled=True,

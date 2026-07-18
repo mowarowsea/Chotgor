@@ -19,7 +19,9 @@ class ChatRequest:
     self_history: str = ""
     relationship_state: str = ""
     inner_narrative: str = ""
-    provider_additional_instructions: str = ""
+    # シナリオ PC / うつつ PC が、配役や「今はユーザと向き合っていない時間」などの
+    # セッション枠組みをキャラに伝えるための注入口。1on1 では通常は空文字。
+    session_frame_instruction: str = ""
     thinking_level: str = "default"
     settings: dict = field(default_factory=dict)
     enable_time_awareness: bool = False

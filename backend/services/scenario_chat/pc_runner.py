@@ -1,8 +1,8 @@
 """シナリオ PC モード — PC（Chotgor キャラ）1 ターン分のストリーム実行。
 
-GM ターン後にメンションで指名された Chotgor キャラを「PC」として 1 on 1 と
-同じ system prompt（Block 1-10）で呼び出し、ChatService.execute_stream を
-通じて応答テキストをストリーミングする。
+GM ターン後にメンションで指名された Chotgor キャラを「PC」として、
+1on1 と同じシステムプロンプトを共有して呼び出し、
+ChatService.execute_stream を通じて応答テキストをストリーミングする。
 
 1on1 のキャラクター応答ストリーミングと同じ思想だが、以下の違いがある:
 
@@ -45,10 +45,12 @@ from backend.services.scenario_chat.service import _has_scene_close
 logger = logging.getLogger(__name__)
 
 
-# PC 専用に system prompt 末尾へ追加注入する「配役の自覚」テンプレ。
-# Block 5（provider 追記）と同じ position で provider_additional_instructions に詰める。
-# Block を新設しない理由: 1on1 とプロンプト構造を共有したいため
-# （新 Block を作ると全テンプレートに分岐が漏れる）。
+# PC 専用に system prompt へ追加注入する「配役の自覚」テンプレ。
+# シナリオ PC 用のセッション枠組みをここで組み立て、
+# ChatRequest.session_frame_instruction 経由でシステムプロンプトの
+# {block_session_frame} に埋め込む。
+# 独立ブロックを新設しない理由: 1on1 とプロンプト構造を共有したいため
+# （新ブロックを作ると全テンプレートに分岐が漏れる）。
 _PC_ROLE_PREAMBLE_TEMPLATE = """\
 ## シナリオでの配役（あなた向けの状況メモ）
 あなたはいま、シナリオ「{scenario_title}」のセッションに参加しており、
@@ -355,16 +357,16 @@ async def stream_pc_response(
             role_name=pc.name,
             slot_description=slot_desc,
         )
-    merged_additional = preamble.strip()
+    session_frame = preamble.strip()
 
     request = build_character_request(
         char, preset, messages, "", settings, sqlite,
         previous_anticipation="",
     )
-    # build_character_request は固定引数で provider_additional_instructions を埋めるため、
+    # build_character_request は固定引数で session_frame_instruction を埋めるため、
     # PC モード用の preamble 合成と default_origin 切替は ChatRequest 構築後に直接代入する
     # （overrides に同名キーを入れると Python の重複指定エラーになるため）。
-    request.provider_additional_instructions = merged_additional
+    request.session_frame_instruction = session_frame
     request.default_origin = default_origin
 
     full_text = ""
