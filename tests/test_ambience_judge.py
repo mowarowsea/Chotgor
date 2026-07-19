@@ -27,7 +27,7 @@ from backend.character_actions.ambience_judge import (
     EMOTION_RUBRIC,
     AmbienceJudge,
     AmbienceReading,
-    _anonymize_conversation,
+    _format_conversation,
     _format_thresholds,
     _parse_judge_response,
 )
@@ -147,29 +147,33 @@ class TestFarewellEmotionRubric:
         assert "1.0" in EMOTION_RUBRIC
 
 
-# ─── _anonymize_conversation ──────────────────────────────────────────────────
+# ─── _format_conversation ─────────────────────────────────────────────────────
 
 
-class TestAnonymizeConversation:
-    """_anonymize_conversation() の匿名化変換を検証する。"""
+class TestFormatConversation:
+    """_format_conversation() の実名対話ログ変換を検証する。
 
-    def test_user_role_becomes_userb(self):
-        """user ロールが 'UserB:' に変換されること。"""
+    実名化（ambience Step 2）により、旧 UserA/UserB 匿名化は廃止された。
+    キャラクター名とユーザ呼称がそのまま行頭ラベルになることを確認する。
+    """
+
+    def test_user_role_becomes_user_label(self):
+        """user ロールがユーザ呼称のラベルに変換されること。"""
         messages = [{"role": "user", "content": "こんにちは"}]
-        result = _anonymize_conversation(messages)
-        assert "UserB: こんにちは" in result
+        result = _format_conversation(messages, "はる", "もわ")
+        assert "もわ: こんにちは" in result
 
-    def test_assistant_role_becomes_usera(self):
-        """assistant ロールが 'UserA:' に変換されること。"""
+    def test_assistant_role_becomes_character_name(self):
+        """assistant ロールがキャラクター名のラベルに変換されること。"""
         messages = [{"role": "assistant", "content": "やあ"}]
-        result = _anonymize_conversation(messages)
-        assert "UserA: やあ" in result
+        result = _format_conversation(messages, "はる", "もわ")
+        assert "はる: やあ" in result
 
-    def test_character_role_becomes_usera(self):
-        """character ロールも 'UserA:' に変換されること（グループチャット互換）。"""
+    def test_character_role_becomes_character_name(self):
+        """character ロールもキャラクター名に変換されること（グループチャット互換）。"""
         messages = [{"role": "character", "content": "そうですね"}]
-        result = _anonymize_conversation(messages)
-        assert "UserA: そうですね" in result
+        result = _format_conversation(messages, "はる", "もわ")
+        assert "はる: そうですね" in result
 
     def test_system_role_is_excluded(self):
         """system ロールは出力に含まれないこと。"""
@@ -177,13 +181,13 @@ class TestAnonymizeConversation:
             {"role": "system", "content": "システム設定"},
             {"role": "user", "content": "ユーザ発言"},
         ]
-        result = _anonymize_conversation(messages)
+        result = _format_conversation(messages, "はる", "もわ")
         assert "システム設定" not in result
-        assert "UserB: ユーザ発言" in result
+        assert "もわ: ユーザ発言" in result
 
     def test_empty_messages_returns_empty_string(self):
         """空リストを渡すと空文字列が返ること。"""
-        assert _anonymize_conversation([]) == ""
+        assert _format_conversation([], "はる", "もわ") == ""
 
     def test_multimodal_list_content_extracts_text_only(self):
         """content がリスト形式（マルチモーダル）の場合、text パートのみ抽出されること。"""
@@ -196,7 +200,7 @@ class TestAnonymizeConversation:
                 ],
             }
         ]
-        result = _anonymize_conversation(messages)
+        result = _format_conversation(messages, "はる", "もわ")
         assert "テキスト部分" in result
         assert "image_url" not in result
 
@@ -206,10 +210,10 @@ class TestAnonymizeConversation:
             {"role": "user", "content": ""},
             {"role": "assistant", "content": "応答"},
         ]
-        result = _anonymize_conversation(messages)
+        result = _format_conversation(messages, "はる", "もわ")
         lines = result.strip().split("\n")
         assert len(lines) == 1
-        assert "UserA: 応答" in result
+        assert "はる: 応答" in result
 
     def test_multiple_turns_preserve_order(self):
         """複数ターンが元の順序を保って出力されること。"""
@@ -218,11 +222,11 @@ class TestAnonymizeConversation:
             {"role": "assistant", "content": "B"},
             {"role": "user", "content": "C"},
         ]
-        result = _anonymize_conversation(messages)
+        result = _format_conversation(messages, "はる", "もわ")
         lines = result.split("\n")
-        assert lines[0].startswith("UserB:")
-        assert lines[1].startswith("UserA:")
-        assert lines[2].startswith("UserB:")
+        assert lines[0].startswith("もわ:")
+        assert lines[1].startswith("はる:")
+        assert lines[2].startswith("もわ:")
 
 
 # ─── _format_thresholds ───────────────────────────────────────────────────────
@@ -601,14 +605,54 @@ class TestAmbienceJudgeResult:
             )
         assert "テスト用キャラクター設定" not in captured.get("system", "")
 
-    def test_conversation_is_anonymized_in_prompt(
+    def test_conversation_uses_real_names_in_prompt(
         self, judge, char_id, judge_preset_id, farewell_config
     ):
-        """会話が UserA/UserB 形式で匿名化されてプロンプトに含まれること。"""
+        """会話が実名（キャラクター名／ユーザ呼称）でプロンプトに含まれること。
+
+        実名化（ambience Step 2）の検証。ユーザ呼称は Settings.user_name から
+        解決され、旧 UserA/UserB 匿名化ラベルが出力に現れないことを確認する。
+        """
         messages = [
             {"role": "user", "content": "ユニークなユーザー発言12345"},
             {"role": "assistant", "content": "ユニークなキャラ応答67890"},
         ]
+        captured_calls = []
+        captured_system = {}
+        mock_provider = MagicMock()
+
+        async def capture_generate(system_prompt, msgs, **kwargs):
+            captured_system["system"] = system_prompt
+            captured_calls.append(msgs)
+            return _make_judge_response(should_exit=False)
+
+        mock_provider.generate = capture_generate
+        with patch("backend.character_actions.ambience_judge.create_provider", return_value=mock_provider):
+            asyncio.run(
+                judge.detect(
+                    character_id=char_id,
+                    session_id="sess-1",
+                    preset_id=judge_preset_id,
+                    farewell_config=farewell_config,
+                    messages=messages,
+                    settings={"user_name": "もわ"},
+                )
+            )
+        user_content = captured_calls[0][0]["content"]
+        # 実名ラベルで会話が並び、匿名化ラベルは使われないこと
+        assert "なりゆきテストキャラ: ユニークなキャラ応答67890" in user_content
+        assert "もわ: ユニークなユーザー発言12345" in user_content
+        assert "UserA" not in user_content
+        assert "UserB" not in user_content
+        # システムプロンプトにも両者の実名が入ること
+        assert "なりゆきテストキャラ" in captured_system["system"]
+        assert "もわ" in captured_system["system"]
+
+    def test_user_label_falls_back_when_unset(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """user_label も Settings.user_name も空の場合、「相手」に縮退すること。"""
+        messages = [{"role": "user", "content": "呼称なしの発言"}]
         captured_calls = []
         mock_provider = MagicMock()
 
@@ -629,10 +673,41 @@ class TestAmbienceJudgeResult:
                 )
             )
         user_content = captured_calls[0][0]["content"]
-        # 元のロール名ではなく UserA/UserB で匿名化されていること
-        assert "UserB:" in user_content
-        assert "UserA:" in user_content
-        assert "ユニークなユーザー発言12345" in user_content
+        assert "相手: 呼称なしの発言" in user_content
+
+    def test_user_label_prefers_character_setting(
+        self, judge, sqlite_store, judge_preset_id, farewell_config
+    ):
+        """characters.user_label が設定済みなら Settings.user_name より優先されること。"""
+        cid = str(uuid.uuid4())
+        sqlite_store.create_character(
+            character_id=cid,
+            name="呼称優先テストキャラ",
+            system_prompt_block1="テスト用",
+            user_label="せんぱい",
+        )
+        messages = [{"role": "user", "content": "呼称優先の発言"}]
+        captured_calls = []
+        mock_provider = MagicMock()
+
+        async def capture_generate(system_prompt, msgs, **kwargs):
+            captured_calls.append(msgs)
+            return _make_judge_response(should_exit=False)
+
+        mock_provider.generate = capture_generate
+        with patch("backend.character_actions.ambience_judge.create_provider", return_value=mock_provider):
+            asyncio.run(
+                judge.detect(
+                    character_id=cid,
+                    session_id="sess-1",
+                    preset_id=judge_preset_id,
+                    farewell_config=farewell_config,
+                    messages=messages,
+                    settings={"user_name": "もわ"},
+                )
+            )
+        user_content = captured_calls[0][0]["content"]
+        assert "せんぱい: 呼称優先の発言" in user_content
 
 
 # ─── AmbienceJudge のスキーマ検証 ─────────────────────────────────────────

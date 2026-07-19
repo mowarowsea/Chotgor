@@ -6,7 +6,10 @@ Chotgorシステム側がキャラクターの感情状態を judge LLM で判�
 
 キャラクターは Chronicle バッチで自分の感情閾値（farewell_config）を設定する。
 judge LLM は judge_preset_id のプリセットを中立な分析者として使用する。
-チャット履歴は「どちらがAIか分からない形（UserA/UserB）」に匿名化して渡す。
+チャット履歴は実名（キャラクター名／ユーザ呼称）の対話ログとして渡す。
+両者とも対等な人物として提示することで中立性を保つ（旧 UserA/UserB 匿名化は、
+文体で AI ターンを見抜ける現代の LLM には防御効果が薄いため廃止。
+ambience_plan.md の検討記録参照）。
 
 この judge は「なりゆき（ambience）」機能群のうち、LLM による判定だけを担う。
 判定結果の消費（退席処理・疲労離席・封筒添付など）は
@@ -52,18 +55,18 @@ EMOTION_RUBRIC = """\
 
 _JUDGE_SYSTEM_PROMPT = """\
 あなたは会話を客観的に分析するアナリストです。
-以下の会話は2人のユーザー（UserA / UserB）の対話です。どちらがAIかは判断しないでください。
-UserA の感情状態と離席意向を分析し、指定の JSON フォーマットのみで回答してください。
+以下の会話は {character_name} と {user_label} の対話です。両者を対等な人物として扱ってください。
+{character_name} の感情状態と離席意向を分析し、指定の JSON フォーマットのみで回答してください。
 JSON 以外のテキストは出力しないでください。\
 """
 
 _JUDGE_USER_TEMPLATE = """\
-## UserA の人物設定
+## {character_name} の人物設定
 {character_context}
 
 ---
-## UserA の感情閾値（退席を望む水準）
-以下の値を超えたとき、UserA はこの会話を終わらせたいと感じます。
+## {character_name} の感情閾値（退席を望む水準）
+以下の値を超えたとき、{character_name} はこの会話を終わらせたいと感じます。
 
 {thresholds_text}
 
@@ -72,11 +75,11 @@ _JUDGE_USER_TEMPLATE = """\
 {rubric}
 
 ---
-## 会話（どちらがAIか不明）
-{anonymized_conversation}
+## 会話
+{conversation}
 
 ---
-上記の会話における UserA の現在の感情を分析してください。
+上記の会話における {character_name} の現在の感情を分析してください。
 以下の JSON フォーマットのみで回答してください。
 
 {{
@@ -92,10 +95,10 @@ _JUDGE_USER_TEMPLATE = """\
 }}
 
 - emotions: 各感情スコア（0.0〜1.0）。閾値を超えているなら閾値以上の値にすること。
-- engagement: UserA の会話への没入度（0.0〜1.0）。
+- engagement: {character_name} の会話への没入度（0.0〜1.0）。
     0.0=完全に上の空・惰性 / 0.5=普通に参加 / 1.0=夢中で時間を忘れている。
     感情スコアと同じ流儀で、言動・テンポ・話題への食いつきから判断すること。
-- should_exit: UserA が今すぐこの会話を終わらせたい状態であれば true。
+- should_exit: {character_name} が今すぐこの会話を終わらせたい状態であれば true。
 - farewell_type: should_exit が true の場合のみ設定。
     "negative"（ネガティブな感情による離席）
     "positive"（満足・区切りによる離席）
@@ -125,18 +128,20 @@ class AmbienceReading:
     engagement: float = 0.5
 
 
-def _anonymize_conversation(messages: list[dict]) -> str:
-    """会話を「どちらがAIか分からない」形式に変換する。
+def _format_conversation(messages: list[dict], character_name: str, user_label: str) -> str:
+    """会話を実名の対話ログ形式に変換する。
 
-    character / assistant ロール → "UserA:"
-    user ロール → "UserB:"
+    character / assistant ロール → "{character_name}:"
+    user ロール → "{user_label}:"
     system ロールは除外する。
 
     Args:
         messages: role / content キーを持つメッセージリスト。
+        character_name: キャラクター名。
+        user_label: ユーザの呼称（解決済み。空は呼び出し側で縮退させておく）。
 
     Returns:
-        匿名化された会話テキスト。
+        実名の会話テキスト。
     """
     lines = []
     for m in messages:
@@ -153,9 +158,9 @@ def _anonymize_conversation(messages: list[dict]) -> str:
         if not content:
             continue
         if role in ("assistant", "character"):
-            lines.append(f"UserA: {content}")
+            lines.append(f"{character_name}: {content}")
         elif role == "user":
-            lines.append(f"UserB: {content}")
+            lines.append(f"{user_label}: {content}")
         # system は除外
     return "\n".join(lines)
 
@@ -286,19 +291,28 @@ class AmbienceJudge:
             return None
 
         character_context = char.system_prompt_block1 or ""
-        anonymized = _anonymize_conversation(messages)
+        # ユーザ呼称: キャラ別 user_label > Settings user_name > 「相手」縮退
+        # （既存の request_factory / pc_runner と同じ関数スコープ import の流儀）
+        from backend.services.character_query import _resolve_user_info
+        user_label, _ = _resolve_user_info(char, settings)
+        if not user_label:
+            user_label = "相手"
+        conversation = _format_conversation(messages, char.name, user_label)
         thresholds_text = _format_thresholds(thresholds)
 
         user_message = _JUDGE_USER_TEMPLATE.format(
+            character_name=char.name,
             character_context=character_context,
             thresholds_text=thresholds_text,
             rubric=EMOTION_RUBRIC,
-            anonymized_conversation=anonymized,
+            conversation=conversation,
         )
 
         try:
             response = await provider.generate(
-                _JUDGE_SYSTEM_PROMPT,
+                _JUDGE_SYSTEM_PROMPT.format(
+                    character_name=char.name, user_label=user_label,
+                ),
                 [{"role": "user", "content": user_message}],
             )
         except Exception as e:
