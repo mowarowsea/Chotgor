@@ -34,9 +34,9 @@ class TestMergePeriodRows:
         """同一期間の複数プロバイダー行が1期間に合算され、内訳として抱き合わされること。"""
         rows = [
             {"day": "2026-06-11", "provider": "claude_cli", "requests": 2,
-             "input_tokens": 100, "output_tokens": 20, "cost_usd": 0.01},
+             "input_tokens": 100, "cache_tokens": 800, "output_tokens": 20, "cost_usd": 0.01},
             {"day": "2026-06-11", "provider": "google", "requests": 1,
-             "input_tokens": 50, "output_tokens": 5, "cost_usd": 0.0},
+             "input_tokens": 50, "cache_tokens": 0, "output_tokens": 5, "cost_usd": 0.0},
         ]
 
         merged = _merge_period_rows(rows, "day")
@@ -46,6 +46,7 @@ class TestMergePeriodRows:
         assert m["label"] == "2026-06-11"
         assert m["requests"] == 3
         assert m["input_tokens"] == 150
+        assert m["cache_tokens"] == 800
         assert m["output_tokens"] == 25
         assert m["cost_usd"] == 0.01
         assert m["providers"] == rows
@@ -54,9 +55,9 @@ class TestMergePeriodRows:
         """入力の期間順（新しい順）がそのまま保たれること。"""
         rows = [
             {"day": "2026-06-11", "provider": "claude_cli", "requests": 1,
-             "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0},
+             "input_tokens": 1, "cache_tokens": 0, "output_tokens": 1, "cost_usd": 0.0},
             {"day": "2026-06-10", "provider": "claude_cli", "requests": 1,
-             "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0},
+             "input_tokens": 1, "cache_tokens": 0, "output_tokens": 1, "cost_usd": 0.0},
         ]
 
         merged = _merge_period_rows(rows, "day")

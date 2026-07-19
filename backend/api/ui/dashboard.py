@@ -22,8 +22,9 @@ def _merge_period_rows(rows: list[dict], key: str) -> list[dict]:
         key: 期間ラベルのキー名（"day" または "week"）。
 
     Returns:
-        [{"label": str, "requests": int, "input_tokens": int, "output_tokens": int,
-          "cost_usd": float, "providers": [row, ...]}] を新しい期間順で返す。
+        [{"label": str, "requests": int, "input_tokens": int, "cache_tokens": int,
+          "output_tokens": int, "cost_usd": float, "providers": [row, ...]}]
+        を新しい期間順で返す。
     """
     merged: dict[str, dict] = {}
     order: list[str] = []
@@ -34,6 +35,7 @@ def _merge_period_rows(rows: list[dict], key: str) -> list[dict]:
                 "label": label,
                 "requests": 0,
                 "input_tokens": 0,
+                "cache_tokens": 0,
                 "output_tokens": 0,
                 "cost_usd": 0.0,
                 "providers": [],
@@ -42,6 +44,7 @@ def _merge_period_rows(rows: list[dict], key: str) -> list[dict]:
         m = merged[label]
         m["requests"] += r["requests"]
         m["input_tokens"] += r["input_tokens"]
+        m["cache_tokens"] += r["cache_tokens"]
         m["output_tokens"] += r["output_tokens"]
         m["cost_usd"] += r["cost_usd"]
         m["providers"].append(r)

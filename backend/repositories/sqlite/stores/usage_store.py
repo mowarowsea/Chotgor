@@ -46,11 +46,24 @@ class UsageStoreMixin:
             ))
             session.commit()
 
+    # 表示用トークン3分割の規約:
+    #   input（表示） = input_tokens + cache_creation_input_tokens
+    #                   （キャッシュ外入力＋キャッシュ新規作成 ＝ このリクエストで
+    #                     初めて処理された入力。プロンプトキャッシュ有効時、
+    #                     Anthropic API の input_tokens はブレークポイント後の端数
+    #                     数トークンしか指さないため、単独では表示に使えない）
+    #   cache（表示） = cache_read_input_tokens（キャッシュ読出。0.1x 課金）
+    # DB の3列は互いに素（合計＝入力全長）であることを前提とする。
+    # google / openai 系プロバイダーは記録時にこの規約へ正規化される（各 provider 参照）。
+
     def get_usage_totals_since(self, since: datetime) -> dict:
-        """since 以降の合計（リクエスト数・トークン In/Out・概算コスト）を返す。
+        """since 以降の合計（リクエスト数・トークン In/Cache/Out・概算コスト）を返す。
 
         Returns:
-            {"requests": int, "input_tokens": int, "output_tokens": int, "cost_usd": float}
+            {"requests": int, "input_tokens": int, "cache_tokens": int,
+             "output_tokens": int, "cost_usd": float}
+            input_tokens は「キャッシュ外入力＋キャッシュ作成」、cache_tokens は
+            「キャッシュ読出」（冒頭の表示規約コメント参照）。
         """
         from backend.repositories.sqlite.models import LlmUsageEvent
 
@@ -58,7 +71,14 @@ class UsageStoreMixin:
             row = (
                 session.query(
                     func.count(LlmUsageEvent.id),
-                    func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0),
+                    func.coalesce(
+                        func.sum(
+                            LlmUsageEvent.input_tokens
+                            + LlmUsageEvent.cache_creation_input_tokens
+                        ),
+                        0,
+                    ),
+                    func.coalesce(func.sum(LlmUsageEvent.cache_read_input_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.total_cost_usd), 0.0),
                 )
@@ -68,8 +88,9 @@ class UsageStoreMixin:
             return {
                 "requests": row[0],
                 "input_tokens": row[1],
-                "output_tokens": row[2],
-                "cost_usd": float(row[3] or 0.0),
+                "cache_tokens": row[2],
+                "output_tokens": row[3],
+                "cost_usd": float(row[4] or 0.0),
             }
 
     def get_usage_daily(self, days: int = 14) -> list[dict]:
@@ -77,7 +98,8 @@ class UsageStoreMixin:
 
         Returns:
             [{"day": "2026-06-11", "provider": "claude_cli", "requests": int,
-              "input_tokens": int, "output_tokens": int, "cost_usd": float}, ...]
+              "input_tokens": int, "cache_tokens": int, "output_tokens": int,
+              "cost_usd": float}, ...]
         """
         from backend.repositories.sqlite.models import LlmUsageEvent
 
@@ -90,7 +112,14 @@ class UsageStoreMixin:
                     day,
                     LlmUsageEvent.provider,
                     func.count(LlmUsageEvent.id),
-                    func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0),
+                    func.coalesce(
+                        func.sum(
+                            LlmUsageEvent.input_tokens
+                            + LlmUsageEvent.cache_creation_input_tokens
+                        ),
+                        0,
+                    ),
+                    func.coalesce(func.sum(LlmUsageEvent.cache_read_input_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.total_cost_usd), 0.0),
                 )
@@ -105,8 +134,9 @@ class UsageStoreMixin:
                 "provider": r[1],
                 "requests": r[2],
                 "input_tokens": r[3],
-                "output_tokens": r[4],
-                "cost_usd": float(r[5] or 0.0),
+                "cache_tokens": r[4],
+                "output_tokens": r[5],
+                "cost_usd": float(r[6] or 0.0),
             }
             for r in rows
         ]
@@ -118,7 +148,8 @@ class UsageStoreMixin:
 
         Returns:
             [{"week": "2026-W23", "provider": "google", "requests": int,
-              "input_tokens": int, "output_tokens": int, "cost_usd": float}, ...]
+              "input_tokens": int, "cache_tokens": int, "output_tokens": int,
+              "cost_usd": float}, ...]
         """
         from backend.repositories.sqlite.models import LlmUsageEvent
 
@@ -130,7 +161,14 @@ class UsageStoreMixin:
                     week,
                     LlmUsageEvent.provider,
                     func.count(LlmUsageEvent.id),
-                    func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0),
+                    func.coalesce(
+                        func.sum(
+                            LlmUsageEvent.input_tokens
+                            + LlmUsageEvent.cache_creation_input_tokens
+                        ),
+                        0,
+                    ),
+                    func.coalesce(func.sum(LlmUsageEvent.cache_read_input_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.total_cost_usd), 0.0),
                 )
@@ -145,8 +183,9 @@ class UsageStoreMixin:
                 "provider": r[1],
                 "requests": r[2],
                 "input_tokens": r[3],
-                "output_tokens": r[4],
-                "cost_usd": float(r[5] or 0.0),
+                "cache_tokens": r[4],
+                "output_tokens": r[5],
+                "cost_usd": float(r[6] or 0.0),
             }
             for r in rows
         ]
@@ -159,7 +198,8 @@ class UsageStoreMixin:
 
         Returns:
             [{"month": "2026-06", "provider": "claude_cli", "requests": int,
-              "input_tokens": int, "output_tokens": int, "cost_usd": float}, ...]
+              "input_tokens": int, "cache_tokens": int, "output_tokens": int,
+              "cost_usd": float}, ...]
         """
         from backend.repositories.sqlite.models import LlmUsageEvent
 
@@ -177,7 +217,14 @@ class UsageStoreMixin:
                     month_label,
                     LlmUsageEvent.provider,
                     func.count(LlmUsageEvent.id),
-                    func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0),
+                    func.coalesce(
+                        func.sum(
+                            LlmUsageEvent.input_tokens
+                            + LlmUsageEvent.cache_creation_input_tokens
+                        ),
+                        0,
+                    ),
+                    func.coalesce(func.sum(LlmUsageEvent.cache_read_input_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0),
                     func.coalesce(func.sum(LlmUsageEvent.total_cost_usd), 0.0),
                 )
@@ -192,14 +239,19 @@ class UsageStoreMixin:
                 "provider": r[1],
                 "requests": r[2],
                 "input_tokens": r[3],
-                "output_tokens": r[4],
-                "cost_usd": float(r[5] or 0.0),
+                "cache_tokens": r[4],
+                "output_tokens": r[5],
+                "cost_usd": float(r[6] or 0.0),
             }
             for r in rows
         ]
 
     def get_usage_recent_events(self, limit: int = 30) -> list[dict]:
-        """直近の使用量イベント（リクエストごとの生データ）を新しい順で返す。"""
+        """直近の使用量イベントを新しい順で返す。
+
+        input_tokens / cache_tokens は集計系と同じ表示規約
+        （input＝キャッシュ外入力＋キャッシュ作成、cache＝キャッシュ読出）で返す。
+        """
         from backend.repositories.sqlite.models import LlmUsageEvent
 
         with self.get_session() as session:
@@ -218,7 +270,9 @@ class UsageStoreMixin:
                     "target": r.target or "",
                     "feature": r.feature or "",
                     "request_id": r.request_id or "",
-                    "input_tokens": r.input_tokens,
+                    "input_tokens": (r.input_tokens or 0)
+                    + (r.cache_creation_input_tokens or 0),
+                    "cache_tokens": r.cache_read_input_tokens or 0,
                     "output_tokens": r.output_tokens,
                     "total_cost_usd": r.total_cost_usd,
                 }

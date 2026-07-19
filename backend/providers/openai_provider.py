@@ -101,6 +101,10 @@ class OpenAIProvider(BaseLLMProvider):
         ``prompt_tokens`` / ``completion_tokens`` / ``prompt_tokens_details.cached_tokens``
         を含むオブジェクト。usage が None の場合は何もしない。
         記録失敗はチャット本流に影響しない（usage_recorder 側で握り潰す）。
+
+        cached_tokens は prompt_tokens の**部分集合**。DB 規約
+        （input/cache_read/cache_creation は互いに素）に合わせて input から
+        差し引いて記録する。
         """
         from backend.lib.usage_recorder import record_usage
 
@@ -114,7 +118,7 @@ class OpenAIProvider(BaseLLMProvider):
             provider=self.PROVIDER_ID,
             model=self.model,
             preset_name=self.preset_name,
-            input_tokens=prompt,
+            input_tokens=max(prompt - cached, 0),
             output_tokens=completion,
             cache_read_input_tokens=cached,
         )

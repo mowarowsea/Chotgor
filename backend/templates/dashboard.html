@@ -31,6 +31,7 @@
                 <th>{{ period_label }}</th><th>プロバイダー</th>
                 <th style="text-align:right">リクエスト</th>
                 <th style="text-align:right">In (tok)</th>
+                <th style="text-align:right">Cache (tok)</th>
                 <th style="text-align:right">Out (tok)</th>
                 <th style="text-align:right">コスト</th>
             </tr>
@@ -42,6 +43,7 @@
                 <td>{{ r.providers[0].provider if r.providers|length == 1 else '合計' }}</td>
                 <td style="text-align:right"><strong>{{ r.requests }}</strong></td>
                 <td style="text-align:right"><strong>{{ "{:,}".format(r.input_tokens) }}</strong></td>
+                <td style="text-align:right"><strong>{{ "{:,}".format(r.cache_tokens) }}</strong></td>
                 <td style="text-align:right"><strong>{{ "{:,}".format(r.output_tokens) }}</strong></td>
                 <td style="text-align:right">{% if r.cost_usd %}${{ "%.4f"|format(r.cost_usd) }}{% else %}–{% endif %}</td>
             </tr>
@@ -52,6 +54,7 @@
                 <td>{{ p.provider }}</td>
                 <td style="text-align:right">{{ p.requests }}</td>
                 <td style="text-align:right">{{ "{:,}".format(p.input_tokens) }}</td>
+                <td style="text-align:right">{{ "{:,}".format(p.cache_tokens) }}</td>
                 <td style="text-align:right">{{ "{:,}".format(p.output_tokens) }}</td>
                 <td style="text-align:right">{% if p.cost_usd %}${{ "%.4f"|format(p.cost_usd) }}{% else %}–{% endif %}</td>
             </tr>
@@ -118,7 +121,8 @@
             <h2 class="ch-section-title">usage <small>・ LLM 使用量（カードをクリックで詳細）</small></h2>
         </div>
         <p class="ch-hint" style="margin-bottom:12px">
-            claude_cli / google プロバイダーのレスポンスから記録（それ以外のプロバイダーは未集計）。
+            In ＝ 新規に処理された入力（キャッシュ外＋キャッシュ作成 1.25x課金）／
+            Cache ＝ キャッシュ読出（0.1x課金）／ Out ＝ 出力。
             コストは Claude CLI の参考値のみ。
         </p>
         <div class="ch-cardgrid">
@@ -127,6 +131,7 @@
                 <div class="ch-card__meta">
                     リクエスト {{ usage_today.requests }} 回<br>
                     In {{ fmt_k(usage_today.input_tokens) }} ／
+                    Cache {{ fmt_k(usage_today.cache_tokens) }} ／
                     Out {{ fmt_k(usage_today.output_tokens) }} tok
                     {% if usage_today.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_today.cost_usd) }}{% endif %}
                 </div>
@@ -136,6 +141,7 @@
                 <div class="ch-card__meta">
                     リクエスト {{ usage_week.requests }} 回<br>
                     In {{ fmt_k(usage_week.input_tokens) }} ／
+                    Cache {{ fmt_k(usage_week.cache_tokens) }} ／
                     Out {{ fmt_k(usage_week.output_tokens) }} tok
                     {% if usage_week.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_week.cost_usd) }}{% endif %}
                 </div>
@@ -145,6 +151,7 @@
                 <div class="ch-card__meta">
                     リクエスト {{ usage_month.requests }} 回<br>
                     In {{ fmt_k(usage_month.input_tokens) }} ／
+                    Cache {{ fmt_k(usage_month.cache_tokens) }} ／
                     Out {{ fmt_k(usage_month.output_tokens) }} tok
                     {% if usage_month.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_month.cost_usd) }}{% endif %}
                 </div>
@@ -164,6 +171,7 @@
                     <tr>
                         <th>時刻</th><th>対象</th><th>feature</th>
                         <th style="text-align:right">In</th>
+                        <th style="text-align:right">Cache</th>
                         <th style="text-align:right">Out</th>
                         <th style="text-align:right">コスト</th>
                     </tr>
@@ -175,6 +183,7 @@
                         <td>{{ e.target }}{% if e.preset_name %}<span class="ch-hint">@{{ e.preset_name }}</span>{% endif %}</td>
                         <td>{{ e.feature }}</td>
                         <td style="text-align:right">{{ "{:,}".format(e.input_tokens) }}</td>
+                        <td style="text-align:right">{{ "{:,}".format(e.cache_tokens) }}</td>
                         <td style="text-align:right">{{ "{:,}".format(e.output_tokens) }}</td>
                         <td style="text-align:right">{% if e.total_cost_usd %}${{ "%.4f"|format(e.total_cost_usd) }}{% else %}–{% endif %}</td>
                     </tr>

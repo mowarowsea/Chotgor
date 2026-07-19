@@ -51,7 +51,9 @@ class TestAddAndRecentEvents:
         assert e["target"] == "織羽"
         assert e["feature"] == "chat"
         assert e["request_id"] == "abcd1234"
-        assert e["input_tokens"] == 1200
+        # 表示規約: input = input_tokens(1200) + cache_creation(50)、cache = cache_read(800)
+        assert e["input_tokens"] == 1250
+        assert e["cache_tokens"] == 800
         assert e["output_tokens"] == 340
         assert e["total_cost_usd"] == 0.0123
         assert isinstance(e["created_at"], datetime)
@@ -105,9 +107,31 @@ class TestUsageTotals:
         assert totals == {
             "requests": 2,
             "input_tokens": 150,
+            "cache_tokens": 0,
             "output_tokens": 30,
             "cost_usd": 0.01,
         }
+
+    def test_totals_split_cache_and_input(self, sqlite_store):
+        """プロンプトキャッシュ有効時の3分割表示規約を検証する。
+
+        claude_cli 実測パターン（input_tokens は端数の 2、実入力はキャッシュ作成側）
+        を模した行で、In ＝ input+creation ／ Cache ＝ read に分かれることを守る。
+        ここが崩れると「In 2 トークン」の見かけ上の異常が再発する。
+        """
+        sqlite_store.add_llm_usage_event(
+            provider="claude_cli",
+            input_tokens=2,
+            output_tokens=1000,
+            cache_read_input_tokens=21300,
+            cache_creation_input_tokens=13000,
+        )
+
+        totals = sqlite_store.get_usage_totals_since(datetime.now() - timedelta(hours=1))
+
+        assert totals["input_tokens"] == 13002
+        assert totals["cache_tokens"] == 21300
+        assert totals["output_tokens"] == 1000
 
     def test_totals_exclude_rows_before_since(self, sqlite_store):
         """since より古い行は集計に含まれないこと。"""
@@ -130,7 +154,8 @@ class TestUsageTotals:
         totals = sqlite_store.get_usage_totals_since(datetime.now() - timedelta(days=1))
 
         assert totals == {
-            "requests": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0,
+            "requests": 0, "input_tokens": 0, "cache_tokens": 0,
+            "output_tokens": 0, "cost_usd": 0.0,
         }
 
 

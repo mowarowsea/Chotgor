@@ -158,6 +158,10 @@ class GoogleProvider(BaseLLMProvider):
         prompt_token_count を入力、candidates_token_count + thoughts_token_count を
         出力としてカウントする。usage_metadata が無い場合は何もしない。
         記録失敗はチャット本流に影響しない（usage_recorder 側で握り潰す）。
+
+        Gemini の cached_content_token_count は prompt_token_count の**部分集合**
+        （implicit cache ヒット分）。DB 規約（input/cache_read/cache_creation は
+        互いに素）に合わせて input から差し引いて記録する。
         """
         from backend.lib.usage_recorder import record_usage
 
@@ -171,7 +175,7 @@ class GoogleProvider(BaseLLMProvider):
             provider=self.PROVIDER_ID,
             model=self.model,
             preset_name=self.preset_name,
-            input_tokens=prompt,
+            input_tokens=max(prompt - cached, 0),
             output_tokens=candidates + thoughts,
             cache_read_input_tokens=cached,
         )

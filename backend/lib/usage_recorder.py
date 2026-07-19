@@ -6,6 +6,17 @@ llm_usage_events テーブルへ1 API 呼び出し = 1行で追加する。
 feature / target / request_id は log_context の ContextVar から自動補完するため、
 呼び出し側はトークン数とモデル情報だけ渡せばよい。
 
+## トークン3列の DB 規約（互いに素）
+
+input_tokens / cache_read_input_tokens / cache_creation_input_tokens は
+**重複なく**入力を3分割し、合計＝入力全長になるよう記録する
+（Anthropic API のネイティブな意味論に揃える）。
+
+- Anthropic / claude_cli: API がこの意味論で返すためそのまま記録。
+- google / openai 系: API の cached 値は prompt 全長の**部分集合**のため、
+  プロバイダー側で input から差し引いてから渡す（差し引かずに渡すと
+  ダッシュボードの In / Cache 表示が二重計上になる）。
+
 記録失敗はチャット本流を絶対に妨げない（握り潰して WARNING ログのみ）。
 """
 

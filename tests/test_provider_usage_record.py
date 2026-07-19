@@ -13,6 +13,7 @@ OpenAIProvider / AnthropicProvider / OllamaProvider に追加した
 from unittest.mock import MagicMock, patch
 
 from backend.providers.anthropic_provider import AnthropicProvider
+from backend.providers.google_provider import GoogleProvider
 from backend.providers.ollama_provider import OllamaProvider
 from backend.providers.openai_provider import OpenAIProvider
 from backend.providers.sakura_provider import SakuraProvider
@@ -31,7 +32,11 @@ class TestOpenAIRecordUsage:
     """
 
     def test_records_with_details(self):
-        """usage オブジェクトから入力/出力/キャッシュ読込トークンが転送されること。"""
+        """usage オブジェクトから入力/出力/キャッシュ読込トークンが転送されること。
+
+        OpenAI の cached_tokens は prompt_tokens の部分集合のため、DB 規約
+        （3列は互いに素）に合わせて input からキャッシュ分が差し引かれること。
+        """
         provider = OpenAIProvider(api_key="sk-test", model="gpt-4o")
         provider.preset_name = "default"
         usage = MagicMock()
@@ -48,7 +53,7 @@ class TestOpenAIRecordUsage:
             provider="openai",
             model="gpt-4o",
             preset_name="default",
-            input_tokens=1000,
+            input_tokens=400,
             output_tokens=200,
             cache_read_input_tokens=600,
         )
@@ -83,6 +88,47 @@ class TestOpenAIRecordUsage:
             output_tokens=30,
             cache_read_input_tokens=0,
         )
+
+
+class TestGoogleRecordUsage:
+    """GoogleProvider._record_usage_from_metadata の挙動を検証する。
+
+    Gemini の cached_content_token_count（implicit cache ヒット分）は
+    prompt_token_count の部分集合。DB 規約（3列は互いに素）に合わせて
+    input から差し引いて記録されることを確認する。ここが崩れると
+    ダッシュボードの In / Cache 表示が二重計上になる。
+    """
+
+    def test_cached_subtracted_from_input(self):
+        """prompt からキャッシュ分を差し引いた値が input として記録されること。"""
+        provider = GoogleProvider(api_key="dummy", model="gemini-2.5-flash")
+        provider.preset_name = "google-default"
+        meta = MagicMock()
+        meta.prompt_token_count = 10000
+        meta.candidates_token_count = 300
+        meta.thoughts_token_count = 50
+        meta.cached_content_token_count = 4000
+
+        with patch("backend.lib.usage_recorder.record_usage") as rec:
+            provider._record_usage_from_metadata(meta)
+
+        rec.assert_called_once_with(
+            provider="google",
+            model="gemini-2.5-flash",
+            preset_name="google-default",
+            input_tokens=6000,
+            output_tokens=350,
+            cache_read_input_tokens=4000,
+        )
+
+    def test_no_record_when_metadata_none(self):
+        """usage_metadata=None の呼び出しは record_usage を呼ばないこと。"""
+        provider = GoogleProvider(api_key="dummy")
+
+        with patch("backend.lib.usage_recorder.record_usage") as rec:
+            provider._record_usage_from_metadata(None)
+
+        rec.assert_not_called()
 
 
 class TestAnthropicRecordUsage:
