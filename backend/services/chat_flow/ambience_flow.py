@@ -36,12 +36,13 @@ async def run_ambience_detection(
     settings: dict,
     vector_store=None,
 ) -> None:
-    """AmbienceJudgeをバックグラウンドで実行し、退席判定をDBに保存するコルーチン。
+    """AmbienceJudgeをバックグラウンドで実行し、判定結果をDBに保存するコルーチン。
 
     退席確定の場合のみセッションの exited_chars を更新する。
     疎遠化確定時は SQLite に加えてベクトルストアの定義 embedding も "estranged" に更新する。
+    対面モード中は場所判定（location_label）を chat_sessions.current_bg_label に反映する。
     SSEストリームは既に終了しているため、イベント送信は行わない。
-    次リクエスト時の already_exited チェックで自動検知される。
+    次リクエスト時の already_exited チェック／セッション再取得で自動検知される。
 
     Args:
         judge: AmbienceJudgeインスタンス。
@@ -54,6 +55,24 @@ async def run_ambience_detection(
         settings: グローバル設定辞書。
         vector_store: LanceStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
     """
+    # 場所判定の材料（対面フラグ・候補ラベル・前回ラベル）を集める。
+    # バックグラウンド実行のため DB 読みのコストは許容。失敗しても感情判定は続行する。
+    face_to_face = False
+    bg_label_candidates: list[str] = []
+    prev_bg_label: str | None = None
+    try:
+        char = judge.sqlite.get_character(character_id)
+        if char is not None and int(getattr(char, "face_to_face_mode", 0) or 0):
+            face_to_face = True
+            bg_label_candidates = [
+                e.get("label", "")
+                for e in (getattr(char, "face_to_face_bg_images", None) or [])
+            ]
+        session = judge.sqlite.get_chat_session(session_id)
+        prev_bg_label = getattr(session, "current_bg_label", None) if session else None
+    except Exception:
+        _log.exception("場所判定材料の取得に失敗 char=%s session=%s", character_name, session_id)
+
     try:
         result = await judge.detect(
             character_id=character_id,
@@ -62,10 +81,27 @@ async def run_ambience_detection(
             farewell_config=farewell_config,
             messages=messages,
             settings=settings,
+            face_to_face=face_to_face,
+            bg_label_candidates=bg_label_candidates,
+            prev_bg_label=prev_bg_label,
         )
     except Exception:
         _log.exception("AmbienceJudge実行エラー char=%s session=%s", character_name, session_id)
         return
+
+    # 場所判定の反映: 対面中のみ。judge 失敗（None）・変化なしのときは触らない
+    # （＝前回ラベル維持）。best-effort。
+    if result is not None and face_to_face and result.location_label != prev_bg_label:
+        try:
+            judge.sqlite.update_chat_session(
+                session_id, current_bg_label=result.location_label
+            )
+            _log.info(
+                "なりゆき: 背景ラベル更新 char=%s session=%s %s → %s",
+                character_name, session_id, prev_bg_label, result.location_label,
+            )
+        except Exception:
+            _log.exception("背景ラベル更新に失敗 char=%s session=%s", character_name, session_id)
 
     # judge の採点結果を該当ターン（最新キャラ発話）の封筒 payload に残す
     # （Tier 3 サンプリングの材料を兼ねる。めぐり Phase 5）。best-effort。

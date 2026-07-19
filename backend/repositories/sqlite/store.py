@@ -132,6 +132,7 @@ class SQLiteStore(
         self._migrate_drop_group_chat()
         self._migrate_add_face_to_face_columns()
         self._migrate_face_to_face_bg_images()
+        self._migrate_add_current_bg_label()
         self._migrate_add_pressure_profile()
         self._migrate_add_gate_columns()
         self._migrate_backfill_timeline_events()

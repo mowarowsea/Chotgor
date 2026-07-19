@@ -1301,6 +1301,34 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE characters DROP COLUMN face_to_face_bg_image"
                 )
 
+    def _migrate_add_current_bg_label(self) -> None:
+        """なりゆき（ambience）の場所判定ラベル列を chat_sessions に追加する。
+
+        - `chat_sessions.current_bg_label` (TEXT, NULL可): 対面中の最後の
+          location_label 判定結果。ambience_flow が書き、フロントが対面中のみ読む。
+
+        新規DBは ORM 定義で既に作成されるため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "chat_sessions" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(chat_sessions)"
+                ).fetchall()
+            }
+            if "current_bg_label" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE chat_sessions ADD COLUMN current_bg_label TEXT"
+                )
+
     def _migrate_drop_self_reflection(self) -> None:
         """自己参照ループ（reflector.py）撤去に伴う characters カラムの整理。
 

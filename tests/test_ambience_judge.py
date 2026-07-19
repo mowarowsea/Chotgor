@@ -710,6 +710,203 @@ class TestAmbienceJudgeResult:
         assert "せんぱい: 呼称優先の発言" in user_content
 
 
+# ─── AmbienceJudge.detect() — 場所判定（location_label / ambience Step 4） ──
+
+
+class TestLocationLabelJudgement:
+    """対面モード時の場所判定（location_label）を検証するテストクラス。
+
+    検証する観点:
+        - 対面 + 候補ありのときだけプロンプトに「対面の場所判定」ブロックが入る
+        - 非対面／候補なし（空配列・空ラベルのみ）ではブロックが入らず location_label=None
+        - judge が候補内のラベルを返せば AmbienceReading.location_label に載る
+        - 候補外のラベル・null は前回ラベル（prev_bg_label）へ丸められる
+        - 前回もラベルなし + 判定不能なら None（背景なし）
+        - プロンプトに候補配列と前回ラベルが注入される
+    """
+
+    def _run_detect(
+        self, judge, char_id, judge_preset_id, farewell_config,
+        response_payload: dict, *, face_to_face=True,
+        candidates=None, prev_label=None, captured=None,
+    ):
+        """場所判定パラメータ付きで detect() を実行するヘルパー。
+
+        Args:
+            judge: テスト対象 AmbienceJudge。
+            char_id: キャラクターID。
+            judge_preset_id: プリセットID。
+            farewell_config: farewell_config 辞書。
+            response_payload: judge LLM が返す JSON dict。
+            face_to_face: 対面モードフラグ。
+            candidates: 候補ラベル配列。
+            prev_label: 前回判定ラベル。
+            captured: 渡すと {"system", "user"} にプロンプトを格納する。
+
+        Returns:
+            detect() の返却値。
+        """
+        mock_provider = MagicMock()
+
+        async def capture_generate(system_prompt, msgs, **kwargs):
+            if captured is not None:
+                captured["system"] = system_prompt
+                captured["user"] = msgs[0]["content"]
+            return json.dumps(response_payload, ensure_ascii=False)
+
+        mock_provider.generate = capture_generate
+        with patch("backend.character_actions.ambience_judge.create_provider", return_value=mock_provider):
+            return asyncio.run(
+                judge.detect(
+                    character_id=char_id,
+                    session_id="sess-1",
+                    preset_id=judge_preset_id,
+                    farewell_config=farewell_config,
+                    messages=[{"role": "user", "content": "部屋に入るね"}],
+                    settings={},
+                    face_to_face=face_to_face,
+                    bg_label_candidates=candidates,
+                    prev_bg_label=prev_label,
+                )
+            )
+
+    def _payload(self, location_label=None) -> dict:
+        """location_label 付きの judge 応答 JSON dict を作るヘルパー。"""
+        return {
+            "emotions": {"anger": 0.0, "disgust": 0.0, "boredom": 0.0, "despair": 0.0},
+            "engagement": 0.5,
+            "should_exit": False,
+            "farewell_type": None,
+            "location_label": location_label,
+        }
+
+    def test_valid_candidate_is_returned(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """judge が候補内のラベルを返した場合、そのまま location_label に載ること。"""
+        result = self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload("はるの部屋"),
+            candidates=["はるの部屋", "もわの部屋"],
+        )
+        assert result.location_label == "はるの部屋"
+
+    def test_out_of_candidates_falls_back_to_prev(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """候補外のラベルは前回ラベルへ丸められること。"""
+        result = self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload("知らない場所"),
+            candidates=["はるの部屋", "もわの部屋"],
+            prev_label="もわの部屋",
+        )
+        assert result.location_label == "もわの部屋"
+
+    def test_null_label_falls_back_to_prev(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """judge が null を返した場合も前回ラベル踏襲になること。"""
+        result = self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload(None),
+            candidates=["はるの部屋"],
+            prev_label="はるの部屋",
+        )
+        assert result.location_label == "はるの部屋"
+
+    def test_no_prev_and_no_match_returns_none(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """前回もラベルなし + 候補外なら None（背景なし）になること。"""
+        result = self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload("知らない場所"),
+            candidates=["はるの部屋"],
+            prev_label=None,
+        )
+        assert result.location_label is None
+
+    def test_not_face_to_face_skips_judgement(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """非対面では候補があっても場所判定せず None、プロンプトにもブロックが入らないこと。"""
+        captured = {}
+        result = self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload("はるの部屋"),
+            face_to_face=False,
+            candidates=["はるの部屋"],
+            captured=captured,
+        )
+        assert result.location_label is None
+        assert "## 対面の場所判定" not in captured["user"]
+
+    def test_no_candidates_skips_judgement(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """候補が空（未登録）なら対面中でも場所判定せず None 固定になること。"""
+        captured = {}
+        result = self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload("はるの部屋"),
+            candidates=[],
+            captured=captured,
+        )
+        assert result.location_label is None
+        assert "## 対面の場所判定" not in captured["user"]
+
+    def test_empty_labels_are_excluded_from_candidates(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """空ラベル（旧単数画像の移行直後など）は候補から除外されること。
+
+        候補が空ラベルのみなら場所判定自体がスキップされる。
+        """
+        captured = {}
+        result = self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload(""),
+            candidates=[""],
+            captured=captured,
+        )
+        assert result.location_label is None
+        assert "## 対面の場所判定" not in captured["user"]
+
+    def test_prompt_contains_candidates_and_prev_label(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """対面時のプロンプトに候補配列・前回ラベル・踏襲ルールが注入されること。"""
+        captured = {}
+        self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload("はるの部屋"),
+            candidates=["はるの部屋", "もわの部屋"],
+            prev_label="もわの部屋",
+            captured=captured,
+        )
+        user_content = captured["user"]
+        assert "## 対面の場所判定" in user_content
+        assert "はるの部屋" in user_content
+        assert "もわの部屋" in user_content
+        assert "前回の判定" in user_content
+        assert "明確に変わったと判断できないなら" in user_content
+
+    def test_prev_label_none_shows_nashi(
+        self, judge, char_id, judge_preset_id, farewell_config
+    ):
+        """前回ラベルが無い場合、プロンプトの前回判定が「なし」になること。"""
+        captured = {}
+        self._run_detect(
+            judge, char_id, judge_preset_id, farewell_config,
+            self._payload("はるの部屋"),
+            candidates=["はるの部屋"],
+            prev_label=None,
+            captured=captured,
+        )
+        assert "前回の判定: なし" in captured["user"]
+
+
 # ─── AmbienceJudge のスキーマ検証 ─────────────────────────────────────────
 
 

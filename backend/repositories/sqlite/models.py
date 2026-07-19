@@ -48,6 +48,11 @@ class ChatSession(Base):
     session_type = Column(String, nullable=False, default="1on1")
     # 退席者リスト: [{"char_name": "Alice", "reason": "理由"}]。NULLなら退席者なし。
     exited_chars = Column(JSON, nullable=True)
+    # 対面中の最後の場所判定ラベル（なりゆき ambience の location_label）。
+    # ambience_flow が judge の判定結果を反映し、フロントは対面モード中のみ参照して
+    # face_to_face_bg_images の対応画像を背景表示する。対面外では参照しない
+    # （残置値があっても無害）。NULL = 判定なし（背景なし）。
+    current_bg_label = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(DateTime, default=lambda: datetime.now(), onupdate=lambda: datetime.now())
 

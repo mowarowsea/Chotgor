@@ -73,7 +73,7 @@ _JUDGE_USER_TEMPLATE = """\
 ---
 ## 感情スコアの基準
 {rubric}
-
+{location_block}
 ---
 ## 会話
 {conversation}
@@ -91,7 +91,8 @@ _JUDGE_USER_TEMPLATE = """\
   }},
   "engagement": 0.5,
   "should_exit": false,
-  "farewell_type": null
+  "farewell_type": null,
+  "location_label": null
 }}
 
 - emotions: 各感情スコア（0.0〜1.0）。閾値を超えているなら閾値以上の値にすること。
@@ -103,7 +104,26 @@ _JUDGE_USER_TEMPLATE = """\
     "negative"（ネガティブな感情による離席）
     "positive"（満足・区切りによる離席）
     "neutral"（自然な会話終了）
-  should_exit が false の場合は null。\
+  should_exit が false の場合は null。
+- location_label: 「対面の場所判定」セクションがある場合のみ設定。無い場合は null。\
+"""
+
+# 対面モード時のみ _JUDGE_USER_TEMPLATE の {location_block} に差し込むブロック。
+# ちらつき対策として「明確に変わったと判断できないなら前回を返す」を明示する。
+_LOCATION_BLOCK_TEMPLATE = """
+---
+## 対面の場所判定
+いま {character_name} と {user_label} は対面で会っています。
+会話の内容から「いま2人がいる場所」を以下の候補から1つ選び、
+location_label に設定してください。
+
+候補ラベル: {candidates}
+前回の判定: {prev_label}
+
+- 会話から場所が明確に変わったと判断できる場合のみ、新しいラベルを返すこと。
+- 明確に変わったと判断できないなら、前回の判定と同じラベルを返すこと。
+- どの候補にも当てはまらない・判断できない場合は前回の判定を返すこと
+  （前回の判定が「なし」なら null）。
 """
 
 
@@ -119,6 +139,8 @@ class AmbienceReading:
         engagement: 会話への没入度（0.0〜1.0）。疲労離席（めぐり Phase 5）の
             発火式で閾値を持ち上げるのに使う（夢中は疲労を「忘れさせる」）。
             judge の JSON にフィールドが無い場合は 0.5 に縮退する。
+        location_label: 対面モード時の場所判定ラベル。detect() 内で候補検証済み
+            （候補外の生値は前回ラベルへ丸められる）。非対面・候補なし・判定不能は None。
     """
 
     should_exit: bool
@@ -126,6 +148,7 @@ class AmbienceReading:
     emotions: dict[str, float]
     reason: str
     engagement: float = 0.5
+    location_label: str | None = None
 
 
 def _format_conversation(messages: list[dict], character_name: str, user_label: str) -> str:
@@ -241,8 +264,11 @@ class AmbienceJudge:
         farewell_config: dict,
         messages: list[dict],
         settings: dict,
+        face_to_face: bool = False,
+        bg_label_candidates: list[str] | None = None,
+        prev_bg_label: str | None = None,
     ) -> AmbienceReading | None:
-        """感情状態を判定し、退席すべきか返す。
+        """感情状態（＋対面時は場所ラベル）を判定して返す。
 
         毎ターン後にバックグラウンドで呼ばれる。
         farewell_config または preset_id が未設定の場合はスキップ（None を返す）。
@@ -254,9 +280,15 @@ class AmbienceJudge:
             farewell_config: キャラクターの別れ設定 JSON。
             messages: 判定対象の会話リスト（直近ターンを含む）。
             settings: グローバル設定 dict（APIキー等）。
+            face_to_face: 対面モード中なら True。場所判定はこのときだけ行う。
+            bg_label_candidates: 場所判定の候補ラベル群（face_to_face_bg_images の label）。
+                空ラベルは候補から除外される。空/None なら場所判定はスキップ。
+            prev_bg_label: セッションの前回判定ラベル（chat_sessions.current_bg_label）。
+                候補外の judge 出力・判定不能時の踏襲先。
 
         Returns:
             AmbienceReading（退席判定あり/なし）、またはスキップ時 None。
+            location_label は候補検証済みの値（候補外は前回踏襲に丸め済み）。
         """
         # スキップ条件
         if not farewell_config:
@@ -300,11 +332,27 @@ class AmbienceJudge:
         conversation = _format_conversation(messages, char.name, user_label)
         thresholds_text = _format_thresholds(thresholds)
 
+        # 場所判定ブロック: 対面中かつ候補ラベルあり（空ラベル除外後）のときだけ差し込む
+        candidates = [c for c in (bg_label_candidates or []) if (c or "").strip()]
+        location_enabled = bool(face_to_face and candidates)
+        location_block = ""
+        if location_enabled:
+            location_block = _LOCATION_BLOCK_TEMPLATE.format(
+                character_name=char.name,
+                user_label=user_label,
+                candidates=json.dumps(candidates, ensure_ascii=False),
+                prev_label=(
+                    json.dumps(prev_bg_label, ensure_ascii=False)
+                    if prev_bg_label else "なし"
+                ),
+            )
+
         user_message = _JUDGE_USER_TEMPLATE.format(
             character_name=char.name,
             character_context=character_context,
             thresholds_text=thresholds_text,
             rubric=EMOTION_RUBRIC,
+            location_block=location_block,
             conversation=conversation,
         )
 
@@ -348,9 +396,21 @@ class AmbienceJudge:
             engagement = 0.5
         engagement = max(0.0, min(1.0, engagement))
 
+        # 場所ラベル: 候補内の値だけ採用。候補外・null・判定無効時は前回踏襲
+        # （前回も無ければ None = 背景なし）。
+        location_label: str | None = None
+        if location_enabled:
+            raw_label = parsed.get("location_label")
+            if isinstance(raw_label, str) and raw_label in candidates:
+                location_label = raw_label
+            else:
+                location_label = prev_bg_label
+
         _log.info(
-            "AmbienceJudge: char=%s session=%s emotions=%s engagement=%.2f should_exit=%s type=%s",
-            character_id, session_id, emotions, engagement, should_exit, farewell_type,
+            "AmbienceJudge: char=%s session=%s emotions=%s engagement=%.2f "
+            "should_exit=%s type=%s location=%s",
+            character_id, session_id, emotions, engagement,
+            should_exit, farewell_type, location_label,
         )
 
         if not should_exit:
@@ -360,6 +420,7 @@ class AmbienceJudge:
                 emotions=emotions,
                 reason="",
                 engagement=engagement,
+                location_label=location_label,
             )
 
         # 退席メッセージを farewell_config から取得
@@ -372,4 +433,5 @@ class AmbienceJudge:
             emotions=emotions,
             reason=reason,
             engagement=engagement,
+            location_label=location_label,
         )

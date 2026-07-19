@@ -70,6 +70,10 @@ def session_to_dict(s) -> dict:
     exited_chars = getattr(s, "exited_chars", None)
     if exited_chars:
         result["exited_chars"] = exited_chars
+    # なりゆき（ambience）の場所判定ラベル。フロントは対面モード中のみ参照する。
+    current_bg_label = getattr(s, "current_bg_label", None)
+    if current_bg_label:
+        result["current_bg_label"] = current_bg_label
     return result
 
 
