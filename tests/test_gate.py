@@ -316,11 +316,11 @@ class TestTakeLeave:
 
 
 class TestEngagementParsing:
-    """farewell judge 応答の engagement パース（縮退込み）を検証するテストクラス。"""
+    """ambience judge 応答の engagement パース（縮退込み）を検証するテストクラス。"""
 
     def test_engagement_parsed_and_clamped(self):
-        """JSON の engagement が FarewellResult に載り、範囲外はクランプされる。"""
-        from backend.character_actions.farewell_detector import _parse_judge_response
+        """JSON の engagement が AmbienceReading に載り、範囲外はクランプされる。"""
+        from backend.character_actions.ambience_judge import _parse_judge_response
         parsed = _parse_judge_response(
             '{"emotions": {"anger": 0.1}, "engagement": 0.9, "should_exit": false}'
         )
@@ -328,7 +328,7 @@ class TestEngagementParsing:
 
     def test_missing_engagement_defaults(self):
         """engagement フィールドが無い judge 応答でもパースは成立する（0.5 縮退は detect 側）。"""
-        from backend.character_actions.farewell_detector import _parse_judge_response
+        from backend.character_actions.ambience_judge import _parse_judge_response
         parsed = _parse_judge_response(
             '{"emotions": {}, "should_exit": false, "farewell_type": null}'
         )

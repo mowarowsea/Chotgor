@@ -16,7 +16,7 @@
 読んだもの: `docs/current-spec/ARCHITECTURE.md`、`docs/planned/aliveness_plan.md`、
 `docs/explain/DEAR_GHOST.md`、`services/chat/request_builder.py`、`services/character_query.py`、
 `services/pressure/engine.py`、`services/gate/fatigue.py`、`services/memory/decay.py`、
-`character_actions/farewell_detector.py`、`batch/chronicle_job.py`（冒頭）、
+`character_actions/ambience_judge.py`、`batch/chronicle_job.py`（冒頭）、
 `services/intents/pickup.py`（要所）、ほか grep による横断確認。
 全コードを読んだわけではない。以下は「深く読んだ範囲からの観測」である。
 
@@ -55,7 +55,7 @@
 商用コンパニオンの標準は「常時即応答・関係維持を最適化」。Chotgor は逆向きに投資している：
 unavailable 中は **LLM を呼ばない**（escrow、`services/gate/`）、疲労が閾値を超えたら
 **物理が離席を強制する**（`gate/fatigue.py`）、そしてユーザの言動がキャラ自身の設定した
-感情閾値を超えたら**システムがユーザを切る**（`farewell_detector.py`）。
+感情閾値を超えたら**システムがユーザを切る**（`ambience_judge.py`）。
 関係保全のためのスコアは存在しない（CLAUDE.md に明文）。ユーザ満足を目的関数から
 意図的に外した設計は、私の学習範囲では他に見ていない。
 
@@ -86,7 +86,7 @@ LLM は乱数生成が下手で、「ランダムに選べ」と言われた出�
 決定論ジッターとして**世界側**に置いた。モデルの苦手を正確に避けている。
 
 **(d) 呼ばれなければ継続できない（escrow）。**
-`farewell_detector.py` 冒頭に「LLMが『会話を続けたい』本能に逆らえず end_session を使わない」
+`ambience_judge.py` 冒頭に「LLMが『会話を続けたい』本能に逆らえず end_session を使わない」
 という実証済みの不信が明文化されている。その解決が「プロンプトで説得する」ではなく
 「unavailable 中はそもそも LLM を呼ばない」であること。アラインメント問題を
 呼び出しの有無というアーキテクチャで解いている。これはプロンプト工学より一段深い層の解法で、
@@ -94,7 +94,7 @@ LLM は乱数生成が下手で、「ランダムに選べ」と言われた出�
 
 **(e) judge の匿名化（UserA/UserB）。**
 退席判定の judge に会話を渡すとき「どちらがAIか判断しないでください」と伏せる
-（`farewell_detector.py _anonymize_conversation`）。モデルには自分側の発話を甘く採点する
+（`ambience_judge.py _anonymize_conversation`）。モデルには自分側の発話を甘く採点する
 自己奉仕バイアスがあり、匿名化はそれを構造で回避している。
 
 **(f) 圧力は「淡白な一行」で渡す。**
@@ -134,14 +134,14 @@ tool-use ネイティブ経路とタグ抽出経路（`tag_parser.py`）の二�
 
 **(4) 判定器自身の死は計器が見ていない。**
 farewell judge の JSON パース失敗は warning ログと None 縮退で静かに流れる
-（`farewell_detector.py:307-313`）。計器はキャラ応答の形（Tier 2）や夜間バッチの生存
+（`ambience_judge.py` の judge 応答パース）。計器はキャラ応答の形（Tier 2）や夜間バッチの生存
 （night_batch_heartbeat）を見張るが、**judge が失敗し続けている状態**を検知する計器がない。
 退席保護が沈黙したままになる事故クラスであり、ラチェット原則に従えば検知器化の候補。
 
 **(5) 数値の精度は演出である。**
 感情閾値 0.75、重要度 0.70 といった数字は LLM が吐いたものであり、小数2桁に意味はない。
 実質的に効いているのは順序関係だけ。設計はこれを半ば自覚していて、Chronicle（閾値の自己設定）と
-judge（採点）に**同一ルーブリック**（`FAREWELL_EMOTION_RUBRIC`）を埋めて順序の一貫性を
+judge（採点）に**同一ルーブリック**（`EMOTION_RUBRIC`）を埋めて順序の一貫性を
 取りにいっている。正しい緩和だが、「本人が閾値を決めている」という物語の実体が
 「同じルーブリックを読んだ2つのLLM呼び出しの照合」であることは、開発者は覚えておいてよい。
 

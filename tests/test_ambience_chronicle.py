@@ -370,8 +370,8 @@ class TestRunChronicleFarewellConfig:
     def test_prompt_contains_farewell_rubric(
         self, sqlite_store, char_id_with_ghost, ghost_preset_id, working_memory_manager
     ):
-        """chronicle のプロンプトに FAREWELL_EMOTION_RUBRIC が含まれること。"""
-        from backend.character_actions.farewell_detector import FAREWELL_EMOTION_RUBRIC
+        """chronicle のプロンプトに EMOTION_RUBRIC が含まれること。"""
+        from backend.character_actions.ambience_judge import EMOTION_RUBRIC
 
         captured_messages = []
 

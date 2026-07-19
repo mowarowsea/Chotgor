@@ -347,7 +347,7 @@ intents
 ## 5. 動機経済・行動側（論点6）
 
 前提となる不信: **LLMの会話継続本能は、キャラクター性を押しのけて会話を続けようとする**
-（`farewell_detector.py` 冒頭に明文化済みの、実証された問題）。したがって終了系の権利は
+（`ambience_judge.py` 冒頭に明文化済みの、実証された問題）。したがって終了系の権利は
 本人のツール呼び出しに頼らず、**物理（外部ゲート）が終わりを決め、本人は終わり方（意味づけ）
 だけを決める**構造にする。
 
@@ -450,7 +450,7 @@ availability内で周期評価＋ジッター（乱数は世界に置く）
 - migration パターン: `repositories/sqlite/migrations.py`（PRAGMA→ALTER、冪等。バックフィルもここ）
 - スケジューラ雛形: `main.py` の `while True: sleep(60)` ＋ 冪等キー（巡回計器・行動権に流用）
 - 本人問い合わせ: `services/character_query.py` `ask_character(_with_tools)`（インタビュー・拾い上げ・裁定）
-- 外部監査: `character_actions/farewell_detector.py`（judge雛形＋発火後にLLMを呼ばない機構。engagement を相乗り）
+- 外部監査: `character_actions/ambience_judge.py`（judge雛形＋発火後にLLMを呼ばない機構。engagement を相乗り）
 - 強制終了・退去挨拶: 既存 Farewell フロー（疲労離席が流用）
 - 未処理マーカー: `chronicled_at` パターン（`delivered_at` が踏襲）
 - タグ一覧: `character_actions/tool_tags.py`（Tier 2 フォーマット残骸検知のパターン源）

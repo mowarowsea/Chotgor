@@ -194,7 +194,9 @@ class DebugLogStoreMixin:
         # PC ターン。いずれもシナリオ進行の一部なので Scenario タブに含める
         # （Batch タブに落ちないこと。うつつはバッチ処理ではなく、ユーザ不在時に走る
         # 場面進行であり、性質としては Scenario と同類）。
-        _CHAT_TYPES = ("chat", "farewell", "trigger")
+        # "farewell" は旧名。ambience（なりゆき）にリネームされたが、
+        # 既存レコードの source_type との後方互換のため両名を含める。
+        _CHAT_TYPES = ("chat", "ambience", "farewell", "trigger")
         _SCENARIO_TYPES = (
             "scenario", "scenario_chat", "scenario_chat_pc",
             "usual_days", "usual_days_pc",

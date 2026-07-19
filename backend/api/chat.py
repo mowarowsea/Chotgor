@@ -236,7 +236,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
     退席済みセッションへのリクエストは LLM をスキップし、退席者一覧のシステムメッセージを返す。
     relationship_status が "estranged" のキャラクターへのリクエストは恒久的に拒否する。
-    別れの検出は FarewellDetector がバックグラウンドで行い、次リクエスト時に反映される。
+    別れの検出は AmbienceJudge がバックグラウンドで行い、次リクエスト時に反映される。
     """
     log_msg_id = new_message_id()
     current_log_session_id.set(session_id)

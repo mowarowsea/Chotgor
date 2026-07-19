@@ -11,7 +11,7 @@ Architecture:
 パッケージ内の分業:
   - preparation.py  : ターン前処理（想起・WM・URL fetch・プロンプト構築）→ PreparedContext
   - flow.py（本体） : tool-use 経路／タグ経路のディスパッチ、power_recall の再帰
-  - farewell_flow.py: ターン完了後の別れ検出・疲労離席の起動
+  - ambience_flow.py: ターン完了後の なりゆき判定・疲労離席の起動
 
 後方互換: `backend.services.chat.service.ChatService` は本クラスの別名として
 そのまま使える（services/chat/service.py が再エクスポート）。
@@ -40,20 +40,17 @@ from backend.services.chat_flow.preparation import (
     extract_text_content,
     prepare_context,
 )
-from backend.services.chat_flow.farewell_flow import (
-    launch_farewell_tasks,
-    run_farewell_detection,
+from backend.services.chat_flow.ambience_flow import (
+    launch_ambience_tasks,
+    run_ambience_detection,
 )
-
-# 後方互換の別名（services/chat/service.py・既存テストが参照する旧名）
-_run_farewell_detection = run_farewell_detection
 
 __all__ = [
     "ChatFlow",
     "PreparedContext",
     "extract_text_content",
     "prepare_context",
-    "_run_farewell_detection",
+    "run_ambience_detection",
 ]
 
 
@@ -300,15 +297,15 @@ class ChatFlow:
                 "anticipate_response", {"content": anticipation}, source="anticipation",
             )
 
-        # FrontOutput は farewell タスク起動より前にログする。
+        # FrontOutput は ambience タスク起動より前にログする。
         # asyncio.create_task はコンテキストをコピーするため、
-        # FrontOutput のカウンターインクリメントが反映された状態で farewell を起動する。
+        # FrontOutput のカウンターインクリメントが反映された状態で ambience を起動する。
         logger.log_front_output(clean_text)
         self._log_debug("CHAT stream", request, ctx.messages, clean_text)
 
-        # 別れ検出: ストリーム完了後にバックグラウンドタスクとして起動する。
+        # なりゆき判定: ストリーム完了後にバックグラウンドタスクとして起動する。
         # 結果はDBに保存し、次リクエスト時の already_exited チェックで検知される。
-        launch_farewell_tasks(self.memory_manager, request, ctx.messages, clean_text)
+        launch_ambience_tasks(self.memory_manager, request, ctx.messages, clean_text)
 
         if clean_text and not text_already_streamed:
             yield ("text", clean_text)

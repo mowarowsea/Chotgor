@@ -49,7 +49,7 @@ from backend.services.character_query import ask_character
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.character_actions.executor import ToolExecutor
-from backend.character_actions.farewell_detector import FAREWELL_EMOTION_RUBRIC
+from backend.character_actions.ambience_judge import EMOTION_RUBRIC
 from backend.services.memory.format import origin_label_prefix, short_thread_id
 from backend.services.scenario_chat.format_speech import format_xml_speech_line
 
@@ -808,7 +808,7 @@ async def run_chronicle(
         closed_threads=closed_threads_text,
         conversation=conversation_text,
         memories=memories,
-        farewell_emotion_rubric=FAREWELL_EMOTION_RUBRIC.strip(),
+        farewell_emotion_rubric=EMOTION_RUBRIC.strip(),
         farewell_config=farewell_config_text,
     )
 

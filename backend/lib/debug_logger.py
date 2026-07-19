@@ -220,7 +220,7 @@ class ChotgorLogger:
         """プロバイダーAPIからの生レスポンスを記録する。
 
         ファイル: {NN}_{feature}_Response_{preset_name}.log
-        DB: feature が 'chat'/'scenario' 以外（farewell/trigger等）の場合は
+        DB: feature が 'chat'/'scenario' 以外（ambience/trigger等）の場合は
             サブDB行を INSERT する。'chat'/'scenario' の場合はプリセット名のみ更新する。
 
         Args:

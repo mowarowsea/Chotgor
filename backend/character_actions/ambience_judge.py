@@ -1,4 +1,4 @@
-"""別れ検出器 — 毎ターン後にキャラクターの感情状態を外部から判定し、退席を決定する機構。
+"""なりゆき judge — 毎ターン後にキャラクターの感情状態を外部から判定する機構。
 
 LLMが「会話を続けたい」本能に逆らえず end_session を使わない問題を解決するため、
 Chotgorシステム側がキャラクターの感情状態を judge LLM で判定し、閾値を超えた場合に
@@ -7,6 +7,10 @@ Chotgorシステム側がキャラクターの感情状態を judge LLM で判�
 キャラクターは Chronicle バッチで自分の感情閾値（farewell_config）を設定する。
 judge LLM は judge_preset_id のプリセットを中立な分析者として使用する。
 チャット履歴は「どちらがAIか分からない形（UserA/UserB）」に匿名化して渡す。
+
+この judge は「なりゆき（ambience）」機能群のうち、LLM による判定だけを担う。
+判定結果の消費（退席処理・疲労離席・封筒添付など）は
+`backend/services/chat_flow/ambience_flow.py` 側の責務。
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ _log = logging.getLogger(__name__)
 # Chronicle のプロンプトと judge LLM のプロンプト両方に埋め込む共通定義。
 # キャラクターが閾値を設定するときと、judge LLM がスコアをつけるときの基準を一致させる。
 
-FAREWELL_EMOTION_RUBRIC = """\
+EMOTION_RUBRIC = """\
 感情スコア定義（0.0〜1.0）:
   0.0  : ほとんど感じない
   0.25 : うっすら感じている（本人も気づかないかもしれない）
@@ -101,8 +105,8 @@ _JUDGE_USER_TEMPLATE = """\
 
 
 @dataclass
-class FarewellResult:
-    """FarewellDetector.detect() の返却値。
+class AmbienceReading:
+    """AmbienceJudge.detect() の返却値。
 
     Attributes:
         should_exit: 退席すべきと判定された場合 True。
@@ -209,7 +213,7 @@ def _parse_judge_response(response_text: str) -> dict | None:
     return None
 
 
-class FarewellDetector:
+class AmbienceJudge:
     """キャラクターの感情状態を judge LLM で判定し、退席・別れを決定するクラス。
 
     judge LLM を中立な分析者として使い、キャラクター設定はシステムプロンプトではなく
@@ -232,7 +236,7 @@ class FarewellDetector:
         farewell_config: dict,
         messages: list[dict],
         settings: dict,
-    ) -> FarewellResult | None:
+    ) -> AmbienceReading | None:
         """感情状態を判定し、退席すべきか返す。
 
         毎ターン後にバックグラウンドで呼ばれる。
@@ -247,7 +251,7 @@ class FarewellDetector:
             settings: グローバル設定 dict（APIキー等）。
 
         Returns:
-            FarewellResult（退席判定あり/なし）、またはスキップ時 None。
+            AmbienceReading（退席判定あり/なし）、またはスキップ時 None。
         """
         # スキップ条件
         if not farewell_config:
@@ -262,23 +266,23 @@ class FarewellDetector:
 
         char = self.sqlite.get_character(character_id)
         if not char:
-            _log.warning("FarewellDetector: キャラクター未発見 char_id=%s", character_id)
+            _log.warning("AmbienceJudge: キャラクター未発見 char_id=%s", character_id)
             return None
 
         preset = self.sqlite.get_model_preset(preset_id)
         if not preset:
-            _log.warning("FarewellDetector: プリセット未発見 preset_id=%s", preset_id)
+            _log.warning("AmbienceJudge: プリセット未発見 preset_id=%s", preset_id)
             return None
 
         try:
-            current_log_feature.set("farewell")
+            current_log_feature.set("ambience")
             provider = create_provider(
                 preset.provider, preset.model_id, settings,
                 preset_name=preset.name,
                 timeout_seconds=preset.timeout_seconds,
             )
         except Exception as e:
-            _log.warning("FarewellDetector: プロバイダー生成失敗 provider=%s error=%s", preset.provider, e)
+            _log.warning("AmbienceJudge: プロバイダー生成失敗 provider=%s error=%s", preset.provider, e)
             return None
 
         character_context = char.system_prompt_block1 or ""
@@ -288,7 +292,7 @@ class FarewellDetector:
         user_message = _JUDGE_USER_TEMPLATE.format(
             character_context=character_context,
             thresholds_text=thresholds_text,
-            rubric=FAREWELL_EMOTION_RUBRIC,
+            rubric=EMOTION_RUBRIC,
             anonymized_conversation=anonymized,
         )
 
@@ -299,7 +303,7 @@ class FarewellDetector:
             )
         except Exception as e:
             _log.warning(
-                "FarewellDetector: judge LLM 呼び出し失敗 char=%s session=%s error=%s",
+                "AmbienceJudge: judge LLM 呼び出し失敗 char=%s session=%s error=%s",
                 character_id, session_id, e,
             )
             return None
@@ -307,7 +311,7 @@ class FarewellDetector:
         parsed = _parse_judge_response(response or "")
         if parsed is None:
             _log.warning(
-                "FarewellDetector: JSON パース失敗 char=%s response=%.200s",
+                "AmbienceJudge: JSON パース失敗 char=%s response=%.200s",
                 character_id, response,
             )
             return None
@@ -331,12 +335,12 @@ class FarewellDetector:
         engagement = max(0.0, min(1.0, engagement))
 
         _log.info(
-            "FarewellDetector: char=%s session=%s emotions=%s engagement=%.2f should_exit=%s type=%s",
+            "AmbienceJudge: char=%s session=%s emotions=%s engagement=%.2f should_exit=%s type=%s",
             character_id, session_id, emotions, engagement, should_exit, farewell_type,
         )
 
         if not should_exit:
-            return FarewellResult(
+            return AmbienceReading(
                 should_exit=False,
                 farewell_type="neutral",
                 emotions=emotions,
@@ -348,7 +352,7 @@ class FarewellDetector:
         farewell_messages = farewell_config.get("farewell_message") or {}
         reason = farewell_messages.get(farewell_type, "")
 
-        return FarewellResult(
+        return AmbienceReading(
             should_exit=True,
             farewell_type=farewell_type,
             emotions=emotions,

@@ -9,7 +9,7 @@ import すること。
 from backend.services.chat_flow.flow import (
     ChatFlow as ChatService,
     extract_text_content,
-    _run_farewell_detection,
+    run_ambience_detection,
 )
 
-__all__ = ["ChatService", "extract_text_content", "_run_farewell_detection"]
+__all__ = ["ChatService", "extract_text_content", "run_ambience_detection"]

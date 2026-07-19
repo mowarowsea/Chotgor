@@ -1,8 +1,12 @@
-"""ChatFlow の別れ・疲労離席後処理 — ターン完了後のバックグラウンド判定を担う。
+"""ChatFlow の なりゆき（ambience）後処理 — ターン完了後のバックグラウンド判定を担う。
 
 flow.py（経路のオーケストレーション）から分離した「応答が出た後の退席まわり」の層。
-judge LLM による別れ検出（run_farewell_detection）と、その起動判定
-（launch_farewell_tasks。judge 不在時の疲労離席縮退も含む）を持つ。
+judge LLM による判定（run_ambience_detection）と、その起動判定
+（launch_ambience_tasks。judge 不在時の疲労離席縮退も含む）を持つ。
+
+なりゆき（ambience）は判定〜設定〜派生処理を含む機能群の総称であり、
+このモジュールは「設定（コード）」側 — judge 出力を消費して DB 更新・退席処理・
+封筒添付・疲労チェックを行う起点ファイル。
 """
 
 from __future__ import annotations
@@ -18,11 +22,11 @@ if TYPE_CHECKING:
     from backend.services.chat.models import ChatRequest
     from backend.services.memory.manager import InscribedMemoryManager
 
-from backend.character_actions.farewell_detector import FarewellDetector
+from backend.character_actions.ambience_judge import AmbienceJudge
 
 
-async def run_farewell_detection(
-    detector: "FarewellDetector",
+async def run_ambience_detection(
+    judge: "AmbienceJudge",
     character_id: str,
     character_name: str,
     session_id: str,
@@ -32,7 +36,7 @@ async def run_farewell_detection(
     settings: dict,
     vector_store=None,
 ) -> None:
-    """FarewellDetectorをバックグラウンドで実行し、退席判定をDBに保存するコルーチン。
+    """AmbienceJudgeをバックグラウンドで実行し、退席判定をDBに保存するコルーチン。
 
     退席確定の場合のみセッションの exited_chars を更新する。
     疎遠化確定時は SQLite に加えてベクトルストアの定義 embedding も "estranged" に更新する。
@@ -40,7 +44,7 @@ async def run_farewell_detection(
     次リクエスト時の already_exited チェックで自動検知される。
 
     Args:
-        detector: FarewellDetectorインスタンス。
+        judge: AmbienceJudgeインスタンス。
         character_id: キャラクターID。
         character_name: キャラクター名。
         session_id: 対象セッションID。
@@ -51,7 +55,7 @@ async def run_farewell_detection(
         vector_store: LanceStore インスタンス（疎遠化時の embedding 更新に使用。None でもよい）。
     """
     try:
-        result = await detector.detect(
+        result = await judge.detect(
             character_id=character_id,
             session_id=session_id,
             preset_id=preset_id,
@@ -60,14 +64,14 @@ async def run_farewell_detection(
             settings=settings,
         )
     except Exception:
-        _log.exception("FarewellDetector実行エラー char=%s session=%s", character_name, session_id)
+        _log.exception("AmbienceJudge実行エラー char=%s session=%s", character_name, session_id)
         return
 
     # judge の採点結果を該当ターン（最新キャラ発話）の封筒 payload に残す
     # （Tier 3 サンプリングの材料を兼ねる。めぐり Phase 5）。best-effort。
     if result is not None:
         try:
-            detector.sqlite.attach_payload_to_latest_chat_event(
+            judge.sqlite.attach_payload_to_latest_chat_event(
                 character_id, session_id,
                 {
                     "judge": {
@@ -86,7 +90,7 @@ async def run_farewell_detection(
         try:
             from backend.services.gate import check_fatigue_leave
             check_fatigue_leave(
-                detector.sqlite,
+                judge.sqlite,
                 character_id=character_id,
                 character_name=character_name,
                 session_id=session_id,
@@ -100,13 +104,13 @@ async def run_farewell_detection(
         return
 
     _log.info(
-        "別れ検出: セッション退席 char=%s session=%s type=%s emotions=%s",
+        "なりゆき: セッション退席 char=%s session=%s type=%s emotions=%s",
         character_name, session_id, result.farewell_type, result.emotions,
     )
 
     # セッションの exited_chars に退席エントリを追記する
     try:
-        sqlite = detector.sqlite
+        sqlite = judge.sqlite
         session = sqlite.get_chat_session(session_id)
         if session is None:
             return
@@ -177,15 +181,15 @@ async def run_farewell_detection(
         _log.exception("退席DB保存エラー char=%s session=%s", character_name, session_id)
 
 
-def launch_farewell_tasks(
+def launch_ambience_tasks(
     memory_manager: "InscribedMemoryManager",
     request: "ChatRequest",
     messages: list[dict],
     clean_text: str,
 ) -> None:
-    """ターン完了後の別れ検出／疲労離席をバックグラウンドタスクとして起動する。
+    """ターン完了後の なりゆき判定／疲労離席をバックグラウンドタスクとして起動する。
 
-    - judge プリセット設定済み（かつ疎遠化前）: run_farewell_detection を起動。
+    - judge プリセット設定済み（かつ疎遠化前）: run_ambience_detection を起動。
     - judge 未設定でも farewell_config.fatigue があれば疲労離席だけ動かす
       （engagement=0.5 縮退。めぐり Phase 5 — 出口は物理が握る）。
     - session_id が無い経路（シナリオ・バッチ）は何もしない。
@@ -200,17 +204,17 @@ def launch_farewell_tasks(
         and request.judge_preset_id
         and request.farewell_relationship_status != "estranged"
     ):
-        farewell_messages = [*messages, {"role": "assistant", "content": clean_text}]
-        detector = FarewellDetector(memory_manager.sqlite)
+        judge_messages = [*messages, {"role": "assistant", "content": clean_text}]
+        judge = AmbienceJudge(memory_manager.sqlite)
         asyncio.create_task(
-            run_farewell_detection(
-                detector=detector,
+            run_ambience_detection(
+                judge=judge,
                 character_id=request.character_id,
                 character_name=request.character_name,
                 session_id=request.session_id,
                 preset_id=request.judge_preset_id,
                 farewell_config=request.farewell_config,
-                messages=farewell_messages,
+                messages=judge_messages,
                 settings=request.settings,
                 vector_store=memory_manager.vector_store,
             )

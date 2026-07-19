@@ -1,8 +1,8 @@
-"""退席判定（_run_farewell_detection）テスト群の共有ヘルパー・フィクスチャ。
+"""なりゆき判定（run_ambience_detection）テスト群の共有ヘルパー・フィクスチャ。
 
-FarewellResult / FarewellDetector / farewell_config の組み立てと、
+AmbienceReading / AmbienceJudge / farewell_config の組み立てと、
 累積カウント制御用のネガティブ退席セッション作成を提供する。
-test_farewell_service_*.py から import して使用する
+test_ambience_service_*.py から import して使用する
 （フィクスチャは import するだけで pytest が認識する）。
 sqlite_store は conftest.py で定義済み。
 ファイル名先頭がアンダースコアのため pytest のテスト収集対象にはならない。
@@ -15,19 +15,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.character_actions.farewell_detector import FarewellDetector, FarewellResult
+from backend.character_actions.ambience_judge import AmbienceJudge, AmbienceReading
 
 
 # ─── ヘルパー ──────────────────────────────────────────────────────────────────
 
 
-def _make_farewell_result(
+def _make_ambience_reading(
     should_exit: bool,
     farewell_type: str = "negative",
     reason: str = "もう話したくない。",
     emotions: dict | None = None,
-) -> FarewellResult:
-    """テスト用 FarewellResult を生成するヘルパー。
+) -> AmbienceReading:
+    """テスト用 AmbienceReading を生成するヘルパー。
 
     Args:
         should_exit: 退席すべきかどうか。
@@ -36,9 +36,9 @@ def _make_farewell_result(
         emotions: 感情スコア dict。
 
     Returns:
-        FarewellResult インスタンス。
+        AmbienceReading インスタンス。
     """
-    return FarewellResult(
+    return AmbienceReading(
         should_exit=should_exit,
         farewell_type=farewell_type,
         reason=reason,
@@ -46,20 +46,20 @@ def _make_farewell_result(
     )
 
 
-def _make_detector(sqlite_store, result: FarewellResult | None) -> FarewellDetector:
-    """detect() の返値を固定したモック FarewellDetector を返すヘルパー。
+def _make_judge(sqlite_store, result: AmbienceReading | None) -> AmbienceJudge:
+    """detect() の返値を固定したモック AmbienceJudge を返すヘルパー。
 
     Args:
         sqlite_store: 実際の SQLiteStore インスタンス。
-        result: detect() が返す FarewellResult（None も可）。
+        result: detect() が返す AmbienceReading（None も可）。
 
     Returns:
-        モック済み FarewellDetector。
+        モック済み AmbienceJudge。
     """
-    detector = MagicMock(spec=FarewellDetector)
-    detector.sqlite = sqlite_store
-    detector.detect = AsyncMock(return_value=result)
-    return detector
+    judge = MagicMock(spec=AmbienceJudge)
+    judge.sqlite = sqlite_store
+    judge.detect = AsyncMock(return_value=result)
+    return judge
 
 
 def _make_farewell_config(
@@ -134,7 +134,7 @@ def char_id(sqlite_store):
     cid = str(uuid.uuid4())
     sqlite_store.create_character(
         character_id=cid,
-        name="別れサービステストキャラ",
+        name="なりゆきサービステストキャラ",
         system_prompt_block1="テスト用設定",
     )
     return cid
@@ -146,7 +146,7 @@ def session_id(sqlite_store, char_id):
     sid = str(uuid.uuid4())
     sqlite_store.create_chat_session(
         session_id=sid,
-        model_id="別れサービステストキャラ@test-preset",
+        model_id="なりゆきサービステストキャラ@test-preset",
     )
     return sid
 
@@ -155,4 +155,3 @@ def session_id(sqlite_store, char_id):
 def farewell_config():
     """デフォルトの farewell_config（閾値3、lookback7日）を返すフィクスチャ。"""
     return _make_farewell_config(lookback_days=7, threshold=3)
-

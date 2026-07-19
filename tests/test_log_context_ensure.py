@@ -183,10 +183,10 @@ class TestDebugLoggerFallbackPrevention:
         assert ids[0] != UNSET_MESSAGE_ID
 
     def test_sub_entry_does_not_use_fallback_request_id(self, store, monkeypatch):
-        """farewell 等のサブ行 INSERT でも request_id が "--------" にならないこと。"""
+        """ambience 等のサブ行 INSERT でも request_id が "--------" にならないこと。"""
         monkeypatch.delenv("CHOTGOR_DEBUG", raising=False)
         _reset_context()
-        current_log_feature.set("farewell")
+        current_log_feature.set("ambience")
         logger = ChotgorLogger()
         logger.set_store(store)
         logger.log_provider_response("TestPreset", "さようなら")

@@ -90,7 +90,7 @@
 | パス | 責務 |
 |---|---|
 | `services/chat/` | 1on1チャット本流。`service.py`（ChatFlow の再エクスポート）、`request_builder.py`（安定ブロック＝システムプロンプト＋変動ブロック＝ターン注釈の二層組み立て）、`request_factory.py`、`content.py`、`indexer.py`（履歴を LanceDB `chat_turns` へ upsert）、`models.py` |
-| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`farewell_flow.py`（別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象） |
+| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`ambience_flow.py`（なりゆき: 別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象） |
 | `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py`、`scene_close.py`（[SCENE_CLOSE] 検出・除去）、`usual_days.py`（うつつのセッション管理・演出素材・シーン駆動） |
 | `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`reindex_service.py`（embedding変更時の全再構築） |
 | `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる）。ANTICIPATE_RESPONSE ガイドは付与しない（予想は次ターンを受け取る相手がいるチャット前提の機能のため） |
@@ -118,7 +118,7 @@
 | `rescheduler.py` | `override_schedule`（1on1専用・当日予定の一時上書き）。state=OnTime/haru/adhoc/occupancy0.85 のエントリを insert するだけ（占有圧最大が勝つ読み取り解決）。`parse_until_time` は 24時超え表記対応・常に24h以内 |
 | `context_tools.py` | **コンテキスト別ツール出し分けの単一判定点**。reach_out=うつつのみ（cap到達日は非露出）／visit_user=1on1かつ対面OFF／override_schedule=1on1かつ生活カレンダー有効。消費者は3系統: ①flow.py→provider.extra_tools（in-process tool-use）②mcp_server.py→GET /api/mcp/tools?character_id&origin&session_id（claude_cli）③flow.py→build_system_prompt(context_tool_hints) |
 | `anticipator.py` | `[ANTICIPATE_RESPONSE:]` タグ抽出（次の展開への期待） |
-| `farewell_detector.py` | 退席判定（judge LLM がキャラクターの感情状態を毎ターン外部判定。judge プリセットは `judge_preset_id`） |
+| `ambience_judge.py` | なりゆき judge（判定）: LLM がキャラクターの感情状態を毎ターン外部判定。judge プリセットは `judge_preset_id`。将来は場所ラベル等の軸も担う |
 | `character_context.py` | 通常チャット以外でキャラクターとして問い合わせる際の共通コンテキストブロック構築 |
 | `tool_tags.py` | ツール名⇔タグ名・ログ表示ラベル/色の集約 |
 

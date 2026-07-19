@@ -2,8 +2,8 @@
 
 テスト方針:
     - SQLite は conftest.py の sqlite_store フィクスチャで実際の一時DBを使用する
-    - FarewellDetector.detect() は AsyncMock でモックして実際のLLM呼び出しを回避する
-    - FarewellResult を直接注入し、DB の状態変化（relationship_status / exited_chars）を確認する
+    - AmbienceJudge.detect() は AsyncMock でモックして実際のLLM呼び出しを回避する
+    - AmbienceReading を直接注入し、DB の状態変化（relationship_status / exited_chars）を確認する
 """
 
 import uuid
@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.chat.service import _run_farewell_detection
+from backend.services.chat.service import run_ambience_detection
 
-from tests._farewell_helpers import (  # noqa: F401
+from tests._ambience_helpers import (  # noqa: F401
     _create_negative_exit_sessions,
-    _make_detector,
+    _make_judge,
     _make_farewell_config,
-    _make_farewell_result,
+    _make_ambience_reading,
     _run,
     char_id,
     farewell_config,
@@ -27,20 +27,20 @@ from tests._farewell_helpers import (  # noqa: F401
 # ─── should_exit=False / None — 何も起きないケース ──────────────────────────────
 
 
-class TestFarewellDetectionNoAction:
+class TestAmbienceDetectionNoAction:
     """detect() が退席不要と判定した場合、DBが変化しないことを検証する。"""
 
     def test_should_exit_false_does_not_update_session(
         self, sqlite_store, char_id, session_id, farewell_config
     ):
         """should_exit=False の場合、exited_chars が更新されないこと。"""
-        result = _make_farewell_result(should_exit=False, farewell_type="neutral")
-        detector = _make_detector(sqlite_store, result)
+        result = _make_ambience_reading(should_exit=False, farewell_type="neutral")
+        judge = _make_judge(sqlite_store, result)
 
-        _run(_run_farewell_detection(
-            detector=detector,
+        _run(run_ambience_detection(
+            judge=judge,
             character_id=char_id,
-            character_name="別れサービステストキャラ",
+            character_name="なりゆきサービステストキャラ",
             session_id=session_id,
             preset_id="dummy-preset",
             farewell_config=farewell_config,
@@ -56,13 +56,13 @@ class TestFarewellDetectionNoAction:
         self, sqlite_store, char_id, session_id, farewell_config
     ):
         """should_exit=False の場合、relationship_status が変更されないこと。"""
-        result = _make_farewell_result(should_exit=False, farewell_type="neutral")
-        detector = _make_detector(sqlite_store, result)
+        result = _make_ambience_reading(should_exit=False, farewell_type="neutral")
+        judge = _make_judge(sqlite_store, result)
 
-        _run(_run_farewell_detection(
-            detector=detector,
+        _run(run_ambience_detection(
+            judge=judge,
             character_id=char_id,
-            character_name="別れサービステストキャラ",
+            character_name="なりゆきサービステストキャラ",
             session_id=session_id,
             preset_id="dummy-preset",
             farewell_config=farewell_config,
@@ -73,16 +73,16 @@ class TestFarewellDetectionNoAction:
         char = sqlite_store.get_character(char_id)
         assert getattr(char, "relationship_status", "active") == "active"
 
-    def test_detector_returns_none_does_not_update_session(
+    def test_judge_returns_none_does_not_update_session(
         self, sqlite_store, char_id, session_id, farewell_config
     ):
         """detect() が None を返した場合、exited_chars が更新されないこと。"""
-        detector = _make_detector(sqlite_store, None)
+        judge = _make_judge(sqlite_store, None)
 
-        _run(_run_farewell_detection(
-            detector=detector,
+        _run(run_ambience_detection(
+            judge=judge,
             character_id=char_id,
-            character_name="別れサービステストキャラ",
+            character_name="なりゆきサービステストキャラ",
             session_id=session_id,
             preset_id="dummy-preset",
             farewell_config=farewell_config,
@@ -98,7 +98,7 @@ class TestFarewellDetectionNoAction:
 # ─── ネガティブ退席 — 閾値未満 ────────────────────────────────────────────────
 
 
-class TestFarewellDetectionBelowThreshold:
+class TestAmbienceDetectionBelowThreshold:
     """ネガティブ退席の累積数が閾値未満の場合の動作を検証する。"""
 
     def test_below_threshold_does_not_set_estranged(
@@ -108,15 +108,15 @@ class TestFarewellDetectionBelowThreshold:
         # 既存のネガティブ退席を2件作成（prev_count=2、total=3、threshold=3 → ちょうど閾値）
         # ただしここでは threshold=3 に対して prev_count=1 のケースでテスト
         config = _make_farewell_config(threshold=3)
-        _create_negative_exit_sessions(sqlite_store, "別れサービステストキャラ", 1)
+        _create_negative_exit_sessions(sqlite_store, "なりゆきサービステストキャラ", 1)
 
-        result = _make_farewell_result(should_exit=True, farewell_type="negative")
-        detector = _make_detector(sqlite_store, result)
+        result = _make_ambience_reading(should_exit=True, farewell_type="negative")
+        judge = _make_judge(sqlite_store, result)
 
-        _run(_run_farewell_detection(
-            detector=detector,
+        _run(run_ambience_detection(
+            judge=judge,
             character_id=char_id,
-            character_name="別れサービステストキャラ",
+            character_name="なりゆきサービステストキャラ",
             session_id=session_id,
             preset_id="dummy-preset",
             farewell_config=config,
@@ -134,15 +134,15 @@ class TestFarewellDetectionBelowThreshold:
         """累積数が閾値未満の場合、警告テキストが退席メッセージに付加されること。"""
         config = _make_farewell_config(lookback_days=7, threshold=3)
         # prev_count=1 → total=2 < threshold=3
-        _create_negative_exit_sessions(sqlite_store, "別れサービステストキャラ", 1)
+        _create_negative_exit_sessions(sqlite_store, "なりゆきサービステストキャラ", 1)
 
-        result = _make_farewell_result(should_exit=True, farewell_type="negative", reason="不機嫌。")
-        detector = _make_detector(sqlite_store, result)
+        result = _make_ambience_reading(should_exit=True, farewell_type="negative", reason="不機嫌。")
+        judge = _make_judge(sqlite_store, result)
 
-        _run(_run_farewell_detection(
-            detector=detector,
+        _run(run_ambience_detection(
+            judge=judge,
             character_id=char_id,
-            character_name="別れサービステストキャラ",
+            character_name="なりゆきサービステストキャラ",
             session_id=session_id,
             preset_id="dummy-preset",
             farewell_config=config,
@@ -163,15 +163,15 @@ class TestFarewellDetectionBelowThreshold:
         """警告テキストに現在の累積退席数（prev + 1）が含まれること。"""
         config = _make_farewell_config(lookback_days=14, threshold=5)
         # prev_count=2 → total=3
-        _create_negative_exit_sessions(sqlite_store, "別れサービステストキャラ", 2)
+        _create_negative_exit_sessions(sqlite_store, "なりゆきサービステストキャラ", 2)
 
-        result = _make_farewell_result(should_exit=True, farewell_type="negative")
-        detector = _make_detector(sqlite_store, result)
+        result = _make_ambience_reading(should_exit=True, farewell_type="negative")
+        judge = _make_judge(sqlite_store, result)
 
-        _run(_run_farewell_detection(
-            detector=detector,
+        _run(run_ambience_detection(
+            judge=judge,
             character_id=char_id,
-            character_name="別れサービステストキャラ",
+            character_name="なりゆきサービステストキャラ",
             session_id=session_id,
             preset_id="dummy-preset",
             farewell_config=config,
@@ -192,13 +192,13 @@ class TestFarewellDetectionBelowThreshold:
         config = _make_farewell_config(threshold=5)
         # prev_count=0 → total=1
 
-        result = _make_farewell_result(should_exit=True, farewell_type="negative")
-        detector = _make_detector(sqlite_store, result)
+        result = _make_ambience_reading(should_exit=True, farewell_type="negative")
+        judge = _make_judge(sqlite_store, result)
 
-        _run(_run_farewell_detection(
-            detector=detector,
+        _run(run_ambience_detection(
+            judge=judge,
             character_id=char_id,
-            character_name="別れサービステストキャラ",
+            character_name="なりゆきサービステストキャラ",
             session_id=session_id,
             preset_id="dummy-preset",
             farewell_config=config,
