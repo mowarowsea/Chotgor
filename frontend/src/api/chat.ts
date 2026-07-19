@@ -37,6 +37,12 @@ export interface Session {
   title: string;
   /** セッション種別。現状は "1on1" のみ。 */
   session_type: "1on1";
+  /**
+   * なりゆき（ambience）の場所判定ラベル。対面モード中の背景画像解決に使う。
+   * judge がキャラ発話後のバックグラウンドで判定するため、反映は次ターン以降
+   * （done 後の fetchSessions で更新される）。
+   */
+  current_bg_label?: string;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +77,11 @@ export interface Character {
   face_to_face_mode?: number;
   /** 対面背景画像が登録済みか。実画像は `/api/characters/{id}/face_to_face_bg_image` から取得。 */
   has_face_to_face_bg_image?: boolean;
+  /**
+   * 対面背景画像のラベル一覧（face_to_face_bg_images の label 群、配列順）。
+   * 非空ラベルが1つでもあれば「ラベル運用あり」= current_bg_label で画像を解決する。
+   */
+  face_to_face_bg_labels?: string[];
 }
 
 /** キャラクター一覧を取得する。 */

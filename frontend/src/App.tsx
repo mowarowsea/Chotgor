@@ -132,9 +132,26 @@ export default function App() {
   const activeCharNameOnly = charNameOf(selectedModel || activeSession?.model_id || characterName);
   const activeCharacter = characters.find((c) => c.name === activeCharNameOnly);
   const faceToFaceMode = !!activeCharacter?.face_to_face_mode;
-  const faceToFaceBgUrl = activeCharacter && activeCharacter.has_face_to_face_bg_image
-    ? `/api/characters/${activeCharacter.id}/face_to_face_bg_image`
-    : null;
+  /**
+   * 対面背景画像の URL 導出（なりゆき ambience）。
+   * - ラベル運用なし（非空ラベルの候補がない。旧単数画像の移行直後など）:
+   *   先頭画像を常時表示（従来挙動の維持）。
+   * - ラベル運用あり: セッションの current_bg_label にマッチする画像を表示。
+   *   未判定・候補外は背景なし（ambience_plan.md「未マッチ/例外時の挙動」）。
+   * 判定はキャラ発話後のバックグラウンドで走るため、切替は次ターンの
+   * fetchSessions 反映時（案B: リアルタイム SSE は使わない）。
+   */
+  const faceToFaceBgUrl = (() => {
+    if (!activeCharacter || !activeCharacter.has_face_to_face_bg_image) return null;
+    const base = `/api/characters/${activeCharacter.id}/face_to_face_bg_image`;
+    const bgLabels = activeCharacter.face_to_face_bg_labels ?? [];
+    if (!bgLabels.some((l) => !!l)) return base;
+    const label = activeSession?.current_bg_label;
+    if (label && bgLabels.includes(label)) {
+      return `${base}?label=${encodeURIComponent(label)}`;
+    }
+    return null;
+  })();
   /** 対面モード切替: 楽観更新 → API。失敗時は state を巻き戻してエラー表示。 */
   const handleToggleFaceToFace = useCallback(async (enabled: boolean) => {
     if (!activeCharacter) return;
