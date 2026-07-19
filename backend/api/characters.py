@@ -113,10 +113,26 @@ async def get_character_image(request: Request, character_id: str):
 
 
 @router.get("/{character_id}/face_to_face_bg_image")
-async def get_face_to_face_bg_image(request: Request, character_id: str):
-    """対面モード時に ChatView 背景へ表示する画像をバイナリで返す。未設定なら 404。"""
+async def get_face_to_face_bg_image(
+    request: Request, character_id: str,
+    label: str | None = None, index: int | None = None,
+):
+    """対面モード時に ChatView 背景へ表示する画像をバイナリで返す。
+
+    face_to_face_bg_images 配列から `label`（一致）または `index`（位置）で
+    1件を解決する。両方省略時は先頭。該当なし・未設定なら 404。
+    """
     char = request.app.state.sqlite.get_character(character_id)
-    bg = getattr(char, "face_to_face_bg_image", None) if char else None
+    entries = (getattr(char, "face_to_face_bg_images", None) or []) if char else []
+    entry = None
+    if label is not None:
+        entry = next((e for e in entries if e.get("label") == label), None)
+    elif index is not None:
+        if 0 <= index < len(entries):
+            entry = entries[index]
+    elif entries:
+        entry = entries[0]
+    bg = (entry or {}).get("image")
     if not bg:
         raise HTTPException(status_code=404, detail="Background image not found")
     try:

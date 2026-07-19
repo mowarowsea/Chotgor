@@ -212,12 +212,15 @@ async def update_character(request: Request, character_id: str):
         # 削除フラグが立っている場合は画像をクリアする
         update_kwargs["image_data"] = None
 
-    # 対面モード背景画像（image_data と同じ data URI パターン。フィールド名のみ別）
-    new_bg = await _read_image_data(form, field="face_to_face_bg_image_file")
-    if new_bg:
-        update_kwargs["face_to_face_bg_image"] = new_bg
-    elif form.get("remove_face_to_face_bg_image"):
-        update_kwargs["face_to_face_bg_image"] = None
+    # 対面モード背景画像（複数・ラベル付き）: 既存配列のラベル更新・削除と新規追加を
+    # フォームから組み立てる（なりゆき ambience Step 3）。
+    # face_bg_form_present マーカーが無い POST（背景セクションを含まない別経路の
+    # フォーム）では配列に触らない — keep フィールド欠落を全削除と誤認しないため。
+    if form.get("face_bg_form_present"):
+        existing_char = request.app.state.sqlite.get_character(character_id)
+        update_kwargs["face_to_face_bg_images"] = await _build_face_bg_images(
+            form, getattr(existing_char, "face_to_face_bg_images", None) or []
+        )
 
     request.app.state.sqlite.update_character(character_id, **update_kwargs)
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
@@ -226,6 +229,32 @@ async def update_character(request: Request, character_id: str):
     if char:
         _persist_usual_world(request.app.state.sqlite, character_id, char.name, form)
     return _save_response(request, "/ui/characters")
+
+
+async def _build_face_bg_images(form, existing: list) -> list | None:
+    """フォームから対面背景画像の配列（[{label, image}]）を組み立てる。
+
+    既存エントリはフォームの face_bg_keep_{idx}（"1"=残す）と face_bg_label_{idx}
+    （ラベル編集）を反映する。keep が "1" でないエントリは削除扱い。
+    face_bg_new_file + face_bg_new_label があれば末尾に新規追加する。
+
+    落とし穴: 既存エントリの idx はフォーム描画時点の配列位置。削除・追加のたびに
+    UI 側でページを再読込して idx を振り直す前提（character_edit.html 参照）。
+
+    Returns:
+        新しい配列。空になった場合は None（NULL 保存 = 背景なし）。
+    """
+    entries: list[dict] = []
+    for idx, entry in enumerate(existing):
+        if form.get(f"face_bg_keep_{idx}") != "1":
+            continue
+        label = (form.get(f"face_bg_label_{idx}") or "").strip()
+        entries.append({"label": label, "image": entry.get("image", "")})
+    new_image = await _read_image_data(form, field="face_bg_new_file")
+    if new_image:
+        new_label = (form.get("face_bg_new_label") or "").strip()
+        entries.append({"label": new_label, "image": new_image})
+    return entries or None
 
 
 def _build_action_menu(form) -> dict | None:

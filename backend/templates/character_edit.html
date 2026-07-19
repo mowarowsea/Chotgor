@@ -181,8 +181,11 @@
         {# - face_to_face_mode は1on1チャット画面のトグルからも切り替えられるが、
              ここからも明示的に変更できる（編集画面で対面ONのままにしておけば次回1on1から
              即対面で入れる）。
-           - face_to_face_bg_image は base64 data URI として保存され、ChatView 背景に
-             cover で表示される。image_data と同じアップロードパターン。 #}
+           - face_to_face_bg_images は [{label, image(base64 data URI)}] の配列。
+             ラベルは ambience judge の場所判定（location_label）候補になり、
+             判定結果に応じて ChatView 背景が切り替わる。
+             既存エントリの削除・新規追加はサーバ保存後に reload して idx を振り直す
+             （_build_face_bg_images の idx 前提を参照）。 #}
         <section class="ch-section">
             <div class="ch-section__head">
                 <h3 class="ch-section-title">face-to-face <small>・ 対面モード</small></h3>
@@ -209,27 +212,48 @@
             </div>
 
             <div class="ch-field" style="margin-bottom:0">
-                <span class="ch-label">背景画像 <span class="ch-hint">PNG / JPG / WebP — 2MB まで</span></span>
-                <div class="image-upload-row">
-                    <input type="file" id="face-bg-file-input" name="face_to_face_bg_image_file" accept="image/*"
-                        style="display:none" data-no-autosave>
-                    <div style="display:flex;flex-direction:column;gap:6px">
-                        <button type="button" class="ch-btn ch-btn--sm"
-                            onclick="document.getElementById('face-bg-file-input').click()">画像を選択</button>
-                        <button type="button" id="remove-face-bg-btn" class="ch-btn ch-btn--sm ch-btn--ghost"
-                            style="{% if not (character and character.face_to_face_bg_image) %}display:none{% endif %}"
-                            onclick="removeFaceBgImage()">削除</button>
+                <span class="ch-label">背景画像 <span class="ch-hint">PNG / JPG / WebP — 2MB まで。ラベルは場所が識別できる名前を推奨（例: はるの部屋、もわの部屋）</span></span>
+                <input type="hidden" name="face_bg_form_present" value="1">
+                {% if character %}
+                <div id="face-bg-list" style="display:flex;flex-direction:column;gap:10px">
+                    {% for entry in (character.face_to_face_bg_images or []) %}
+                    <div class="image-upload-row" id="face-bg-entry-{{ loop.index0 }}">
+                        <img src="/api/characters/{{ character.id }}/face_to_face_bg_image?index={{ loop.index0 }}"
+                            alt="対面背景 {{ entry.label }}"
+                            style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover">
+                        <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+                            <input type="text" class="ch-input" name="face_bg_label_{{ loop.index0 }}"
+                                value="{{ entry.label }}" placeholder="ラベル（例: はるの部屋）">
+                            <input type="hidden" name="face_bg_keep_{{ loop.index0 }}"
+                                id="face-bg-keep-{{ loop.index0 }}" value="1">
+                            <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                                style="align-self:flex-start"
+                                onclick="removeFaceBgEntry({{ loop.index0 }})">削除</button>
+                        </div>
                     </div>
-                    {% if character and character.face_to_face_bg_image %}
-                    <img id="face-bg-preview" src="/api/characters/{{ character.id }}/face_to_face_bg_image"
-                        alt="対面背景"
-                        style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover">
-                    {% else %}
-                    <img id="face-bg-preview" alt="" style="display:none">
-                    {% endif %}
+                    {% endfor %}
                 </div>
+                {# 新規追加行: file/label とも name を持たせない（通常 autosave の FormData に
+                   同乗させないため）。追加ボタンが JS で明示的に append して送信する。 #}
+                <div class="image-upload-row" style="margin-top:10px">
+                    <input type="file" id="face-bg-new-file" accept="image/*"
+                        style="display:none" data-no-autosave>
+                    <img id="face-bg-new-preview" alt="" style="display:none;max-width:200px;max-height:120px;border-radius:6px;object-fit:cover">
+                    <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+                        <input type="text" class="ch-input" id="face-bg-new-label"
+                            placeholder="ラベル（例: はるの部屋）" data-no-autosave>
+                        <div style="display:flex;gap:8px">
+                            <button type="button" class="ch-btn ch-btn--sm"
+                                onclick="document.getElementById('face-bg-new-file').click()">画像を選択</button>
+                            <button type="button" id="face-bg-add-btn" class="ch-btn ch-btn--sm" disabled
+                                onclick="addFaceBgEntry()">追加</button>
+                        </div>
+                    </div>
+                </div>
+                {% else %}
+                <p class="ch-hint" style="margin:0">キャラクター保存後に背景画像を追加できます。</p>
+                {% endif %}
             </div>
-            <input type="hidden" id="remove-face-bg-flag" name="remove_face_to_face_bg_image" value="">
         </section>
 
         {# ════════════ CHAPTER 2 — engine ════════════ #}
@@ -894,37 +918,61 @@
         if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
     }
 
-    // ── 対面モード 背景画像（クロップなし。アバターと違ってフリーアスペクト） ──
-    (function setupFaceBgImage() {
-        const fileInput = document.getElementById('face-bg-file-input');
+    // ── 対面モード 背景画像（複数・ラベル付き。クロップなしのフリーアスペクト） ──
+    // 削除・追加はサーバ保存後に reload して既存エントリの idx を振り直す
+    // （_build_face_bg_images が「描画時点の配列位置 = idx」を前提とするため）。
+    (function setupFaceBgNewImage() {
+        const fileInput = document.getElementById('face-bg-new-file');
         if (!fileInput) return;
         fileInput.addEventListener('change', function (e) {
             const file = e.target.files[0];
             if (!file) return;
             const reader = new FileReader();
             reader.onload = function (ev) {
-                const img = document.getElementById('face-bg-preview');
+                const img = document.getElementById('face-bg-new-preview');
                 img.src = ev.target.result;
                 img.style.display = '';
-                document.getElementById('remove-face-bg-flag').value = '';
-                document.getElementById('remove-face-bg-btn').style.display = '';
+                document.getElementById('face-bg-add-btn').disabled = false;
             };
             reader.readAsDataURL(file);
         });
     })();
 
-    /** 対面背景画像を削除する。プレビューを消し、削除フラグを立てる。 */
-    function removeFaceBgImage() {
-        const fileInput = document.getElementById('face-bg-file-input');
-        if (fileInput) {
-            fileInput.value = '';
-            try { fileInput.files = new DataTransfer().files; } catch (_) {}
-        }
-        const img = document.getElementById('face-bg-preview');
-        if (img) { img.src = ''; img.style.display = 'none'; }
-        document.getElementById('remove-face-bg-flag').value = '1';
-        document.getElementById('remove-face-bg-btn').style.display = 'none';
-        if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
+    /**
+     * フォーム全体を保存し、成功したら reload して背景一覧の idx を振り直す。
+     * @param {(fd: FormData) => void} [extraAppend] 送信直前に FormData へ追記するフック
+     */
+    async function saveFaceBgAndReload(extraAppend) {
+        const form = document.querySelector('form[data-autosave]');
+        const fd = new FormData(form);
+        if (extraAppend) extraAppend(fd);
+        const res = await fetch(form.action, {
+            method: 'POST',
+            body: fd,
+            headers: { 'X-Requested-With': 'fetch' },
+        });
+        if (res.ok) location.reload();
+        else alert('背景画像の保存に失敗しました');
+    }
+
+    /** 既存の対面背景エントリを削除する（keep フラグを落として保存）。 */
+    function removeFaceBgEntry(idx) {
+        document.getElementById('face-bg-keep-' + idx).value = '';
+        const row = document.getElementById('face-bg-entry-' + idx);
+        if (row) row.style.opacity = '0.4';
+        saveFaceBgAndReload();
+    }
+
+    /** 選択済みの新規画像＋ラベルを配列末尾に追加する。 */
+    function addFaceBgEntry() {
+        const fileInput = document.getElementById('face-bg-new-file');
+        if (!fileInput || !fileInput.files.length) return;
+        document.getElementById('face-bg-add-btn').disabled = true;
+        const label = document.getElementById('face-bg-new-label').value;
+        saveFaceBgAndReload(function (fd) {
+            fd.append('face_bg_new_file', fileInput.files[0]);
+            fd.append('face_bg_new_label', label);
+        });
     }
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>

@@ -30,9 +30,12 @@ def fmt_dt(dt: datetime | None) -> str | None:
 def char_to_dict(char) -> dict:
     """Character ORM オブジェクトを API レスポンス用 dict に変換する。
 
-    image_data / face_to_face_bg_image / enabled_providers は含まない
+    image_data / face_to_face_bg_images の画像本体 / enabled_providers は含まない
     （サイズ・センシティビティのため。背景画像は別エンドポイント経由でバイナリ取得）。
+    背景はラベル一覧（face_to_face_bg_labels）のみ返し、フロントは
+    `/api/characters/{id}/face_to_face_bg_image?label=...` で画像本体を解決する。
     """
+    bg_entries = getattr(char, "face_to_face_bg_images", None) or []
     return {
         "id": char.id,
         "name": char.name,
@@ -44,7 +47,8 @@ def char_to_dict(char) -> dict:
         "ghost_model": char.ghost_model,
         "allowed_tools": getattr(char, "allowed_tools", None) or {},
         "face_to_face_mode": int(getattr(char, "face_to_face_mode", 0) or 0),
-        "has_face_to_face_bg_image": bool(getattr(char, "face_to_face_bg_image", None)),
+        "has_face_to_face_bg_image": bool(bg_entries),
+        "face_to_face_bg_labels": [e.get("label", "") for e in bg_entries],
         "created_at": fmt_dt(char.created_at),
         "updated_at": fmt_dt(char.updated_at),
     }

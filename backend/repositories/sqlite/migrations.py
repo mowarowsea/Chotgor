@@ -1149,11 +1149,13 @@ class SQLiteMigrationsMixin:
         - `characters.face_to_face_mode` (INTEGER, NOT NULL DEFAULT 0): 0=テキスト / 1=対面。
           キャラスコープで保持し、1on1チャット画面のトグルで切り替える。うつつスケジューラは
           1 のキャラのスロットをスキップする。
-        - `characters.face_to_face_bg_image` (TEXT, NULL可): 対面時の ChatView 背景画像
-          （base64 data URI）。
         - `chat_messages.face_to_face` (INTEGER, NOT NULL DEFAULT 0): 当該メッセージが
           交わされた時点のモード。後からハレ履歴をうつつ PC へ流し込む際にラベルを
           切り替えるために使う。
+
+        旧 `characters.face_to_face_bg_image`（TEXT 単数）の ADD はここから撤去済み。
+        背景画像列は _migrate_face_to_face_bg_images が JSON 配列列として面倒を見る
+        （旧列が残る DB からのデータ移行も含む）。
 
         新規DBは ORM 定義で既に作成されるため何もしない。冪等。
         """
@@ -1175,10 +1177,6 @@ class SQLiteMigrationsMixin:
                     conn.exec_driver_sql(
                         "ALTER TABLE characters "
                         "ADD COLUMN face_to_face_mode INTEGER NOT NULL DEFAULT 0"
-                    )
-                if "face_to_face_bg_image" not in cols:
-                    conn.exec_driver_sql(
-                        "ALTER TABLE characters ADD COLUMN face_to_face_bg_image TEXT"
                     )
             if "chat_messages" in tables:
                 cols = {
@@ -1249,6 +1247,58 @@ class SQLiteMigrationsMixin:
             if "switch_angle_enabled" in cols:
                 conn.exec_driver_sql(
                     "ALTER TABLE characters DROP COLUMN switch_angle_enabled"
+                )
+
+    def _migrate_face_to_face_bg_images(self) -> None:
+        """対面背景画像の複数化（なりゆき ambience Step 3）。
+
+        - `characters.face_to_face_bg_images` (JSON, NULL可) を追加:
+          `[{"label": str, "image": base64 data URI}, ...]` の配列。
+        - 旧 `face_to_face_bg_image` (TEXT 単数) に画像がある行は
+          `[{"label": "", "image": <旧値>}]` として新列へ自動移行する
+          （新列が未設定の行のみ。既に移行済みなら触らない）。
+        - 移行後、旧列を DROP COLUMN（SQLite 3.35+）。
+
+        新規DBは ORM 定義で新列のみ作成されるため何もしない。冪等。
+        """
+        import json
+
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            if "face_to_face_bg_images" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters ADD COLUMN face_to_face_bg_images JSON"
+                )
+            if "face_to_face_bg_image" in cols:
+                rows = conn.exec_driver_sql(
+                    "SELECT id, face_to_face_bg_image FROM characters "
+                    "WHERE face_to_face_bg_image IS NOT NULL "
+                    "AND face_to_face_bg_image != '' "
+                    "AND (face_to_face_bg_images IS NULL OR face_to_face_bg_images = '')"
+                ).fetchall()
+                for char_id, old_image in rows:
+                    payload = json.dumps(
+                        [{"label": "", "image": old_image}], ensure_ascii=False
+                    )
+                    conn.exec_driver_sql(
+                        "UPDATE characters SET face_to_face_bg_images = ? WHERE id = ?",
+                        (payload, char_id),
+                    )
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters DROP COLUMN face_to_face_bg_image"
                 )
 
     def _migrate_drop_self_reflection(self) -> None:

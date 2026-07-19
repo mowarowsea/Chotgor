@@ -1,7 +1,7 @@
 """対面モード + external_scenes（scene-wrap 構造）の振る舞いテスト。
 
 検証する観点:
-    - 新カラム（characters.face_to_face_mode / face_to_face_bg_image,
+    - 新カラム（characters.face_to_face_mode / face_to_face_bg_images,
       chat_messages.face_to_face）が冪等migrationで追加され、ORM/Storeから扱える
     - create_chat_message が face_to_face フラグを正しく保存する
     - build_system_prompt が face_to_face=True で対面ブロックを差し込み、False で消す
@@ -104,23 +104,30 @@ class TestFaceToFaceSchema:
     """対面モードに伴うカラムの存在と既定値・永続化を確認する。"""
 
     def test_character_defaults(self, sqlite_store):
-        """新規キャラは face_to_face_mode=0 / face_to_face_bg_image=None で作られること。"""
+        """新規キャラは face_to_face_mode=0 / face_to_face_bg_images=None で作られること。"""
         sqlite_store.create_character("char-1", "テスト")
         char = sqlite_store.get_character("char-1")
         assert getattr(char, "face_to_face_mode", 0) == 0
-        assert getattr(char, "face_to_face_bg_image", None) is None
+        assert getattr(char, "face_to_face_bg_images", None) is None
 
     def test_character_update_face_to_face(self, sqlite_store):
-        """update_character で face_to_face_mode / face_to_face_bg_image を更新できる。"""
+        """update_character で face_to_face_mode / face_to_face_bg_images を更新できる。"""
         sqlite_store.create_character("char-1", "テスト")
         sqlite_store.update_character(
             "char-1",
             face_to_face_mode=1,
-            face_to_face_bg_image="data:image/png;base64,AAAA",
+            face_to_face_bg_images=[
+                {"label": "はるの部屋", "image": "data:image/png;base64,AAAA"},
+                {"label": "もわの部屋", "image": "data:image/png;base64,BBBB"},
+            ],
         )
         char = sqlite_store.get_character("char-1")
         assert char.face_to_face_mode == 1
-        assert char.face_to_face_bg_image == "data:image/png;base64,AAAA"
+        assert len(char.face_to_face_bg_images) == 2
+        assert char.face_to_face_bg_images[0] == {
+            "label": "はるの部屋", "image": "data:image/png;base64,AAAA",
+        }
+        assert char.face_to_face_bg_images[1]["label"] == "もわの部屋"
 
     def test_chat_message_face_to_face_default(self, sqlite_store):
         """face_to_face を省略すると既定値 0 で保存される。"""
@@ -135,6 +142,111 @@ class TestFaceToFaceSchema:
         assert msg.face_to_face == 1
         fetched = sqlite_store.list_chat_messages("s1")
         assert fetched[0].face_to_face == 1
+
+
+class TestFaceToFaceBgImagesMigration:
+    """対面背景画像の複数化マイグレーション（_migrate_face_to_face_bg_images）を検証する。
+
+    手順: 新スキーマの DB に SQL 直叩きで旧 `face_to_face_bg_image`（TEXT 単数）列を
+    追加し直して「旧DB」状態を再現し、マイグレーションを直接呼ぶ。検証する観点:
+        - 旧列に画像がある行が `[{"label": "", "image": <旧値>}]` として新列へ移行される
+        - 旧列が空（NULL / ""）の行は新列 NULL のまま（空配列を作らない）
+        - 新列に既に値がある行は上書きされない（再実行安全）
+        - 移行後に旧列が DROP される
+        - 冪等: 2回呼んでもエラーにならず、データも変わらない
+    """
+
+    def _recreate_legacy_column(self, sqlite_store):
+        """旧 face_to_face_bg_image 列を追加して「移行前の旧DB」を再現する。"""
+        with sqlite_store.engine.begin() as conn:
+            conn.exec_driver_sql(
+                "ALTER TABLE characters ADD COLUMN face_to_face_bg_image TEXT"
+            )
+
+    def _set_legacy_image(self, sqlite_store, char_id, value):
+        """旧列へ画像値を SQL 直叩きでセットする（ORM は旧列を知らないため）。"""
+        with sqlite_store.engine.begin() as conn:
+            conn.exec_driver_sql(
+                "UPDATE characters SET face_to_face_bg_image = ? WHERE id = ?",
+                (value, char_id),
+            )
+
+    def _columns(self, sqlite_store) -> set:
+        """characters テーブルの現在の列名集合を返す。"""
+        with sqlite_store.engine.begin() as conn:
+            return {
+                r[1]
+                for r in conn.exec_driver_sql("PRAGMA table_info(characters)").fetchall()
+            }
+
+    def test_legacy_image_becomes_single_entry_array(self, sqlite_store):
+        """旧列の1枚が label="" の1件配列として新列へ移行されること。"""
+        sqlite_store.create_character("char-1", "テスト")
+        self._recreate_legacy_column(sqlite_store)
+        self._set_legacy_image(sqlite_store, "char-1", "data:image/png;base64,OLD")
+        # 新列を NULL に戻して「未移行」状態にする
+        sqlite_store.update_character("char-1", face_to_face_bg_images=None)
+
+        sqlite_store._migrate_face_to_face_bg_images()
+
+        char = sqlite_store.get_character("char-1")
+        assert char.face_to_face_bg_images == [
+            {"label": "", "image": "data:image/png;base64,OLD"}
+        ]
+
+    def test_empty_legacy_stays_null(self, sqlite_store):
+        """旧列が NULL の行は新列も NULL のまま（空配列を作らない）こと。"""
+        sqlite_store.create_character("char-1", "テスト")
+        self._recreate_legacy_column(sqlite_store)
+
+        sqlite_store._migrate_face_to_face_bg_images()
+
+        char = sqlite_store.get_character("char-1")
+        assert char.face_to_face_bg_images is None
+
+    def test_existing_new_value_not_overwritten(self, sqlite_store):
+        """新列に既に配列がある行は旧列の値で上書きされないこと。"""
+        sqlite_store.create_character("char-1", "テスト")
+        sqlite_store.update_character(
+            "char-1",
+            face_to_face_bg_images=[{"label": "設定済み", "image": "data:image/png;base64,NEW"}],
+        )
+        self._recreate_legacy_column(sqlite_store)
+        self._set_legacy_image(sqlite_store, "char-1", "data:image/png;base64,OLD")
+
+        sqlite_store._migrate_face_to_face_bg_images()
+
+        char = sqlite_store.get_character("char-1")
+        assert char.face_to_face_bg_images == [
+            {"label": "設定済み", "image": "data:image/png;base64,NEW"}
+        ]
+
+    def test_legacy_column_dropped(self, sqlite_store):
+        """マイグレーション後に旧列が DROP されること。"""
+        sqlite_store.create_character("char-1", "テスト")
+        self._recreate_legacy_column(sqlite_store)
+        assert "face_to_face_bg_image" in self._columns(sqlite_store)
+
+        sqlite_store._migrate_face_to_face_bg_images()
+
+        cols = self._columns(sqlite_store)
+        assert "face_to_face_bg_image" not in cols
+        assert "face_to_face_bg_images" in cols
+
+    def test_idempotent(self, sqlite_store):
+        """2回呼んでもエラーにならず、移行済みデータが変わらないこと。"""
+        sqlite_store.create_character("char-1", "テスト")
+        self._recreate_legacy_column(sqlite_store)
+        self._set_legacy_image(sqlite_store, "char-1", "data:image/png;base64,OLD")
+        sqlite_store.update_character("char-1", face_to_face_bg_images=None)
+
+        sqlite_store._migrate_face_to_face_bg_images()
+        sqlite_store._migrate_face_to_face_bg_images()
+
+        char = sqlite_store.get_character("char-1")
+        assert char.face_to_face_bg_images == [
+            {"label": "", "image": "data:image/png;base64,OLD"}
+        ]
 
 
 # ---------------------------------------------------------------------------
