@@ -469,7 +469,9 @@ def _build_schedule_block(schedule_lines: list[str] | None) -> str:
     """
     if not schedule_lines:
         return ""
-    lines = ["## あなたの予定（生活カレンダーより）"]
+    # 見出しは供給源に言及しない — 生活カレンダーの予定行に加え、発話予約
+    # （speak_later）の「本人の段取り」行がカレンダー無効キャラにも載るため。
+    lines = ["## あなたの予定"]
     lines += [f"- {line}" for line in schedule_lines]
     return "\n".join(lines)
 

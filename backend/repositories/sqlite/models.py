@@ -192,6 +192,11 @@ class Character(Base):
     # 1=有効（schedule_entries を実現層とする占有圧・配達値ベースの生活カレンダー）。
     # 無効キャラは従来どおり動き続ける（オプトイン移行）。
     living_schedule_enabled = Column(Integer, nullable=False, default=0)
+    # 発話予約（speak_later）のキャラ単位有効化トグル
+    # （docs/planned/speak_later_plan.md）。0=無効（既定 — ユーザが意図しない
+    # リクエスト＝課金を発生させる機能のためオプトイン）、1=有効
+    # （1on1 で speak_later ツールが露出し、発火スケジューラの対象になる）。
+    speak_later_enabled = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now())
     updated_at = Column(
         DateTime,
@@ -700,6 +705,32 @@ class ScheduleEntry(Base):
         default=lambda: datetime.now(),
         onupdate=lambda: datetime.now(),
     )
+
+
+class SpeechReservation(Base):
+    """発話予約（speak_later）— キャラ発の時限発話の1件（docs/planned/speak_later_plan.md）。
+
+    キャラクター本人が 1on1 の会話中に speak_later ツールで仕掛ける
+    「この時刻に、自分からこの会話に声をかける」の器。発話本文は保存しない —
+    残すのは時刻＋用件メモ（note）だけで、本文は発火時に本人が生成する。
+
+    intents（動機経済の「いつか」）とは性質が異なる「何時何分」の決定論なので
+    相乗りせず独立テーブルとする（2026-07-20 裁定）。
+    pending は同一セッションに1件（置き直しは旧行を superseded に倒して新行を作る —
+    履歴は行として残る）。
+    """
+
+    __tablename__ = "speech_reservations"
+
+    id = Column(String, primary_key=True)                      # UUID
+    character_id = Column(String, nullable=False, index=True)  # 誰の予約か
+    session_id = Column(String, nullable=False, index=True)    # 発話先の 1on1 セッション
+    speak_at = Column(DateTime, nullable=False)                # 発火予定時刻
+    note = Column(Text, nullable=False)                        # 何を話そうとしているか（本人の言葉）
+    # pending / fired / expired / cancelled / superseded
+    status = Column(String, nullable=False, default="pending", index=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())
+    fired_at = Column(DateTime, nullable=True)                 # 実際に発火した時刻
 
 
 class ScenarioTurn(Base):

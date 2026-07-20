@@ -144,6 +144,9 @@ async def create_character(request: Request):
     # 生活カレンダー（Living Schedule）有効化トグル。既定 OFF なので ON のときだけ付け足す。
     if form.get("living_schedule_enabled"):
         request.app.state.sqlite.update_character(char_id, living_schedule_enabled=1)
+    # 発話予約（speak_later）有効化トグルも同様（既定 OFF のオプトイン）。
+    if form.get("speak_later_enabled"):
+        request.app.state.sqlite.update_character(char_id, speak_later_enabled=1)
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     _persist_usual_world(request.app.state.sqlite, char_id, name, form)
     return RedirectResponse(url="/ui/characters", status_code=303)
@@ -200,6 +203,8 @@ async def update_character(request: Request, character_id: str):
         availability_schedule=_parse_availability_schedule(form),
         # 生活カレンダー（Living Schedule）有効化トグル。未チェックなら 0（従来挙動）。
         living_schedule_enabled=1 if form.get("living_schedule_enabled") else 0,
+        # 発話予約（speak_later）有効化トグル。未チェックなら 0（既定 OFF）。
+        speak_later_enabled=1 if form.get("speak_later_enabled") else 0,
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()

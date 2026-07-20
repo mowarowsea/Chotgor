@@ -8,6 +8,9 @@
     4. 次の予定: 固定予定（template）だけが出る。world/adhoc（伏せ枠・発火済み突発）は
        未来の予定として**絶対に出ない**（ランダムイベントのネタバレ防止・要件の絶対条件）
     5. 素材が無ければ空リスト（ヘッダだけのブロックを作らない）
+    6. 発話予約（speak_later）の相乗り: pending の間だけ「本人の段取り」行が載り、
+       fired/superseded 等へ遷移したら消える。生活カレンダー無効キャラにも載る
+       （自分の段取りはどの場でも本人の頭の中にあるもの）
 """
 
 import uuid
@@ -159,6 +162,57 @@ def test_hidden_and_world_events_never_shown_as_next(sqlite_store):
     joined = "\n".join(lines)
     assert "次の予定: 就寝" in joined
     assert "友人からの誘い" not in joined and "突発の呼び出し" not in joined
+
+
+def test_reservation_line_shown_even_without_calendar(sqlite_store):
+    """発話予約の行は生活カレンダー無効キャラにも載ること（予約はセッションに
+    紐づくが、注入はセッションを問わない — 本人の段取りとして常に想起される）。"""
+    char_id = _make_character(sqlite_store, living=0)
+    sqlite_store.create_speech_reservation(
+        character_id=char_id, session_id="session-1",
+        speak_at=_NOW + timedelta(minutes=30), note="調べものの結果を伝える",
+    )
+    lines = build_schedule_lines(sqlite_store, char_id, now=_NOW)
+    assert lines == ["23:30 になったら「調べものの結果を伝える」をしようと思っている"]
+
+
+def test_reservation_line_disappears_after_transition(sqlite_store):
+    """fired / superseded へ遷移した予約の行は消えること（pending の間だけ載る）。"""
+    char_id = _make_character(sqlite_store, living=0)
+    r1 = sqlite_store.create_speech_reservation(
+        character_id=char_id, session_id="s1",
+        speak_at=_NOW + timedelta(minutes=30), note="発火済みの用件",
+    )
+    r2 = sqlite_store.create_speech_reservation(
+        character_id=char_id, session_id="s2",
+        speak_at=_NOW + timedelta(hours=1), note="置き直し前の用件",
+    )
+    sqlite_store.set_speech_reservation_status(r1.id, "fired", fired_at=_NOW)
+    sqlite_store.set_speech_reservation_status(r2.id, "superseded")
+    assert build_schedule_lines(sqlite_store, char_id, now=_NOW) == []
+
+
+def test_reservation_rides_with_calendar_lines(sqlite_store):
+    """生活カレンダー有効キャラでは、予定の行に続けて予約の行が同じ枠に載ること。"""
+    char_id = _make_character(sqlite_store)
+    sqlite_store.create_schedule_entry(
+        character_id=char_id,
+        start_at=_NOW + timedelta(minutes=60),
+        end_at=_NOW + timedelta(hours=7),
+        state="offline",
+        source="haru",
+        origin="template",
+        occupancy=0.5,
+        label="就寝",
+    )
+    # 日付を跨ぐ予約は M/D 付きの表記になる
+    sqlite_store.create_speech_reservation(
+        character_id=char_id, session_id="s1",
+        speak_at=_NOW + timedelta(hours=11), note="朝いちで声をかける",
+    )
+    lines = build_schedule_lines(sqlite_store, char_id, now=_NOW)
+    assert any("次の予定: 就寝" in line for line in lines)
+    assert lines[-1] == "7/11 10:00 になったら「朝いちで声をかける」をしようと思っている"
 
 
 def test_current_world_event_is_shown(sqlite_store):

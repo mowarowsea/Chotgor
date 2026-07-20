@@ -18,6 +18,7 @@ SQLiteStore はドメイン別 Mixin を多重継承したファサードクラ�
   DecisionStoreMixin                — スケジューラ決定ログ（予報パネルの材料）
   IntentStoreMixin                  — 意図（動機経済の「〜したい」レコード）
   ScheduleStoreMixin                — 生活カレンダー（Living Schedule）の実現層エントリ
+  SpeechReservationStoreMixin       — 発話予約（speak_later）
   SQLiteMigrationsMixin             — 冪等マイグレーション（migrations.py）
 
 ORM モデル定義は models.py にあり、後方互換のため本モジュールから再エクスポートする。
@@ -50,6 +51,7 @@ from backend.repositories.sqlite.models import (  # noqa: F401
     ScenarioTurn,
     ScheduleEntry,
     SchedulerDecision,
+    SpeechReservation,
     TimelineEvent,
     ToolCallEvent,
     WorkingMemoryPost,
@@ -69,6 +71,9 @@ from backend.repositories.sqlite.stores.preset_store import PresetStoreMixin
 from backend.repositories.sqlite.stores.scenario_store import ScenarioChatStoreMixin
 from backend.repositories.sqlite.stores.schedule_store import ScheduleStoreMixin
 from backend.repositories.sqlite.stores.settings_store import SettingsStoreMixin
+from backend.repositories.sqlite.stores.speech_reservation_store import (
+    SpeechReservationStoreMixin,
+)
 from backend.repositories.sqlite.stores.timeline_store import TimelineStoreMixin
 from backend.repositories.sqlite.stores.tool_event_store import ToolEventStoreMixin
 from backend.repositories.sqlite.stores.usage_store import UsageStoreMixin
@@ -93,6 +98,7 @@ class SQLiteStore(
     DecisionStoreMixin,
     IntentStoreMixin,
     ScheduleStoreMixin,
+    SpeechReservationStoreMixin,
     SQLiteMigrationsMixin,
 ):
     """SQLite永続化ストア — 全テーブルへのCRUD操作を提供するファサードクラス。
@@ -139,6 +145,7 @@ class SQLiteStore(
         self._migrate_add_living_schedule()
         self._migrate_drop_self_reflection()
         self._migrate_drop_switch_angle_enabled()
+        self._migrate_add_speak_later()
 
     def get_session(self) -> Session:
         """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""

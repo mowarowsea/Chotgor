@@ -1222,6 +1222,37 @@ class SQLiteMigrationsMixin:
                         "ADD COLUMN living_schedule_enabled INTEGER NOT NULL DEFAULT 0"
                     )
 
+    def _migrate_add_speak_later(self) -> None:
+        """発話予約（speak_later）のキャラ単位トグル列を追加する。
+
+        - `characters.speak_later_enabled` (INTEGER, NOT NULL DEFAULT 0):
+          0=無効（既定 — 課金を伴う機能のためオプトイン）、1=有効。
+        - `speech_reservations` テーブル自体は ``Base.metadata.create_all`` が
+          新規・既存 DB いずれでも作成する（checkfirst=True）ので、ここでは ALTER のみ扱う。
+
+        新規DBは ORM 定義で既に列を持つため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            if "speak_later_enabled" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters "
+                    "ADD COLUMN speak_later_enabled INTEGER NOT NULL DEFAULT 0"
+                )
+
     def _migrate_drop_switch_angle_enabled(self) -> None:
         """switch_angle 機能撤去に伴い `characters.switch_angle_enabled` 列を削除する。
 

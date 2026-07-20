@@ -269,7 +269,13 @@ async def _maybe_deliver_session(
     )
 
 
-async def _deliver_session(state, session, char) -> None:
+async def _deliver_session(
+    state, session, char,
+    *,
+    extra_annotation: str | None = None,
+    require_pending: bool = True,
+    feature: str = "escrow_delivery",
+) -> None:
     """預かり分をキャラ本人へ配達し、返信を生成・保存する。
 
     1on1 SSE 経路（api/chat.py stream_message）の配達部と同じ手順:
@@ -278,10 +284,21 @@ async def _deliver_session(state, session, char) -> None:
     生成した返信は通常のキャラクターメッセージとしてセッションに保存され、
     ユーザが次にセッションを開いたときに見える。
 
+    発話予約（speak_later）の発火もこの関数を共用する（speech_reservation.py）:
+    extra_annotation に合成注釈を渡すと、預かり分があればその末尾に添えて
+    1ターンに併合し、無ければ（require_pending=False のとき）合成注釈だけを
+    最終ユーザターン相当として LLM に渡す。合成注釈は DB に保存しない —
+    時間差注釈と同じ「LLM 渡しのコピーのみ」思想で、画面にはキャラの発話だけが増える。
+
     Args:
         state: FastAPI の app.state。
         session: 配達対象の ChatSession ORM。
         char: 配達先の Character ORM。
+        extra_annotation: 最終ユーザターン相当へ末尾追記する合成注釈
+            （発話予約の発火時のみ渡される）。
+        require_pending: True（既定）なら未配達メッセージが無いとき何もしない
+            （escrow 経路のレース安全）。False は発話予約の単独発火用。
+        feature: 計器 Tier 2（record_response_smells）へ渡す機構名。
     """
     # API 層と同等のログ文脈を張る（ログ UI でセッション・キャラに紐づくように）
     log_msg_id = new_message_id()
@@ -295,15 +312,8 @@ async def _deliver_session(state, session, char) -> None:
         if getattr(m, "delivered_at", None) is None
         and not getattr(m, "is_system_message", None)
     ]
-    if not pending:
+    if not pending and (require_pending or not extra_annotation):
         return  # 走査後にユーザターンが先に配達したケース（レース）— 何もしない
-
-    # 最後の預かりメッセージを「今回のユーザ発話」、それ以外を履歴として組む
-    # （SSE 経路の history / user_content の分割と同じ形）
-    last = pending[-1]
-    history = [m for m in messages if m.id != last.id]
-    for m in pending[:-1]:
-        m.content = format_escrow_annotation(m)
 
     # api 層のヘルパーは lazy import（api → services の逆流 import を起動時に作らない）
     from backend.api.chat import build_1on1_chat_request
@@ -313,17 +323,40 @@ async def _deliver_session(state, session, char) -> None:
     )
     from backend.services.memory.format import format_recalled_threads
 
-    user_content = build_message_content(
-        format_escrow_annotation(last), last.images or [],
-        sqlite, state.uploads_dir,
-    )
+    if pending:
+        # 最後の預かりメッセージを「今回のユーザ発話」、それ以外を履歴として組む
+        # （SSE 経路の history / user_content の分割と同じ形）
+        last = pending[-1]
+        history = [m for m in messages if m.id != last.id]
+        for m in pending[:-1]:
+            m.content = format_escrow_annotation(m)
 
-    # 配達マークは LLM 呼び出しの前（SSE 経路と同順・再送ループ防止）
-    sqlite.mark_messages_delivered([m.id for m in pending])
-    logger.info(
-        "能動配達: %d 件を配達して返信を生成 char=%s session=%s",
-        len(pending), char.name, session.id,
-    )
+        last_text = format_escrow_annotation(last)
+        if extra_annotation:
+            # 発話予約との合流: 未配達分の配達と合成注釈を1ターンに併合する
+            last_text = f"{last_text}\n\n{extra_annotation}"
+        user_content = build_message_content(
+            last_text, last.images or [],
+            sqlite, state.uploads_dir,
+        )
+
+        # 配達マークは LLM 呼び出しの前（SSE 経路と同順・再送ループ防止）
+        sqlite.mark_messages_delivered([m.id for m in pending])
+        logger.info(
+            "能動配達: %d 件を配達して返信を生成 char=%s session=%s",
+            len(pending), char.name, session.id,
+        )
+    else:
+        # 発話予約の単独発火: 配達すべきユーザメッセージは無い。全履歴を渡し、
+        # 合成注釈だけを最終ユーザターン相当として渡す（DB には保存しない）。
+        history = list(messages)
+        user_content = build_message_content(
+            extra_annotation, [], sqlite, state.uploads_dir,
+        )
+        logger.info(
+            "発話予約: 合成注釈のみで発話を生成 char=%s session=%s",
+            char.name, session.id,
+        )
 
     chat_request = await build_1on1_chat_request(state, session, history, user_content)
 
@@ -393,7 +426,7 @@ async def _deliver_session(state, session, char) -> None:
     # 計器 Tier 2: 応答の外形スキャン（誤検知許容の smell 記録）
     from backend.services.instruments.tier2 import record_response_smells
     record_response_smells(
-        sqlite, full_text, character_name=used_char_name, feature="escrow_delivery",
+        sqlite, full_text, character_name=used_char_name, feature=feature,
     )
 
     # キャラクター回答到着完了（遅延返信の配達）→ ntfy プッシュ通知（ベストエフォート）。

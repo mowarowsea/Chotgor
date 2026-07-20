@@ -139,6 +139,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_run_every_minute(app, name="escrow_delivery", label="能動配達", fn=_escrow_delivery_tick))
     asyncio.create_task(_run_every_minute(app, name="weekly_schedule", label="週次スケジュール", fn=_weekly_schedule_tick))
     asyncio.create_task(_run_every_minute(app, name="sudden_event", label="突発イベント", fn=_sudden_event_tick))
+    asyncio.create_task(_run_every_minute(app, name="speech_reservation", label="発話予約", fn=_speech_reservation_tick))
 
     yield
 
@@ -749,6 +750,18 @@ async def _weekly_schedule_tick(app: FastAPI) -> None:
     from backend.services.schedule import run_pending_weekly_batches
 
     await run_pending_weekly_batches(app.state)
+
+
+async def _speech_reservation_tick(app: FastAPI) -> None:
+    """発話予約（speak_later）の発火走査（docs/planned/speak_later_plan.md §②）。
+
+    キャラ本人が仕掛けた時限発話（speech_reservations の pending）を走査し、
+    時刻到来かつ availability・日次 cap を通過したものを 1on1 等価のヘッドレス
+    生成で発火させる。判定・ガードの詳細は services/gate/speech_reservation.py 参照。
+    """
+    from backend.services.gate.speech_reservation import run_pending_speech_reservations
+
+    await run_pending_speech_reservations(app.state)
 
 
 async def _sudden_event_tick(app: FastAPI) -> None:

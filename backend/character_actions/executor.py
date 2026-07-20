@@ -26,6 +26,7 @@ from backend.character_actions.carver import Carver, extract_carve_narrative_tag
 from backend.character_actions.inscriber import Inscriber, extract_inscribe_memory_tags
 from backend.character_actions.threader import Threader
 from backend.character_actions.web_searcher import WebSearcher
+from backend.character_actions.later_speaker import LaterSpeaker
 from backend.character_actions.leaver import Leaver
 from backend.character_actions.messenger import Messenger
 from backend.character_actions.rescheduler import Rescheduler
@@ -394,6 +395,23 @@ class ToolExecutor:
                 until=str(tool_input.get("until", "")),
                 reason=str(tool_input.get("reason", "")),
             )
+        if tool_name == "speak_later":
+            # 1on1 専用: 時限発話の仕掛け（context_tools.py が露出を制御）。
+            # LaterSpeaker は現在の default_origin で都度生成する — 1on1 経路判定に
+            # origin が要るため（Messenger と同じ流儀）。
+            try:
+                return LaterSpeaker(
+                    self.character_id,
+                    self.session_id,
+                    self.memory_manager.sqlite if self.memory_manager is not None else None,
+                    default_origin=self.default_origin,
+                ).speak_later(
+                    at=str(tool_input.get("at", "")),
+                    note=str(tool_input.get("note", "")),
+                )
+            except Exception as e:
+                self.logger.exception("speak_later エラー char=%s", self.character_id)
+                return f"[speak_later error: {e}]"
         self.logger.warning("未知のツール name=%s", tool_name)
         return f"[Unknown tool: {tool_name}]"
 

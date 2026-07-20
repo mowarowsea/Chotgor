@@ -23,6 +23,11 @@ from backend.character_actions.inscriber import (
     INSCRIBE_MEMORY_SCHEMA,
     INSCRIBE_MEMORY_TOOL_DESCRIPTION,
 )
+from backend.character_actions.later_speaker import (
+    SPEAK_LATER_SCHEMA,
+    SPEAK_LATER_TOOL_DESCRIPTION,
+    SPEAK_LATER_TOOLS_HINT,
+)
 from backend.character_actions.leaver import (
     TAKE_LEAVE_SCHEMA,
     TAKE_LEAVE_TOOL_DESCRIPTION,
@@ -135,5 +140,9 @@ CONTEXT_TOOL_SPECS: dict[str, ToolSpec] = {
     "override_schedule": ToolSpec(
         "override_schedule", OVERRIDE_SCHEDULE_TOOL_DESCRIPTION, OVERRIDE_SCHEDULE_SCHEMA,
         hint=OVERRIDE_SCHEDULE_TOOLS_HINT,
+    ),
+    "speak_later": ToolSpec(
+        "speak_later", SPEAK_LATER_TOOL_DESCRIPTION, SPEAK_LATER_SCHEMA,
+        hint=SPEAK_LATER_TOOLS_HINT,
     ),
 }

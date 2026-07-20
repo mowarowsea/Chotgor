@@ -375,6 +375,34 @@
             </div>
         </section>
 
+        {# ── speak_later ・ 発話予約 ──
+           1on1 の会話中に本人が「この時刻に自分から声をかける」を仕掛ける機能
+           （docs/planned/speak_later_plan.md）。発火時に本人への問い合わせ＝
+           リクエスト課金が発生するため、既定 OFF のオプトイン。 #}
+        <section class="ch-section">
+            <div class="ch-section__head">
+                <h3 class="ch-section-title">speak_later <small>・ 発話予約</small></h3>
+            </div>
+            <p class="ch-hint">
+                会話の中で本人が「◯時になったら自分から声をかける」を仕掛け、時刻が来たら
+                その会話に本人発のメッセージが増える。発火はキャラ発の現実接触として
+                日次上限（escrow_delivery_daily_cap）を共有する。
+            </p>
+            <div class="ch-field" style="margin-bottom:0">
+                <label class="ch-switch-row" style="border:none;padding:0">
+                    <span class="ch-switch-row__text">
+                        <span class="ch-switch-row__label">発話予約を有効化</span>
+                        <span class="ch-switch-row__note">時刻到来で本人への問い合わせ（リクエスト）が発生する</span>
+                    </span>
+                    <span class="ch-toggle">
+                        <input type="checkbox" name="speak_later_enabled" value="1"
+                            {% if character and character.speak_later_enabled %}checked{% endif %}>
+                        <span class="ch-toggle__track"></span>
+                    </span>
+                </label>
+            </div>
+        </section>
+
         {# ── 体質インタビュー（めぐり Phase 3）──
            圧力（社会圧・退屈圧・体調圧）の体質係数を、本人への体験の質問で初期化する。
            数値は聞かず、選択肢＋本人の言葉を固定ルーブリックで係数へ写像する。

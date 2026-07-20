@@ -1,6 +1,6 @@
 # speak_later 仕様書 — キャラ発の時限発話（発話予約）
 
-> Status: **draft**（2026-07-20 要件合意・実装未着手）
+> Status: **implemented**（2026-07-20 要件合意 → 同日実装完了。実装時の補足判断は「実装メモ」参照）
 > 関連: [aliveness_plan.md](aliveness_plan.md)（能動配達・行動権 push）、
 > [schedule_plan.md](schedule_plan.md)（availability・生活カレンダー）
 
@@ -185,6 +185,23 @@ scheduler_decisions に残るため、**専用の封筒 event_type は v1 では
 | 変更 | `templates/character_edit.html` ＋ characters API | トグル UI・保存 |
 | 変更 | WorkDir `.claude/settings.json` | permissions.allow へ `mcp__chotgor__speak_later` |
 | 変更 | `docs/current-spec/ARCHITECTURE.md` | 機構の追記 |
+
+## 実装メモ（2026-07-20 実装時の補足判断）
+
+仕様に書かれていなかった細部は以下のとおり決めた:
+
+| 論点 | 判断 |
+|---|---|
+| `at` の 24時超え表記 | override_schedule と同じ流儀で `"25:30"` = 翌1:30 も受ける（`parse_speak_at`。本人が override の習慣で書いても弾かない） |
+| 遅延発火の文言切替 | speak_at から **10分以上** 遅れたら遅延文言（毎分スケジューラの粒度では数分の遅れは定刻扱い） |
+| 発火側のトグル再確認 | 仕掛け後にユーザがトグル OFF にしたら発火させず **cancelled** に倒す（トグルは課金ガードなので発火側でも見る — 仕様の発火判定リストへの追加） |
+| fired マークの順序 | fired 遷移＋日次カウンタ消費を**生成より先に**確定する（生成失敗で毎分 LLM を叩き直さない。escrow の delivered-before-LLM と同思想。失敗は決定ログ error に残る） |
+| cancelled 系の決定ログ | outcome=**skipped**（物理で流れた扱い。expired のみ仕様どおり declined） |
+| 注入ブロックの見出し | `{block_schedule}` の見出しを「## あなたの予定（生活カレンダーより）」→「## あなたの予定」へ中立化（カレンダー無効キャラにも予約行が載るため。スナップショット更新済み） |
+| escrow ready マーカー | 発火で未配達分を併せて配達したら `escrow_ready_{session}` を掃除する（stale な復帰観測時刻が次回配達のジッターを飛ばさないように） |
+
+テスト: `tests/test_later_speaker.py`（仕掛け側）・`tests/test_speech_reservation.py`（発火側）・
+`tests/test_context_tools.py` / `tests/test_schedule_awareness.py`（露出・注入の追記分）。
 
 ## 棄却した設計案（検討記録）
 

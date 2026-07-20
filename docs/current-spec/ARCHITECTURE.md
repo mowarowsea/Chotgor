@@ -24,6 +24,7 @@
 | 轢き判定 | ③突発の発火時、占有圧最大の予定が既存予定を上書きする裁定 |
 | 玉突き裁定（dilemma） | ③に轢かれた予定を本人が cancel/reschedule/不満化する処理 |
 | 聖域化 | 対面中は③④を保留し②シーンを捨てる保護 |
+| 発話予約（speak_later） | キャラ発の時限発話。`speech_reservations` に時刻＋用件メモを仕掛け、時刻到来で本人が発話を生成（キャラ向け文言では「予約」と言わない） |
 | 計器（instruments） | 監査層（Tier 1 インバリアント / Tier 2 スメル / Tier 3 判定巡回） |
 | 決定ログ | `scheduler_decisions`。無人機構の評価1回ごとの結果と理由（追記型） |
 | ダイヤル | `characters.timeline_dial`（0〜3）。めぐり機構の強度切替 |
@@ -98,7 +99,7 @@
 | `services/instruments/` | 計器（監査層）。Tier 1 巡回インバリアント・Tier 2 スメル検知器（正規表現）・Tier 3 判定巡回（LLM サンプリング）。アラームは `lib/instrument_recorder.py` 経由でどこからでも発火できる |
 | `services/pressure/` | 圧力（社会圧・退屈圧・体調圧）。封筒の導関数として毎回計算する純関数（保存しない）＋体質インタビュー（`pressure_profile` 初期化） |
 | `services/intents/` | 意図（「〜したい」の経済層）。意図圧の読み取り時計算・失効/不満化の候補挙げ・拾い上げ（Chronicle 同乗＋うつつ完走後） |
-| `services/gate/` | 応答可能性ゲート。`check_availability` 純関数（従来経路: 対面 > away > うつつ進行中 > 生活時間割 ／ 生活カレンダー経路: 対面 > away > schedule_entries 占有圧最大 > OnTime）・メッセージ預かり（escrow）・能動配達（従来: 復帰＋ジッター ／ 生活カレンダー: チェック間隔格子＋決定論 reply_rate 判定 `resolve_delivery_due`）・疲労離席の発火式 |
+| `services/gate/` | 応答可能性ゲート。`check_availability` 純関数（従来経路: 対面 > away > うつつ進行中 > 生活時間割 ／ 生活カレンダー経路: 対面 > away > schedule_entries 占有圧最大 > OnTime）・メッセージ預かり（escrow）・能動配達（従来: 復帰＋ジッター ／ 生活カレンダー: チェック間隔格子＋決定論 reply_rate 判定 `resolve_delivery_due`）・発話予約の発火（`speech_reservation.py` — speak_later の毎分走査・24h expire・cap 共有・`_deliver_session` 共用）・疲労離席の発火式 |
 | `services/schedule/` | **生活カレンダー（Living Schedule）**。`plan_parser.py`（[PLAN]/[EVENT] 行パーサ・24時超え表記・テンプレ裸変換・配達値個別上書き）・`weekly_batch.py`（週次バッチ①GM生成→②本人問い合わせ→schedule_entries template 層入れ替え＋③伏せ枠配置。層フォールバック=前週→テンプレ裸。冪等キー=キャラ別対象 ISO 週）・`scene_selection.py`（②導出のうつつシーン選出＝占有圧上位50%＋ランダムの決定論純関数）・`events.py`（③世界突発の確率配置＝pending 伏せ枠・発火時 GM 具体化→轢き判定（占有圧最大が勝つ）→insert→シーン）・`dilemma.py`（玉突き裁定＝③に轢かれた予定を本人が cancel/reschedule/不満化） |
 | `services/actions/` | 会話外行動権。閾値評価（無料）→本人問い合わせ→実行（push / 調べもの / 臨時うつつ）→帰還のループ |
 
@@ -116,7 +117,8 @@
 | `leaver.py` | `take_leave` — 本人宣言の離席（away 設定＋chat.farewell 封筒） |
 | `messenger.py` | `reach_out`（うつつ専用・現実へのプッシュ送信＋visit=対面ON＋うつつポーズ要求）／ `visit_user`（1on1専用・対面モードON）。push 実体は `services/actions/runner.execute_push` を共有。日次予算は escrow_delivery_daily_cap と共有 |
 | `rescheduler.py` | `override_schedule`（1on1専用・当日予定の一時上書き）。state=OnTime/haru/adhoc/occupancy0.85 のエントリを insert するだけ（占有圧最大が勝つ読み取り解決）。`parse_until_time` は 24時超え表記対応・常に24h以内 |
-| `context_tools.py` | **コンテキスト別ツール出し分けの単一判定点**。reach_out=うつつのみ（cap到達日は非露出）／visit_user=1on1かつ対面OFF／override_schedule=1on1かつ生活カレンダー有効。消費者は3系統: ①flow.py→provider.extra_tools（in-process tool-use）②mcp_server.py→GET /api/mcp/tools?character_id&origin&session_id（claude_cli）③flow.py→build_system_prompt(context_tool_hints) |
+| `later_speaker.py` | `speak_later`（1on1専用・キャラ発の時限発話の仕掛け）。時刻＋用件メモを speech_reservations へ pending insert（本文は発火時に本人が生成）。未来 availability は無風仮定で仕掛け時にエラー判定・72h horizon・同一セッションの pending は superseded に倒して置き直し。発火は `services/gate/speech_reservation.py` |
+| `context_tools.py` | **コンテキスト別ツール出し分けの単一判定点**。reach_out=うつつのみ（cap到達日は非露出）／visit_user=1on1かつ対面OFF／override_schedule=1on1かつ生活カレンダー有効／speak_later=1on1かつ発話予約有効（speak_later_enabled=1）。消費者は3系統: ①flow.py→provider.extra_tools（in-process tool-use）②mcp_server.py→GET /api/mcp/tools?character_id&origin&session_id（claude_cli）③flow.py→build_system_prompt(context_tool_hints) |
 | `anticipator.py` | `[ANTICIPATE_RESPONSE:]` タグ抽出（次の展開への期待） |
 | `ambience_judge.py` | なりゆき judge（判定）: LLM がキャラクターの感情状態を毎ターン外部判定。judge プリセットは `judge_preset_id`。将来は場所ラベル等の軸も担う |
 | `character_context.py` | 通常チャット以外でキャラクターとして問い合わせる際の共通コンテキストブロック構築 |
@@ -296,7 +298,8 @@ chronicle_job / forget_job など
 決定ログ: scheduler_decisions（追記型・剪定なし）— 無人機構の評価1回ごとの結果と理由
   （fired/declined/skipped/error）。「正常な沈黙（閾値未達）」と「壊れた沈黙（機構の死）」を
   事後に区別する。記録点は行動権 runner・うつつ main.py・③突発 events.py・
-  能動配達 delivery.py・週次バッチ weekly_batch.py。ループ生存は settings
+  能動配達 delivery.py・週次バッチ weekly_batch.py・発話予約 speech_reservation.py。
+  ループ生存は settings
   `scheduler_heartbeat_*`（`main.py _beat_scheduler` が毎周上書き）＋ Tier 1
   `scheduler_heartbeat`（鮮度1時間超でアラーム）
 予報: services/timeline/forecast.build_forecast → /ui/forecast（予報パネル）。
@@ -332,7 +335,9 @@ chronicle_job / forget_job など
 - 毎分: action（2時間格子＋ジッター評価）・usual_days（うつつシーン＋push再開）・
   escrow_delivery（能動配達）・weekly_schedule（日曜夜 `weekly_schedule_time` 既定 20:00 に
   翌週分、コールドスタートは当週分即時）・sudden_event（③伏せ枠の発火＝GM 具体化→
-  轢き判定→シーン→玉突き裁定。日次上限 `sudden_event_daily_cap` 既定3）
+  轢き判定→シーン→玉突き裁定。日次上限 `sudden_event_daily_cap` 既定3）・
+  speech_reservation（発話予約 speak_later の発火。availability 再評価→cap 共有→
+  1on1 等価ヘッドレス生成。unavailable は pending 維持で遅延発火・24h で expired）
 
 ### 夜間バッチ
 

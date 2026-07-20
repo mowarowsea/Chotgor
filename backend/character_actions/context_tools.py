@@ -8,6 +8,8 @@
     - visit_user        : 1on1（origin=="real" かつ session_id あり）専用。対面モードON。
                           すでに対面中なら露出しない。
     - override_schedule : 1on1 専用かつ生活カレンダー有効（living_schedule_enabled=1）のみ。
+    - speak_later       : 1on1 専用かつ発話予約有効（speak_later_enabled=1）のみ。
+                          時限発話の仕掛け（cap は発火側で見るため露出は絞らない）。
 
 出し分けの消費者は3系統あり、すべてこのモジュールを参照する（判定の重複を作らない）:
     1. in-process tool-use プロバイダー（anthropic/openai/google）
@@ -69,6 +71,9 @@ def resolve_context_tool_names(
         # 1on1 専用: 予定の一時上書き（生活カレンダー有効キャラのみ）
         if int(getattr(char, "living_schedule_enabled", 0) or 0):
             names.append("override_schedule")
+        # 1on1 専用: 時限発話の仕掛け（発話予約有効キャラのみ。既定 OFF のオプトイン）
+        if int(getattr(char, "speak_later_enabled", 0) or 0):
+            names.append("speak_later")
     return names
 
 

@@ -4,6 +4,7 @@
     - reach_out         : うつつ（origin="usual"）専用。日次上限到達日は露出しない。
     - visit_user        : 1on1（origin="real" ＋ session_id）専用。対面中は露出しない。
     - override_schedule : 1on1 専用かつ生活カレンダー有効のみ。
+    - speak_later       : 1on1 専用かつ発話予約有効（speak_later_enabled=1）のみ。
     - バッチ（origin="real"・session なし）・シナリオ幕間（interlude）では追加ツールなし。
     - ヒント（resolve_context_tool_hints）はツール露出と同じ判定で並ぶ。
     - sqlite=None / キャラ不在では安全側（空リスト）に倒れる。
@@ -71,6 +72,33 @@ def test_oneonone_hides_override_without_living_calendar(sqlite_store):
         sqlite_store, char_id, origin="real", session_id="session-1",
     )
     assert names == ["visit_user"]
+
+
+def test_oneonone_exposes_speak_later_when_enabled(sqlite_store):
+    """発話予約有効キャラの 1on1 では speak_later が露出すること。"""
+    char_id = _make_character(sqlite_store, speak_later_enabled=1)
+    names = resolve_context_tool_names(
+        sqlite_store, char_id, origin="real", session_id="session-1",
+    )
+    assert names == ["visit_user", "speak_later"]
+
+
+def test_speak_later_hidden_outside_oneonone_or_when_disabled(sqlite_store):
+    """speak_later はうつつ・セッション無し・トグル OFF では露出しないこと。"""
+    char_id = _make_character(sqlite_store, speak_later_enabled=1)
+    # うつつでは出ない（1on1 専用）
+    assert "speak_later" not in resolve_context_tool_names(
+        sqlite_store, char_id, origin="usual",
+    )
+    # セッション無し（バッチ経路）では出ない
+    assert "speak_later" not in resolve_context_tool_names(
+        sqlite_store, char_id, origin="real",
+    )
+    # トグル OFF（既定）では出ない
+    char2 = _make_character(sqlite_store)
+    assert "speak_later" not in resolve_context_tool_names(
+        sqlite_store, char2, origin="real", session_id="session-1",
+    )
 
 
 def test_batch_and_interlude_expose_nothing(sqlite_store):

@@ -17,6 +17,12 @@
       体験している現実であり、隠す方が不整合になる。
 
 出力は淡白な事実の行リスト（圧力ブロックと同じ思想 — どう受け取るかは本人次第）。
+
+発話予約（speak_later）の相乗り（docs/planned/speak_later_plan.md）:
+    pending の予約がある間、「{speak_at} になったら『{note}』をしようと思っている」を
+    本人の段取りとして同じ枠に注入する。予約はセッションに紐づくが、注入はセッションを
+    問わない（自分の段取りはどの場でも本人の頭の中にあるもの）。生活カレンダー無効の
+    キャラにも載る（予約行だけのブロックになる）。
 """
 
 import logging
@@ -67,12 +73,15 @@ def build_schedule_lines(sqlite, character_id: str, now: datetime | None = None)
         now: 基準時刻（テスト注入用）。
 
     Returns:
-        淡白な事実の行リスト。生活カレンダー無効・素材なしなら空リスト。
+        淡白な事実の行リスト。素材なしなら空リスト。
+        生活カレンダー無効キャラは 1〜3 を出さない（発話予約の行だけ載りうる）。
     """
     char = sqlite.get_character(character_id)
-    if char is None or not int(getattr(char, "living_schedule_enabled", 0) or 0):
+    if char is None:
         return []
     now = now or datetime.now()
+    if not int(getattr(char, "living_schedule_enabled", 0) or 0):
+        return _build_reservation_lines(sqlite, character_id, now)
     lines: list[str] = []
 
     # --- 1. いまの予定（占有圧最大が現実） ---
@@ -126,4 +135,23 @@ def build_schedule_lines(sqlite, character_id: str, now: datetime | None = None)
             f"（{day_note}{next_entry.start_at:%H:%M}から・あと{_fmt_span(remaining)}）"
         )
 
+    # --- 4. 発話予約（speak_later）— 本人の段取りの想起 ---
+    lines.extend(_build_reservation_lines(sqlite, character_id, now))
+
+    return lines
+
+
+def _build_reservation_lines(sqlite, character_id: str, now: datetime) -> list[str]:
+    """pending の発話予約を「本人の段取り」の行にする。
+
+    fired / expired / cancelled / superseded になった予約は
+    list_pending_speech_reservations に載らないため、自然に消える。
+    """
+    lines: list[str] = []
+    for r in sqlite.list_pending_speech_reservations(character_id=character_id):
+        if r.speak_at.date() == now.date():
+            stamp = f"{r.speak_at:%H:%M}"
+        else:
+            stamp = f"{r.speak_at.month}/{r.speak_at.day} {r.speak_at:%H:%M}"
+        lines.append(f"{stamp} になったら「{r.note}」をしようと思っている")
     return lines
