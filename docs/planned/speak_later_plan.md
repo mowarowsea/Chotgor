@@ -1,4 +1,4 @@
-# ころあい (speak_later) 仕様書 — キャラ発の時限発話
+# speak_later 仕様書 — キャラ発の時限発話（発話予約）
 
 > Status: **draft**（2026-07-20 要件合意・実装未着手）
 > 関連: [aliveness_plan.md](aliveness_plan.md)（能動配達・行動権 push）、
@@ -7,8 +7,11 @@
 ## 概要
 
 キャラクターが 1on1 の会話中に「この時刻に、自分からこの会話に声をかける」という
-**心づもり**を置き、時刻が来たら Chotgor がキャラクター本人へ問い合わせて、
+**発話予約**を仕掛け、時刻が来たら Chotgor がキャラクター本人へ問い合わせて、
 その会話にキャラ発のメッセージが増える機能。
+
+「予約」はあくまで黒子（システム）側の語彙。キャラクター本人に見せる文言では
+「自分がやろうとしていること（能動的な段取り）」として表現し、「予約」とは言わない。
 
 - ① キャラがツール `speak_later` で「何時何分に声をかける」を仕掛ける
 - ② 毎分スケジューラが時刻到来を検知し、1on1 同等のヘッドレス生成で発話を落とす
@@ -19,16 +22,17 @@
 
 ## 命名について
 
-### 採用案（仮 — 最終決定は本人と相談）
-- **日本語名**: 「ころあい」（頃合い）— 頃合いを見て、自分から声をかける。
-  うつつ（現）・めぐり（巡り）・なりゆきと同じ和語の系譜
 - **ツール名**: `speak_later` — 本人視点で意味が最も直截（あとで自分から話す）
-- **テーブル名**: `speech_cues`（cue = 自分で仕込む合図）、時刻カラム `cue_at`
+- **和名は付けない** — 和名は機能群（うつつ・めぐり・なりゆき）に付ける流儀。
+  個々のツールには付けない（他ツールと同様 — ユーザ裁定 2026-07-20）
+- **内部命名は「予約（reservation）」でよい** — 「予約」を避ける制約はキャラクターに
+  見せる文言だけ（同裁定）。テーブル `speech_reservations`・時刻カラム `speak_at`
 
 ### 棄却した命名案（検討記録）
 | 案 | 理由 |
 |---|---|
-| 「予約」系（reserve/schedule_speech） | 本人への文言に「予約」を使うと外部サービス感が強い（ユーザ裁定）。機構名にも波及させない |
+| 和名「ころあい」等 | 個々のツールに和名は付けない方針（機能群に育ったら再検討） |
+| キャラ向け文言での「予約」 | 外部サービス感が強い（ユーザ裁定）。※内部命名・黒子側の表現は対象外 |
 | 「約束」 | 相手との約束とは限らない（自分の段取りの場合もある） |
 | `plan_return` | 「戻る」に限定される。同席中の数時間後にも使うので不正確 |
 | `set_intention` | めぐりの意図（intents）と語彙衝突する |
@@ -40,10 +44,13 @@
 3. 発話内容は仕掛け時に固定せず、**発火時に本人が生成**する（仕掛けに残すのは時刻＋用件メモ）
 4. 指定時刻が offline（availability 不可）なら仕掛け時に**エラーを返す**
    （availability の上書きはしない。可能なら「予定を変えれば置けるよ」のヒントを添える）
-5. プロンプト文言は「予約していた件」ではなく**「これをやろうとしていました」**の系統
+5. キャラに見せる文言は「予約していた件」ではなく**「これをやろうとしていました」**の系統
+   （制約はキャラ向け文言のみ。システム内部・黒子側は「予約」でよい — 2026-07-20 裁定）
 6. **キャラ設定画面でオン・オフできる**（ユーザが意図しないリクエスト＝課金を発生させる機能のため、既定 OFF）
 7. データは**新規テーブル**（intents 相乗りしない）
 8. フロント反映は push 不要。通知（ntfy）→ ユーザがリロード、で v1 は足りる
+9. 予約が入っている間は、キャラへの問い合わせプロンプトに
+   「{時刻}になったら『{note}』をしようと思っている」という一文を注入する（2026-07-20 追加）
 
 ## 設計
 
@@ -52,9 +59,9 @@
 ```
 1on1 ターン中に本人が speak_later(at, note) を呼ぶ
   → バリデーション（機能有効 / 時刻解釈 / 未来 / 上限 horizon / 未来 availability）
-  → speech_cues に pending 行（同一セッションの既存 pending は superseded に倒して置き直し）
-毎分スケジューラ（main.py _run_every_minute 新規登録 name="speech_cue"）
-  → pending 走査: cue_at 到来 && availability.available && 日次 cap 未達 → 発火
+  → speech_reservations に pending 行（同一セッションの既存 pending は superseded に倒して置き直し）
+毎分スケジューラ（main.py _run_every_minute 新規登録 name="speech_reservation"）
+  → pending 走査: speak_at 到来 && availability.available && 日次 cap 未達 → 発火
 発火 = 能動配達（services/gate/delivery.py）と同じヘッドレス SceneLoop:
   build_1on1_chat_request → OneOnOneRouter/Executor → キャラ発メッセージ保存
   → index → ntfy 通知 → scheduler_decisions 記録 → status=fired
@@ -74,7 +81,7 @@
   1. トグル OFF / origin 不一致 / session なし → エラー文字列（露出とのタイムラグ対策。
      messenger.py と同じ二重ガード）
   2. 時刻が過去・パース不能・72時間超 → エラー文字列
-  3. `check_availability(char, cue_at, sqlite=...)` で `available == False`
+  3. `check_availability(char, speak_at, sqlite=...)` で `available == False`
      → エラー文字列「その時間は{reason}なので声をかけられない」。
      生活カレンダー有効キャラには「予定を動かせば置ける（override_schedule）」のヒントを添える。
      ※未来時刻評価は予報パネルと同じ**無風仮定**（うつつシーン進行中などの
@@ -86,19 +93,19 @@
 
 ### ② スケジューラと発火
 
-- `main.py` に `_run_every_minute(name="speech_cue", ...)` を新規登録
-  （A1 共通ループ — heartbeat `scheduler_heartbeat_speech_cue` が自動で立つ）
+- `main.py` に `_run_every_minute(name="speech_reservation", ...)` を新規登録
+  （A1 共通ループ — heartbeat `scheduler_heartbeat_speech_reservation` が自動で立つ）
 - 発火判定（毎分・LLM 呼び出しは発火時のみ）:
-  1. `cue_at <= now` の pending を走査
+  1. `speak_at <= now` の pending を走査
   2. `check_availability` を再評価。unavailable なら**発火せず pending 維持**
      （置いたあとに予定が変わった／うつつシーン進行中のケース。復帰後に遅れて発火）
-  3. `cue_at + 24h` を過ぎても発火できなければ **status=expired**
+  3. `speak_at + 24h` を過ぎても発火できなければ **status=expired**
      ＋ scheduler_decisions（declined）。黙って消さず記録に残す
   4. 日次コストガード: `escrow_delivery_daily_cap` の予算・カウンタを**共有**
      （キャラ発の現実接触は経路を問わず1つの予算 — 2026-07-11 裁定の延長）。
      到達日は skipped 記録（日1回）→ 翌日カウンタリセット後に遅延発火
   5. セッション削除済み・キャラ estranged・退席済み → status=cancelled ＋記録
-- 決定ログ: `scheduler_decisions` kind=`speech_cue`（fired / declined / skipped / error）
+- 決定ログ: `scheduler_decisions` kind=`speech_reservation`（fired / declined / skipped / error）
 
 ### 発火時の生成（キャラクター問い合わせ原則）
 
@@ -109,13 +116,27 @@ LLM に渡す（**DB には保存しない** — 時間差注釈と同じ「LLM 
 
 - 定刻発火: 「（いま {HH:MM}。あなたはこの時間に『{note}』をやろうとしていた。
   ここからはあなたから声をかける番）」
-- 遅延発火: 「（いま {HH:MM}。本当は {cue_at} に『{note}』をやろうとしていたが、
+- 遅延発火: 「（いま {HH:MM}。本当は {speak_at} に『{note}』をやろうとしていたが、
   都合がつかず今になった）」
 
 **未配達メッセージとの合流**: 発火時にセッションへ未配達のユーザメッセージが残っていたら、
 escrow 配達と同じ手順（時間差注釈＋`mark_messages_delivered`）で併せて配達し、
 合成注釈を末尾に添える。別々に2ターン発生させない。
 実装は `_deliver_session` に「追加注釈・ユーザメッセージ無しでも生成する」拡張を入れて共用する。
+
+### 予約中のプロンプト注入（自分の段取りの想起）
+
+pending の予約がある間、キャラへの問い合わせプロンプトに本人の段取りとして一文を注入する:
+
+> {speak_at} になったら「{note}」をしようと思っている。
+
+- 注入先は予定コンテキスト（`services/schedule/awareness.build_schedule_lines` →
+  ターン注釈 `{block_schedule}`）と同じ枠に相乗りする（1on1・うつつ PC の両方に載る）
+- 目的: 本人が自分の段取りを覚えている状態を作る。発火前に会話が動いたときの
+  置き直し判断、「もうすぐ◯時だ」といった自然な言及、発火時の唐突さの緩和
+- 予約はセッションに紐づくが、注入はセッションを問わない
+  （自分の段取りはどの場でも本人の頭の中にあるものなので）
+- fired / expired / cancelled / superseded になったら注入は消える
 
 ### コストガードとトグル
 
@@ -128,14 +149,14 @@ escrow 配達と同じ手順（時間差注釈＋`mark_messages_delivered`）で
 
 ### データ
 
-新規テーブル `speech_cues`（migrations.py にマーカー冪等のマイグレーション追加）:
+新規テーブル `speech_reservations`（migrations.py にマーカー冪等のマイグレーション追加）:
 
 ```sql
-speech_cues
+speech_reservations
   id            TEXT PRIMARY KEY
   character_id  TEXT NOT NULL
   session_id    TEXT NOT NULL
-  cue_at        DATETIME NOT NULL   -- 発火予定時刻
+  speak_at      DATETIME NOT NULL   -- 発火予定時刻
   note          TEXT NOT NULL       -- 何を話そうとしているか（本人の言葉）
   status        TEXT NOT NULL       -- pending / fired / expired / cancelled / superseded
   created_at    DATETIME NOT NULL
@@ -152,13 +173,14 @@ scheduler_decisions に残るため、**専用の封筒 event_type は v1 では
 
 | 区分 | ファイル | 内容 |
 |---|---|---|
-| 新規 | `backend/character_actions/later_speaker.py` | SCHEMA / DESCRIPTION / HINT ＋ ツール実装（バリデーション・cue 書き込み） |
-| 新規 | `backend/services/gate/speech_cue.py` | 発火ランナー（毎分走査・発火判定・生成呼び出し）。delivery.py の隣 |
+| 新規 | `backend/character_actions/later_speaker.py` | SCHEMA / DESCRIPTION / HINT ＋ ツール実装（バリデーション・予約書き込み） |
+| 新規 | `backend/services/gate/speech_reservation.py` | 発火ランナー（毎分走査・発火判定・生成呼び出し）。delivery.py の隣 |
 | 変更 | `character_actions/tool_specs.py` | CONTEXT_TOOL_SPECS へ1件追加 |
 | 変更 | `character_actions/context_tools.py` | 露出判定（real＋session＋トグル） |
 | 変更 | `character_actions/executor.py` | `_dispatch` に分岐追加 |
 | 変更 | `services/gate/delivery.py` | `_deliver_session` の共用化（追加注釈・pending 無し生成） |
-| 変更 | `main.py` | `_run_every_minute(name="speech_cue")` 登録 |
+| 変更 | `main.py` | `_run_every_minute(name="speech_reservation")` 登録 |
+| 変更 | `services/schedule/awareness.py`（＋flow.py の注釈組み立て） | 予約中の一文をターン注釈へ追加 |
 | 変更 | SQLiteStore / migrations.py | テーブル＋CRUD＋characters 列 |
 | 変更 | `templates/character_edit.html` ＋ characters API | トグル UI・保存 |
 | 変更 | WorkDir `.claude/settings.json` | permissions.allow へ `mcp__chotgor__speak_later` |
@@ -179,7 +201,7 @@ scheduler_decisions に残るため、**専用の封筒 event_type は v1 では
 
 ## 将来枠
 
-- 予報パネル週間カレンダーへの cue 表示（伏せ枠ネタバレ制御と同じ扱いの検討が必要 —
+- 予報パネル週間カレンダーへの予約表示（伏せ枠ネタバレ制御と同じ扱いの検討が必要 —
   note をユーザに見せるかは本人の秘密性の論点）
 - キャンセル・一覧ツール（`speak_later` の置き直しで v1 は代替）
 - 時限 push（セッション外・reach_out の時刻指定版）
@@ -193,4 +215,5 @@ scheduler_decisions に残るため、**専用の封筒 event_type は v1 では
 - セッション削除／estranged／退席済みの cancelled 遷移
 - 未配達メッセージとの合流（1ターンに併合されること・mark_messages_delivered 順序）
 - 合成注釈が DB に保存されないこと（画面にはキャラ発話のみ増える）
+- 予約中のプロンプト注入（pending 中のみ載り、fired/expired/superseded で消えること）
 - トグル OFF 時の非露出＋実行ガード
