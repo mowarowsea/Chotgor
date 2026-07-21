@@ -40,8 +40,8 @@ def test_usual_hides_reach_out_when_cap_reached(sqlite_store):
     """日次上限到達日は reach_out の露出自体が消えること（プロンプトからも消える）。"""
     char_id = _make_character(sqlite_store)
     today = datetime.now().date().isoformat()
-    sqlite_store.set_setting("escrow_delivery_daily_cap", "1")
-    sqlite_store.set_setting(f"escrow_delivery_count_{today}", "1")
+    sqlite_store.set_setting("spontaneous_initiative_daily_cap", "1")
+    sqlite_store.set_setting(f"spontaneous_initiative_count_{today}", "1")
     assert resolve_context_tool_names(sqlite_store, char_id, origin="usual") == []
 
 

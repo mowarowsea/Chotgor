@@ -4,7 +4,7 @@
 以下のツールは文脈によって露出が変わる（2026-07-11 要件 ①②④）:
 
     - reach_out         : うつつ（origin=="usual"）専用。相手へ現実のメッセージを送る。
-                          日次上限（escrow_delivery_daily_cap 共有）到達日は露出自体を消す。
+                          日次上限（Spontaneous Initiative 共有）到達日は露出自体を消す。
     - visit_user        : 1on1（origin=="real" かつ session_id あり）専用。対面モードON。
                           すでに対面中なら露出しない。
     - override_schedule : 1on1 専用かつ生活カレンダー有効（living_schedule_enabled=1）のみ。
@@ -26,8 +26,8 @@
 
 from datetime import datetime
 
-from backend.character_actions.messenger import delivery_cap_reached
 from backend.character_actions.tool_specs import CONTEXT_TOOL_SPECS
+from backend.lib.initiative_budget import initiative_cap_reached
 
 # コンテキストツール名の全集合（テスト・許可設定の照合用）
 CONTEXT_TOOL_NAMES: frozenset[str] = frozenset(CONTEXT_TOOL_SPECS)
@@ -62,7 +62,7 @@ def resolve_context_tool_names(
     names: list[str] = []
     if origin == "usual":
         # うつつ専用: 現実へのメッセージ送信。上限到達日は「見せない」で使用も止まる
-        if not delivery_cap_reached(sqlite, now):
+        if not initiative_cap_reached(sqlite, now):
             names.append("reach_out")
     elif origin == "real" and session_id:
         # 1on1 専用: 対面切替（すでに対面中なら不要）

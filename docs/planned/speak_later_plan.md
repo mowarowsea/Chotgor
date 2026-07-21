@@ -101,8 +101,8 @@
      （置いたあとに予定が変わった／うつつシーン進行中のケース。復帰後に遅れて発火）
   3. `speak_at + 24h` を過ぎても発火できなければ **status=expired**
      ＋ scheduler_decisions（declined）。黙って消さず記録に残す
-  4. 日次コストガード: `escrow_delivery_daily_cap` の予算・カウンタを**共有**
-     （キャラ発の現実接触は経路を問わず1つの予算 — 2026-07-11 裁定の延長）。
+  4. 日次コストガード: `spontaneous_initiative_daily_cap` の予算・カウンタを`reach_out` と**共有**
+     （キャラ自発のリクエストは経路を問わず1つの予算 — 2026-07-11 裁定の延長）。
      到達日は skipped 記録（日1回）→ 翌日カウンタリセット後に遅延発火
   5. セッション削除済み・キャラ estranged・退席済み → status=cancelled ＋記録
 - 決定ログ: `scheduler_decisions` kind=`speech_reservation`（fired / declined / skipped / error）
@@ -143,7 +143,7 @@ pending の予約がある間、キャラへの問い合わせプロンプトに
 | ガード | 内容 |
 |---|---|
 | キャラ単位トグル | `characters.speak_later_enabled`（INTEGER, 既定 0=OFF）。キャラ編集 UI にチェックボックス。OFF ならツール非露出＋実行ガード |
-| 日次 cap | `escrow_delivery_daily_cap` 共有（発火時に消費。仕掛け自体はコストゼロなので消費しない） |
+| 日次 cap | `spontaneous_initiative_daily_cap` 共有（発火時に消費。仕掛け自体はコストゼロなので消費しない） |
 | pending 上限 | 1件/セッション（置き直しで上書き）。キャラ全体の上限は設けない（セッション数と日次 cap が実質上限） |
 | horizon | 72時間先まで |
 

@@ -2,7 +2,7 @@
 
 検証対象（backend/services/gate/speech_reservation.py）:
     1. 発火判定（run_pending_speech_reservations）:
-       - 定刻到来で発火し、fired 遷移・決定ログ・日次カウンタ消費（escrow と共有）が揃う
+       - 定刻到来で発火し、fired 遷移・決定ログ・日次カウンタ消費（reach_out と共有）が揃う
        - unavailable 中は発火せず pending 維持 → 復帰後に遅延発火（遅延文言の合成注釈）
        - speak_at + 24h を過ぎたら expired ＋ declined 記録（黙って消さない）
        - 日次 cap 到達日は skipped 記録（日1回だけ）→ pending 維持
@@ -130,11 +130,11 @@ class TestReservationFiring:
         char_msgs = [m for m in msgs if m.role == "character"]
         assert len(char_msgs) == 1
         assert char_msgs[0].content == "約束どおり、声をかけにきたよ。"
-        # 決定ログ（fired）と日次カウンタ（escrow と共有）
+        # 決定ログ（fired）と日次カウンタ（reach_out と共有）
         decisions = sqlite_store.list_scheduler_decisions(scheduler="speech_reservation")
         assert [d.outcome for d in decisions] == ["fired"]
         today = now.date().isoformat()
-        assert int(sqlite_store.get_setting(f"escrow_delivery_count_{today}", "0") or 0) == 1
+        assert int(sqlite_store.get_setting(f"spontaneous_initiative_count_{today}", "0") or 0) == 1
 
     @pytest.mark.asyncio
     async def test_annotation_not_saved_to_db(self, sqlite_store, _patched_llm):
@@ -213,7 +213,7 @@ class TestReservationGate:
         char_id, _, sid = _make_char_session(sqlite_store)
         now = datetime.now()
         r = _reserve(sqlite_store, char_id, sid, speak_at=now - timedelta(minutes=1))
-        sqlite_store.set_setting("escrow_delivery_daily_cap", "0")
+        sqlite_store.set_setting("spontaneous_initiative_daily_cap", "0")
         flow = _FakeFlow()
         state = _make_state(sqlite_store, flow)
 

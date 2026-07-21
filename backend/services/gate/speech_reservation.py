@@ -14,7 +14,7 @@ docs/planned/speak_later_plan.md §②:
     3. check_availability を再評価。unavailable なら発火せず pending 維持
        （置いたあとに予定が変わった／うつつシーン進行中のケース。復帰後に遅れて発火）。
        毎分続く状態なので決定ログは残さない（ノイズ防止 — 生存確認は heartbeat）。
-    4. 日次コストガード: escrow_delivery_daily_cap の予算・カウンタを共有
+    4. 日次コストガード: Spontaneous Initiative の予算・カウンタを reach_out と共有
        （キャラ発の現実接触は経路を問わず1つの予算 — 2026-07-11 裁定の延長）。
        到達日は skipped 記録（日1回）→ 翌日カウンタリセット後に遅延発火。
     5. 発火 = fired マーク＋カウンタ消費を先に確定してから生成する
@@ -29,7 +29,7 @@ docs/planned/speak_later_plan.md §②:
 import logging
 from datetime import datetime, timedelta
 
-from backend.character_actions.messenger import delivery_cap_reached
+from backend.lib.initiative_budget import consume_initiative, initiative_cap_reached
 from backend.services.gate.availability import (
     check_availability,
     is_usual_scene_running,
@@ -165,9 +165,9 @@ async def _maybe_fire_reservation(state, reservation, now: datetime) -> None:
     if not availability.available:
         return  # pending 維持 — 復帰後に遅れて発火（毎分続くため記録しない）
 
-    # --- 4. 日次コストガード（escrow 配達・reach_out と共有の予算） ---
+    # --- 4. 日次コストガード（reach_out と共有の Spontaneous Initiative 予算） ---
     today_str = now.date().isoformat()
-    if delivery_cap_reached(sqlite, now):
+    if initiative_cap_reached(sqlite, now):
         # cap 到達は毎分続くため、決定ログは予約×日付ごとに1回だけ残す
         mark_key = f"speech_reservation_cap_decision_{reservation.id}_{today_str}"
         if not sqlite.get_setting(mark_key, ""):
@@ -182,9 +182,7 @@ async def _maybe_fire_reservation(state, reservation, now: datetime) -> None:
     # --- 5. 発火確定 — fired マーク＋カウンタ消費を生成より先に確定する ---
     # （生成失敗で毎分 LLM を叩き直さない。escrow の delivered-before-LLM と同思想）
     sqlite.set_speech_reservation_status(reservation.id, "fired", fired_at=now)
-    count_key = f"escrow_delivery_count_{today_str}"
-    delivered_today = int(sqlite.get_setting(count_key, "0") or 0)
-    sqlite.set_setting(count_key, str(delivered_today + 1))
+    consume_initiative(sqlite, now)
 
     annotation = build_reservation_annotation(reservation, now)
     await _deliver_session(

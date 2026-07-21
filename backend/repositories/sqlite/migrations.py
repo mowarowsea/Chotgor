@@ -1360,6 +1360,48 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE chat_sessions ADD COLUMN current_bg_label TEXT"
                 )
 
+    def _migrate_rename_initiative_cap(self) -> None:
+        """日次コストガードの settings キーを Spontaneous Initiative へリネームする。
+
+        `escrow_delivery_daily_cap` → `spontaneous_initiative_daily_cap`。
+        escrow の能動配達（ユーザ発話への返信）が cap の対象から外れ、キャラ自発の
+        リクエストだけを数える予算になったため（aliveness_plan.md §5.1・2026-07-21 裁定）。
+
+        日次カウンタ（`escrow_delivery_count_{date}`）は翌日には無関係になるので移行せず、
+        cap 到達マーカー（`escrow_cap_decision_*`）と併せて掃除する。
+        新キーが既にあれば旧キーを捨てるだけ（ユーザの再設定を上書きしない）。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "global_settings" not in tables:
+                return
+            row = conn.exec_driver_sql(
+                "SELECT value FROM global_settings WHERE key = 'escrow_delivery_daily_cap'"
+            ).fetchone()
+            if row is not None:
+                exists = conn.exec_driver_sql(
+                    "SELECT 1 FROM global_settings "
+                    "WHERE key = 'spontaneous_initiative_daily_cap'"
+                ).fetchone()
+                if exists is None:
+                    conn.exec_driver_sql(
+                        "INSERT INTO global_settings (key, value) VALUES "
+                        "('spontaneous_initiative_daily_cap', ?)",
+                        (row[0],),
+                    )
+                conn.exec_driver_sql(
+                    "DELETE FROM global_settings WHERE key = 'escrow_delivery_daily_cap'"
+                )
+            conn.exec_driver_sql(
+                "DELETE FROM global_settings WHERE key LIKE 'escrow_delivery_count_%' "
+                "OR key LIKE 'escrow_cap_decision_%'"
+            )
+
     def _migrate_drop_self_reflection(self) -> None:
         """自己参照ループ（reflector.py）撤去に伴う characters カラムの整理。
 

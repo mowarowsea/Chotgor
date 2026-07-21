@@ -6,6 +6,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from backend.api.ui.common import _save_response, get_templates
+from backend.lib.initiative_budget import CAP_SETTING_KEY, DEFAULT_DAILY_CAP
 from backend.services.memory.reindex_service import reindex_with_new_embeddings
 
 logger = logging.getLogger(__name__)
@@ -72,13 +73,13 @@ async def save_general_settings(request: Request):
         cw = 10
     store.set_setting("context_window_max_chronicled", str(max(0, min(200, cw))))
 
-    # 預かり（escrow）能動配達の日次上限（0 = 能動配達オフ）。
-    # delivery.py は空文字を既定12に倒すため、明示保存値は 0〜200 にクランプする。
+    # キャラ自発リクエスト（Spontaneous Initiative）の日次上限（0 = 自発接触オフ）。
+    # 読み手は空文字を既定に倒すため、明示保存値は 0〜200 にクランプする。
     try:
-        cap = int(form.get("escrow_delivery_daily_cap") or 12)
+        cap = int(form.get(CAP_SETTING_KEY) or DEFAULT_DAILY_CAP)
     except (TypeError, ValueError):
-        cap = 12
-    store.set_setting("escrow_delivery_daily_cap", str(max(0, min(200, cap))))
+        cap = DEFAULT_DAILY_CAP
+    store.set_setting(CAP_SETTING_KEY, str(max(0, min(200, cap))))
 
     # 翻訳モデル設定の保存
     store.set_setting("translation_preset_id", form.get("translation_preset_id") or "")

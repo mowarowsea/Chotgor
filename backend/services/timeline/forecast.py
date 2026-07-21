@@ -19,6 +19,11 @@ resolve_delivery_due / check_availability）の合成であり、LLM を一切�
 import logging
 from datetime import date, datetime, timedelta
 
+from backend.lib.initiative_budget import (
+    CAP_SETTING_KEY,
+    COUNT_KEY_PREFIX,
+    DEFAULT_DAILY_CAP,
+)
 from backend.services.actions.runner import (
     _URGE_THRESHOLD,
     action_urge_snapshot,
@@ -66,7 +71,7 @@ _CAP_DEFS = [
     ("行動実行", "action_exec_count_", "action_exec_daily_cap", 3),
     ("うつつシーン", "usual_days_scene_count_", "usual_days_daily_cap", 24),
     ("③突発発火", "sudden_event_fire_count_", "sudden_event_daily_cap", 3),
-    ("能動配達", "escrow_delivery_count_", "escrow_delivery_daily_cap", 12),
+    ("自発リクエスト", COUNT_KEY_PREFIX, CAP_SETTING_KEY, DEFAULT_DAILY_CAP),
 ]
 
 

@@ -9,8 +9,8 @@
     - visit_user: 1on1 のテキストモード中に、本人の意志で対面モードへ切り替える
       「突然会いに来た」ツール。**1on1 専用**。
 
-コストガード: reach_out は預かり配達と同じ日次上限（escrow_delivery_daily_cap・
-既定 12）とカウンタ（escrow_delivery_count_{date}）を共有する。キャラ発の現実接触は
+コストガード: reach_out は発話予約の発火と同じ日次予算
+（Spontaneous Initiative・lib/initiative_budget.py）を共有する。キャラ自発のリクエストは
 経路を問わず 1 つの予算で数える（2026-07-11 裁定）。上限到達時はツール自体が
 露出されなくなる（context_tools.py）が、露出とのタイムラグに備え実行側でも弾く。
 
@@ -25,14 +25,13 @@ import json
 import logging
 from datetime import datetime, timedelta
 
+from backend.lib.initiative_budget import consume_initiative, initiative_cap_reached
+
 logger = logging.getLogger(__name__)
 
 # うつつをポーズさせる長さ（分）。本人がメッセージを送ってから、GM が
 # 「その後の時間」を描写するまでの現実の待ち時間。
 PUSH_PAUSE_MINUTES = 15
-
-# 預かり配達と共有する日次上限の既定値（services/gate/delivery.py と揃える）
-_DEFAULT_DAILY_CAP = 12
 
 
 def push_pause_key(character_id: str) -> str:
@@ -71,28 +70,6 @@ def read_push_pause(sqlite_store, character_id: str) -> dict | None:
 def clear_push_pause(sqlite_store, character_id: str) -> None:
     """うつつポーズ要求を消す（再開時・破棄時にスケジューラが呼ぶ）。"""
     sqlite_store.set_setting(push_pause_key(character_id), "")
-
-
-def delivery_cap_reached(sqlite_store, now: datetime | None = None) -> bool:
-    """キャラ発の現実接触（push/配達）の日次上限に達しているかを返す。
-
-    預かり配達（delivery.py）と同じ設定キー・カウンタを読む純関数。
-    context_tools.py（露出判定）と Messenger.reach_out（実行ガード）が共有する。
-
-    Args:
-        sqlite_store: SQLiteStore。
-        now: 基準時刻（テスト注入用）。
-
-    Returns:
-        上限到達なら True。cap=0 は「能動接触を止める」有効設定として True になる。
-    """
-    today_str = (now or datetime.now()).date().isoformat()
-    try:
-        cap = int(sqlite_store.get_setting("escrow_delivery_daily_cap", ""))
-    except (TypeError, ValueError):
-        cap = _DEFAULT_DAILY_CAP
-    count = int(sqlite_store.get_setting(f"escrow_delivery_count_{today_str}", "0") or 0)
-    return count >= cap
 
 
 # --- reach_out: パラメータスキーマ ---
@@ -231,7 +208,7 @@ class Messenger:
             return "[reach_out error: キャラクターが見つかりません]"
 
         now = datetime.now()
-        if delivery_cap_reached(self.sqlite_store, now):
+        if initiative_cap_reached(self.sqlite_store, now):
             # 露出側（context_tools）でも隠すが、同日中に上限へ達した直後の呼び出しを弾く
             return (
                 "[reach_out error: 今日はもう相手へ届ける回数の上限に達しています。"
@@ -247,11 +224,8 @@ class Messenger:
 
         result = execute_push(self.sqlite_store, char, preset, body)
 
-        # 日次カウンタ消費（預かり配達と共有の予算）
-        today_str = now.date().isoformat()
-        count_key = f"escrow_delivery_count_{today_str}"
-        delivered = int(self.sqlite_store.get_setting(count_key, "0") or 0)
-        self.sqlite_store.set_setting(count_key, str(delivered + 1))
+        # 日次カウンタ消費（発話予約の発火と共有の予算）
+        consume_initiative(self.sqlite_store, now)
 
         # 会いに行く（対面ON）。availability は対面中 OnTime になる。
         if visit:

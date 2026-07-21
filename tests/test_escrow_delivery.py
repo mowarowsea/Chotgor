@@ -8,7 +8,8 @@
          配達しない（決定論ジッター待ち — 復帰直後の機械的な即レスを避ける）
        - ジッター経過後のターンで配達され、マーカーは消費される
        - estranged / 退席済みセッションは配達対象外
-       - 日次コストガード（escrow_delivery_daily_cap）到達時は配達しない
+       - 自発リクエストの日次上限（Spontaneous Initiative）は配達を止めない
+         （配達はユーザ起点なので cap の対象外）
     2. 配達フェーズ（_deliver_session）:
        - LLM に渡る user_content / 履歴コピーに時間差注釈が付く
          （DB 本文は変更されない）
@@ -27,6 +28,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from backend.lib.initiative_budget import CAP_SETTING_KEY, read_count
 from backend.services.gate.delivery import (
     _delivery_jitter_seconds,
     _deliver_session,
@@ -217,24 +219,30 @@ class TestDeliveryGate:
         assert len(sqlite_store.list_undelivered_messages(sid2)) == 1
 
     @pytest.mark.asyncio
-    async def test_daily_cap_blocks_delivery(
+    async def test_initiative_cap_does_not_block_delivery(
         self, sqlite_store, _patched_llm, monkeypatch,
     ):
-        """日次コストガード到達時はジッター経過後でも配達しない。"""
+        """自発リクエストの日次上限は配達を止めず、カウンタも消費しないこと。
+
+        配達はユーザ発話への返信＝ユーザ起点なので、cap（Spontaneous Initiative）の
+        対象外（aliveness_plan.md §5.1・2026-07-21 裁定）。cap=0（自発接触オフ）でも
+        ユーザが送ったメッセージには返事が届く。
+        """
         monkeypatch.setattr(
             "backend.services.gate.delivery._delivery_jitter_seconds",
             lambda sid, ready_at: 0,
         )
         _, _, sid = _make_char_session(sqlite_store)
         _escrow(sqlite_store, sid)
-        sqlite_store.set_setting("escrow_delivery_daily_cap", "0")
+        sqlite_store.set_setting(CAP_SETTING_KEY, "0")
         flow = _FakeFlow()
         state = _make_state(sqlite_store, flow)
 
         await run_pending_escrow_deliveries(state)
 
-        assert flow.calls == 0
-        assert len(sqlite_store.list_undelivered_messages(sid)) == 1
+        assert flow.calls == 1
+        assert sqlite_store.list_undelivered_messages(sid) == []
+        assert read_count(sqlite_store) == 0
 
     def test_jitter_is_deterministic(self):
         """同じセッション・同じ観測時刻なら常に同じジッター（乱数は世界に置く）。"""

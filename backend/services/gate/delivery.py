@@ -33,7 +33,11 @@ v1 では預かり分の配達は「次のユーザリクエスト時」のみ�
       次のユーザターンで通常履歴としてキャラに渡る — 時間差注釈だけが失われる）。
     - 応答生成は 1on1 SSE 経路と同じ SceneLoop（OneOnOneRouter/Executor）を
       ヘッドレスで await 回収する（うつつの無人進行と同じパターン）。
-    - 日次コストガード: settings ``escrow_delivery_daily_cap``（既定 12 配達/日）。
+    - **日次コストガードは掛からない**。配達はユーザ発話への返信＝ユーザ起点であり、
+      cap（Spontaneous Initiative）の目的「ユーザが意図しないリクエストの暴走を防ぐ」の
+      対象外だから（aliveness_plan.md §5.1・2026-07-21 裁定）。
+      cap を掛けていた頃は、キャラ発の接触で始まった会話をユーザが続けると1往復ごとに
+      1消費し、上限到達日はそれ以降の配達が全部止まる（返事が来なくなる）不具合があった。
 """
 
 import asyncio
@@ -61,8 +65,6 @@ logger = logging.getLogger(__name__)
 
 # 復帰観測から配達までの決定論ジッターの最大幅（分）— 従来経路のみ
 _JITTER_MAX_MINUTES = 10
-# 日次コストガードの既定値（配達 = LLM 1呼び出し）
-_DEFAULT_DAILY_CAP = 12
 # チェック間隔格子の評価点数の上限（生活カレンダー経路）。
 # 古い預かりに対して毎分すべてのチェック点を再評価すると計算が伸びるため、
 # 直近 _MAX_CHECKPOINTS 点に絞る（reply_rate > 0 なら十分な点数で実質必ず成功する）。
@@ -166,7 +168,7 @@ async def run_pending_escrow_deliveries(state, now: datetime | None = None) -> N
 async def _maybe_deliver_session(
     state, session, now: datetime, oldest_pending_at: datetime | None = None
 ) -> None:
-    """1セッション分の配達判定 — 経路別ゲート・コストガードを通す。
+    """1セッション分の配達判定 — 経路別ゲートを通す（日次 cap は掛けない）。
 
     従来経路は availability 復帰＋ジッター、生活カレンダー経路はチェック間隔格子＋
     決定論 reply_rate 判定（resolve_delivery_due）。
@@ -233,35 +235,10 @@ async def _maybe_deliver_session(
         if now < due:
             return  # ジッター待ち（復帰直後の機械的な即レスを避ける）
 
-    # 日次コストガード（配達 = LLM 1呼び出し）。cap=0 は「能動配達を止める」
-    # 意味で有効な設定値なので、or フォールバックではなく明示的にパースする
-    today_str = now.date().isoformat()
-    try:
-        cap = int(sqlite.get_setting("escrow_delivery_daily_cap", ""))
-    except (TypeError, ValueError):
-        cap = _DEFAULT_DAILY_CAP
-    count_key = f"escrow_delivery_count_{today_str}"
-    delivered_today = int(sqlite.get_setting(count_key, "0") or 0)
-    if delivered_today >= cap:
-        logger.warning(
-            "能動配達: 日次上限 %d 到達。当日はスキップ session=%s", cap, session.id,
-        )
-        # 配達due なのに cap で止まる状態は毎分続くため、決定ログは日に1回だけ残す
-        # （ノイズで決定タイムラインを埋めない — 生存確認は heartbeat が担う）
-        mark_key = f"escrow_cap_decision_{session.id}_{today_str}"
-        if not sqlite.get_setting(mark_key, ""):
-            sqlite.set_setting(mark_key, "1")
-            sqlite.record_scheduler_decision(
-                "escrow_delivery", "skipped", character_id=char.id,
-                reason=f"日次上限（{delivered_today}/{cap}）",
-                details={"session_id": session.id},
-            )
-        return
-
-    # 配達確定 — カウンタを進め、従来経路なら ready マーカーを消費してから配達する
+    # 配達確定 — 従来経路なら ready マーカーを消費してから配達する。
+    # 日次 cap は掛けない（ユーザ発話への返信なので Spontaneous Initiative ではない）。
     if not int(getattr(char, "living_schedule_enabled", 0) or 0):
         sqlite.set_setting(f"escrow_ready_{session.id}", "")
-    sqlite.set_setting(count_key, str(delivered_today + 1))
     await _deliver_session(state, session, char)
     sqlite.record_scheduler_decision(
         "escrow_delivery", "fired", character_id=char.id,

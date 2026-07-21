@@ -247,7 +247,9 @@ active の数分遅延は許容 — 遅延が要らない場面には逃げ道�
 
 既存 `_escrow_delivery_scheduler`（毎分・availability 復帰でジッター配達、aliveness §5.1）を、
 **「チェック間隔ごとに返信率で決定論判定して配達」へ一般化**する延長で載る。
-日次コストガード `escrow_delivery_daily_cap` もそのまま流用。
+日次コストガードは**掛からない**（配達はユーザ発話への返信＝ユーザ起点のため。
+`spontaneous_initiative_daily_cap` はキャラ自発のリクエストだけを数える —
+aliveness_plan.md §5.1「日次コストガードの定義」）。
 動作変更として最大の点は「available になるまで配達しない」→「busy 中もチェック点で
 配達しうる」への転換で、`escrow_ready_*` マーカー＋0〜10分ジッターは
 チェック間隔格子＋決定論 reply_rate 判定に置換される。

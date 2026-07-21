@@ -3,13 +3,13 @@
 検証対象（2026-07-11 要件 ①②）:
     1. reach_out（うつつ経路 origin="usual"）:
        - 新規セッション＋キャラ発メッセージが作られる（行動権 push と同一経路）
-       - 日次カウンタ（escrow_delivery_count_{date}）を消費する（預かり配達と予算共有）
+       - 日次カウンタ（spontaneous_initiative_count_{date}）を消費する（発話予約の発火と予算共有）
        - うつつポーズ要求キー（usual_push_pause_{character_id}）が立つ
          （sent_at / resume_at=15分後 / visit の3点セット）
        - visit=true で characters.face_to_face_mode が ON になる
     2. reach_out の実行ガード:
        - うつつ以外（origin="real"）からはエラー文字列を返し、何も作られない
-       - 日次上限（escrow_delivery_daily_cap）到達時はエラー文字列を返す
+       - 日次上限（spontaneous_initiative_daily_cap）到達時はエラー文字列を返す
        - message 空はエラー文字列
     3. visit_user（1on1）:
        - face_to_face_mode が OFF→ON になる
@@ -24,9 +24,9 @@ from backend.character_actions.messenger import (
     PUSH_PAUSE_MINUTES,
     Messenger,
     clear_push_pause,
-    delivery_cap_reached,
     read_push_pause,
 )
+from backend.lib.initiative_budget import initiative_cap_reached
 
 
 def _make_character(sqlite_store, name="はるテスト", **kwargs):
@@ -59,9 +59,9 @@ def test_reach_out_usual_creates_session_and_pause(sqlite_store):
     assert len(messages) == 1
     assert messages[0].role == "character"
     assert "おーい、生きてる？" in messages[0].content
-    # 日次カウンタ消費（預かり配達と共有の予算。get_setting は数値文字列を int に戻す）
+    # 日次カウンタ消費（発話予約の発火と共有の予算。get_setting は数値文字列を int に戻す）
     today = datetime.now().date().isoformat()
-    assert int(sqlite_store.get_setting(f"escrow_delivery_count_{today}", "0")) == 1
+    assert int(sqlite_store.get_setting(f"spontaneous_initiative_count_{today}", "0")) == 1
     # ポーズ要求キー（15分後再開）
     pause = read_push_pause(sqlite_store, char_id)
     assert pause is not None
@@ -100,12 +100,12 @@ def test_reach_out_rejected_outside_usual(sqlite_store):
 
 
 def test_reach_out_rejected_when_cap_reached(sqlite_store):
-    """日次上限（escrow_delivery_daily_cap）到達時、reach_out はエラー文字列を返すこと。"""
+    """日次上限（spontaneous_initiative_daily_cap）到達時、reach_out はエラー文字列を返すこと。"""
     char_id, _ = _make_character(sqlite_store)
     today = datetime.now().date().isoformat()
-    sqlite_store.set_setting("escrow_delivery_daily_cap", "2")
-    sqlite_store.set_setting(f"escrow_delivery_count_{today}", "2")
-    assert delivery_cap_reached(sqlite_store) is True
+    sqlite_store.set_setting("spontaneous_initiative_daily_cap", "2")
+    sqlite_store.set_setting(f"spontaneous_initiative_count_{today}", "2")
+    assert initiative_cap_reached(sqlite_store) is True
 
     messenger = Messenger(char_id, sqlite_store, default_origin="usual")
     result = messenger.reach_out("上限越えの連絡")
