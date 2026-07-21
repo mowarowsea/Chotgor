@@ -907,10 +907,12 @@ html::-webkit-scrollbar-track,
 .ch-panel--flush { padding: 0; overflow: hidden; }
 
 /* カードグリッド — NPC/PC等を並べる共通レイアウト。
-   minmax で 1 行に最低 220px のカードを並べ、画面幅で自動折り返し。 */
+   minmax で 1 行に最低 220px のカードを並べ、画面幅で自動折り返し。
+   auto-fit は空トラックを畳むので、カード数が少ないセクションでも
+   残った枚数が横方向に伸びて 1 行を埋める（枚数依存でカードが痩せない）。 */
 .ch-cardgrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }

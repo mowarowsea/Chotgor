@@ -1,9 +1,12 @@
 /**
- * ThinkingBlock — 思考ブロック・想起記憶の折りたたみ表示。
- * 記憶行（[category] … (score: X)）とワーキングメモリスレッド行の
- * パース＆色付けヘルパーを内包する。
+ * ThinkingBlock — 想起記憶ブロックと思考(スケッチ)ブロックを別アコーディオンで表示する。
+ * バックエンドは両者を1本の reasoning テキストとして送ってくるため、
+ * 記憶行（[category] … (score: X)）とワーキングメモリスレッド行を判定して
+ * 「想起した記憶」グループと「スケッチ」グループに仕分けたうえで、
+ * それぞれ独立して開閉できる折りたたみとして描画する。
  */
 import { useCallback, useState } from "react";
+import type { ReactNode } from "react";
 
 import { translateText } from "../../api";
 
@@ -85,16 +88,22 @@ function ThreadLine({ line }: { line: string }) {
 }
 
 /**
- * 思考ブロック・想起記憶を折りたたみ表示するコンポーネント。
- * ストリーミング中は自動展開する。
- * 展開状態かつ非ストリーミング時に翻訳ボタンを表示する。
+ * 折りたたみ可能な補助ブロックの共通シェル。
+ * 「想起した記憶」ブロックと「スケッチ」ブロックはこれを土台に個別インスタンス化され、
+ * 開閉状態・翻訳状態を互いに独立して持つ（これが別アコーディオン化の実体）。
+ * ストリーミング中は自動展開する。展開状態かつ非ストリーミング時に翻訳ボタンを表示する。
  */
-export function ThinkingBlock({
-  content,
+function CollapsibleAuxBlock({
+  label,
   streaming = false,
+  translateSource,
+  children,
 }: {
-  content: string;
+  label: string;
   streaming?: boolean;
+  /** 翻訳ボタン押下時に送る原文。このブロックが担当する行のみを渡す。 */
+  translateSource: string;
+  children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(streaming);
   const [translation, setTranslation] = useState<string | null>(null);
@@ -105,7 +114,7 @@ export function ThinkingBlock({
     setTranslating(true);
     setTranslateError(null);
     try {
-      const result = await translateText(content);
+      const result = await translateText(translateSource);
       setTranslation(result);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -114,12 +123,7 @@ export function ThinkingBlock({
     } finally {
       setTranslating(false);
     }
-  }, [content]);
-
-  const lines = content.split("\n").filter((l) => l !== "");
-  const memoryLines = lines.filter(isMemoryLine);
-  const threadLines = lines.filter(isThreadLine);
-  const sketchLines = lines.filter((l) => !isMemoryLine(l) && !isThreadLine(l));
+  }, [translateSource]);
 
   return (
     <div className="ch-aux-bubble rounded-lg overflow-hidden text-xs mb-1" style={{ border: "1px solid var(--ch-sep)" }}>
@@ -129,7 +133,7 @@ export function ThinkingBlock({
           onClick={() => setExpanded((e) => !e)}
         >
           <span className="text-[9px] opacity-50">{expanded ? "▼" : "▶"}</span>
-          <span className="tracking-wide">想起した記憶・スケッチ</span>
+          <span className="tracking-wide">{label}</span>
           {streaming && <span className="animate-pulse ml-1 text-ch-accent-t text-[10px]">●</span>}
         </button>
         {expanded && !streaming && (
@@ -146,46 +150,7 @@ export function ThinkingBlock({
       </div>
       {expanded && (
         <div className="px-3 py-2 font-mono leading-relaxed" style={{ borderTop: "1px solid var(--ch-sep)" }}>
-          {memoryLines.length > 0 && (
-            <>
-              <div className="flex items-center gap-2 mb-1.5">
-                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
-                <span className="text-ch-t4 shrink-0 text-[10px]">想起した記憶</span>
-                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
-              </div>
-              <div className="mb-1.5">
-                {memoryLines.map((line, i) => (
-                  <ReasoningLine key={i} line={line} />
-                ))}
-              </div>
-            </>
-          )}
-          {threadLines.length > 0 && (
-            <>
-              <div className="flex items-center gap-2 my-1.5">
-                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
-                <span className="text-ch-t4 shrink-0 text-[10px]">想起したスレッド</span>
-                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
-              </div>
-              <div className="mb-1.5">
-                {threadLines.map((line, i) => (
-                  <ThreadLine key={i} line={line} />
-                ))}
-              </div>
-            </>
-          )}
-          {sketchLines.length > 0 && (
-            <>
-              <div className="flex items-center gap-2 my-1.5">
-                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
-                <span className="text-ch-t4 shrink-0 text-[10px]">スケッチ</span>
-                <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
-              </div>
-              <div className="text-ch-t3 whitespace-pre-wrap">
-                {sketchLines.join("\n")}
-              </div>
-            </>
-          )}
+          {children}
           {translateError && (
             <div className="mt-2 text-[10px]" style={{ color: "#c87070" }}>
               {translateError}
@@ -206,5 +171,76 @@ export function ThinkingBlock({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 想起記憶ブロックと思考(スケッチ)ブロックを別アコーディオンで表示するコンポーネント。
+ * バックエンドから届く reasoning は1本の文字列だが、行の形（記憶行/スレッド行/それ以外）で
+ * 「想起した記憶」グループと「スケッチ」グループに仕分け、それぞれ独立した
+ * CollapsibleAuxBlock として描画する。どちらか一方しか無ければ他方は描画しない。
+ */
+export function ThinkingBlock({
+  content,
+  streaming = false,
+}: {
+  content: string;
+  streaming?: boolean;
+}) {
+  const lines = content.split("\n").filter((l) => l !== "");
+  const memoryLines = lines.filter(isMemoryLine);
+  const threadLines = lines.filter(isThreadLine);
+  const sketchLines = lines.filter((l) => !isMemoryLine(l) && !isThreadLine(l));
+
+  const hasRecall = memoryLines.length > 0 || threadLines.length > 0;
+  const hasSketch = sketchLines.length > 0;
+
+  if (!hasRecall && !hasSketch) return null;
+
+  return (
+    <>
+      {hasRecall && (
+        <CollapsibleAuxBlock
+          label="想起した記憶"
+          streaming={streaming}
+          translateSource={[...memoryLines, ...threadLines].join("\n")}
+        >
+          {memoryLines.length > 0 && (
+            <div className="mb-1.5">
+              {memoryLines.map((line, i) => (
+                <ReasoningLine key={i} line={line} />
+              ))}
+            </div>
+          )}
+          {threadLines.length > 0 && (
+            <>
+              {memoryLines.length > 0 && (
+                <div className="flex items-center gap-2 my-1.5">
+                  <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
+                  <span className="text-ch-t4 shrink-0 text-[10px]">想起したスレッド</span>
+                  <hr className="flex-1" style={{ borderColor: "var(--ch-sep)" }} />
+                </div>
+              )}
+              <div>
+                {threadLines.map((line, i) => (
+                  <ThreadLine key={i} line={line} />
+                ))}
+              </div>
+            </>
+          )}
+        </CollapsibleAuxBlock>
+      )}
+      {hasSketch && (
+        <CollapsibleAuxBlock
+          label="スケッチ"
+          streaming={streaming}
+          translateSource={sketchLines.join("\n")}
+        >
+          <div className="text-ch-t3 whitespace-pre-wrap">
+            {sketchLines.join("\n")}
+          </div>
+        </CollapsibleAuxBlock>
+      )}
+    </>
   );
 }
