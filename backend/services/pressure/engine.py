@@ -107,6 +107,15 @@ def _partner_of(event) -> str | None:
     return None
 
 
+# 同日の接触が「濃い」ほど安らぎを底上げする頭打ち付きブースト。
+# 件数そのものを無制限に効かせるとメッセージスパムで安らぎが積み上がってしまうため、
+# _SOCIAL_RICHNESS_CAP_COUNT 件目以降は伸びを止める（会話量は反映するが青天井にはしない）。
+_SOCIAL_RICHNESS_GAIN = 0.15
+_SOCIAL_RICHNESS_CAP_COUNT = 6
+# 対面接触はテキストより厚く安らぐ（同じ回数でも質が違う）。
+_SOCIAL_FACE_MULT = 1.4
+
+
 def compute_social(
     events: list,
     now: datetime,
@@ -118,11 +127,16 @@ def compute_social(
     対人イベントの安らぎ（relief）が時間とともに指数減衰し、
     残りの安らぎが少ないほど圧が高い:
 
-        relief = Σ_(相手,日) w_eff(相手) × exp(-経過日数 / tau_days)
+        relief = Σ_(相手,日) w_eff(相手) × richness(相手,日) × face_mult(相手,日)
+                   × exp(-経過日数 / tau_days)
         社会圧 = clamp(1 - relief, 0, 1)
 
-    同じ相手との同日の発言は1接触に丸める（メッセージ数で安らぎが
-    無限に積み上がらないように。会った・話した、が単位）。
+    同じ相手との同日の接触は日単位で集約するが、二値（会った/会っていない）には
+    しない。件数が多い日ほど richness が頭打ち付きで安らぎを底上げし
+    （_SOCIAL_RICHNESS_CAP_COUNT 件で頭打ち）、対面接触があった日は
+    _SOCIAL_FACE_MULT 倍テキストより厚く安らぐ。一言挨拶の日と、対面で
+    しっかり話した日を同じ扱いにしないための調整（メッセージ数を無制限に
+    効かせるわけではない）。
 
     相手別重み: w_eff = 関係の重み ^ (1 + 3×体質の鋭さ)。
     鋭さ 0（誰でもいい派）なら軽い関係でもそのまま安らぎになるが、
@@ -142,21 +156,29 @@ def compute_social(
     sharpness = float(profile["social"]["sharpness"])
     gamma = 1.0 + 3.0 * max(0.0, min(1.0, sharpness))
 
-    # (相手, 日付) ごとに最新の接触だけを数える（同日の連続発言は1接触）
-    contacts: dict[tuple, datetime] = {}
+    # (相手, 日付) ごとに集約: 最新時刻・件数・対面接触の有無
+    contacts: dict[tuple, dict] = {}
     for ev in events:
         partner = _partner_of(ev)
         if partner is None:
             continue
         key = (partner, ev.occurred_at.date())
-        if key not in contacts or ev.occurred_at > contacts[key]:
-            contacts[key] = ev.occurred_at
+        bucket = contacts.setdefault(key, {"at": ev.occurred_at, "count": 0, "face": False})
+        bucket["count"] += 1
+        if ev.occurred_at > bucket["at"]:
+            bucket["at"] = ev.occurred_at
+        if getattr(ev, "modality", None) == "face":
+            bucket["face"] = True
 
     relief = 0.0
-    for (partner, _date), at in contacts.items():
+    for (partner, _date), info in contacts.items():
         weight = max(0.0, min(1.0, float(relation_weight_fn(partner))))
         w_eff = weight ** gamma
-        relief += w_eff * math.exp(-_days_between(now, at) / tau)
+        richness = 1.0 + _SOCIAL_RICHNESS_GAIN * (
+            min(info["count"], _SOCIAL_RICHNESS_CAP_COUNT) - 1
+        )
+        face_mult = _SOCIAL_FACE_MULT if info["face"] else 1.0
+        relief += w_eff * richness * face_mult * math.exp(-_days_between(now, info["at"]) / tau)
     return max(0.0, min(1.0, 1.0 - relief))
 
 

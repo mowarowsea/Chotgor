@@ -3,7 +3,7 @@
 検証対象（docs/planned/aliveness_plan.md §4.1〜4.2）:
     1. 純関数性: 圧力は保存されず、封筒＋体質＋時刻から毎回同じ値が出る
     2. 社会圧: 接触からの経過で単調増加・相手別重み（関係の厚み×体質の鋭さ）で
-       減衰量が変わる・同日の連続発言は1接触に丸められる
+       減衰量が変わる・同日の接触件数と対面かどうかが頭打ち付きで安らぎに反映される
     3. 退屈圧: イベント密度・多様性の低さで上がり、賑やかなタイムラインで下がる
     4. 体調圧: 疲労成分（イベント密度の減衰積分）＋リズム成分（決定論の波）。
        正規化はキャラ自身の平常活動量から動的に導き、回復は静かな日の指数減衰が担う
@@ -56,20 +56,26 @@ def _make_character(sqlite_store, name="はるテスト"):
 class _FakeEvent:
     """圧力計算に渡す封筒のスタブ（純関数テスト用の最小属性セット）。"""
 
-    def __init__(self, event_type, occurred_at, actor=None, counterpart=None, origin="real"):
+    def __init__(
+        self, event_type, occurred_at, actor=None, counterpart=None, origin="real",
+        modality=None,
+    ):
         self.event_type = event_type
         self.occurred_at = occurred_at
         self.actor = actor
         self.counterpart = counterpart
         self.origin = origin
+        self.modality = modality
 
 
 _NOW = datetime(2026, 7, 6, 12, 0, 0)
 
 
-def _chat_event(days_ago: float):
+def _chat_event(days_ago: float, modality: str | None = None):
     """days_ago 日前の chat.message 封筒スタブを作るヘルパ。"""
-    return _FakeEvent("chat.message", _NOW - timedelta(days=days_ago), actor="user")
+    return _FakeEvent(
+        "chat.message", _NOW - timedelta(days=days_ago), actor="user", modality=modality,
+    )
 
 
 def _events_on_day(days_ago: int, count: int):
@@ -89,7 +95,8 @@ class TestSocialPressure:
     """社会圧の計算を検証するテストクラス。
 
     接触なし→最大、直近接触→低下、経過で単調増加、体質の鋭さと関係の重みで
-    減衰量が変わること、同日の連続発言が1接触に丸められることを確認する。
+    減衰量が変わること、同日の接触件数・対面かどうかが頭打ち付きで安らぎに
+    反映されることを確認する。
     """
 
     def test_no_contact_is_max(self):
@@ -106,15 +113,31 @@ class TestSocialPressure:
         old = compute_social([_chat_event(10.0)], _NOW, profile, w)
         assert fresh < stale < old
 
-    def test_same_day_messages_count_once(self):
-        """同じ相手との同日の発言10件は1接触ぶんの安らぎにしかならない。"""
+    def test_same_day_messages_give_diminishing_boost(self):
+        """同日の発言が多いほど安らぐが、頭打ちがありスパムで無限には積み上がらない。"""
         profile = merge_profile(None)
         w = lambda p: 0.8  # noqa: E731
         one = compute_social([_chat_event(0.5)], _NOW, profile, w)
-        many = compute_social(
-            [_chat_event(0.5) for _ in range(10)], _NOW, profile, w
+        few = compute_social([_chat_event(0.5) for _ in range(3)], _NOW, profile, w)
+        many = compute_social([_chat_event(0.5) for _ in range(10)], _NOW, profile, w)
+        capped = compute_social([_chat_event(0.5) for _ in range(6)], _NOW, profile, w)
+        # 発言が多い日ほど安らぎが増え、圧は下がる
+        assert many < few < one
+        # ただし上限件数（6件）を超えると頭打ちで同じ結果になる
+        assert abs(many - capped) < 1e-9
+
+    def test_face_to_face_relieves_more_than_text(self):
+        """同じ回数の接触でも、対面がある日はテキストのみの日より安らぐ。"""
+        profile = merge_profile(None)
+        w = lambda p: 0.8  # noqa: E731
+        text_only = compute_social(
+            [_chat_event(0.5) for _ in range(3)], _NOW, profile, w,
         )
-        assert abs(one - many) < 1e-9
+        with_face = compute_social(
+            [_chat_event(0.5, modality="face")] + [_chat_event(0.5) for _ in range(2)],
+            _NOW, profile, w,
+        )
+        assert with_face < text_only
 
     def test_sharpness_discounts_light_relations(self):
         """鋭さが高い体質では、軽い関係（重み小）の接触がほぼ安らぎにならない。"""
