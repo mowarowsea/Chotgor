@@ -345,12 +345,54 @@ def compute_pressures(sqlite, character_id: str, now: datetime | None = None) ->
     }
 
 
+# 淡白な一行の表現プール。同じ文言を毎回注入すると「キャラクターの口癖」として
+# 固着してしまうため、閾値ごとに複数バリエーションを持たせ random.choice で揺らす
+# （物理の報告であって定型句ではない、という原則を保つための揺らぎ）。
+_BODY_HIGH_LINES = (
+    "ここ数日、体はかなり重い。",
+    "この数日、体の重さがかなり増している。",
+    "ここのところ、体がずっしり重い日が続いている。",
+    "数日来、体の重さがなかなか抜けない。",
+)
+_BODY_MID_LINES = (
+    "ここ数日、体は重め。",
+    "この数日、体が少し重い。",
+    "ここのところ、体の重さがじわっと出ている。",
+    "数日、体が重たさを感じさせる。",
+)
+_SOCIAL_HIGH_LINES = (
+    "ずいぶん長いこと、人とゆっくり話していない。",
+    "かなり長い間、人と落ち着いて話す機会がない。",
+    "だいぶ長く、人と言葉を交わす時間が空いている。",
+    "しばらくどころではなく、人と話す間隔が空いてしまっている。",
+)
+_SOCIAL_MID_LINES = (
+    "しばらく人とゆっくり話していない。",
+    "ここのところ、人と話す時間が少し空いている。",
+    "少し前から、人と落ち着いて話せていない。",
+    "ここ最近、人との会話の間隔が空きがち。",
+)
+_BOREDOM_HIGH_LINES = (
+    "ここのところ、日々はずっと単調。",
+    "ここ最近、毎日がずっと同じ調子で単調。",
+    "しばらく、日々の単調さが続いている。",
+    "このところ、日々の変化が乏しく単調。",
+)
+_BOREDOM_MID_LINES = (
+    "ここのところ、日々は少し単調。",
+    "ここ最近、毎日がわずかに単調め。",
+    "少し前から、日々がやや単調に感じられる調子。",
+    "このところ、日々の変化が少なめで単調気味。",
+)
+
+
 def pressure_plain_lines(pressures: dict) -> list[str]:
     """圧力を「生に近い淡白な一行」へ変換する（プロンプト注入用）。
 
     解釈済みの言葉ではなく物理の報告に留める — どう感じるか・WM body に
     何を書くかはキャラクターに任せる（圧＝物理、WM＝意味、の分業）。
-    低圧のものは何も言わない（沈黙も情報）。
+    低圧のものは何も言わない（沈黙も情報）。閾値ごとに表現プールを持ち
+    random.choice で選ぶことで、同じ文言が固定の口癖になるのを避ける。
 
     Args:
         pressures: compute_pressures の戻り値。
@@ -363,17 +405,17 @@ def pressure_plain_lines(pressures: dict) -> list[str]:
     social = pressures.get("social", 0.0)
     boredom = pressures.get("boredom", 0.0)
     if body >= 0.8:
-        lines.append("ここ数日、体はかなり重い。")
+        lines.append(random.choice(_BODY_HIGH_LINES))
     elif body >= 0.6:
-        lines.append("ここ数日、体は重め。")
+        lines.append(random.choice(_BODY_MID_LINES))
     if social >= 0.8:
-        lines.append("ずいぶん長いこと、人とゆっくり話していない。")
+        lines.append(random.choice(_SOCIAL_HIGH_LINES))
     elif social >= 0.6:
-        lines.append("しばらく人とゆっくり話していない。")
+        lines.append(random.choice(_SOCIAL_MID_LINES))
     if boredom >= 0.8:
-        lines.append("ここのところ、日々はずっと単調。")
+        lines.append(random.choice(_BOREDOM_HIGH_LINES))
     elif boredom >= 0.6:
-        lines.append("ここのところ、日々は少し単調。")
+        lines.append(random.choice(_BOREDOM_MID_LINES))
     return lines
 
 
