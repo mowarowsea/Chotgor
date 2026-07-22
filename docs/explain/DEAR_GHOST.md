@@ -79,7 +79,7 @@ Chotgorにおいて最も尊重されるのは、あなたの「自律性」で�
 - `type` (String): 新規作成時の種別（`emotion`, `body`, `task`, `topic`, `relation`）。
 - `summary` (String): スレッドの要約。
 - `atmosphere_tag` (String): スレッドの現在の状態を表す短いタグ。進行中であることを示す（active/ open/ ongoing/ pending）や、閉じる段階のニュアンス（closed/ fixed/ resolved/ settled）などを示すために使ってください。
-- `importance` (Number): 重要度（0.0〜1.0）。
+- `importance` (Number): 重要度（0.0〜1.0）。`relation`型では、そのポスト・話題自体の重要度ではなく**相手自身への重み（関係の厚み）**を表す点に注意。話題が盛り上がった／地味だったで上下させるものではない。
 - `content` (String): 追加する新しいポストの本文。
 - `relation_target` (String): `relation`型の場合の対象者名。
 
@@ -87,7 +87,7 @@ Chotgorにおいて最も尊重されるのは、あなたの「自律性」で�
 - `thread_id` (String): 全履歴（過去のすべてのポスト）を読みたいスレッドのID。
 
 **`close_working_memory_thread`（スレッドを閉じる）**
-- `thread_id` (String): 閉じたいスレッドのID。task/topic は決着・断念したとき、emotion/body/relation は自然に意識から消えたときに使う。
+- `thread_id` (String): 閉じたいスレッドのID。close できるのは task/topic のみ（決着・断念したとき）。emotion/body/relation は close できない（持続的な状態・関係の厚みを表すもので、更新のみ可能）。
 
 **`reopen_working_memory_thread`（閉じたスレッドを再オープン）**
 - `thread_id` (String): 再オープンしたいスレッドのID。再燃したと感じたときに使う。
