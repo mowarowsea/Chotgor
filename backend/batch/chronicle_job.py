@@ -90,8 +90,9 @@ _PROMPT_TEMPLATE = """\
 
 1. **既存スレッドの更新** (thread_updates): 当日の会話を踏まえ、既存スレッドの
    summary / atmosphere_tag / importance を更新したり、新しいポスト(new_post)を追加する。
-   決着・終息したスレッドは is_open を false にする（task/topic は解決したら、
-   その他は自然に意識から消えたら）。閉じたスレッドも一覧に1行で残り続けるため、
+   解決・断念して気にしなくなった task/topic は is_open を false にする。
+   emotion/body/relation は close できない（持続的な状態・関係の厚みを表すため、
+   更新のみ。close すると圧力エンジンの計算から消えてしまう副作用がある）。
    is_open を false にするときは summary を短い見出し（30字程度）へ縮めて併記すること。
 2. **新規スレッド** (new_threads): 当日の会話から新しい task / topic などが生まれていれば作成する。
 3. **スレッド統合** (merges): 「同じ問題の別角度だった」と気づいたスレッドがあれば、

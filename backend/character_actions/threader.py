@@ -145,8 +145,9 @@ READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
 
 CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
     "ワーキングメモリのスレッドを閉じる。"
-    "task / topic なら解決・断念して気にしなくなったとき、"
-    "emotion / body / relation なら自然に意識から消えたとき。"
+    "task / topic を解決・断念して気にしなくなったときに使う。"
+    "emotion / body / relation は close できない（更新のみ可能）— "
+    "持続的な状態・関係の厚みを表すもので、close すると意図せず消えてしまうため。"
     "閉じたスレッドはあなたの長期記憶へ昇格するわけではなく、"
     "後から read_working_memory_thread で読み返したり、reopen_working_memory_thread で再開できる。"
     "閉じたスレッドも一覧に1行で残り続けるため、閉じる前に post_working_memory_thread で"
@@ -321,6 +322,9 @@ class Threader:
             return err
         try:
             ok = wm.set_open(thread_id, False)
+        except ValueError as e:
+            # 種別制約違反（emotion/body/relation は close 不可）
+            return f"[close_working_memory_thread error: {e}]"
         except Exception as e:
             logger.exception("close_working_memory_thread 失敗 char=%s", self.character_id)
             return f"[close_working_memory_thread error: {e}]"

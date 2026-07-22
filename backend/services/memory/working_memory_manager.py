@@ -48,6 +48,11 @@ class WorkingMemoryManager:
     _SINGLETON_TYPES = frozenset({"emotion", "body"})
     # heat 想起の対象となる種別（解決を目指す種別のみ）。
     _RECALLABLE_TYPES = frozenset({"task", "topic"})
+    # close できる種別（解決を目指す task/topic のみ）。emotion/body/relation は
+    # 「自然に消える」対象であり明示的な close 操作はできない — 更新のみ許可する。
+    # relation を close すると圧力エンジンの関係重み（compute_social）が既定値へ
+    # 落ちる副作用があり、キャラクター本人にその副作用は見えないため事故を防ぐ。
+    _CLOSABLE_TYPES = frozenset({"task", "topic"})
     # type 別の半減期（日）。task/topic のみ定義。relation/emotion/body は固定注入で対象外。
     _WM_HALF_LIFE = {"task": 14.0, "topic": 3.0}
 
@@ -294,11 +299,24 @@ class WorkingMemoryManager:
         return self._thread_to_dict(thread, include_latest_post=True)
 
     def set_open(self, thread_id: str, is_open: bool) -> bool:
-        """スレッドの is_open フラグを更新する（Chronicle 専用）。
+        """スレッドの is_open フラグを更新する。
+
+        close（is_open=False）は _CLOSABLE_TYPES（task/topic）のスレッドのみ許可する。
+        emotion/body/relation は「自然に消える」ものであり明示的に閉じられない
+        （更新のみ可能）。reopen（is_open=True）は種別を問わず常に許可する。
 
         Returns:
             更新成否。
+
+        Raises:
+            ValueError: close 対象のスレッドが _CLOSABLE_TYPES 以外の種別の場合。
         """
+        if not is_open:
+            thread = self.sqlite.get_working_memory_thread(thread_id)
+            if thread and thread.type not in self._CLOSABLE_TYPES:
+                raise ValueError(
+                    f"'{thread.type}' 型スレッドは close できません（更新のみ可能）。"
+                )
         ok = self.sqlite.update_working_memory_thread(thread_id, is_open=is_open)
         if ok:
             self._reindex_thread(thread_id)
