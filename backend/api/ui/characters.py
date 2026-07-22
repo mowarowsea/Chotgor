@@ -18,24 +18,6 @@ from backend.services.character_query import ask_character
 router = APIRouter(prefix="/ui", tags=["ui"])
 
 
-def _build_allowed_tools(form) -> dict:
-    """フォームから allowed_tools 辞書を構築する。
-
-    チェックボックスがONの場合のみ True、未チェックは False になる。
-
-    Args:
-        form: await request.form() の結果。
-
-    Returns:
-        {google_calendar, gmail, google_drive} の bool dict。
-    """
-    return {
-        "google_calendar":  bool(form.get("tool_google_calendar")),
-        "gmail":            bool(form.get("tool_gmail")),
-        "google_drive":     bool(form.get("tool_google_drive")),
-    }
-
-
 def _build_enabled_providers(form) -> dict:
     """フォームから enabled_providers 辞書を構築する。
 
@@ -49,25 +31,6 @@ def _build_enabled_providers(form) -> dict:
         {preset_id: {}} の辞書。
     """
     return {pid: {} for pid in form.getlist("preset_ids")}
-
-
-def _usual_time_grid_text(usual_config: dict) -> str:
-    """うつつの time_grid を、日本語が読める JSON 文字列に整形する（テキストエリア表示用）。
-
-    Jinja の ``| tojson`` フィルタは ``ensure_ascii=True`` で日本語を ``\\uXXXX`` に
-    エスケープしてしまい、編集画面のテキストエリアで内容が読めなくなる。
-    そのためビュー側で ``ensure_ascii=False`` の JSON 文字列へ変換して渡す。
-
-    Args:
-        usual_config: うつつ運用設定 dict（None / 空可）。
-
-    Returns:
-        time_grid を表す JSON 文字列。空なら空文字列。
-    """
-    time_grid = (usual_config or {}).get("time_grid") or {}
-    if not time_grid:
-        return ""
-    return json.dumps(time_grid, ensure_ascii=False)
 
 
 # --- Characters ---
@@ -96,7 +59,6 @@ async def new_character_form(request: Request):
             # 新規作成時はまだ うつつ 世界が存在しない（空の既定値でフォームを描画する）
             "usual_scenario": None,
             "usual_config": {},
-            "usual_time_grid_text": "",
         },
     )
 
@@ -109,7 +71,6 @@ async def create_character(request: Request):
         return RedirectResponse(url="/ui/characters/new", status_code=303)
 
     enabled_providers = _build_enabled_providers(form)
-    allowed_tools = _build_allowed_tools(form)
 
     image_data = await _read_image_data(form)
 
@@ -125,7 +86,6 @@ async def create_character(request: Request):
         ghost_model=ghost_model,
         image_data=image_data,
         judge_preset_id=judge_preset_id,
-        allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),
         user_position=(form.get("user_position") or "").strip(),
         user_visibility_note=(form.get("user_visibility_note") or "").strip(),
@@ -171,7 +131,6 @@ async def edit_character_form(request: Request, character_id: str):
             "provider_labels": PROVIDER_LABELS,
             "usual_scenario": usual_scenario,
             "usual_config": usual_config,
-            "usual_time_grid_text": _usual_time_grid_text(usual_config),
         },
     )
 
@@ -181,7 +140,6 @@ async def update_character(request: Request, character_id: str):
     form = await request.form()
 
     enabled_providers = _build_enabled_providers(form)
-    allowed_tools = _build_allowed_tools(form)
 
     ghost_model = form.get("ghost_model") or None
     judge_preset_id = form.get("judge_preset_id") or None
@@ -191,7 +149,6 @@ async def update_character(request: Request, character_id: str):
         enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         judge_preset_id=judge_preset_id,
-        allowed_tools=allowed_tools,
         user_label=(form.get("user_label") or "").strip(),
         user_position=(form.get("user_position") or "").strip(),
         user_visibility_note=(form.get("user_visibility_note") or "").strip(),
@@ -396,17 +353,6 @@ def _parse_usual_form(
     # 偶発イベントカテゴリ: 1 行 1 カテゴリ
     cats = [c.strip() for c in (form.get("usual_event_categories") or "").splitlines() if c.strip()]
 
-    # 時間グリッド: 自由 JSON（空・不正なら無視）
-    time_grid = {}
-    tg_raw = (form.get("usual_time_grid") or "").strip()
-    if tg_raw:
-        try:
-            parsed = json.loads(tg_raw)
-            if isinstance(parsed, dict):
-                time_grid = parsed
-        except json.JSONDecodeError:
-            pass
-
     def _num(key: str, default):
         """フォーム値を数値化（空・不正なら default）。"""
         raw = (form.get(key) or "").strip()
@@ -437,7 +383,6 @@ def _parse_usual_form(
         # 生活カレンダー有効キャラの1日のシーン回数（Phase 4・§8）。手動 slots に依らず
         # ②はる固定予定からシーンを導出する際の枠数。0 は「未設定＝既定回数に委ねる」。
         "scenes_per_day": _num("usual_scenes_per_day", 0),
-        "time_grid": time_grid,
         "event_categories": cats,
         "event_probability": _num("usual_event_probability", 0.0),
         # キー名は「レスポンス」軸（= LLM 呼出回数の上限）。話者ブロック単位の「ターン」とは別軸。

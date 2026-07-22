@@ -345,7 +345,7 @@ class Scenario(Base):
     owner_character_id = Column(String, nullable=True)
     # うつつ運用設定（JSON, NULL可）。owner_character_id が NULL のときは未使用。
     #   {"enabled": bool, "slots": ["10:00","13:00","17:00"],
-    #    "time_grid": {曜日×時間帯→ラベル}, "event_categories": {...},
+    #    "event_categories": {...},
     #    "event_probability": float, "max_responses_per_scene": int,
     #    "gm_preset_id": str, "pc_preset_id": str}
     # SQLite では TEXT として保存される。

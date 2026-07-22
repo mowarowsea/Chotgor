@@ -58,10 +58,10 @@
         {% endif %}
 
         {# ── identity ・ 自我 ── #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible" open>
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">identity <small>・ 自我</small></h3>
-            </div>
+            </summary>
 
             {# アイコン #}
             <div class="ch-field">
@@ -102,13 +102,13 @@
                     class="ch-textarea ch-textarea--mono" rows="12"
                     placeholder="人格・背景・話し方・価値観などを書く…">{% if character %}{{ character.system_prompt_block1 }}{% endif %}</textarea>
             </div>
-        </section>
+        </details>
 
         {# ── narrative ・ 内的叙述 ── #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">narrative <small>・ 内的叙述</small></h3>
-            </div>
+            </summary>
             <div class="ch-field">
                 <span class="ch-label">Inner Narrative
                     <span class="ch-hint">キャラクター自身が carve_narrative で書き込む叙述（読み取り専用）</span>
@@ -125,16 +125,16 @@
                 <div><a href="/ui/working-memory/{{ character.id }}" class="ch-btn ch-btn--sm">スレッド一覧を開く →</a></div>
             </div>
             {% endif %}
-        </section>
+        </details>
 
         {# ── user ・ 相手の人物像 ── #}
         {# 1on1・全バッチ処理（chronicle/forget/うつつ headless）すべてで、
            キャラのシステムプロンプトに「あなたが対話する相手」ブロックとして注入される。
            うつつでは pc_slots[user] にも同期保存され GM プロンプトにも反映される。 #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">user <small>・ 対話する相手</small></h3>
-            </div>
+            </summary>
             <p class="ch-hint" style="margin:0 0 12px">
                 このキャラから見たユーザの人物像。1on1・うつつ・全バッチ処理（記憶想起・棚卸し等）
                 のシステムプロンプトに共通で注入される。
@@ -175,7 +175,7 @@
                 </div>
                 {% endif %}
             </div>
-        </section>
+        </details>
 
         {# ── 対面モード ── 1on1チャットの「テキスト／対面」切替と、対面時の背景画像 ── #}
         {# - face_to_face_mode は1on1チャット画面のトグルからも切り替えられるが、
@@ -186,10 +186,10 @@
              判定結果に応じて ChatView 背景が切り替わる。
              既存エントリの削除・新規追加はサーバ保存後に reload して idx を振り直す
              （_build_face_bg_images の idx 前提を参照）。 #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">face-to-face <small>・ 対面モード</small></h3>
-            </div>
+            </summary>
             <p class="ch-hint" style="margin:0 0 12px">
                 1on1チャットを「対面」として描く時のための背景画像。対面ONのとき ChatView
                 に背景として表示される。対面中はキャラ本人にも「いま対面している」ことが
@@ -254,7 +254,7 @@
                 <p class="ch-hint" style="margin:0">キャラクター保存後に背景画像を追加できます。</p>
                 {% endif %}
             </div>
-        </section>
+        </details>
 
         {# ════════════ CHAPTER 2 — engine ════════════ #}
         <div class="ch-chapter">
@@ -263,10 +263,10 @@
         </div>
 
         {# ── models ・ 利用モデル ── #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible" open>
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">models <small>・ 利用モデル</small></h3>
-            </div>
+            </summary>
 
             <div class="ch-field">
                 <span class="ch-label">利用モデル
@@ -319,17 +319,17 @@
                 {% endif %}
             </div>
 
-        </section>
+        </details>
 
         {# ── めぐり ・ 会話外行動権（Phase 6） ──
            閾値超えの意図があるとき、本人への問い合わせを経て実行される行動のメニュー。
            個別 ON/OFF（全 OFF = 行動権スケジューラの評価対象外）。
            「調べるかどうかも本人任せ」— ここで許可するのは可能性だけで、
            実行するかは毎回キャラクター本人が選ぶ。 #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">meguri <small>・ 会話外行動</small></h3>
-            </div>
+            </summary>
             <p class="ch-hint">
                 心に残った「〜したい」（意図）の圧が高まったとき、本人に「いま、これをする？」と
                 問い合わせて、本人が選べば実行される行動のメニュー。実行の可否は毎回本人が決める。
@@ -373,16 +373,16 @@
                     </span>
                 </label>
             </div>
-        </section>
+        </details>
 
         {# ── speak_later ・ 発話予約 ──
            1on1 の会話中に本人が「この時刻に自分から声をかける」を仕掛ける機能
            （docs/planned/speak_later_plan.md）。発火時に本人への問い合わせ＝
            リクエスト課金が発生するため、既定 OFF のオプトイン。 #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">speak_later <small>・ 発話予約</small></h3>
-            </div>
+            </summary>
             <p class="ch-hint">
                 会話の中で本人が「◯時になったら自分から声をかける」を仕掛け、時刻が来たら
                 その会話に本人発のメッセージが増える。発火はキャラ自発のリクエストとして
@@ -401,17 +401,17 @@
                     </span>
                 </label>
             </div>
-        </section>
+        </details>
 
         {# ── 体質インタビュー（めぐり Phase 3）──
            圧力（社会圧・退屈圧・体調圧）の体質係数を、本人への体験の質問で初期化する。
            数値は聞かず、選択肢＋本人の言葉を固定ルーブリックで係数へ写像する。
            本人からの更新経路は作らない（圧力＝物理）。ここはユーザ（守護者）の介入枠。 #}
         {% if character %}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">constitution <small>・ 体質インタビュー</small></h3>
-            </div>
+            </summary>
             <p class="ch-hint">
                 圧力（人恋しさ・退屈・疲れやすさ）の体質を、本人に体験の質問を投げて初期化する。
                 数値は聞かず、選択肢と本人の言葉を固定ルーブリックで係数化する。
@@ -429,17 +429,17 @@
                     {% else %}未実施 — 標準の体質で動作中{% endif %}
                 </span>
             </div>
-        </section>
+        </details>
         {% endif %}
 
         {# ── 生活時間割（めぐり / Aliveness §5.1）──
            応答できない時間帯（仕事・睡眠など）。ここに入れた時間帯の間はメッセージを
            預かり、本人には席に戻ったときにまとめて届く（availability ゲート）。
            編集内容は JS が availability_schedule_json（隠しフィールド）へ直列化して保存。 #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">availability <small>・ 生活時間割</small></h3>
-            </div>
+            </summary>
             <p class="ch-hint">
                 このキャラが「席にいない」時間帯（仕事・睡眠など）。この間に届いたメッセージは
                 預かり、本人が席に戻ったときにまとめて届く。空 = 常時応答可能。
@@ -477,55 +477,13 @@
             </div>
             <input type="hidden" name="availability_schedule_json" id="availability_schedule_json"
                 value='{{ (character.availability_schedule or {}) | tojson if character else "{}" }}'>
-        </section>
-
-        {# ── tools ・ 外部連携 ── #}
-        <section class="ch-section">
-            <div class="ch-section__head">
-                <h3 class="ch-section-title">tools <small>・ 外部連携</small></h3>
-            </div>
-            <div class="ch-field" style="margin-bottom:0">
-                <span class="ch-label">外部ツール連携
-                    <span class="ch-hint">許可する外部ツール（Claude Code CLI プリセットのみ有効）</span>
-                </span>
-                {% set at = (character.allowed_tools or {}) if character else {} %}
-                <div class="ch-switchlist" style="margin-top:6px">
-                    <label class="ch-switch-row">
-                        <span class="ch-switch-row__text">
-                            <span class="ch-switch-row__label">Google Calendar</span>
-                        </span>
-                        <span class="ch-toggle">
-                            <input type="checkbox" name="tool_google_calendar" value="1" {% if at.get('google_calendar') %}checked{% endif %}>
-                            <span class="ch-toggle__track"></span>
-                        </span>
-                    </label>
-                    <label class="ch-switch-row">
-                        <span class="ch-switch-row__text">
-                            <span class="ch-switch-row__label">Gmail</span>
-                        </span>
-                        <span class="ch-toggle">
-                            <input type="checkbox" name="tool_gmail" value="1" {% if at.get('gmail') %}checked{% endif %}>
-                            <span class="ch-toggle__track"></span>
-                        </span>
-                    </label>
-                    <label class="ch-switch-row">
-                        <span class="ch-switch-row__text">
-                            <span class="ch-switch-row__label">Google Drive</span>
-                        </span>
-                        <span class="ch-toggle">
-                            <input type="checkbox" name="tool_google_drive" value="1" {% if at.get('google_drive') %}checked{% endif %}>
-                            <span class="ch-toggle__track"></span>
-                        </span>
-                    </label>
-                </div>
-            </div>
-        </section>
+        </details>
 
         {# ── ambience ・ なりゆき（場の判定）の judge プリセット ── #}
-        <section class="ch-section">
-            <div class="ch-section__head">
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
                 <h3 class="ch-section-title">ambience <small>・ なりゆき</small></h3>
-            </div>
+            </summary>
             <div class="ch-field" style="margin-bottom:0">
                 <label class="ch-label" for="judge_preset_id">judge モデル
                     <span class="ch-hint">場のなりゆき判定（退席・背景）に使う judge LLM プリセット（未設定なら疲労離席の縮退のみ）</span>
@@ -540,7 +498,7 @@
                     {% endfor %}
                 </select>
             </div>
-        </section>
+        </details>
 
         {# ════════════ CHAPTER 3 — うつつ ════════════ #}
         <div class="ch-chapter">
@@ -549,7 +507,10 @@
         </div>
 
         {# ── 生活世界（Usual Days）── 主人公（このキャラ）の無人生活モード。owner 付きシナリオとして保存される ── #}
-        <section class="ch-section">
+        <details class="ch-section ch-section--collapsible" open>
+            <summary class="ch-section__head">
+                <h3 class="ch-section-title">usual <small>・ 生活世界</small></h3>
+            </summary>
             <p class="ch-hint" style="margin:0 0 12px">
                 ユーザ不在のあいだ、このキャラが自律的に「生活」し続ける裏の世界。
                 世界（時間・場・出来事）は GM が与え、何を経験し選ぶかはキャラが決める。
@@ -591,6 +552,14 @@
 
             {# ユーザの呼称・位置づけは Chapter 1 の「user」セクションへ移動した。
                うつつ GM プロンプトには Chapter 1 の値が pc_slots[user] として自動同期される。 #}
+        </details>
+
+        {# ── うつつ 詳細設定 ── スロット・プリセット・偶発イベント・履歴上限など、初期設定後は
+           滅多に触らないパラメータ群。 #}
+        <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head">
+                <h3 class="ch-section-title">usual <small>・ 詳細設定</small></h3>
+            </summary>
 
             <div class="ch-field">
                 <label class="ch-label" for="usual_slots">スロット時刻
@@ -688,15 +657,7 @@
                 </div>
             </div>
 
-            <div class="ch-field" style="margin-bottom:0">
-                <label class="ch-label" for="usual_time_grid">時間グリッド（任意・JSON）
-                    <span class="ch-hint">曜日×時間帯→ラベルの自由 JSON。空でよい</span>
-                </label>
-                <textarea id="usual_time_grid" name="usual_time_grid" class="ch-textarea ch-textarea--mono" rows="3"
-                    oninput="validateTimeGrid(this)"
-                    placeholder='{"平日朝": "通勤", "休日昼": "自由時間"}'>{{ usual_time_grid_text }}</textarea>
-            </div>
-        </section>
+        </details>
 
         {# ── 下部アクションバー ── #}
         <div class="ch-actionbar">
@@ -745,33 +706,6 @@
 
 {% block scripts %}
 <script>
-    /**
-     * 時間グリッド欄の中身が正しい JSON（オブジェクト）かを検証する。
-     * 空欄は許容。不正なら setCustomValidity でフォーム送信・自動保存を止め、
-     * aria-invalid で枠を赤くする（autosave 側がこのメッセージをトーストで通知する）。
-     * @param {HTMLTextAreaElement} el 時間グリッドのテキストエリア
-     */
-    function validateTimeGrid(el) {
-        const raw = (el.value || '').trim();
-        let msg = '';
-        if (raw) {
-            try {
-                const parsed = JSON.parse(raw);
-                if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                    msg = '時間グリッドは {…} 形式のJSONで入力してください';
-                }
-            } catch (e) {
-                msg = '時間グリッドが正しいJSON形式ではありません';
-            }
-        }
-        el.setCustomValidity(msg);
-        if (msg) {
-            el.setAttribute('aria-invalid', 'true');
-        } else {
-            el.removeAttribute('aria-invalid');
-        }
-    }
-
     /**
      * Ghost Model ラジオに「選択済みをもう一度クリックで解除」の挙動を取り付ける。
      * ラジオ単体では未設定に戻せないため、2度目のクリックで checked を外して
@@ -845,9 +779,6 @@
     document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('#model-accordion input[name="ghost_model"]')
             .forEach(attachGhostRadio);
-        // 時間グリッドの初期値も検証しておく（不正なまま開いた場合に枠を赤くする）。
-        const tg = document.getElementById('usual_time_grid');
-        if (tg) validateTimeGrid(tg);
     });
 
     // ── アイコントリミング (Cropper.js) ──────────────

@@ -1269,6 +1269,30 @@ html::-webkit-scrollbar-track,
 .ch-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .ch-section__desc { margin: 4px 0 0; font-size: 12px; font-style: italic; color: var(--ch-t3); }
 
+/* 折りたたみ可能セクション（<details> ベース・JS不要）。
+   summary が ch-section__head を兼ねる。低頻度項目は既定で open 属性を外して閉じておく。 */
+.ch-section--collapsible {
+  border: 1px solid var(--ch-sep);
+  border-radius: var(--ch-radius-md);
+  padding: 14px 18px;
+  background: var(--ch-bg-s);
+}
+.ch-section--collapsible > summary.ch-section__head {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+}
+.ch-section--collapsible > summary.ch-section__head::-webkit-details-marker { display: none; }
+.ch-section--collapsible[open] > summary.ch-section__head { margin-bottom: 16px; }
+.ch-section--collapsible > summary.ch-section__head::after {
+  content: "▸";
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--ch-t3);
+  transition: transform .15s;
+}
+.ch-section--collapsible[open] > summary.ch-section__head::after { transform: rotate(90deg); }
+
 /* ============================================================
    CHECK LIST — チェックボックス群
    ============================================================ */

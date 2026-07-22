@@ -21,7 +21,7 @@ import backend.main as mainmod
 import backend.services.scenario_chat.pc_runner as pc_runner_mod
 import backend.services.scenario_chat.service as svc
 import backend.services.scenario_chat.usual_days as usual_days_mod
-from backend.api.ui.characters import _parse_usual_form, _usual_time_grid_text
+from backend.api.ui.characters import _parse_usual_form
 from backend.lib.log_context import current_log_feature
 from backend.services.chat.request_builder import build_system_prompt
 from backend.lib.time_awareness import (
@@ -1286,7 +1286,6 @@ class TestUsualFormParsing:
             "usual_max_responses": "6",
             "usual_history_max_turns": "40",
             "usual_history_max_chars": "30000",
-            "usual_time_grid": '{"平日朝": "通勤"}',
         }
         scn_kwargs, cfg = _parse_usual_form(form, "はる")
 
@@ -1299,7 +1298,6 @@ class TestUsualFormParsing:
         assert cfg["max_responses_per_scene"] == 6
         assert cfg["gm_preset_id"] == "gm-p"
         assert cfg["pc_preset_id"] == "pc-p"
-        assert cfg["time_grid"] == {"平日朝": "通勤"}
         # 履歴上限（あらすじ起稿タイミングのノブ）は scenario 列へ保存される
         assert scn_kwargs["history_max_turns"] == 40
         assert scn_kwargs["history_max_chars"] == 30000
@@ -1317,16 +1315,10 @@ class TestUsualFormParsing:
         assert cfg["event_categories"] == []
         assert cfg["event_probability"] == 0.0
         assert cfg["max_responses_per_scene"] == 8
-        assert cfg["time_grid"] == {}
         assert scn_kwargs["scenario"] is None
         # 履歴上限は空欄 → None（設定既定に委ねる）で保存される
         assert scn_kwargs["history_max_turns"] is None
         assert scn_kwargs["history_max_chars"] is None
-
-    def test_invalid_time_grid_json_ignored(self):
-        """time_grid の JSON が不正なら空 dict にフォールバックすること。"""
-        _scn, cfg = _parse_usual_form({"usual_time_grid": "{壊れた"}, "X")
-        assert cfg["time_grid"] == {}
 
     def test_invalid_numbers_fallback(self):
         """確率・上限レスポンス数が不正値なら既定値にフォールバックすること。"""
@@ -1335,31 +1327,6 @@ class TestUsualFormParsing:
         )
         assert cfg["event_probability"] == 0.0
         assert cfg["max_responses_per_scene"] == 8
-
-
-class TestUsualTimeGridDisplay:
-    """時間グリッドの編集画面表示用テキスト整形（_usual_time_grid_text）を検証する。
-
-    Jinja の ``| tojson`` は ``ensure_ascii=True`` で日本語を ``\\uXXXX`` に
-    エスケープしてしまい、テキストエリアで読めなくなる。ビュー側ヘルパーが
-    日本語をそのまま読める JSON 文字列に整形できることを担保する。
-    """
-
-    def test_japanese_not_escaped(self):
-        """日本語が ``\\uXXXX`` にエスケープされず、そのまま JSON 文字列になること。"""
-        text = _usual_time_grid_text({"time_grid": {"朝": "通勤"}})
-        # 生の日本語が含まれ、エスケープ表記が含まれないこと
-        assert "朝" in text
-        assert "通勤" in text
-        assert "\\u" not in text
-        # 出力は再パース可能な有効 JSON であること
-        assert json.loads(text) == {"朝": "通勤"}
-
-    def test_empty_or_missing_returns_blank(self):
-        """time_grid が空・未設定・None なら空文字列を返すこと（プレースホルダ表示用）。"""
-        assert _usual_time_grid_text({"time_grid": {}}) == ""
-        assert _usual_time_grid_text({}) == ""
-        assert _usual_time_grid_text(None) == ""
 
 
 # ---------------------------------------------------------------------------

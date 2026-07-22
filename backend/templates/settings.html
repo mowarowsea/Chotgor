@@ -68,6 +68,8 @@
             <hr class="ch-divider">
 
             <!-- API キー群 -->
+            <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head"><h3 class="ch-section-title">APIキー</h3></summary>
             {{ masked_api_key_input(
                    "anthropic_api_key",
                    "Anthropic API Key",
@@ -117,10 +119,13 @@
                    "tvly-… (leave blank to keep current)",
                    "Not configured. Web search will be disabled."
                ) }}
+            </details>
 
             <hr class="ch-divider">
 
             <!-- Ollama 設定 -->
+            <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head"><h3 class="ch-section-title">Ollama</h3></summary>
             <div class="ch-field">
                 <label class="ch-label" for="ollama_base_url">Ollama Base URL
                     <span class="ch-hint">Ollamaサーバーのベースアドレス</span>
@@ -142,8 +147,13 @@
                     <span class="ch-toggle__track"></span>
                 </span>
             </label>
+            </details>
 
             <hr class="ch-divider">
+
+            <!-- 詳細設定: コンテキストウィンドウ・自発リクエスト・Chronicle時刻・時間認識・翻訳モデル -->
+            <details class="ch-section ch-section--collapsible">
+            <summary class="ch-section__head"><h3 class="ch-section-title">詳細設定</h3></summary>
 
             <!-- コンテキストウィンドウ圧縮 -->
             <div class="ch-field">
@@ -155,8 +165,6 @@
                        min="0" max="200" class="ch-input" style="width:120px">
             </div>
 
-            <hr class="ch-divider">
-
             <!-- キャラ自発リクエスト（Spontaneous Initiative）— めぐり §5.1 -->
             <div class="ch-field">
                 <label class="ch-label" for="spontaneous_initiative_daily_cap">キャラクター自発リクエスト（日次上限）
@@ -166,8 +174,6 @@
                        value="{{ settings.get('spontaneous_initiative_daily_cap', '12') }}"
                        min="0" max="200" class="ch-input" style="width:120px">
             </div>
-
-            <hr class="ch-divider">
 
             <!-- Chronicle Time -->
             <div class="ch-field">
@@ -192,10 +198,8 @@
                 </span>
             </label>
 
-            <hr class="ch-divider">
-
             <!-- 翻訳モデル -->
-            <div class="ch-field">
+            <div class="ch-field" style="margin-bottom:0">
                 <label class="ch-label" for="translation_preset_id">翻訳モデル
                     <span class="ch-hint">ThinkingBlock / Thoughts の翻訳に使用するモデル</span>
                 </label>
@@ -210,14 +214,15 @@
                 </select>
                 <p class="ch-hint">選択したモデルがチャット画面・ログ画面の翻訳ボタンで使用されます。</p>
             </div>
+            </details>
         </form>
     </section>
 
     {# ── Embedding 設定: 再インデックスを伴うため明示ボタン保存 ── #}
-    <section class="ch-section">
-        <div class="ch-section__head">
+    <details class="ch-section ch-section--collapsible">
+        <summary class="ch-section__head">
             <h2 class="ch-section-title">Embedding Model</h2>
-        </div>
+        </summary>
         <form method="post" action="/ui/settings/embedding">
             <p class="ch-prose" style="margin-bottom:18px">
                 記憶のベクトル化に使うモデル。変更すると全キャラクターの記憶が再インデックスされるため、
@@ -284,19 +289,19 @@
                 </button>
             </div>
         </form>
-    </section>
+    </details>
 
     {# ── 記憶の修復 ───────────────────────────────────── #}
-    <section class="ch-section">
-        <div class="ch-section__head">
+    <details class="ch-section ch-section--collapsible">
+        <summary class="ch-section__head">
             <h2 class="ch-section-title">記憶の修復</h2>
-        </div>
+        </summary>
         <p class="ch-prose" style="margin-bottom:14px">Embedding モデル変更後に記憶が想起されなくなった場合、現在の設定で全記憶を再インデックスします。SQLite に記憶データが残っていれば復元されます。</p>
         <form method="post" action="/ui/settings/reindex"
               onsubmit="return confirm('全キャラクターの記憶を再インデックスします。完了まで時間がかかる場合があります。続けますか？')">
             <button type="submit" class="ch-btn">記憶を再インデックス</button>
         </form>
-    </section>
+    </details>
 </div>
 
 <script>
