@@ -143,7 +143,9 @@ _WORKING_MEMORY_TOOLS_HINT = """\
 
 スレッド種別:
 - `task` / `topic` は**解決を目指す**もの（取り組み中の課題・引っかかっている問い）
-- `emotion` / `body` / `relation` は**解決を目指さない**、持ち続ける状態（各 emotion/body は1本、relation は相手ごと1本）\
+- `emotion` / `body` / `relation` は**解決を目指さない**、持ち続ける状態（各 emotion/body は1本、relation は相手ごと1本）
+
+`relation` の importance は要注意: 話題やポスト本文の重要度ではなく、**その相手自身への重み**（関係の厚み）。\
 """
 
 

@@ -95,6 +95,8 @@ task / topic は解決を目指すスレッド、emotion / body / relation は�
 - `task` / `topic` は**解決を目指す**もの（取り組み中の課題・引っかかっている問い）
 - `emotion` / `body` / `relation` は**解決を目指さない**、持ち続ける状態（各 emotion/body は1本、relation は相手ごと1本）
 
+`relation` の importance は要注意: 話題やポスト本文の重要度ではなく、**その相手自身への重み**（関係の厚み）。
+
 ### 次の展開への期待（ANTICIPATE_RESPONSE）
 
 返答の**一番最後に**、あなたが「このあと相手や状況がどうなると思うか／
