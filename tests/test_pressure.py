@@ -18,8 +18,17 @@ from datetime import datetime, timedelta
 
 from backend.services.chat.request_builder import build_system_prompt, build_turn_annotation
 from backend.services.pressure.engine import (
+    _BODY_GOOD_LINES,
+    _BODY_HIGH_LINES,
+    _BODY_MID_LINES,
+    _BOREDOM_GOOD_LINES,
+    _BOREDOM_HIGH_LINES,
+    _BOREDOM_MID_LINES,
     _FATIGUE_DEFAULT_RATE,
     _FATIGUE_MIN_RATE,
+    _SOCIAL_GOOD_LINES,
+    _SOCIAL_HIGH_LINES,
+    _SOCIAL_MID_LINES,
     DEFAULT_PROFILE,
     _baseline_activity_rate,
     compute_boredom,
@@ -230,18 +239,29 @@ class TestBodyPressure:
 
 
 class TestPlainLines:
-    """淡白な一行（プロンプト注入用の物理報告）を検証するテストクラス。"""
+    """淡白な一行（プロンプト注入用の物理報告）を検証するテストクラス。
 
-    def test_low_pressures_say_nothing(self):
-        """全部低圧なら何も言わない（沈黙も情報）。"""
-        assert pressure_plain_lines({"social": 0.2, "boredom": 0.3, "body": 0.1}) == []
+    語彙は口癖化を避けるためプールから乱数選択されるので、個々の文言では
+    なく「どのプール（高圧/中圧/好調/ニュートラル）から選ばれたか」を検証する。
+    """
+
+    def test_neutral_pressures_say_nothing(self):
+        """全部ニュートラル（中間域）なら何も言わない（沈黙も情報）。"""
+        assert pressure_plain_lines({"social": 0.4, "boredom": 0.3, "body": 0.5}) == []
 
     def test_high_pressures_reported_plainly(self):
         """閾値超えの圧だけが淡白に言語化される。"""
-        lines = pressure_plain_lines({"social": 0.7, "boredom": 0.2, "body": 0.9})
-        assert any("体" in line for line in lines)
-        assert any("人と" in line for line in lines)
-        assert not any("単調" in line for line in lines)
+        lines = pressure_plain_lines({"social": 0.7, "boredom": 0.3, "body": 0.9})
+        assert any(line in _BODY_HIGH_LINES for line in lines)
+        assert any(line in _SOCIAL_MID_LINES for line in lines)
+        assert not any(line in _BOREDOM_HIGH_LINES or line in _BOREDOM_MID_LINES for line in lines)
+
+    def test_good_pressures_reported_plainly(self):
+        """きわめて低圧（好調）のときも一行報告される。"""
+        lines = pressure_plain_lines({"social": 0.1, "boredom": 0.2, "body": 0.05})
+        assert any(line in _BODY_GOOD_LINES for line in lines)
+        assert any(line in _SOCIAL_GOOD_LINES for line in lines)
+        assert any(line in _BOREDOM_GOOD_LINES for line in lines)
 
 
 class TestComputePressuresIntegration:
