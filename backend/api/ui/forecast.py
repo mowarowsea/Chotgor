@@ -29,7 +29,15 @@ async def forecast_panel(request: Request, character_id: str = ""):
 
     sqlite = request.app.state.sqlite
     characters = sqlite.list_characters()
-    selected = character_id or (characters[0].id if characters else "")
+    valid_ids = {c.id for c in characters}
+    selected = character_id if character_id in valid_ids else ""
+    if not selected:
+        last_id = sqlite.get_setting("ui_last_character_id", "")
+        selected = last_id if last_id in valid_ids else ""
+    if not selected and characters:
+        selected = characters[0].id
+    if selected:
+        sqlite.set_setting("ui_last_character_id", selected)
 
     forecast = build_forecast(sqlite, selected) if selected else {"error": "キャラクターがいません"}
 

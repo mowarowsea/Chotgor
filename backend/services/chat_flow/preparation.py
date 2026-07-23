@@ -167,8 +167,11 @@ async def prepare_context(
                 recall_error = "ワーキングメモリの取得に失敗しました"
 
     # --- 2. URLの自動fetch ---
+    # 1on1（default_origin=="real"）限定。シナリオ/うつつでは last_user_msg が
+    # 実ユーザではなくNPC/Narratorの台詞であり、会話文中のURL"らしき"文字列
+    # （例: 技術相談での「https://」か「http://」かという言い回し）まで誤fetchしてしまうため。
     fetched_contents = []
-    if last_user_msg:
+    if last_user_msg and request.default_origin == "real":
         urls = find_urls(last_user_msg)
         if urls:
             try:

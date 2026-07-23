@@ -70,3 +70,27 @@ class TestInstrumentsPanel:
         )
         assert resp.status_code == 303
         assert sqlite_store.list_alarms(unacknowledged_only=True) == []
+
+    def test_acknowledge_all_alarms(self, instruments_client, sqlite_store):
+        """一括確認済み化 POST が未確認アラームを全件 ack してパネルへリダイレクトする。"""
+        sqlite_store.fire_alarm("usual_scene_error")
+        sqlite_store.fire_alarm("embedding_degraded")
+        resp = instruments_client.post(
+            "/ui/instruments/alarms/ack_all", follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert sqlite_store.list_alarms(severity="alarm", unacknowledged_only=True) == []
+
+    def test_detector_filter_tabs_and_sort_headers_render(self, instruments_client, sqlite_store):
+        """検知器タブ（ch-filter）とソート可能な列見出しがアラーム/スメル双方に出る。"""
+        sqlite_store.fire_alarm("usual_scene_error")
+        sqlite_store.fire_alarm("smell_format_debris", severity="smell")
+        resp = instruments_client.get("/ui/instruments")
+        assert resp.status_code == 200
+        assert 'id="alarms-table"' in resp.text
+        assert 'id="smells-table"' in resp.text
+        assert 'data-detector-filters="alarms-table"' in resp.text
+        assert 'data-detector-filters="smells-table"' in resp.text
+        assert 'data-sort-key="occurred"' in resp.text
+        assert 'data-sort-key="invariant"' in resp.text
+        assert "未確認をすべて確認済みにする" in resp.text

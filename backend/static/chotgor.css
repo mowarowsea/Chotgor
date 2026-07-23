@@ -858,6 +858,13 @@ html::-webkit-scrollbar-track,
 .ch-table tbody tr:last-child td { border-bottom: none; }
 .ch-table tbody tr:hover { background: var(--ch-sep); }
 
+/* クリックソート可能な列見出し（JS が is-asc/is-desc を切替） */
+.ch-th-sort { cursor: pointer; user-select: none; }
+.ch-th-sort:hover { color: var(--ch-t2); }
+.ch-th-sort::after { content: ""; display: inline-block; width: 0.7em; margin-left: 4px; opacity: .4; }
+.ch-th-sort.is-asc::after { content: "\25B2"; opacity: 1; color: var(--ch-a); }
+.ch-th-sort.is-desc::after { content: "\25BC"; opacity: 1; color: var(--ch-a); }
+
 /* model presets の表示/編集セル（JS が display 切替する要素） */
 .preset-display { font-family: var(--ch-fm); font-size: 12px; color: var(--ch-t2); }
 .preset-edit-field { max-width: 100%; }

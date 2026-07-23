@@ -96,6 +96,28 @@ class InstrumentStoreMixin:
             session.commit()
             return True
 
+    def acknowledge_all_alarms(self) -> int:
+        """未確認の severity="alarm" をすべて確認済みにする（一括確認ボタン用）。
+
+        smell は元々 ack 対象外（パネルに確認ボタンを出していない）なので触らない。
+
+        Returns:
+            確認済みにした件数。
+        """
+        from backend.repositories.sqlite.models import Alarm
+
+        with self.get_session() as session:
+            rows = (
+                session.query(Alarm)
+                .filter(Alarm.severity == "alarm", Alarm.acknowledged_at.is_(None))
+                .all()
+            )
+            now = datetime.now()
+            for alarm in rows:
+                alarm.acknowledged_at = now
+            session.commit()
+            return len(rows)
+
     def quiet_period_days(self) -> int | None:
         """静音期間（無事故N日）を返す。
 

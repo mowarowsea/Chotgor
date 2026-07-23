@@ -118,3 +118,10 @@ async def acknowledge_alarm(request: Request, alarm_id: int):
     """アラームを確認済みにしてパネルへ戻る。"""
     request.app.state.sqlite.acknowledge_alarm(alarm_id)
     return RedirectResponse(url="/ui/instruments", status_code=303)
+
+
+@router.post("/instruments/alarms/ack_all")
+async def acknowledge_all_alarms(request: Request):
+    """未確認アラームを一括で確認済みにしてパネルへ戻る。"""
+    request.app.state.sqlite.acknowledge_all_alarms()
+    return RedirectResponse(url="/ui/instruments", status_code=303)

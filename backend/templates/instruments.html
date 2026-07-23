@@ -4,21 +4,36 @@
 
 {#-
   alarm_table — アラーム/スメルの一覧テーブルを描画するマクロ。
-  rows は Alarm ORM のリスト。ack=True のとき確認ボタン列を出す。
+  rows は Alarm ORM のリスト。ack=True のとき確認ボタン列と一括確認ボタンを出す。
+  table_id は検知器フィルタ/ソートJSが対象テーブルを引くためのユニークID。
 -#}
-{% macro alarm_table(rows, empty_hint, ack=False) -%}
+{% macro alarm_table(rows, empty_hint, ack=False, table_id="") -%}
 {% if rows %}
-<div class="ch-table-wrap">
+{% set inv_groups = rows|groupby('invariant_id') %}
+<div class="ch-filterbar">
+    <div class="ch-filters" data-detector-filters="{{ table_id }}">
+        <span class="ch-filter is-active" data-filter="all">すべて<span class="ch-filter__count">{{ rows|length }}</span></span>
+        {% for invariant_id, group in inv_groups %}
+        <span class="ch-filter" data-filter="{{ invariant_id }}">{{ invariant_labels.get(invariant_id, invariant_id) }}<span class="ch-filter__count">{{ group|length }}</span></span>
+        {% endfor %}
+    </div>
+    {% if ack and rows|selectattr('acknowledged_at', 'none')|list %}
+    <form method="post" action="/ui/instruments/alarms/ack_all">
+        <button type="submit" class="ch-btn ch-btn--xs">未確認をすべて確認済みにする</button>
+    </form>
+    {% endif %}
+</div>
+<div class="ch-table-wrap" id="{{ table_id }}">
     <table class="ch-table">
         <thead>
             <tr>
-                <th>発生時刻</th><th>検知器</th><th>内容</th>
+                <th class="ch-th-sort" data-sort-key="occurred">発生時刻</th><th class="ch-th-sort" data-sort-key="invariant">検知器</th><th>内容</th>
                 {% if ack %}<th></th>{% endif %}
             </tr>
         </thead>
         <tbody>
             {% for a in rows %}
-            <tr {% if a.acknowledged_at %}style="opacity:.5"{% endif %}>
+            <tr data-invariant="{{ a.invariant_id }}" data-occurred="{{ a.occurred_at.isoformat() }}" {% if a.acknowledged_at %}style="opacity:.5"{% endif %}>
                 <td style="white-space:nowrap">{{ a.occurred_at.strftime("%m/%d %H:%M") }}</td>
                 <td><span class="ch-tag {% if a.severity == 'alarm' %}ch-tag--danger{% else %}ch-tag--sub{% endif %}">{{ invariant_labels.get(a.invariant_id, a.invariant_id) }}</span></td>
                 <td style="font-size:.85em;word-break:break-all">
@@ -106,13 +121,13 @@
     {# ── Tier 1 / Tier 3: アラーム ─────────────────────── #}
     <section class="ch-section">
         <div class="ch-section__head"><h2 class="ch-section-title">アラーム（Tier 1 インバリアント / Tier 3 判定巡回）</h2></div>
-        {{ alarm_table(alarms, "直近30日、アラームの発火はありません。", ack=True) }}
+        {{ alarm_table(alarms, "直近30日、アラームの発火はありません。", ack=True, table_id="alarms-table") }}
     </section>
 
     {# ── Tier 2: スメル ────────────────────────────────── #}
     <section class="ch-section">
         <div class="ch-section__head"><h2 class="ch-section-title">スメル（Tier 2 検知器・誤検知許容）</h2></div>
-        {{ alarm_table(smells, "直近30日、スメルの検知はありません。") }}
+        {{ alarm_table(smells, "直近30日、スメルの検知はありません。", table_id="smells-table") }}
     </section>
 
     {# ── メーター ──────────────────────────────────────── #}
@@ -141,4 +156,55 @@
         {% endif %}
     </section>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    // 計器パネル: 検知器タブで行を絞り込み、列見出しクリックで並び替える。
+    // アラーム表・スメル表それぞれ独立に動く（table_id 単位）。
+    function initInstrumentTable(tableId) {
+      var wrap = document.getElementById(tableId);
+      if (!wrap) return;
+      var table = wrap.querySelector('table');
+      var tbody = table.querySelector('tbody');
+      var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+
+      var filterBar = document.querySelector('.ch-filters[data-detector-filters="' + tableId + '"]');
+      if (filterBar) {
+        var filters = filterBar.querySelectorAll('.ch-filter');
+        filters.forEach(function (f) {
+          f.addEventListener('click', function () {
+            filters.forEach(function (x) { x.classList.remove('is-active'); });
+            f.classList.add('is-active');
+            var want = f.getAttribute('data-filter');
+            rows.forEach(function (row) {
+              row.style.display = (want === 'all' || row.getAttribute('data-invariant') === want) ? '' : 'none';
+            });
+          });
+        });
+      }
+
+      var ths = table.querySelectorAll('th.ch-th-sort');
+      ths.forEach(function (th) {
+        th.addEventListener('click', function () {
+          var key = th.getAttribute('data-sort-key');
+          var dir = th.classList.contains('is-asc') ? 'desc' : 'asc';
+          ths.forEach(function (t) { t.classList.remove('is-asc', 'is-desc'); });
+          th.classList.add(dir === 'asc' ? 'is-asc' : 'is-desc');
+          rows.slice().sort(function (a, b) {
+            var av = a.getAttribute('data-' + key) || '';
+            var bv = b.getAttribute('data-' + key) || '';
+            if (av === bv) return 0;
+            var cmp = av < bv ? -1 : 1;
+            return dir === 'asc' ? cmp : -cmp;
+          }).forEach(function (row) { tbody.appendChild(row); });
+        });
+      });
+    }
+
+    initInstrumentTable('alarms-table');
+    initInstrumentTable('smells-table');
+  })();
+</script>
 {% endblock %}

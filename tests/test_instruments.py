@@ -65,6 +65,17 @@ class TestInstrumentStore:
         assert len(sqlite_store.list_alarms()) == 1  # 記録自体は残る
         assert sqlite_store.acknowledge_alarm(99999) is False
 
+    def test_acknowledge_all(self, sqlite_store):
+        """一括確認で severity="alarm" の未確認だけがまとめて確認済みになる。smell は対象外。"""
+        sqlite_store.fire_alarm("usual_scene_error")
+        sqlite_store.fire_alarm("embedding_degraded")
+        sqlite_store.fire_alarm("smell_format_debris", severity="smell")
+        assert sqlite_store.acknowledge_all_alarms() == 2
+        assert sqlite_store.list_alarms(severity="alarm", unacknowledged_only=True) == []
+        assert len(sqlite_store.list_alarms(severity="smell", unacknowledged_only=True)) == 1
+        # 何も無い状態で呼んでも 0 件・例外なし
+        assert sqlite_store.acknowledge_all_alarms() == 0
+
     def test_quiet_period_days(self, sqlite_store):
         """静音期間 = 最後の alarm からの日数。smell は静音期間を壊さない。"""
         # 計器未稼働（開始時刻もアラームもない）

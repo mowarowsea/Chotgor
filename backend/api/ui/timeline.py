@@ -57,8 +57,14 @@ async def timeline_page(request: Request, character_id: str = "", days: int = 7)
     selected = None
     if character_id:
         selected = sqlite.get_character(character_id)
-    elif characters:
-        selected = characters[0]
+    else:
+        last_id = sqlite.get_setting("ui_last_character_id", "")
+        if last_id:
+            selected = sqlite.get_character(last_id)
+        if selected is None and characters:
+            selected = characters[0]
+    if selected is not None:
+        sqlite.set_setting("ui_last_character_id", selected.id)
 
     events = []
     dial = 0
