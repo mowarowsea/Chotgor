@@ -92,13 +92,17 @@ export function NpcDetailDialog({
   if (!npc) return null;
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center px-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-8"
       style={{ background: "var(--ch-overlay)" }}
       onClick={onClose}
     >
       <div
-        className="bg-ch-bg rounded-xl w-full max-w-md overflow-hidden"
-        style={{ border: "1px solid var(--ch-sep2)", boxShadow: "var(--ch-shadow)" }}
+        className="bg-ch-bg rounded-xl w-full max-w-md overflow-y-auto"
+        style={{
+          border: "1px solid var(--ch-sep2)",
+          boxShadow: "var(--ch-shadow)",
+          maxHeight: "calc(100vh - 4rem)",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 画像エリア（あれば大きめ） */}
