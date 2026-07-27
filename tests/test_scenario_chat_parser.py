@@ -8,6 +8,7 @@ ScenarioChatParser の feed() / flush() 動作を網羅的に検証する。
     - Narrator 行の処理
     - 行頭でない `@名前` は話者切替とみなさない
     - 行頭に `@` がない冒頭の地の文は Narrator にフォールバック吸収
+    - 行頭 `@名前:` の直前に半角スペース/タブが混入していても話者切替として認識
     - GM がユーザ代弁（@user_alias:）した場合の破棄＋警告ログ
     - `@user_alias` の名前が Narrator 本文中に出てきても切替対象外
     - is_speaker_change フラグが話者切替の最初の delta だけ True
@@ -297,6 +298,61 @@ class TestInlineAtIgnored:
             d.content_delta for d in deltas if d.speaker_type == "narrator"
         )
         assert "@レイカ" in narrator_text
+
+
+class TestLeadingWhitespaceBeforeAt:
+    """行頭 `@名前:` の直前に半角スペース/タブが混入していても話者切替として
+    認識することを検証する。
+
+    実際の運用ログ（request_id 9e851ae6）で、GM 出力が ` @キャラ名: 本文` のように
+    `@` の前に単一スペースを挟んで出力するケースが観測された。フロントは行頭 `@`
+    のみを話者宣言として扱っていたため、この行がそのキャラの発言ではなく Narrator の
+    地の文として表示されてしまっていた。行頭の空白（スペース・タブ）は読み飛ばして
+    `@` を探すことで、この形式破りでも本来の話者として認識できるようにする。
+    """
+
+    def test_single_leading_space_before_at_still_switches_speaker(self):
+        """`@` の直前に半角スペース 1 個があっても話者切替として認識すること。"""
+        parser = ScenarioChatParser(known_npc_names={"レイカ": "id-r"})
+        deltas = parser.feed(" @レイカ: hi\n")
+        deltas += parser.flush()
+        speakers = _ordered_speakers(deltas)
+        assert "レイカ" in speakers
+        text_by = _all_text_by_speaker(deltas)
+        assert "hi" in text_by["レイカ"]
+        # 話者宣言部（行頭空白込み）は本文に混入しないこと
+        assert "@" not in text_by["レイカ"]
+
+    def test_multiple_spaces_and_tab_before_at(self):
+        """スペース複数個・タブ混じりでも話者切替として認識すること。"""
+        parser = ScenarioChatParser(known_npc_names={"レイカ": "id-r"})
+        deltas = parser.feed("  \t@レイカ: hi\n")
+        deltas += parser.flush()
+        speakers = _ordered_speakers(deltas)
+        assert "レイカ" in speakers
+
+    def test_leading_whitespace_split_across_chunks(self):
+        """行頭空白だけが独立したチャンクで来ても、次チャンクの `@` と正しく結合すること。"""
+        parser = ScenarioChatParser(known_npc_names={"レイカ": "id-r"})
+        deltas = []
+        deltas += parser.feed(" ")
+        deltas += parser.feed("@レイカ: hi\n")
+        deltas += parser.flush()
+        speakers = _ordered_speakers(deltas)
+        assert "レイカ" in speakers
+        text_by = _all_text_by_speaker(deltas)
+        assert "hi" in text_by["レイカ"]
+
+    def test_leading_space_without_colon_falls_back_to_body_with_space_preserved(self):
+        """`@` の後に `:` が無い（話者宣言ではない）場合、行頭空白を含めて
+        そのまま本文として通ること（空白を失わないこと）。"""
+        parser = ScenarioChatParser()
+        deltas = parser.feed(" @foo bar\n")
+        deltas += parser.flush()
+        narrator_text = "".join(
+            d.content_delta for d in deltas if d.speaker_type == "narrator"
+        )
+        assert narrator_text == " @foo bar\n"
 
 
 class TestBlankLinesBetweenBlocks:

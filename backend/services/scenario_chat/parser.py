@@ -20,6 +20,8 @@ LLM (GM) からのストリーム出力を逐次的に消費しつつ、`@話者
 
 注: `@名前:` の検出は「行頭のみ」とする。Narrator の地の文に "@誰々" が
 含まれているケースは話者切替とみなさない。これによりキャラ名と地の文の混在に強い。
+ただし行頭の半角スペース・タブは無視して `@` を探す（LLM が `@名前:` の前に
+誤って空白を挟んで出力するケースの救済。行頭判定そのものは崩さない）。
 """
 
 from dataclasses import dataclass
@@ -157,7 +159,8 @@ class ScenarioChatParser:
         """バッファをスキャンして発話 delta 列を出力する。
 
         ロジック:
-            1. バッファ先頭が「行頭 `@`」位置にある場合、`:` を探す
+            1. バッファ先頭が「行頭 `@`」位置にある場合（先頭の半角スペース・タブは
+               無視して判定する）、`:` を探す
                - `:` が見つかれば話者切替確定（または user_alias で suppress）
                - `:` が見つからず eof=False ならバッファに留めて待機
                - `:` が見つからず eof=True なら現在話者の本文として扱う
@@ -167,21 +170,34 @@ class ScenarioChatParser:
         deltas: list[UtteranceDelta] = []
 
         while self._buffer:
-            if self._at_line_start and self._buffer.startswith("@"):
+            if self._at_line_start:
+                # 行頭の半角スペース・タブは読み飛ばしてから `@` かどうかを見る。
+                # 空白のみでバッファが尽きている場合、後続に `@` が来るか判定できない
+                # ため（eof でない限り）次チャンクを待つ。
+                stripped = self._buffer.lstrip(" \t")
+                lead_ws_len = len(self._buffer) - len(stripped)
+                if lead_ws_len and not stripped and not eof:
+                    break
+            else:
+                stripped = self._buffer
+                lead_ws_len = 0
+
+            if self._at_line_start and stripped.startswith("@"):
                 # `:` を探す（同一行内）
-                line_end = self._buffer.find("\n")
-                search_end = line_end if line_end != -1 else len(self._buffer)
-                colon_pos = self._buffer.find(":", 1, search_end)
+                line_end = stripped.find("\n")
+                search_end = line_end if line_end != -1 else len(stripped)
+                colon_pos = stripped.find(":", 1, search_end)
 
                 if colon_pos == -1:
                     # 同一行内に `:` がない。
-                    # - 改行があるなら：これは話者宣言ではない。@... 文字列として本文扱い。
+                    # - 改行があるなら：これは話者宣言ではない。@... 文字列として本文扱い
+                    #   （行頭の空白も含めてそのまま出力する）。
                     # - 改行がないかつ eof：本文として扱う（保険）。
                     # - 改行がないかつ eof=False：次のチャンクを待つ。
                     if line_end != -1:
                         # 行頭 `@` だが `:` がない → 単なる本文。
-                        text = self._buffer[: line_end + 1]
-                        self._buffer = self._buffer[line_end + 1 :]
+                        text = self._buffer[: lead_ws_len + line_end + 1]
+                        self._buffer = self._buffer[lead_ws_len + line_end + 1 :]
                         emitted = self._emit_text(text)
                         if emitted is not None:
                             deltas.append(emitted)
@@ -200,11 +216,11 @@ class ScenarioChatParser:
                         break
 
                 # `:` が見つかった → 話者宣言確定
-                if not eof and line_end == -1 and colon_pos == len(self._buffer) - 1:
+                if not eof and line_end == -1 and colon_pos == len(stripped) - 1:
                     break
-                name = self._buffer[1:colon_pos].strip()
-                # 話者宣言ヘッダ部 `@名前:` を捨てる
-                self._buffer = self._buffer[colon_pos + 1 :]
+                name = stripped[1:colon_pos].strip()
+                # 話者宣言ヘッダ部（行頭空白 + `@名前:`）を丸ごと捨てる
+                self._buffer = stripped[colon_pos + 1 :]
                 self._switch_speaker(name)
                 if self._buffer.startswith("\r\n"):
                     self._buffer = self._buffer[2:]
