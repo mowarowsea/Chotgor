@@ -310,7 +310,12 @@ async def test_execute_stream_text_is_cleaned_by_inscribe_memory_tags():
 
 @pytest.mark.asyncio
 async def test_execute_stream_provider_error_yields_error_text():
-    """プロバイダーがエラーを送出した場合、("text", エラーメッセージ) でストリームが終了する。"""
+    """プロバイダーがエラーを送出した場合、("provider_error", メッセージ) で終了すること。
+
+    エラー文言を text に混ぜると、シナリオ／うつつの PC ターンがそれをキャラの発話として
+    保存してしまうため、発話とは別種のチャンクで通知する（1on1 経路は OneOnOneExecutor が
+    text へ倒して従来どおり表示・保存する）。
+    """
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
 
@@ -332,8 +337,9 @@ async def test_execute_stream_provider_error_yields_error_text():
     ):
         chunks = await _collect_stream(service, request)
 
-    text_chunks = [c for t, c in chunks if t == "text"]
-    assert any("Error" in c for c in text_chunks)
+    error_chunks = [c for t, c in chunks if t == "provider_error"]
+    assert any("Error" in c for c in error_chunks)
+    assert not any(t == "text" for t, _ in chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +379,7 @@ async def test_execute_stream_with_tools_yields_text():
 @pytest.mark.asyncio
 async def test_execute_stream_with_tools_error_yields_error_text():
     """SUPPORTS_TOOLS=True でプロバイダーが例外を送出した場合、
-    ("text", エラーメッセージ) でストリームが終了すること。
+    ("provider_error", メッセージ) でストリームが終了すること。
     """
     memory_manager = MagicMock()
     memory_manager.recall_with_identity.return_value = ([], [])
@@ -392,5 +398,6 @@ async def test_execute_stream_with_tools_error_yields_error_text():
     ):
         chunks = await _collect_stream(service, request)
 
-    text_chunks = [c for t, c in chunks if t == "text"]
-    assert any("Error" in c for c in text_chunks)
+    error_chunks = [c for t, c in chunks if t == "provider_error"]
+    assert any("Error" in c for c in error_chunks)
+    assert not any(t == "text" for t, _ in chunks)

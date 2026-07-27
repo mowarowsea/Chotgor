@@ -18,11 +18,13 @@ import types
 from datetime import datetime, timedelta
 
 import backend.main as mainmod
+import backend.services.scenario_chat.loop_strategies as loop_strategies_mod
 import backend.services.scenario_chat.pc_runner as pc_runner_mod
 import backend.services.scenario_chat.service as svc
 import backend.services.scenario_chat.usual_days as usual_days_mod
 from backend.api.ui.characters import _parse_usual_form
 from backend.lib.log_context import current_log_feature
+from backend.providers.base import LLMApiError
 from backend.services.chat.request_builder import build_system_prompt
 from backend.lib.time_awareness import (
     format_time_context,
@@ -1900,3 +1902,134 @@ class TestUsualErrorHandling:
         # （cap まで暴走していれば GM/PC はそれぞれ 4 回前後呼ばれるはず）。
         assert gm_calls["n"] == 2
         assert len(pc_calls) == 1
+
+    def test_pc_provider_error_is_retried_once_and_recovers(self, sqlite_store, monkeypatch):
+        """PC がプロバイダエラーになっても 1 回だけ引き直し、成功すればシーンが続くこと。
+
+        Claude CLI の MCP 起動レース由来の異常終了は一過性なので、GM の投げかけ直後に
+        PC の返事だけ落ちてシーンが切れるのを避ける。1 回目 LLMApiError → 2 回目成功の
+        台本で、PC の発話が通常どおり scenario_turns へ保存されることを確認する。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_responses=2)
+        pc_attempts = {"n": 0}
+
+        async def fake_gm(**kwargs):
+            svc._save_turn(
+                sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                speaker_type="narrator", speaker_name="Narrator",
+                content="朝。@はる", raw_response="朝。@はる",
+            )
+            return
+            yield
+
+        async def flaky_pc(**kwargs):
+            pc_attempts["n"] += 1
+            if pc_attempts["n"] == 1:
+                raise LLMApiError("[Error: Claude Code exited with code 1]")
+                yield  # 到達しないが async generator にするためのダミー
+            yield ("pc_done", {
+                "character": kwargs["pc"].name,
+                "character_id": kwargs["pc"].character_id,
+                "full_text": "「……はい、今から確認します」",
+                "anticipation": None,
+            })
+
+        monkeypatch.setattr(loop_strategies_mod, "_PC_RETRY_WAIT_SECONDS", 0)
+        monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+        monkeypatch.setattr(pc_runner_mod, "stream_pc_response", flaky_pc)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        async def fake_synopsis(*a, **k):
+            return None
+
+        monkeypatch.setattr(usual_days_mod, "maybe_update_auto_synopsis", fake_synopsis)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        # リトライで復帰しているのでシーンはエラー終了しない。
+        assert result["error"] is None
+        assert pc_attempts["n"] == 2
+        pc_turns = [
+            t for t in sqlite_store.list_scenario_turns(sid)
+            if getattr(t, "speaker_type", "") == "pc"
+        ]
+        assert len(pc_turns) == 1
+        assert pc_turns[0].content == "「……はい、今から確認します」"
+
+    def test_pc_provider_error_never_saved_as_speech(self, sqlite_store, monkeypatch):
+        """再試行しても PC がプロバイダエラーなら、エラー文言を発話として保存しないこと。
+
+        修正前は ChatFlow がエラー文を ("text", "[Error: ...]") として流していたため、
+        「はるがエラー文を喋った」ターンが うつつ の履歴に残っていた（本バグの再現）。
+        修正後は GM のプロバイダエラーと同じく発言ナシ＋シーン打ち切りになる。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_responses=8)
+        pc_attempts = {"n": 0}
+
+        async def fake_gm(**kwargs):
+            svc._save_turn(
+                sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                speaker_type="narrator", speaker_name="Narrator",
+                content="朝。@はる", raw_response="朝。@はる",
+            )
+            return
+            yield
+
+        async def always_error_pc(**kwargs):
+            pc_attempts["n"] += 1
+            raise LLMApiError("[Error: Claude Code exited with code 1\nSTDERR: \nSTDOUT: {...}]")
+            yield
+
+        monkeypatch.setattr(loop_strategies_mod, "_PC_RETRY_WAIT_SECONDS", 0)
+        monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+        monkeypatch.setattr(pc_runner_mod, "stream_pc_response", always_error_pc)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        # 初回＋リトライの 2 回で打ち切られ、エラーは result 側にだけ現れる。
+        assert pc_attempts["n"] == 2
+        assert result["error"] is not None
+        turns = sqlite_store.list_scenario_turns(sid)
+        assert all(getattr(t, "speaker_type", "") != "pc" for t in turns)
+        # どのターンにもエラー文言が混入していないこと（発話としての保存を禁ずる）。
+        assert all("Claude Code exited" not in (getattr(t, "content", "") or "") for t in turns)
+
+    def test_pc_non_provider_error_is_not_retried(self, sqlite_store, monkeypatch):
+        """プロバイダ以外の失敗（履歴構築の不整合など）は再試行せず即打ち切ること。
+
+        引き直しても同じ結果になる種類の失敗まで 2 回呼ぶと、無駄な LLM 呼び出しと
+        ログの二重化を招くため、リトライ対象は LLMApiError に限定している。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_responses=8)
+        pc_attempts = {"n": 0}
+
+        async def fake_gm(**kwargs):
+            svc._save_turn(
+                sqlite=kwargs["sqlite"], session_id=kwargs["session_id"],
+                speaker_type="narrator", speaker_name="Narrator",
+                content="朝。@はる", raw_response="朝。@はる",
+            )
+            return
+            yield
+
+        async def boom_pc(**kwargs):
+            pc_attempts["n"] += 1
+            raise ValueError("PC プリセットが見つかりません")
+            yield
+
+        monkeypatch.setattr(loop_strategies_mod, "_PC_RETRY_WAIT_SECONDS", 0)
+        monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+        monkeypatch.setattr(pc_runner_mod, "stream_pc_response", boom_pc)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        assert pc_attempts["n"] == 1
+        assert result["error"] is not None

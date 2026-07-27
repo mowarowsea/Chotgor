@@ -17,11 +17,13 @@ GM/PC ターン実行といったシナリオ固有の責務を担う。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from backend.lib.log_context import current_log_feature
+from backend.providers.base import LLMApiError
 from backend.services.chat_flow.scene_loop import (
     LoopState,
     SpeakerInfo,
@@ -29,6 +31,11 @@ from backend.services.chat_flow.scene_loop import (
 )
 
 logger = logging.getLogger(__name__)
+
+# PC ターンがプロバイダエラーになったときの試行回数（初回＋リトライ1回）と待機秒。
+# Claude CLI の MCP 起動レース由来の異常終了は一過性なので、間を置いて 1 回だけ引き直す。
+_PC_PROVIDER_ERROR_ATTEMPTS = 2
+_PC_RETRY_WAIT_SECONDS = 2.0
 
 
 @dataclass
@@ -408,38 +415,71 @@ class ScenarioTurnExecutor:
 
         full_text = ""
         anticipation_text: str | None = None
-        try:
-            async for ev_type, payload in stream_pc_response(
-                pc=pc,
-                scenario_title=sc.scenario.title,
-                user_alias=sc.user_speaker_name,
-                history=latest_history,
-                preset_id=preset_id,
-                sqlite=sc.sqlite,
-                settings=sc.settings,
-                chat_service=sc.chat_service,
-                scenario_session_id=sc.session_id,
-                default_origin="usual" if sc.is_headless else "interlude",
-            ):
-                if ev_type == "pc_done":
-                    full_text = payload["full_text"]
-                    anticipation_text = payload.get("anticipation")
-                yield (ev_type, payload)
-        except Exception as e:
-            logger.exception(
-                "PC レスポンス実行エラー session=%s pc=%s",
-                sc.session_id,
-                pc.name,
-            )
+        # プロバイダ由来エラー（Claude CLI の MCP 起動レースによる異常終了など）は
+        # 一過性であることが多いので 1 回だけ再試行する。GM の投げかけ直後に PC の返事
+        # だけ落ちると、シーンを閉じたとき問いかけが宙に浮くため。
+        # 再試行しても駄目なら GM ターンと同じく発言ナシ＋シーン終了へ倒す。
+        last_error: Exception | None = None
+        for attempt in range(_PC_PROVIDER_ERROR_ATTEMPTS):
+            full_text = ""
+            anticipation_text = None
+            last_error = None
+            try:
+                async for ev_type, payload in stream_pc_response(
+                    pc=pc,
+                    scenario_title=sc.scenario.title,
+                    user_alias=sc.user_speaker_name,
+                    history=latest_history,
+                    preset_id=preset_id,
+                    sqlite=sc.sqlite,
+                    settings=sc.settings,
+                    chat_service=sc.chat_service,
+                    scenario_session_id=sc.session_id,
+                    default_origin="usual" if sc.is_headless else "interlude",
+                ):
+                    if ev_type == "pc_done":
+                        full_text = payload["full_text"]
+                        anticipation_text = payload.get("anticipation")
+                    yield (ev_type, payload)
+                break
+            except LLMApiError as e:
+                last_error = e
+                if attempt + 1 < _PC_PROVIDER_ERROR_ATTEMPTS:
+                    logger.warning(
+                        "PC レスポンスがプロバイダエラー、再試行する session=%s pc=%s: %s",
+                        sc.session_id,
+                        pc.name,
+                        str(e)[:300],
+                    )
+                    await asyncio.sleep(_PC_RETRY_WAIT_SECONDS)
+                    continue
+                logger.error(
+                    "PC レスポンスがプロバイダエラー、再試行後も失敗 session=%s pc=%s: %s",
+                    sc.session_id,
+                    pc.name,
+                    str(e)[:300],
+                )
+            except Exception as e:
+                # プロバイダ以外の失敗（履歴構築・プリセット不整合など）は再試行しても
+                # 同じ結果になるため、そのままシーン終了へ倒す。
+                logger.exception(
+                    "PC レスポンス実行エラー session=%s pc=%s",
+                    sc.session_id,
+                    pc.name,
+                )
+                last_error = e
+            break
+
+        if last_error is not None:
             yield (
                 "error",
                 {
                     "character": pc.name,
                     "character_id": pc.character_id,
-                    "message": str(e),
+                    "message": str(last_error),
                 },
             )
-            yield ("turn_result", TurnResult(text="", error=str(e)))
+            yield ("turn_result", TurnResult(text="", error=str(last_error)))
             return
 
         if full_text.strip():

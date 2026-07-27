@@ -705,3 +705,125 @@ async def test_prepare_context_memory_degraded_false_on_success():
         await _collect_stream_events(service, request)
 
     assert mock_build.call_args.kwargs["memory_degraded"] is False
+
+
+# --- ChatService.execute_stream — プロバイダ由来エラー（provider_error） ---
+
+@pytest.mark.asyncio
+async def test_execute_stream_yields_provider_error_not_text_on_tool_path():
+    """SUPPORTS_TOOLS=True でプロバイダが LLMApiError を送出したら、
+    エラー文言は ("text", ...) ではなく ("provider_error", ...) として流れること。
+
+    背景: エラー文言を text に混ぜていたため、シナリオ／うつつの PC ターンが
+    「[Error: Claude Code exited with code 1 ...]」をキャラの発話として保存していた。
+    発話（text）と「応答が得られなかった事実」（provider_error）を型で分離し、
+    消費側が経路ごとに扱いを選べるようにする。
+    """
+    from backend.providers.base import LLMApiError
+
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="claude_cli",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(
+        side_effect=LLMApiError("[Error: Claude Code exited with code 1]")
+    )
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        events = await _collect_stream_events(service, request)
+
+    assert ("provider_error", "[Error: Claude Code exited with code 1]") in events
+    assert not any(t == "text" for t, _ in events)
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_yields_provider_error_on_tag_path():
+    """タグ方式（SUPPORTS_TOOLS=False）の ("error", ...) チャンクも provider_error として
+    流れ、それ以前に届いていた発話テキストは取りこぼされないこと。
+
+    Gemini 等はストリーム途中で safety filter / 5xx を error チャンクで通知するため、
+    「途中まで喋った本文」と「エラー」を別種のイベントとして両方渡す必要がある。
+    """
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="google",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    async def fake_stream_typed(system_prompt, messages):
+        yield ("text", "……ええと、")
+        yield ("error", "[Google API blocked: PROHIBITED_CONTENT]")
+
+    fake_provider = MagicMock()
+    fake_provider.SUPPORTS_TOOLS = False
+    fake_provider.generate_stream_typed = fake_stream_typed
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager)
+        events = await _collect_stream_events(service, request)
+
+    assert ("text", "……ええと、") in events
+    assert ("provider_error", "[Google API blocked: PROHIBITED_CONTENT]") in events
+    # エラー文言そのものは発話として流さないこと
+    assert not any(t == "text" and "PROHIBITED_CONTENT" in c for t, c in events)
+
+
+@pytest.mark.asyncio
+async def test_one_on_one_executor_converts_provider_error_to_text():
+    """1on1 経路では provider_error を従来どおり text として扱うこと（表示・保存を維持）。
+
+    1on1 でエラーを無言にすると「返事が来なかった」ことすら履歴に残らず追跡できなく
+    なるため、PC ターン（発言ナシ）とは意図的に扱いを変えている。
+    """
+    from backend.services.chat_flow.scene_loop import SpeakerInfo
+    from backend.services.chat_flow.strategies.one_on_one import OneOnOneExecutor
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="claude_cli",
+        model="",
+        messages=[Message(role="user", content="hello")],
+    )
+
+    class _FakeFlow:
+        """provider_error だけを流す ChatFlow の代役。"""
+
+        async def execute_stream(self, req):
+            yield ("provider_error", "[Error: Claude Code exited with code 1]")
+
+    executor = OneOnOneExecutor(_FakeFlow())
+    speaker = SpeakerInfo(kind="character", name="Alice", metadata={"request": request})
+
+    events = []
+    async for ev in executor.execute(speaker, MagicMock()):
+        events.append(ev)
+
+    assert ("text", "[Error: Claude Code exited with code 1]") in events
+    assert not any(t == "provider_error" for t, _ in events)
+    # TurnResult.text にも畳まれ、API 層の保存経路が従来どおり動くこと
+    turn_result = [c for t, c in events if t == "turn_result"][0]
+    assert turn_result.text == "[Error: Claude Code exited with code 1]"

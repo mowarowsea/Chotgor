@@ -26,6 +26,7 @@ from typing import Any, AsyncGenerator
 
 from backend.character_actions.anticipator import extract_anticipation
 from backend.lib.debug_logger import logger as debug_logger
+from backend.providers.base import LLMApiError
 from backend.lib.tool_event_recorder import record_tool_event
 from backend.lib.log_context import (
     current_log_dir_id,
@@ -228,6 +229,10 @@ async def stream_pc_response(
     event 名は 1on1（chunk/reasoning/error）と互換になっており、
     フロントの SSE 解釈を統一しやすくしている。``pc_done`` は「PC レスポンス完了」を
     示す PC 専用イベントで、その後ループ側で ``turn_end`` が発行される（loop_strategies）。
+
+    Raises:
+        LLMApiError: プロバイダ由来エラーで応答が得られなかった場合。エラー文言を
+            PC の発話として保存しないため、``pc_done`` を出さずに送出する。
     """
     # PC ターンは「ユーザの 1 リクエスト中に走る独立した LLM 呼び出し」なので、
     # ログ機構上は新しい MAIN 行として扱う（ChotgorLogger._MAIN_SOURCE_TYPES 参照）。
@@ -397,6 +402,13 @@ async def stream_pc_response(
                 yield ("chunk", {"character": pc.name, "content": content})
         elif chunk_type == "anticipation":
             anticipation_text = content
+        elif chunk_type == "provider_error":
+            # プロバイダ由来エラー（Claude CLI の異常終了・API 側 5xx 等）。
+            # エラー文言を PC の発話として保存すると、うつつ／幕間の履歴に
+            # 「はるがエラー文を喋った」ターンが残ってしまう。GM ターン（engine の
+            # provider_error）と同じく発言ナシとして扱うため、例外へ変換して
+            # 呼び出し側（loop_strategies._run_pc）のリトライ／シーン終了へ委ねる。
+            raise LLMApiError(content)
 
     # 末尾 ANTICIPATE_RESPONSE タグを本文から剥がす（PC モードでも 1on1 同様に副作用処理）。
     clean_text, parsed_anticipation = extract_anticipation(full_text)

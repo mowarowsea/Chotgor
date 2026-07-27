@@ -81,6 +81,11 @@ class OneOnOneExecutor:
 
         full_text = ""
         async for event in self._flow.execute_stream(request):
+            # プロバイダ由来エラーは 1on1 では従来どおりキャラ発話と同じ扱いで表示・保存する。
+            # 履歴から消すと「無言の応答」になって追跡できなくなるため、ここで text へ倒す
+            # （シナリオ/うつつの PC ターンは pc_runner 側で発言ナシとして扱う）。
+            if isinstance(event, tuple) and len(event) == 2 and event[0] == "provider_error":
+                event = ("text", event[1])
             yield event
             # 1on1 経路で「最終応答テキスト」とみなせるのは ``text`` チャンクの累計。
             # power_recall の再帰先で出された text もすべて連結される。

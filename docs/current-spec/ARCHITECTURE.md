@@ -91,7 +91,7 @@
 | パス | 責務 |
 |---|---|
 | `services/chat/` | 1on1チャット本流。`service.py`（ChatFlow の再エクスポート）、`request_builder.py`（安定ブロック＝システムプロンプト＋変動ブロック＝ターン注釈の二層組み立て）、`request_factory.py`、`content.py`、`indexer.py`（履歴を LanceDB `chat_turns` へ upsert）、`models.py` |
-| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`ambience_flow.py`（なりゆき: 別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象） |
+| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`ambience_flow.py`（なりゆき: 別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象）。**プロバイダ由来エラーは発話（`text`）と分けて `provider_error` チャンクで流す**（消費側で扱いが違う: 1on1/OpenAI互換=text相当で表示・保存、シナリオ/うつつPC=`pc_runner` が LLMApiError へ変換し発言ナシ扱い） |
 | `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py`、`scene_close.py`（[SCENE_CLOSE] 検出・除去）、`usual_days.py`（うつつのセッション管理・演出素材・シーン駆動） |
 | `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`reindex_service.py`（embedding変更時の全再構築） |
 | `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる）。ANTICIPATE_RESPONSE ガイドは付与しない（予想は次ターンを受け取る相手がいるチャット前提の機能のため） |
@@ -210,6 +210,9 @@ main.py うつつ tick（_run_every_minute 同乗・冪等キー=日付+スロ�
       - GMプロンプトに time_context（曜日/時間帯/季節）＋偶発イベント（混合抽選）＋
         ソフト収束ヒントを注入（prompt_builder の time_context/gm_ooc_appendix）
       - PC ターンは pc_runner（1on1同等の想起・WM・inscribe）。記憶は origin="usual"
+      - プロバイダエラーは GM・PC とも「発言ナシ」。GM=engine の provider_error でターン非保存、
+        PC=pc_runner が LLMApiError 送出 → loop_strategies が **1回だけ引き直し**、
+        それでも駄目ならシーン打ち切り（Claude CLI の MCP 起動レース由来の一過性失敗対策）
     → シーン完走後に maybe_update_auto_synopsis(force=False) であらすじ自動蒸留
 ```
 

@@ -194,7 +194,9 @@ async def chat_completions(request: Request, body: OAIChatRequest):
                 elif chunk_type == "thinking":
                     if content:
                         yield _sse_chunk_reasoning(content)
-                elif chunk_type == "text":
+                elif chunk_type in ("text", "provider_error"):
+                    # provider_error は 1on1 と同じくエラー文言をそのまま本文として返す
+                    # （OpenAI 互換クライアントには「無言」より原因が見えた方がよい）。
                     if content:
                         yield _sse_chunk(content)
             yield "data: [DONE]\n\n"

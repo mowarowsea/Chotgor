@@ -141,6 +141,14 @@ class ChatFlow:
                 ("recall_error",  str)                  : 想起失敗時のUI表示メッセージ（失敗時のみ1回）
                 ("thinking",      str)                  : 思考ブロック（リアルタイム）
                 ("text",          str)                  : クリーンな応答テキスト（最後に1回）
+                ("provider_error", str)                 : プロバイダ由来エラー（発生時のみ1回、直後に終了）
+
+        ``provider_error`` はキャラクターの発話ではなく「応答が得られなかった」事実を表す。
+        text に混ぜると呼び出し側がエラー文をそのまま発話として保存してしまうため、
+        別種のチャンクとして流す。消費側の扱いは経路ごとに異なる:
+          - 1on1（OneOnOneExecutor / OpenAI互換API）: 従来どおり text 相当で表示・保存する
+            （履歴から消すと「無言の応答」になり追跡不能になるため）
+          - シナリオ/うつつの PC ターン（pc_runner）: 例外へ変換し、発言ナシとして扱う
         """
         ctx = await prepare_context(self.memory_manager, self.working_memory_manager, request)
 
@@ -183,13 +191,13 @@ class ChatFlow:
             try:
                 clean_text, thinking_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
             except LLMApiError as e:
-                # str(e) は既に "[Error: ...]" 形式なのでそのまま yield する
+                # str(e) は既に "[Error: ...]" 形式なのでそのまま流す
                 _log.warning("LLM APIエラー（ツール方式）char=%s@%s: %s", request.character_name, request.current_preset_name or request.provider, e)
-                yield ("text", str(e))
+                yield ("provider_error", str(e))
                 return
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
-                yield ("text", f"[Error: {type(e).__name__}: {e}]")
+                yield ("provider_error", f"[Error: {type(e).__name__}: {e}]")
                 return
             # 思考ブロックがあればテキスト本体より先にyieldする
             if thinking_text:
@@ -197,6 +205,8 @@ class ChatFlow:
         else:
             full_text = ""
             stripper = StreamingTagStripper()
+            # プロバイダ由来エラーを検知したら保持し、バッファ flush 後に provider_error として流す。
+            provider_error_text: str | None = None
 
             try:
                 async for chunk_type, content in ctx.provider_impl.generate_stream_typed(ctx.system_prompt, ctx.messages):
@@ -210,15 +220,10 @@ class ChatFlow:
                             yield ("text", safe_chunk)
                     elif chunk_type == "error":
                         # プロバイダ由来エラー（APIキー未設定・SDK 例外・safety filter 等）。
-                        # 1on1 チャットでは UX 維持のためエラー文言を従来どおりキャラ発話
-                        # として表示・保存する（履歴から消すと「無言の応答」になり追跡不能）。
-                        # text として上位へ転送するが、後段の inscribe/carve/recall の
-                        # マーカー解析は走らせるとエラー文字列を誤抽出するため、ここで stream を
-                        # 終了させる（remaining flush と clean_text は通常経路を通る）。
-                        full_text += content
-                        safe_chunk = stripper.feed(content)
-                        if safe_chunk:
-                            yield ("text", safe_chunk)
+                        # エラー文言は発話ではないので text には積まず provider_error として流す。
+                        # 後段の inscribe/carve/recall のマーカー解析もエラー文字列を誤抽出する
+                        # ため走らせない（バッファ flush だけ済ませて終了する）。
+                        provider_error_text = content or "[provider error]"
                         _log.warning(
                             "LLM provider エラー（タグ方式）char=%s@%s: %s",
                             request.character_name,
@@ -228,13 +233,17 @@ class ChatFlow:
                         break
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（タグ方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
-                yield ("text", f"[Error: {type(e).__name__}: {e}]")
+                yield ("provider_error", f"[Error: {type(e).__name__}: {e}]")
                 return
 
             # ストリーム終了後、バッファに残ったテキストを流す
+            # （エラーで打ち切った場合も、そこまでに届いていた発話は取りこぼさない）
             remaining = stripper.flush()
             if remaining:
                 yield ("text", remaining)
+            if provider_error_text is not None:
+                yield ("provider_error", provider_error_text)
+                return
             text_already_streamed = True
 
             # PowerRecall: Inscriber 等の後処理より先に実行し、検知したら即 return する。
