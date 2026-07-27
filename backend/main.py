@@ -420,7 +420,11 @@ def _schedule_scene_descriptors(
     """
     from datetime import timedelta
 
-    from backend.services.schedule import format_scene_framing, select_daily_scenes
+    from backend.services.schedule import (
+        format_scene_framing,
+        scene_run_key,
+        select_daily_scenes,
+    )
 
     owner_id = owner_char.id
     scenes_per_day = int(cfg.get("scenes_per_day") or 0) or _DEFAULT_SCENES_PER_DAY
@@ -438,7 +442,7 @@ def _schedule_scene_descriptors(
         if now < scene.fire_at:
             continue  # 起動時刻がまだ来ていない
         descriptors.append({
-            "key": f"usual_days_entry_run_{scene.entry_id}",
+            "key": scene_run_key(scene.entry_id),
             "slot": f"{scene.fire_at:%H:%M}",
             "topic_ooc": format_scene_framing(
                 getattr(owner_char, "name", "") or "", scene.label
@@ -556,6 +560,18 @@ async def _run_due_usual_scenes(app: FastAPI) -> None:
                     extra_first_gm_ooc=extra_ooc,
                     slot=slot,
                 )
+                if result.get("skipped"):
+                    # 別系統（③突発・行動権など）のシーンが進行中だった。先勝ちで捨てる
+                    # （冪等キーは既に立っているので当日この枠は再評価されない）。
+                    _log.info(
+                        "うつつ: 別シーン進行中につきスキップ owner=%s slot=%s", owner_id, slot,
+                    )
+                    sqlite.record_scheduler_decision(
+                        "usual_days", "skipped", character_id=owner_id,
+                        reason="別のうつつシーンが進行中（先勝ち・通過分は捨てる）",
+                        details={"slot": slot},
+                    )
+                    continue
                 ran_today += 1
                 sqlite.set_setting(count_key, str(ran_today))
                 # 無人運転なので結果を必ずログに残す（GM/PC のエラーは観測できるように）。
@@ -680,7 +696,6 @@ async def _run_pending_push_resumes(app: FastAPI) -> None:
             "その事実を踏まえて場面の続きを描写すること。"
             "ユーザの言動を捏造してはならない）"
         )
-        sqlite.set_setting(count_key, str(ran_today + 1))
         _log.info(
             "うつつ: push再開 owner=%s session=%s 経過=%d分", owner_id, session.id, minutes,
         )
@@ -693,6 +708,16 @@ async def _run_pending_push_resumes(app: FastAPI) -> None:
                 extra_first_gm_ooc=resume_ooc,
                 slot="push_resume",
             )
+            if result.get("skipped"):
+                # 別シーンが進行中だった。ポーズキーは既に消してあるので、続きは
+                # 次のスロットのシーンが同一セッションで自然に拾う。
+                sqlite.record_scheduler_decision(
+                    "usual_days", "skipped", character_id=owner_id,
+                    reason="push再開: 別のうつつシーンが進行中",
+                )
+                continue
+            # 日次コストガードは「実際に走った」ぶんだけ数える（スキップは消費しない）。
+            sqlite.set_setting(count_key, str(ran_today + 1))
             sqlite.record_scheduler_decision(
                 "usual_days",
                 "error" if result.get("error") else "fired",

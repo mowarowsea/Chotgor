@@ -1013,6 +1013,67 @@ class TestFireSuddenEvent:
         )
         assert sqlite_store.list_schedule_entries(char.id, statuses=["planned"]) == []
 
+    async def test_marks_scene_run_key_after_scene(self, sqlite_store, monkeypatch):
+        """③がシーンを走らせたら、insert したエントリの当日冪等キーを立てること。
+
+        突発は「insert」と「その場面を1本走らせる」を両方やる。キーを立てないと、
+        残った planned エントリを②導出（うつつスケジューラ）が拾い、同じ出来事を
+        もう一度シーン化してしまう（2026-07-26 に実際に発生）。
+        """
+        from backend.services.schedule.scene_selection import scene_run_key
+
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        fire = _MON.replace(hour=13)
+        self._seed(sqlite_store, char, fire)
+        self._patch_gm_and_scene(
+            monkeypatch, "[EVENT: 13:00-15:00 | 客先トラブル | busy | 激強]",
+        )
+        await run_pending_sudden_events(_make_event_state(sqlite_store), fire)
+
+        entry = next(
+            e for e in sqlite_store.list_schedule_entries(char.id, statuses=["planned"])
+            if e.label == "客先トラブル"
+        )
+        assert sqlite_store.get_setting(scene_run_key(entry.id), "") == fire.date().isoformat()
+
+    async def test_no_scene_run_key_when_scene_skipped(self, sqlite_store, monkeypatch):
+        """うつつシーン排他で③のシーンが捨てられたら、冪等キーは立てないこと。
+
+        その突発はまだ体験されていないので、②導出が後から拾って体験してよい。
+        玉突き裁定もシーン完走時のみなので走らない。
+        """
+        from backend.services.schedule.scene_selection import scene_run_key
+
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        fire = _MON.replace(hour=13)
+        self._seed(sqlite_store, char, fire)
+        monkeypatch.setattr(
+            events_module, "_ask_gm_to_concretize",
+            _async_return("[EVENT: 13:00-15:00 | 客先トラブル | busy | 激強]"),
+        )
+        monkeypatch.setattr(
+            events_module, "_run_event_scene",
+            _async_return({"error": None, "skipped": "already_running"}),
+        )
+        ruling_calls: list[int] = []
+        import backend.services.schedule.dilemma as dilemma_module
+
+        async def spy_ruling(*a, **k):
+            ruling_calls.append(1)
+            return {"status": "skipped"}
+
+        monkeypatch.setattr(dilemma_module, "run_collision_ruling", spy_ruling)
+
+        await run_pending_sudden_events(_make_event_state(sqlite_store), fire)
+
+        entry = next(
+            e for e in sqlite_store.list_schedule_entries(char.id, statuses=["planned"])
+            if e.label == "客先トラブル"
+        )
+        # 予定は insert 済みで残るが、②導出はまだこれを拾ってよい
+        assert sqlite_store.get_setting(scene_run_key(entry.id), "") == ""
+        assert ruling_calls == []
+
 
 # ---------------------------------------------------------------------------
 # Phase 6: 玉突き裁定

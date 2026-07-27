@@ -382,6 +382,8 @@ async def run_usual_days_scene(
         fired_responses は LLM 呼出回数（GM + PC）、fired_turns は scenario_turns 行数（=話者ブロック数）。
         本人の reach_out でシーンが一時停止した場合は "paused_for_push": True が付く
         （蒸留・封筒・意図拾い上げはスキップされ、再開はスケジューラの領分）。
+        既にシーンが進行中だった場合は何も走らせず、"skipped": "already_running" を
+        付けた空の集計 dict を返す（plan §10）。
     """
     # service とは相互依存（service.run_scenario_turn がうつつ味付けに本モジュールを使う）の
     # ため、ループ本体の import はここで遅延させて循環を断つ。
@@ -397,7 +399,24 @@ async def run_usual_days_scene(
     _pre_scenario = sqlite.get_scenario(_pre_session.scenario_id) if _pre_session else None
     _gate_owner_id = getattr(_pre_scenario, "owner_character_id", None) if _pre_scenario else None
     if _gate_owner_id:
-        from backend.services.gate import mark_usual_scene_running
+        from backend.services.gate import is_usual_scene_running, mark_usual_scene_running
+        # 起動口での排他（plan §10）: 呼び出し元は毎分ティッカー3系統＋行動権で、
+        # ティッカーをまたぐと並行起動しうる。先勝ちで、後発のシーンは捨てる
+        # （待たせると経過時間メモ・題材 framing が陳腐化するため）。
+        # check と mark の間に await を挟まないので単一イベントループ上で原子的。
+        if is_usual_scene_running(sqlite, _gate_owner_id):
+            logger.info(
+                "うつつ: 既にシーン進行中のため起動をスキップ owner=%s session=%s slot=%s",
+                _gate_owner_id, session_id, slot,
+            )
+            return {
+                "saved_turn_ids": [],
+                "fired_responses": 0,
+                "fired_turns": 0,
+                "scene_closed": False,
+                "skipped": "already_running",
+                "error": None,
+            }
         mark_usual_scene_running(sqlite, _gate_owner_id, True)
     try:
         async for ev_type, payload in run_scenario_turn(

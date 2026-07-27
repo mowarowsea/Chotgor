@@ -242,3 +242,61 @@
   - SCENE_CLOSE 数 < N で「あるだけ遡る」フォールバックが動く。
   - SCENE_CLOSE 0 件で既存フォールバックに落ちる。
   - ①③⑤（うつつ）＋②④（1on1）シナリオで、⑤時点に②④両方が並ぶ。
+
+---
+
+## 10. シーン起動の排他 — 1キャラにつき同時1シーン（v1.2・2026-07-27 追記）
+
+### 10.1 発覚した問題
+
+2026-07-26 20:30、同一うつつセッションに **2本のシーンが並行起動**し、履歴が二重トラックに
+なった（GM の幕開けが 2 つ、はるの応答が 2 つ、同じ出来事に別々に反応した状態で 1 本の
+`scenario_turns` に縒り合わさる）。
+
+`run_usual_days_scene` の呼び出し元は 4 系統あり、そのうち 3 つは **それぞれ独立した毎分
+`asyncio.create_task`** から駆動される:
+
+| 呼び出し元 | 駆動元 |
+|---|---|
+| `main.py::_run_due_usual_scenes` | `_usual_days_tick`（毎分） |
+| `main.py::_run_pending_push_resumes` | `_usual_days_tick`（毎分） |
+| `services/schedule/events.py::_run_event_scene` | `_sudden_event_tick`（毎分・**別タスク**） |
+| `services/actions/runner.py::_execute_scene` | `_action_tick`（毎分・**別タスク**） |
+
+同一ティッカー内は `for` ループの逐次 `await` なので並行しないが、**ティッカーをまたぐと
+排他が一切ない**。既存の `usual_scene_running_{character_id}` マーカーは 1on1 の
+availability ゲート用にしか読まれておらず、シーン起動判定には使われていなかった。
+
+### 10.2 採用：起動口での排他（先勝ち・後発は捨てる）
+
+`run_usual_days_scene` の冒頭で `is_usual_scene_running(sqlite, owner_id)` を見て、
+進行中なら**シーンを走らせずに即返す**。関数内に置くことで 4 系統すべてを 1 箇所で塞ぐ。
+
+- check → `mark_usual_scene_running(True)` の間に `await` を挟まないため、単一イベント
+  ループ上で原子的（TOCTOU にならない）。
+- 戻り値に `"skipped": "already_running"` を載せ、呼び出し側は決定ログ
+  （`scheduler_decisions`）に残すだけにする。
+- TTL は既存の `_USUAL_RUNNING_TTL_MINUTES` に相乗り（クラッシュ時は自然失効）。
+
+**粒度はシーン単位であってターン単位ではない。** シーン内の GM／PC ターン進行は
+`run_scenario_turn(auto_advance=True)` の 1 回の呼び出しの中で完結し、
+`run_usual_days_scene` を再入しないため、ガードは幕開けの 1 回しか通らない。
+`scenario_chat/` 配下から `is_usual_scene_running` を参照する箇所も無い
+（＝はるのターンがゲートで弾かれる経路は存在しない）。
+
+### 10.3 検討したが採らなかった案
+
+- **後処理まで排他を伸ばす**（マーカー解除を関数末尾へ）: あらすじ蒸留・`scene.closed`
+  封筒・意図の拾い上げまでを排他対象にする案。より素直だが、1on1 の
+  `unavailable("usual_scene")` が数十秒延びる。現状このシステムは 1 分未満のオーダーを
+  問題にしないため**不採用**（2026-07-27 裁定）。マーカー解除は従来どおり `finally`。
+- **キューイング**（後発を捨てずに待たせる）: 待っている間に前提が古くなる（経過時間メモ・
+  題材 framing が陳腐化する）ため不採用。捨てて次の機会に任せるほうが自然。
+
+### 10.4 実装箇所
+
+- `backend/services/scenario_chat/usual_days.py`: `run_usual_days_scene` 冒頭にガード。
+- `backend/main.py` / `services/schedule/events.py` / `services/actions/runner.py`:
+  `skipped` の観測（決定ログ・戻り値）。
+- テスト: 進行中マーカーが立っているとシーンが走らない／マーカーが無ければ走る／
+  シーン内のターン進行はガードを通らない。

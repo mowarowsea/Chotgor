@@ -292,12 +292,16 @@ async def _fire_sudden_event(state, char, seed, now: datetime) -> None:
 
     # シーン実行（③発火 = うつつシーン）。世界の突発が生活に割り込む場面を GM が回す。
     result = await _run_event_scene(state, char, event, category)
+    skipped = bool(result is not None and result.get("skipped"))
     sqlite.record_scheduler_decision(
         "sudden_event",
-        "error" if (result is not None and result.get("error")) else "fired",
+        "skipped" if skipped
+        else "error" if (result is not None and result.get("error"))
+        else "fired",
         character_id=char.id,
         reason=(
-            f"シーン中断: {result['error']}"
+            f"insert のみ・シーンは別シーン進行中でスキップ（{event.label}）" if skipped
+            else f"シーン中断: {result['error']}"
             if (result is not None and result.get("error"))
             else f"発火・insert（{event.label}）"
         ),
@@ -306,8 +310,15 @@ async def _fire_sudden_event(state, char, seed, now: datetime) -> None:
                  "entry_id": entry.id if entry is not None else None},
     )
 
+    # ②導出の二重体験化を防ぐ（plan §10）: この突発は今このシーンで体験済みなので、
+    # insert したエントリの当日冪等キーを立てて、うつつスケジューラが同じ出来事を
+    # もう一度シーンにしないようにする。スキップ時は立てない（②が後で拾ってよい）。
+    if entry is not None and result is not None and not skipped:
+        from backend.services.schedule.scene_selection import scene_run_key
+        sqlite.set_setting(scene_run_key(entry.id), now.date().isoformat())
+
     # Phase 6: 玉突き裁定（轢かれた予定を本人が裁く＋内圧確認）。シーン完走時のみ。
-    if result is not None and not result.get("error"):
+    if result is not None and not result.get("error") and not skipped:
         try:
             from backend.services.schedule.dilemma import run_collision_ruling
             await run_collision_ruling(state, char, entry, now=now)
@@ -410,13 +421,12 @@ async def _run_event_scene(state, char, event, category: str) -> dict | None:
     session = ensure_usual_session(sqlite, scenario)
     if session is None:
         return None
-    sqlite.set_setting(count_key, str(ran_today + 1))
     framing = (
         f"[OOC] 世界の側から突発的な出来事が起きる: {event.label}"
         f"（種:「{category}」・{event.start_at:%H:%M}〜{event.end_at:%H:%M}）。"
         f"{char.name} の予定に割り込むかたちで、この出来事を場面として立ち上げてよい。"
     )
-    return await run_usual_days_scene(
+    result = await run_usual_days_scene(
         session_id=session.id,
         sqlite=sqlite,
         settings=sqlite.get_all_settings(),
@@ -424,3 +434,8 @@ async def _run_event_scene(state, char, event, category: str) -> dict | None:
         extra_first_gm_ooc=framing,
         slot=f"event:{category}",
     )
+    # 排他で捨てられた場合は日次カウンタを消費しない（plan §10）。予定は insert 済みで
+    # 残るので、この突発は②導出のシーンとして後から体験される余地がある。
+    if not result.get("skipped"):
+        sqlite.set_setting(count_key, str(ran_today + 1))
+    return result

@@ -320,7 +320,6 @@ async def _execute_scene(sqlite, char, settings, chat_service) -> dict:
     session = ensure_usual_session(sqlite, scenario)
     if session is None:
         return {"summary": "出かけようとしたが、行き先が見つからなかった", "failed": True}
-    sqlite.set_setting(count_key, str(ran_today + 1))
     result = await run_usual_days_scene(
         session_id=session.id,
         sqlite=sqlite,
@@ -329,6 +328,10 @@ async def _execute_scene(sqlite, char, settings, chat_service) -> dict:
         extra_first_gm_ooc="（予定外の外出。本人が「出かけたくなった」ので短いひとコマを）",
         slot="impromptu",
     )
+    if result.get("skipped"):
+        # 別のうつつシーンが進行中だった（plan §10 の排他）。カウンタは消費しない。
+        return {"summary": "出かけようとしたが、すでに別のことの最中だった", "failed": True}
+    sqlite.set_setting(count_key, str(ran_today + 1))
     if result.get("error"):
         return {"summary": "出かけたが、途中で流れが途切れた", "failed": True}
     return {"summary": f"ふらっと出かけてきた（{result.get('fired_turns', 0)}場面）"}

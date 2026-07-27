@@ -23,6 +23,7 @@ from backend.services.schedule.plan_parser import (
 from backend.services.schedule.scene_selection import (
     SceneSlot,
     format_scene_framing,
+    scene_run_key,
     select_daily_scenes,
 )
 from backend.services.schedule.weekly_batch import (
@@ -51,6 +52,7 @@ __all__ = [
     "run_pending_sudden_events",
     "run_pending_weekly_batches",
     "run_weekly_schedule_batch",
+    "scene_run_key",
     "select_daily_scenes",
     "week_key",
     "week_start_of",

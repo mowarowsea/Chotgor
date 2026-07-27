@@ -1264,6 +1264,125 @@ class TestUsualScheduler:
             assert calls == []
 
 
+class TestUsualSceneExclusion:
+    """うつつシーン起動の排他（usual_days_plan §10）を検証する。
+
+    背景 — `run_usual_days_scene` の呼び出し元は 4 系統あり、うち 3 つは独立した毎分
+    `asyncio.create_task`（`_usual_days_tick` / `_sudden_event_tick` / `_action_tick`）
+    から駆動される。ティッカーをまたぐと排他が無く、同一セッションへ 2 本のシーンが
+    並行起動して履歴が二重トラックになる事故が実際に起きた（2026-07-26）。
+
+    ここで担保する不変条件:
+        1. 進行中マーカー（`usual_scene_running_{character_id}`）が立っていれば、
+           シーンは走らず `skipped="already_running"` を返す（先勝ち・後発は捨てる）。
+        2. スキップ時は `scenario_turns` を 1 行も増やさず、GM も PC も呼ばない。
+        3. 排他の粒度は**シーン単位であってターン単位ではない** — シーン中はマーカーが
+           立ちっぱなしだが、その内側の GM↔PC 連鎖は最後まで回る。
+        4. 完走後はマーカーが解除され、次のシーンは通常どおり起動できる。
+    """
+
+    def test_skips_when_scene_already_running(self, sqlite_store, monkeypatch):
+        """進行中マーカーが立っていると、シーンを走らせず skipped を返すこと。"""
+        from backend.services.gate import mark_usual_scene_running
+
+        sid, cid = _build_usual_session(sqlite_store, max_responses=4)
+        pc_calls: list[dict] = []
+        _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
+        # 別系統のシーンが進行中の状態を作る
+        mark_usual_scene_running(sqlite_store, cid, True)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        assert result["skipped"] == "already_running"
+        assert result["fired_turns"] == 0
+        # ターンは 1 行も増えず、GM も PC も呼ばれていない
+        assert sqlite_store.list_scenario_turns(sid) == []
+        assert pc_calls == []
+
+    def test_marker_is_scene_scoped_not_turn_scoped(self, sqlite_store, monkeypatch):
+        """シーン中はマーカーが立つが、内側の GM↔PC 連鎖は上限まで回りきること。
+
+        排他がターン単位に効いてしまうと「GM → PC で 1 ターン目、以降は進行中扱いで
+        リクエスト不可」になる。そうならないこと（＝ガードは幕開けの 1 回だけ通る）を、
+        シーン中のマーカー状態を GM ターンごとに記録して確認する。
+        """
+        from backend.services.gate import is_usual_scene_running
+
+        sid, cid = _build_usual_session(sqlite_store, max_responses=4)
+        pc_calls: list[dict] = []
+        _install_mocks(monkeypatch, gm_script=[], pc_calls=pc_calls)
+
+        # GM ターンのたびにマーカー状態を覗く（_install_mocks の fake_gm をラップする）
+        marker_during: list[bool] = []
+        original_gm = svc._run_gm_turn
+
+        async def spy_gm(**kwargs):
+            marker_during.append(is_usual_scene_running(sqlite_store, cid))
+            async for ev in original_gm(**kwargs):
+                yield ev
+
+        monkeypatch.setattr(svc, "_run_gm_turn", spy_gm)
+
+        result = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        # シーン中は常にマーカーが立っている（＝1on1 側からは unavailable に見える）
+        assert marker_during and all(marker_during)
+        # それでも GM2 + PC2 = 4 ターンまで回りきっている（ターン単位で止まっていない）
+        assert result.get("skipped") is None
+        assert len(sqlite_store.list_scenario_turns(sid)) == 4
+        assert len(pc_calls) == 2
+
+    def test_marker_cleared_after_scene_allows_next(self, sqlite_store, monkeypatch):
+        """完走後はマーカーが解除され、続けて次のシーンを起動できること。"""
+        from backend.services.gate import is_usual_scene_running
+
+        sid, cid = _build_usual_session(sqlite_store, max_responses=2)
+        _install_mocks(monkeypatch, gm_script=[], pc_calls=[])
+
+        first = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+        assert first.get("skipped") is None
+        assert is_usual_scene_running(sqlite_store, cid) is False
+
+        second = asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+        assert second.get("skipped") is None
+
+    def test_scheduler_records_skip_without_consuming_cap(self, sqlite_store, monkeypatch):
+        """スケジューラは skipped を決定ログに残し、日次カウンタを消費しないこと。
+
+        「実際に走ったぶんだけ数える」— 捨てられたシーンでコスト枠を食わない。
+        冪等キーは（起動を試みた時点で立つため）当日分としては消費される＝通過分は捨てる。
+        """
+        _build_usual_world(sqlite_store, slots=["00:00"])
+        today = datetime.now().date().isoformat()
+
+        async def fake_scene(**kwargs):
+            return {
+                "saved_turn_ids": [], "fired_responses": 0, "fired_turns": 0,
+                "scene_closed": False, "skipped": "already_running", "error": None,
+            }
+
+        monkeypatch.setattr(svc, "run_usual_days_scene", fake_scene)
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(sqlite=sqlite_store, chat_service=object())
+        )
+        asyncio.run(mainmod._run_due_usual_scenes(app))
+
+        assert sqlite_store.get_setting(f"usual_days_scene_count_{today}", "0") in ("0", "")
+        decisions = sqlite_store.list_scheduler_decisions(scheduler="usual_days")
+        assert any(
+            d.outcome == "skipped" and "別のうつつシーンが進行中" in (d.reason or "")
+            for d in decisions
+        )
+
+
 # ---------------------------------------------------------------------------
 # Phase 5 — 管理UI（うつつ設定フォームのパース）
 # ---------------------------------------------------------------------------

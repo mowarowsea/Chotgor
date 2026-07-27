@@ -135,6 +135,22 @@ def select_daily_scenes(
     return slots
 
 
+def scene_run_key(entry_id: str) -> str:
+    """②導出シーンの当日冪等キー名を返す（値は実行日の ISO 日付）。
+
+    うつつスケジューラ（main.py）と③突発（services/schedule/events.py）が同じ鍵を
+    読み書きする。突発は自分でシーンを1本走らせるため、insert したエントリの鍵を
+    立てて②導出の二重体験化を防ぐ。
+
+    Args:
+        entry_id: schedule_entries.id。
+
+    Returns:
+        settings のキー名。
+    """
+    return f"usual_days_entry_run_{entry_id}"
+
+
 def format_scene_framing(character_name: str, label: str) -> str:
     """②導出シーンの題材を GM 向けの framing OOC に整形する。
 
