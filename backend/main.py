@@ -409,6 +409,11 @@ def _schedule_scene_descriptors(
     ものだけを記述子化する。冪等キーはエントリ単位（entry_id）。題材（ラベル）を GM への
     framing OOC として topic_ooc に載せる（§8）。
 
+    選出は**当日1回だけ**行い、結果（entry_id リスト）を settings に固定する。
+    select_daily_scenes は「同じ入力集合に対して」決定論なので、③突発の insert や
+    玉突きの cancel で集合が変わると選び直しが起き、それまで選ばれていなかった過去の
+    枠が新規当選して即発火する（2026-07-26 に scenes_per_day=3 に対し5枠が走った）。
+
     Args:
         sqlite: SQLiteStore。
         owner_char: うつつ世界の所有者 Character（living_schedule_enabled=1）。
@@ -423,6 +428,8 @@ def _schedule_scene_descriptors(
     from backend.services.schedule import (
         format_scene_framing,
         scene_run_key,
+        scene_selection_key,
+        scenes_from_entry_ids,
         select_daily_scenes,
     )
 
@@ -434,9 +441,25 @@ def _schedule_scene_descriptors(
     entries = sqlite.list_schedule_entries(
         owner_id, since=day_start, until=day_end, statuses=["planned"],
     )
-    scenes = select_daily_scenes(
-        entries, character_id=owner_id, day=day, scenes_per_day=scenes_per_day,
+
+    # 当日の選出を固定キーから復元する（set_setting/get_setting が JSON を往復させる）。
+    pin_key = scene_selection_key(owner_id, day)
+    pinned = sqlite.get_setting(pin_key, None)
+    scenes = (
+        scenes_from_entry_ids(entries, [str(x) for x in pinned], character_id=owner_id)
+        if isinstance(pinned, list) and pinned
+        else []
     )
+    if not scenes:
+        # 未固定・壊れた値、または固定分が1つも現存しない（週次バッチの作り直し等）
+        # → 選び直して固定する。選出が空のときは固定しない（起動直後にエントリ未生成だと
+        # 「今日は無し」を1日焼き付けてしまうため、次の tick で再評価させる）。
+        scenes = select_daily_scenes(
+            entries, character_id=owner_id, day=day, scenes_per_day=scenes_per_day,
+        )
+        if scenes:
+            sqlite.set_setting(pin_key, [s.entry_id for s in scenes])
+
     descriptors: list[dict] = []
     for scene in scenes:
         if now < scene.fire_at:

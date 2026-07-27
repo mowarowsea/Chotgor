@@ -1264,6 +1264,114 @@ class TestUsualScheduler:
             assert calls == []
 
 
+class TestScheduleSceneDescriptorPinning:
+    """②導出の選出を当日固定する機構（schedule_plan §8）を検証する。
+
+    背景 — `select_daily_scenes` は「同じ入力集合に対して」決定論であり、③突発の
+    insert や玉突きの cancel で集合が動くと選び直しが起きる。その結果、それまで
+    選ばれていなかった**過去の枠が新規当選し、fire_at が既に過去なので即発火**する。
+    2026-07-26 には `scenes_per_day=3` に対して当日 5 枠が消費された。
+
+    ここで担保する不変条件:
+        1. 初回評価で選出結果（entry_id リスト）が settings に固定される。
+        2. 以後、集合が変わっても固定した枠しか記述子にならない（＝予算超過しない）。
+        3. 固定分が1つも現存しなくなったら選び直して固定し直す（シーンがゼロになる
+           事故を防ぐ）。
+        4. 選出が空のときは固定しない（起動直後の未生成状態を焼き付けない）。
+    """
+
+    def _world(self, sqlite_store, hours, scenes_per_day=2):
+        """living_schedule 有効キャラと、当日の planned エントリを作る。
+
+        Returns:
+            (owner_char, cfg, now) — now はその日の 23:00（全エントリが到来済みになる）。
+        """
+        cid = "char-haru"
+        sqlite_store.create_character(cid, "はる")
+        sqlite_store.update_character(cid, living_schedule_enabled=1)
+        today = datetime.now().date()
+        base = datetime(today.year, today.month, today.day)
+        for i, hour in enumerate(hours):
+            sqlite_store.create_schedule_entry(
+                character_id=cid,
+                start_at=base.replace(hour=hour),
+                end_at=base.replace(hour=hour) + timedelta(hours=1),
+                state="active", occupancy=0.25, status="planned",
+                label=f"予定{i}", entry_id=f"entry-{hour}",
+            )
+        return (
+            sqlite_store.get_character(cid),
+            {"scenes_per_day": scenes_per_day},
+            base.replace(hour=23),
+        )
+
+    def test_pins_selection_on_first_evaluation(self, sqlite_store):
+        """初回評価で選出結果が settings に固定され、枠数どおりになること。"""
+        from backend.services.schedule import scene_selection_key
+
+        owner, cfg, now = self._world(sqlite_store, [1, 3, 5, 7], scenes_per_day=2)
+        got = mainmod._schedule_scene_descriptors(sqlite_store, owner, cfg, now)
+
+        assert len(got) == 2
+        pinned = sqlite_store.get_setting(scene_selection_key(owner.id, now.date()), None)
+        assert isinstance(pinned, list) and len(pinned) == 2
+
+    def test_new_entry_does_not_reshuffle_selection(self, sqlite_store):
+        """固定後にエントリが増えても（③突発の insert）、選出が入れ替わらないこと。
+
+        固定が無いと集合の変化で選び直しが起き、未実行の過去枠が新規当選して
+        即発火する。ここでは記述子の顔ぶれが初回と同一であることを確認する。
+        """
+        owner, cfg, now = self._world(sqlite_store, [1, 3, 5, 7], scenes_per_day=2)
+        first = mainmod._schedule_scene_descriptors(sqlite_store, owner, cfg, now)
+
+        # ③突発が占有圧の高い予定を割り込ませる（従来ならここで選出が動いた）
+        today = now.date()
+        sqlite_store.create_schedule_entry(
+            character_id=owner.id,
+            start_at=datetime(today.year, today.month, today.day, 20),
+            end_at=datetime(today.year, today.month, today.day, 22),
+            state="busy", occupancy=1.0, status="planned", origin="adhoc",
+            label="突発", entry_id="entry-sudden",
+        )
+        second = mainmod._schedule_scene_descriptors(sqlite_store, owner, cfg, now)
+
+        assert [d["key"] for d in second] == [d["key"] for d in first]
+
+    def test_repins_when_pinned_entries_all_gone(self, sqlite_store):
+        """固定分が1つも現存しなければ選び直して固定し直すこと。"""
+        from backend.services.schedule import scene_selection_key
+
+        owner, cfg, now = self._world(sqlite_store, [1, 3, 5, 7], scenes_per_day=2)
+        key = scene_selection_key(owner.id, now.date())
+        sqlite_store.set_setting(key, ["gone-1", "gone-2"])
+
+        got = mainmod._schedule_scene_descriptors(sqlite_store, owner, cfg, now)
+
+        assert len(got) == 2
+        assert sqlite_store.get_setting(key, None) != ["gone-1", "gone-2"]
+
+    def test_does_not_pin_empty_selection(self, sqlite_store):
+        """候補ゼロのときは固定しないこと（未生成状態を1日焼き付けない）。"""
+        from backend.services.schedule import scene_selection_key
+
+        owner, cfg, now = self._world(sqlite_store, [], scenes_per_day=2)
+        assert mainmod._schedule_scene_descriptors(sqlite_store, owner, cfg, now) == []
+        assert sqlite_store.get_setting(
+            scene_selection_key(owner.id, now.date()), ""
+        ) in ("", None)
+
+    def test_broken_pin_value_falls_back_to_reselect(self, sqlite_store):
+        """固定値が壊れていても落ちず、選び直すこと。"""
+        from backend.services.schedule import scene_selection_key
+
+        owner, cfg, now = self._world(sqlite_store, [1, 3, 5, 7], scenes_per_day=2)
+        sqlite_store.set_setting(
+            scene_selection_key(owner.id, now.date()), "{壊れたJSON",
+        )
+        assert len(mainmod._schedule_scene_descriptors(sqlite_store, owner, cfg, now)) == 2
+
+
 class TestUsualSceneExclusion:
     """うつつシーン起動の排他（usual_days_plan §10）を検証する。
 

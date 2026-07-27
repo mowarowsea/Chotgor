@@ -769,6 +769,56 @@ class TestSceneSelection:
         assert "はる" in text and "ゲームに没頭" in text
         assert format_scene_framing("はる", "") == ""
 
+    def test_selection_shifts_when_entry_set_changes(self):
+        """入力集合が変われば選出も変わること（＝当日固定が要る根拠の明示）。
+
+        select_daily_scenes は「同じ入力集合に対して」決定論であって、集合が変われば
+        結果は変わる。③突発の insert・玉突きの cancel で日中に集合が動くため、
+        呼び出し側が当日固定しないと過去の枠が新規当選して即発火する（§8）。
+        このテストは仕様の再確認であり、固定機構が守るべき前提を可視化する。
+        """
+        base = [
+            _fake_entry("morning", 9, occupancy=0.25, label="朝"),
+            _fake_entry("noon", 11, occupancy=0.25, label="昼"),
+            _fake_entry("eve", 17, occupancy=0.25, label="夕"),
+            _fake_entry("night", 21, occupancy=0.25, label="夜"),
+        ]
+        before = select_daily_scenes(
+            base, character_id="c1", day=_MON.date(), scenes_per_day=2,
+        )
+        after = select_daily_scenes(
+            base + [_fake_entry("sudden", 20, occupancy=1.0, label="突発")],
+            character_id="c1", day=_MON.date(), scenes_per_day=2,
+        )
+        assert {s.entry_id for s in before} != {s.entry_id for s in after}
+
+    def test_scenes_from_entry_ids_restores_same_slots(self):
+        """固定した entry_id から、選出時と同じ SceneSlot（fire_at 含む）が復元されること。"""
+        from backend.services.schedule import scenes_from_entry_ids
+
+        entries = [
+            _fake_entry("a", 9, occupancy=1.0, label="朝"),
+            _fake_entry("b", 14, occupancy=0.5, label="昼"),
+            _fake_entry("c", 19, occupancy=0.25, label="夜"),
+        ]
+        chosen = select_daily_scenes(
+            entries, character_id="c1", day=_MON.date(), scenes_per_day=2,
+        )
+        restored = scenes_from_entry_ids(
+            entries, [s.entry_id for s in chosen], character_id="c1",
+        )
+        assert [(s.entry_id, s.fire_at, s.label) for s in restored] == [
+            (s.entry_id, s.fire_at, s.label) for s in chosen
+        ]
+
+    def test_scenes_from_entry_ids_drops_missing(self):
+        """現存しない entry_id（cancel された枠）は静かに落ちること。"""
+        from backend.services.schedule import scenes_from_entry_ids
+
+        entries = [_fake_entry("a", 9, label="朝")]
+        got = scenes_from_entry_ids(entries, ["a", "gone"], character_id="c1")
+        assert [s.entry_id for s in got] == ["a"]
+
 
 # ---------------------------------------------------------------------------
 # Phase 5: ③突発（[EVENT] パーサ・伏せ枠配置・轢き判定・発火）

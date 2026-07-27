@@ -64,6 +64,57 @@ def _scene_jitter_minutes(character_id: str, entry_id: str) -> int:
     return rng.randint(0, _SCENE_JITTER_MAX_MINUTES)
 
 
+def _to_slots(entries: list, character_id: str) -> list[SceneSlot]:
+    """エントリ群を SceneSlot 化して起動時刻昇順で返す（選出後の共通整形）。
+
+    Args:
+        entries: 採用済みの ScheduleEntry 群。
+        character_id: 決定論ジッターのシード。
+
+    Returns:
+        fire_at 昇順の SceneSlot リスト。
+    """
+    slots = [
+        SceneSlot(
+            entry_id=str(e.id),
+            label=str(getattr(e, "label", None) or "日常のひとコマ"),
+            fire_at=e.start_at + timedelta(
+                minutes=_scene_jitter_minutes(character_id, str(e.id))
+            ),
+            occupancy=float(getattr(e, "occupancy", 0.0) or 0.0),
+            state=str(getattr(e, "state", "") or ""),
+        )
+        for e in entries
+    ]
+    slots.sort(key=lambda s: s.fire_at)
+    return slots
+
+
+def scenes_from_entry_ids(
+    entries: list, entry_ids: list[str], *, character_id: str
+) -> list[SceneSlot]:
+    """固定済みの entry_id リストから SceneSlot を再構成する（選出の当日固定・§8）。
+
+    選出集合が日中に変わると `select_daily_scenes` の結果が入れ替わり、過去の枠が
+    新規当選して即発火する。それを避けるため、当日の選出結果は entry_id で固定し、
+    以後はこの関数で復元する（fire_at は決定論ジッターなので再現する）。
+
+    現存しない entry_id（cancel・削除された枠）は静かに落とす。
+
+    Args:
+        entries: その日の候補エントリ（呼び出し側が期間・status で取得済み）。
+        entry_ids: 固定済みの entry_id リスト。
+        character_id: 決定論ジッターのシード。
+
+    Returns:
+        fire_at 昇順の SceneSlot リスト。1件も現存しなければ空リスト。
+    """
+    wanted = set(entry_ids)
+    return _to_slots(
+        [e for e in entries if str(getattr(e, "id", "")) in wanted], character_id
+    )
+
+
 def select_daily_scenes(
     entries: list,
     *,
@@ -73,7 +124,11 @@ def select_daily_scenes(
 ) -> list[SceneSlot]:
     """その日の planned エントリからうつつシーンを選出する（§8・決定論純関数）。
 
-    毎分のスケジューラから呼ばれても結果がぶれないよう決定論乱数（seed=キャラ+日）で回す。
+    決定論乱数（seed=キャラ+日）で回すが、**同じ入力集合に対して**決定論なのであって、
+    集合が変われば結果は変わる（③突発の insert・玉突きの cancel で日中に変動する）。
+    呼び出し側は当日1回だけ選出し、以後 :func:`scenes_from_entry_ids` で復元すること
+    —— そうしないと過去の枠が新規当選して即発火する（schedule_plan §8）。
+
     選出規則:
         1. offline 以外・その日に始まるエントリを対象にする。
         2. 対象数が枠以下なら全採用。
@@ -119,20 +174,20 @@ def select_daily_scenes(
         rng.shuffle(rest)
         chosen = top + rest[: scenes_per_day - top_count]
 
-    slots = [
-        SceneSlot(
-            entry_id=str(e.id),
-            label=str(getattr(e, "label", None) or "日常のひとコマ"),
-            fire_at=e.start_at + timedelta(
-                minutes=_scene_jitter_minutes(character_id, str(e.id))
-            ),
-            occupancy=float(getattr(e, "occupancy", 0.0) or 0.0),
-            state=str(getattr(e, "state", "") or ""),
-        )
-        for e in chosen
-    ]
-    slots.sort(key=lambda s: s.fire_at)
-    return slots
+    return _to_slots(chosen, character_id)
+
+
+def scene_selection_key(character_id: str, day: date) -> str:
+    """当日のシーン選出を固定する settings キー名を返す（値は entry_id の JSON 配列）。
+
+    Args:
+        character_id: うつつ世界の所有者キャラ。
+        day: 対象日。
+
+    Returns:
+        settings のキー名。
+    """
+    return f"usual_scene_selection_{character_id}_{day.isoformat()}"
 
 
 def scene_run_key(entry_id: str) -> str:
