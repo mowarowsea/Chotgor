@@ -12,7 +12,6 @@ import {
   MessageActionBar,
   ThinkingBlock,
   UserMessageActions,
-  mobileBubbleExtendClass,
 } from "../ChatBubbles";
 import { trimEnd } from "./helpers";
 import { Avatar } from "./npc";
@@ -215,6 +214,8 @@ function GMBubbleRowImpl({
   const displayContent = trimEnd(content);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(content);
+  // タッチ環境で鉛筆を出すためのタップ状態。マウス環境はホバー（group-hover）で出すので使わない。
+  const [tapped, setTapped] = useState(false);
 
   // content prop がサーバ最新値に入れ替わったら編集テキストも初期化し直す。
   useEffect(() => {
@@ -283,10 +284,24 @@ function GMBubbleRowImpl({
   // 編集の鉛筆はアバター列の下端（バブル左下の余白）へ置く。バブル下の操作バーへ足すと
   // 行が間延びするため。1 レスポンスは複数の話者ブロックに割れるので、末尾かどうかに
   // 関わらず全バブルに出す（末尾ブロックしか直せないと「無理やり直す」用途に届かない）。
+  //
+  // ただし全バブルに常時見えていると煩いので、マウス環境は行ホバー、タッチ環境は
+  // バブルのタップで出す。透明なあいだは pointer-events を切って誤タップも防ぐ
+  // （sm 未満＝タッチ想定。sm 以上ではタップ状態を無視してホバーだけで判定する）。
+  const pencilReveal = tapped
+    ? "opacity-100 sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto"
+    : "opacity-0 pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto";
   const editPencil =
     !editing && onEditCommit ? (
-      <EditButton onClick={() => setEditing(true)} title="この発話を書き換える" />
+      <EditButton
+        onClick={() => setEditing(true)}
+        title="この発話を書き換える"
+        className={pencilReveal}
+      />
     ) : undefined;
+
+  // バブル本体のタップで鉛筆を出し入れする（タッチ環境用）。編集中は無効。
+  const toggleTapped = editing ? undefined : () => setTapped((v) => !v);
 
   // 操作バー（コピー / 枝ナビ / 破棄 / 再生成 / ログ）。
   // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
@@ -311,7 +326,8 @@ function GMBubbleRowImpl({
     );
 
   // Narrator は地の文寄せ（アバターなし、見出しなし）。バブル枠を持たず斜体で流す。
-  // 行幅・スマホ時の左拡張は他モードと揃える（アバター列ぶんのスペーサーを置く）。
+  // 左のスペーサー列は鉛筆の置き場所として常に確保する（スマホ幅でも左拡張しない）。
+  // 鉛筆の有無で幅を変えると、ストリーミング中〜確定でレイアウトががたつくため。
   // content-visibility: auto はビューポート外のレイアウト・ペイントをスキップ（DOM 肥大対策）。
   if (speaker_type === "narrator") {
     return (
@@ -324,11 +340,11 @@ function GMBubbleRowImpl({
           {editPencil && <div className="mt-auto pb-1">{editPencil}</div>}
         </div>
         <div className="flex-1 min-w-0">
-          {/* 鉛筆を置く行では列を空けたままにする（左拡張するとスペーサーごと覆ってしまう）。 */}
-          <div className={editPencil ? "w-full" : mobileBubbleExtendClass}>
+          <div className="w-full">
             <div
               className="text-sm leading-relaxed italic text-ch-t2 break-words"
               style={{ textWrap: "pretty" }}
+              onClick={toggleTapped}
             >
               {body}
             </div>
@@ -346,6 +362,8 @@ function GMBubbleRowImpl({
       avatar={<Avatar name={speaker_name} src={avatarSrc} onClick={onAvatarClick} />}
       name={speaker_name}
       underAvatar={editPencil}
+      // 鉛筆の有無で幅が変わらないよう、アバター列は常に確保する。
+      keepAvatarGutter
       nameSuffix={
         is_known === false ? (
           <span className="text-[10px] text-ch-t4">(ephemeral)</span>
@@ -360,6 +378,7 @@ function GMBubbleRowImpl({
         colored
         characterName={speaker_name}
         dashed={is_known === false}
+        onClick={toggleTapped}
       >
         {body}
       </Bubble>

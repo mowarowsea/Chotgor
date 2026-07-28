@@ -37,6 +37,7 @@ export function CharacterMessageRow({
   name,
   nameSuffix,
   underAvatar,
+  keepAvatarGutter = false,
   style,
   testId,
   children,
@@ -49,12 +50,17 @@ export function CharacterMessageRow({
   nameSuffix?: React.ReactNode;
   /**
    * アバター列の下端（バブル左下の余白）へ置く要素。編集の鉛筆など。
-   *
-   * 指定するとスマホ幅でのバブル左拡張（`mobileBubbleExtendClass`）を止め、
-   * アバター列ぶんの余白を全幅で確保する。バブルは 38px ぶん狭くなる代わりに、
-   * 置いた要素がバブルに覆われず、どの画面幅でも同じ位置に出る。
+   * スマホ幅でバブルに覆われないよう、`keepAvatarGutter` と併せて使うこと。
    */
   underAvatar?: React.ReactNode;
+  /**
+   * true でスマホ幅でもバブルを左へ拡張せず、アバター列ぶんの余白を残す。
+   *
+   * `underAvatar` の有無で切り替えると、要素が出入りするたびにバブル幅が
+   * 38px 変わってレイアウトががたつく（ストリーミング中は編集不可＝鉛筆なし）。
+   * 幅は行の性格で固定し、要素の有無とは独立させる。
+   */
+  keepAvatarGutter?: boolean;
   /** 行外側 div への追加 style（content-visibility 最適化用）。 */
   style?: React.CSSProperties;
   /** 行外側 div の data-testid。 */
@@ -81,14 +87,14 @@ export function CharacterMessageRow({
          */}
         <div
           className={`flex items-center gap-1.5 flex-wrap mb-1 text-[11px] sm:min-h-0 ${
-            underAvatar ? "" : "min-h-[28px]"
+            keepAvatarGutter ? "" : "min-h-[28px]"
           }`}
         >
           <span className="font-semibold text-ch-t2">{name}</span>
           {nameSuffix}
         </div>
-        {/* バブル領域: スマホ幅では左端をアバター左端に揃える（underAvatar があるときは列を空けたままにする） */}
-        <div className={underAvatar ? "w-full" : mobileBubbleExtendClass}>{children}</div>
+        {/* バブル領域: スマホ幅では左端をアバター左端に揃える（アバター列を残す行では拡張しない） */}
+        <div className={keepAvatarGutter ? "w-full" : mobileBubbleExtendClass}>{children}</div>
       </div>
     </div>
   );

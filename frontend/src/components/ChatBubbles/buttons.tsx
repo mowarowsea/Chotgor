@@ -119,10 +119,14 @@ export function DiscardButton({
 }
 
 /**
- * バブル下部の編集（鉛筆）ボタン。
+ * 発話の編集（鉛筆）ボタン。
  *
  * `UserMessageActions` 内の鉛筆と同じ見た目を、GM/PC 発話の手動書き換えでも
  * 使えるように切り出したもの。
+ *
+ * 他のボタンと違い出現条件（ホバー / タップ）をクラスに持たない。全バブルに
+ * 常時見えていると煩いので、いつ見せるかは呼び出し側が `className` の opacity /
+ * pointer-events で決めること。
  */
 export function EditButton({
   onClick,
@@ -133,14 +137,14 @@ export function EditButton({
   onClick: () => void;
   /** ホバー時のツールチップ。 */
   title?: string;
-  /** 追加クラス。 */
+  /** 追加クラス。出現条件（opacity / pointer-events）はここで指定する。 */
   className?: string;
 }) {
   return (
     <button
       onClick={onClick}
       title={title}
-      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0 ${className}`}
+      className={`text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0 ${className}`}
     >
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={12} height={12}>
         <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />

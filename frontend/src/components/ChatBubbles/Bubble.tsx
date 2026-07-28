@@ -18,6 +18,7 @@ export function Bubble({
   characterName = "",
   colored = false,
   dashed = false,
+  onClick,
   children,
 }: {
   kind: "user" | "character";
@@ -27,6 +28,8 @@ export function Bubble({
   colored?: boolean;
   /** true で枠線を破線にする（シナリオの ephemeral NPC 用）。 */
   dashed?: boolean;
+  /** バブル本体のタップ/クリック（タッチ環境で操作ボタンを出す用途）。 */
+  onClick?: () => void;
   children: React.ReactNode;
 }) {
   if (kind === "user") {
@@ -45,6 +48,7 @@ export function Bubble({
   }
   return (
     <div
+      onClick={onClick}
       className={`ch-bubble ch-bubble--character inline-block max-w-full px-3.5 py-2 text-ch-t1 text-sm leading-relaxed break-words ${colored ? bubbleClassFor(characterName) : "bg-ch-s1"}`}
       style={{
         borderRadius: "4px 14px 14px 14px",
