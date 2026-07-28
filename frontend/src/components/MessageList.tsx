@@ -81,7 +81,7 @@ export default function MessageList({
             onScroll={handleScroll}
         >
           {/* pt-16: 浮遊ヘッダー分の上余白。 */}
-          <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 space-y-5">
+          <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 space-y-3">
             {messages.length === 0 && !sending && !waitingCharacter && (
                 <p className="text-ch-t4 text-xs text-center mt-20">
                     {emptyMessage}
