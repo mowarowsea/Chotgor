@@ -50,8 +50,9 @@ export function CharacterMessageRow({
   /**
    * アバター列の下端（バブル左下の余白）へ置く要素。編集の鉛筆など。
    *
-   * スマホ幅では `mobileBubbleExtendClass` によりバブルがアバター列へせり出して
-   * 覆い隠すため、sm 以上でのみ表示する。スマホでは呼び出し側が別の場所に出すこと。
+   * 指定するとスマホ幅でのバブル左拡張（`mobileBubbleExtendClass`）を止め、
+   * アバター列ぶんの余白を全幅で確保する。バブルは 38px ぶん狭くなる代わりに、
+   * 置いた要素がバブルに覆われず、どの画面幅でも同じ位置に出る。
    */
   underAvatar?: React.ReactNode;
   /** 行外側 div への追加 style（content-visibility 最適化用）。 */
@@ -69,20 +70,25 @@ export function CharacterMessageRow({
       {/* アバター列。アバターは上端（全モードで位置を統一）、underAvatar は下端へ落とす。 */}
       <div className="flex flex-col items-center shrink-0">
         {avatar}
-        {underAvatar && <div className="mt-auto pb-1 hidden sm:block">{underAvatar}</div>}
+        {underAvatar && <div className="mt-auto pb-1">{underAvatar}</div>}
       </div>
       <div className="flex-1 min-w-0">
         {/*
          * 名前行: キャラクター名 + 補足。
-         * スマホ幅では下のバブル領域を左へ広げる（左端をアバター左端に揃える）ため、
-         * 名前行にアバターと同じ高さ(28px)を確保し、バブルがアバターへ重ならないようにする。
+         * スマホ幅で下のバブル領域を左へ広げるときは、名前行にアバターと同じ高さ(28px)を
+         * 確保してバブルがアバターへ重ならないようにする。左拡張しない
+         * （underAvatar あり）ときはバブルがアバターの右に収まるので不要。
          */}
-        <div className="flex items-center gap-1.5 flex-wrap mb-1 text-[11px] min-h-[28px] sm:min-h-0">
+        <div
+          className={`flex items-center gap-1.5 flex-wrap mb-1 text-[11px] sm:min-h-0 ${
+            underAvatar ? "" : "min-h-[28px]"
+          }`}
+        >
           <span className="font-semibold text-ch-t2">{name}</span>
           {nameSuffix}
         </div>
-        {/* バブル領域: スマホ幅では左端をアバター左端に揃える */}
-        <div className={mobileBubbleExtendClass}>{children}</div>
+        {/* バブル領域: スマホ幅では左端をアバター左端に揃える（underAvatar があるときは列を空けたままにする） */}
+        <div className={underAvatar ? "w-full" : mobileBubbleExtendClass}>{children}</div>
       </div>
     </div>
   );

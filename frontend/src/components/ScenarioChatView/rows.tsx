@@ -292,32 +292,23 @@ function GMBubbleRowImpl({
   // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
   // モデル応答は複数バブルで構成され得るため、グループ末尾のバブルにだけ操作バーを出して
   // 1 応答 = 1 操作バーを保つ。再生成・破棄は最新グループ末尾でのみ有効。
-  // onEdit も渡すが、これはアバター列が使えないスマホ幅でのみ表示される（MessageActionBar 側で制御）。
-  const actions = editing ? null : isGroupTail ? (
-    <MessageActionBar
-      copyText={copyText ?? content}
-      onRegenerate={isLastGM ? onRegenerate : undefined}
-      regenerateTitle="このレスポンスを再生成（前の結果は枝として残る）"
-      onDiscard={isLastGM ? onDiscard : undefined}
-      discardTitle="この応答を破棄してユーザ入力に戻す"
-      onEdit={onEditCommit ? () => setEditing(true) : undefined}
-      variantIndex={variantIndex}
-      variantCount={variantCount}
-      onPrevVariant={onPrevVariant}
-      onNextVariant={onNextVariant}
-      elapsedMs={elapsedMs}
-      logMessageId={logMessageId}
-    />
-  ) : editPencil ? (
-    // 非末尾バブルのスマホ幅用。sm 以上では上記の鉛筆がアバター列に出るので隠す。
-    <div className="flex items-center mt-0.5 w-full sm:hidden">
-      <EditButton
-        onClick={() => setEditing(true)}
-        title="この発話を書き換える"
-        className="ml-auto"
+  // 編集はここに置かない（鉛筆はアバター列の下端へ出す）。
+  const actions =
+    editing || !isGroupTail ? null : (
+      <MessageActionBar
+        copyText={copyText ?? content}
+        onRegenerate={isLastGM ? onRegenerate : undefined}
+        regenerateTitle="このレスポンスを再生成（前の結果は枝として残る）"
+        onDiscard={isLastGM ? onDiscard : undefined}
+        discardTitle="この応答を破棄してユーザ入力に戻す"
+        variantIndex={variantIndex}
+        variantCount={variantCount}
+        onPrevVariant={onPrevVariant}
+        onNextVariant={onNextVariant}
+        elapsedMs={elapsedMs}
+        logMessageId={logMessageId}
       />
-    </div>
-  ) : null;
+    );
 
   // Narrator は地の文寄せ（アバターなし、見出しなし）。バブル枠を持たず斜体で流す。
   // 行幅・スマホ時の左拡張は他モードと揃える（アバター列ぶんのスペーサーを置く）。
@@ -330,10 +321,11 @@ function GMBubbleRowImpl({
       >
         {/* アバター列ぶんのスペーサー。空きスペースの下端に編集の鉛筆を置く。 */}
         <div className="flex flex-col items-center" style={{ width: 28, flexShrink: 0 }}>
-          {editPencil && <div className="mt-auto pb-1 hidden sm:block">{editPencil}</div>}
+          {editPencil && <div className="mt-auto pb-1">{editPencil}</div>}
         </div>
         <div className="flex-1 min-w-0">
-          <div className={mobileBubbleExtendClass}>
+          {/* 鉛筆を置く行では列を空けたままにする（左拡張するとスペーサーごと覆ってしまう）。 */}
+          <div className={editPencil ? "w-full" : mobileBubbleExtendClass}>
             <div
               className="text-sm leading-relaxed italic text-ch-t2 break-words"
               style={{ textWrap: "pretty" }}

@@ -5,13 +5,7 @@ import { useState } from "react";
 
 import { fetchLogEntry } from "../../api";
 import type { LogEntry } from "../../api";
-import {
-  CopyButton,
-  DiscardButton,
-  EditButton,
-  RegenerateButton,
-  VariantNav,
-} from "./buttons";
+import { CopyButton, DiscardButton, RegenerateButton, VariantNav } from "./buttons";
 import { RawLogModal, TAG_COLORS, ToolCallRow, ToolTagRow } from "./logViewer";
 
 /**
@@ -31,9 +25,10 @@ function formatElapsed(ms: number): string {
 /**
  * バブル下部の操作バー。
  *
- * コピー / ログ折りたたみ（1on1 のみ）/ 再生成 を 1 行に並べる共通部品。
+ * コピー / ログ折りたたみ（1on1 のみ）/ 枝ナビ・破棄・再生成 を 1 行に並べる共通部品。
  * 1on1・グループ・シナリオの全モードで同じ並び・見た目を共有する（DRY）。
- * 再生成は誤クリック防止のため `ml-auto` で右端（バブル右端）へ寄せる。
+ * 破壊的な操作（破棄・再生成）は誤クリック防止のため右端へ寄せ、隣り合うボタンとの
+ * 間隔も広めに取る。編集の鉛筆はこのバーではなくアバター列の下端に置く（呼び出し側の責務）。
  *
  * `logMessageId` が渡されたときのみログ折りたたみを表示する
  * （CHOTGOR_DEBUG=1 時の 1on1 チャット用）。トリガーは操作行内に置き、
@@ -45,8 +40,6 @@ export function MessageActionBar({
   regenerateTitle = "再生成",
   onDiscard,
   discardTitle = "この応答を破棄",
-  onEdit,
-  editTitle = "この応答を書き換える",
   variantIndex,
   variantCount,
   onPrevVariant,
@@ -64,10 +57,6 @@ export function MessageActionBar({
   onDiscard?: () => void;
   /** 破棄ボタンのツールチップ。 */
   discardTitle?: string;
-  /** 手動書き換えコールバック（無指定で編集ボタン非表示）。 */
-  onEdit?: () => void;
-  /** 編集ボタンのツールチップ。 */
-  editTitle?: string;
   /** 枝ナビの現在位置と総数。総数が 2 以上のときだけ ◀ n/m ▶ を表示する。 */
   variantIndex?: number;
   variantCount?: number;
@@ -185,9 +174,6 @@ export function MessageActionBar({
               onNext={onNextVariant ?? (() => {})}
             />
           )}
-          {/* 鉛筆は sm 以上ではアバター列の下（バブル左下の余白）へ出すため、
-              ここに置くのはアバター列がバブルに覆われるスマホ幅のときだけ。 */}
-          {onEdit && <EditButton onClick={onEdit} title={editTitle} className="sm:hidden" />}
           {onDiscard && <DiscardButton onClick={onDiscard} title={discardTitle} />}
           {onRegenerate && (
             <RegenerateButton onClick={onRegenerate} title={regenerateTitle} />
