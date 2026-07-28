@@ -53,14 +53,24 @@ PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google
 
 
 def provider_sort_key(provider_id: str) -> tuple[int, str]:
-    """プロバイダーの表示順ソートキー。PROVIDER_ORDER 未登録のものは末尾へ回す。
-
-    プリセット一覧の並び（第一キー=プロバイダー）を UI 横断で揃えるために使う。
-    """
+    """プロバイダーの表示順ソートキー。PROVIDER_ORDER 未登録のものは末尾へ回す。"""
     try:
         return (PROVIDER_ORDER.index(provider_id), provider_id)
     except ValueError:
         return (len(PROVIDER_ORDER), provider_id)
+
+
+def model_preset_sort_key(preset) -> tuple:
+    """モデルプリセット一覧の並び順キー: プロバイダー表示順 → モデルID → プリセット名。
+
+    UI 横断（backend の各ページ・`/v1/models`）で並びを揃えるための唯一の正本。
+    モデルID 空欄は「プロバイダー既定モデル」なので、同一プロバイダー内の先頭に来る。
+    """
+    return (
+        provider_sort_key(preset.provider or ""),
+        (preset.model_id or "").lower(),
+        (preset.name or "").lower(),
+    )
 
 
 def get_default_model(provider_id: str) -> str:

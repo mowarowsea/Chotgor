@@ -1,7 +1,8 @@
 """Tests for モデルプリセット一覧の並び順と /ui/model-presets ページ描画。
 
 このモジュールは「プリセット一覧はプロバイダー表示順（PROVIDER_ORDER）を第一キー、
-プリセット名を第二キーに並べる」という規約を、以下の3経路で守れているか検証する:
+モデルIDを第二キー、プリセット名を第三キーに並べる」という規約を、
+以下の3経路で守れているか検証する:
 
 1. `SQLiteStore.list_model_presets()` — backend UI 各ページ（models / settings /
    character edit / memories / scenarios）が共通で使う一覧取得。
@@ -30,13 +31,18 @@ _TEMPLATES_DIR = str(Path(__file__).parent.parent / "backend" / "templates")
 
 
 def _seed_presets(store) -> None:
-    """並び順が created_at 順とは一致しないよう、わざと崩した順で登録する。"""
-    # 登録順: google → anthropic(Bravo) → ollama → anthropic(Alpha) → claude_cli
+    """並び順が created_at 順とは一致しないよう、わざと崩した順で登録する。
+
+    anthropic に「モデルID が名前順と逆転する組（Bravo=claude-x / Alpha=claude-y）」と
+    「同一モデルIDで名前だけ異なる組（Aardvark / Bravo = claude-x）」を含めて、
+    第二キー=モデルID・第三キー=名前 の優先順位を判別できるようにしている。
+    """
     store.create_model_preset("p-google", "Gemini", "google", "gemini-2.0-flash")
     store.create_model_preset("p-ant-b", "Bravo", "anthropic", "claude-x")
     store.create_model_preset("p-ollama", "Qwen", "ollama", "qwen2.5:latest")
     store.create_model_preset("p-ant-a", "Alpha", "anthropic", "claude-y")
     store.create_model_preset("p-cli", "CLI", "claude_cli", "")
+    store.create_model_preset("p-ant-c", "Aardvark", "anthropic", "claude-x")
 
 
 @pytest.fixture
@@ -65,17 +71,26 @@ class TestProviderSortKey:
 class TestListModelPresetsOrder:
     """SQLiteStore.list_model_presets — 一覧の並び順。"""
 
-    def test_sorted_by_provider_then_name(self, sqlite_store):
-        """プロバイダー表示順が第一キー、プリセット名が第二キーになること。"""
+    def test_sorted_by_provider_then_model_then_name(self, sqlite_store):
+        """プロバイダー表示順 → モデルID → プリセット名 の優先順位で並ぶこと。"""
         _seed_presets(sqlite_store)
 
         names = [p.name for p in sqlite_store.list_model_presets()]
 
-        # claude_cli → anthropic(Alpha, Bravo) → google → ollama の順
-        assert names == ["CLI", "Alpha", "Bravo", "Gemini", "Qwen"]
+        # claude_cli → anthropic(claude-x: Aardvark, Bravo → claude-y: Alpha) → google → ollama
+        assert names == ["CLI", "Aardvark", "Bravo", "Alpha", "Gemini", "Qwen"]
+
+    def test_empty_model_id_comes_first_within_provider(self, sqlite_store):
+        """モデルID 空欄（プロバイダー既定）が同一プロバイダー内の先頭に来ること。"""
+        sqlite_store.create_model_preset("p1", "Zulu", "anthropic", "")
+        sqlite_store.create_model_preset("p2", "Alpha", "anthropic", "claude-x")
+
+        names = [p.name for p in sqlite_store.list_model_presets()]
+
+        assert names == ["Zulu", "Alpha"]
 
     def test_name_order_is_case_insensitive(self, sqlite_store):
-        """同一プロバイダー内の名前順が大文字小文字を無視して並ぶこと。"""
+        """同一プロバイダー・同一モデルIDの名前順が大文字小文字を無視して並ぶこと。"""
         sqlite_store.create_model_preset("p1", "beta", "anthropic", "m")
         sqlite_store.create_model_preset("p2", "Alpha", "anthropic", "m")
 
@@ -96,7 +111,7 @@ class TestModelsApiOrder:
         return TestClient(app)
 
     def test_presets_sorted_within_character(self, sqlite_store, models_client):
-        """キャラクターごとにプロバイダー順→プリセット名順で返ること。
+        """キャラクターごとにプロバイダー順→モデルID順→プリセット名順で返ること。
 
         APIキー必須のプロバイダー（anthropic / google）は settings に鍵がないと
         除外されるため、ここで設定してから検証する。
@@ -113,6 +128,7 @@ class TestModelsApiOrder:
                 "p-ollama": {},
                 "p-ant-a": {},
                 "p-cli": {},
+                "p-ant-c": {},
             },
         )
 
@@ -120,28 +136,29 @@ class TestModelsApiOrder:
 
         assert [m["id"] for m in data] == [
             "はる@CLI",
-            "はる@Alpha",
+            "はる@Aardvark",
             "はる@Bravo",
+            "はる@Alpha",
             "はる@Gemini",
             "はる@Qwen",
         ]
         # 並び順の根拠（プロバイダー）をフロントへ渡していること
         assert [m["provider"] for m in data] == [
-            "claude_cli", "anthropic", "anthropic", "google", "ollama",
+            "claude_cli", "anthropic", "anthropic", "anthropic", "google", "ollama",
         ]
 
 
 class TestModelPresetsPage:
     """GET /ui/model-presets — 一覧テーブルと詳細モーダルの描画。"""
 
-    def test_rows_sorted_by_provider_then_name(self, sqlite_store, presets_client):
-        """テーブル行がプロバイダー順→名前順で並ぶこと（HTML 上の出現順で判定）。"""
+    def test_rows_sorted_by_provider_then_model_then_name(self, sqlite_store, presets_client):
+        """テーブル行がプロバイダー順→モデルID順→名前順で並ぶこと（HTML 上の出現順で判定）。"""
         _seed_presets(sqlite_store)
 
         html = presets_client.get("/ui/model-presets").text
 
-        positions = [html.index(f'data-modal-open="preset-{pid}"')
-                     for pid in ["p-cli", "p-ant-a", "p-ant-b", "p-google", "p-ollama"]]
+        expected = ["p-cli", "p-ant-c", "p-ant-b", "p-ant-a", "p-google", "p-ollama"]
+        positions = [html.index(f'data-modal-open="preset-{pid}"') for pid in expected]
         assert positions == sorted(positions)
 
     def test_list_columns_are_slim(self, sqlite_store, presets_client):

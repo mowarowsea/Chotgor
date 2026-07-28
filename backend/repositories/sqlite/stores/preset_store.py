@@ -33,19 +33,16 @@ class PresetStoreMixin:
             return preset
 
     def list_model_presets(self) -> list:
-        """LLMモデルプリセット一覧を「プロバイダー表示順 → プリセット名」の順で返す。
+        """LLMモデルプリセット一覧を「プロバイダー表示順 → モデルID → プリセット名」で返す。
 
         プロバイダー順は PROVIDER_ORDER（UI 表示順）に従うため SQL では並べられず、
         取得後に Python 側でソートする。プリセットは数十件規模なのでコストは無視できる。
         """
-        from backend.providers.registry import provider_sort_key
+        from backend.providers.registry import model_preset_sort_key
         with self.get_session() as session:
             from backend.repositories.sqlite.store import LLMModelPreset
             presets = session.query(LLMModelPreset).all()
-            return sorted(
-                presets,
-                key=lambda p: (provider_sort_key(p.provider or ""), (p.name or "").lower()),
-            )
+            return sorted(presets, key=model_preset_sort_key)
 
     def get_model_preset(self, preset_id: str):
         """IDでLLMモデルプリセットを取得する。"""
