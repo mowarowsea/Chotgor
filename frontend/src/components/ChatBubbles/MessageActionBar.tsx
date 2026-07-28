@@ -174,44 +174,25 @@ export function MessageActionBar({
             ))}
           </button>
         )}
-        {/* 枝ナビは「他の候補がある」ことを示す情報なので、ホバー非依存で常時表示する。
-            以降の操作ボタンは右端寄せの起点をここへ移す（ml-auto は先頭要素にだけ効く）。 */}
-        {variantCount !== undefined && variantCount > 1 && (
-          <VariantNav
-            index={variantIndex ?? 1}
-            count={variantCount}
-            onPrev={onPrevVariant ?? (() => {})}
-            onNext={onNextVariant ?? (() => {})}
-            className="ml-auto"
-          />
-        )}
-        {onEdit && (
-          <EditButton
-            onClick={onEdit}
-            title={editTitle}
-            className={variantCount !== undefined && variantCount > 1 ? "" : "ml-auto"}
-          />
-        )}
-        {onDiscard && (
-          <DiscardButton
-            onClick={onDiscard}
-            title={discardTitle}
-            className={
-              onEdit || (variantCount !== undefined && variantCount > 1) ? "" : "ml-auto"
-            }
-          />
-        )}
-        {onRegenerate && (
-          <RegenerateButton
-            onClick={onRegenerate}
-            title={regenerateTitle}
-            className={
-              onDiscard || onEdit || (variantCount !== undefined && variantCount > 1)
-                ? ""
-                : "ml-auto"
-            }
-          />
-        )}
+        {/* 右端の操作ボタン群。誤タップ防止のため、隣り合うボタンの間隔を広めに取る。
+            枝ナビは「他の候補がある」ことを示す情報なので、ホバー非依存で常時表示する。 */}
+        <div className="flex items-center gap-2 ml-auto">
+          {variantCount !== undefined && variantCount > 1 && (
+            <VariantNav
+              index={variantIndex ?? 1}
+              count={variantCount}
+              onPrev={onPrevVariant ?? (() => {})}
+              onNext={onNextVariant ?? (() => {})}
+            />
+          )}
+          {/* 鉛筆は sm 以上ではアバター列の下（バブル左下の余白）へ出すため、
+              ここに置くのはアバター列がバブルに覆われるスマホ幅のときだけ。 */}
+          {onEdit && <EditButton onClick={onEdit} title={editTitle} className="sm:hidden" />}
+          {onDiscard && <DiscardButton onClick={onDiscard} title={discardTitle} />}
+          {onRegenerate && (
+            <RegenerateButton onClick={onRegenerate} title={regenerateTitle} />
+          )}
+        </div>
       </div>
 
       {/* ログ展開コンテンツ */}

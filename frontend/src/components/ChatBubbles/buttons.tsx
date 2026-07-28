@@ -162,7 +162,6 @@ export function VariantNav({
   count,
   onPrev,
   onNext,
-  className = "",
 }: {
   /** 現在の枝番号（1始まり）。 */
   index: number;
@@ -172,13 +171,12 @@ export function VariantNav({
   onPrev: () => void;
   /** 次の枝へ。末尾では呼ばれない。 */
   onNext: () => void;
-  /** 追加クラス（右端寄せの `ml-auto` 等）。 */
-  className?: string;
 }) {
+  // 矢印は隣接する破棄・再生成との誤タップを避けるため、タップ領域を広めに取る。
   const btn =
-    "text-ch-t3 hover:text-ch-t2 disabled:opacity-25 disabled:hover:text-ch-t3 transition-colors px-0.5 leading-none";
+    "text-ch-t3 hover:text-ch-t2 disabled:opacity-25 disabled:hover:text-ch-t3 transition-colors px-1 py-0.5 leading-none";
   return (
-    <div className={`flex items-center gap-0.5 text-[11px] select-none ${className}`}>
+    <div className="flex items-center gap-1 text-[11px] select-none">
       <button onClick={onPrev} disabled={index <= 1} title="前のレスポンス" className={btn}>
         ◀
       </button>

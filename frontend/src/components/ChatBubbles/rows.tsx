@@ -28,7 +28,7 @@ export const mobileBubbleExtendClass =
  * 1on1 / グループ / シナリオ（NPC・character）でバブルの寸法・揃えを統一する
  * ための共通部品。各モードで重複していた flex 構造をここに集約している（DRY）。
  *
- * - アバターは常に上端揃え（`self-start`）。
+ * - アバターは常に列の上端。
  * - 行全体の最大幅は 88%（アバター込み）。
  * - `children`（バブル本体・操作バー等）はスマホ幅で左端をアバター左端に揃える。
  */
@@ -36,6 +36,7 @@ export function CharacterMessageRow({
   avatar,
   name,
   nameSuffix,
+  underAvatar,
   style,
   testId,
   children,
@@ -46,6 +47,13 @@ export function CharacterMessageRow({
   name: string;
   /** 名前の右に添える要素（@プリセット名・(ephemeral) ラベル等）。 */
   nameSuffix?: React.ReactNode;
+  /**
+   * アバター列の下端（バブル左下の余白）へ置く要素。編集の鉛筆など。
+   *
+   * スマホ幅では `mobileBubbleExtendClass` によりバブルがアバター列へせり出して
+   * 覆い隠すため、sm 以上でのみ表示する。スマホでは呼び出し側が別の場所に出すこと。
+   */
+  underAvatar?: React.ReactNode;
   /** 行外側 div への追加 style（content-visibility 最適化用）。 */
   style?: React.CSSProperties;
   /** 行外側 div の data-testid。 */
@@ -58,8 +66,11 @@ export function CharacterMessageRow({
       style={style}
       data-testid={testId}
     >
-      {/* アバターは上端揃え（全モードで位置を統一）。 */}
-      <div className="self-start">{avatar}</div>
+      {/* アバター列。アバターは上端（全モードで位置を統一）、underAvatar は下端へ落とす。 */}
+      <div className="flex flex-col items-center shrink-0">
+        {avatar}
+        {underAvatar && <div className="mt-auto pb-1 hidden sm:block">{underAvatar}</div>}
+      </div>
       <div className="flex-1 min-w-0">
         {/*
          * 名前行: キャラクター名 + 補足。

@@ -280,13 +280,19 @@ function GMBubbleRowImpl({
     <MarkdownContent content={displayContent} />
   );
 
-  // 操作バー（コピー / 枝ナビ / 編集 / 破棄 / 再生成 / ログ）。
+  // 編集の鉛筆はアバター列の下端（バブル左下の余白）へ置く。バブル下の操作バーへ足すと
+  // 行が間延びするため。1 レスポンスは複数の話者ブロックに割れるので、末尾かどうかに
+  // 関わらず全バブルに出す（末尾ブロックしか直せないと「無理やり直す」用途に届かない）。
+  const editPencil =
+    !editing && onEditCommit ? (
+      <EditButton onClick={() => setEditing(true)} title="この発話を書き換える" />
+    ) : undefined;
+
+  // 操作バー（コピー / 枝ナビ / 破棄 / 再生成 / ログ）。
   // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
   // モデル応答は複数バブルで構成され得るため、グループ末尾のバブルにだけ操作バーを出して
   // 1 応答 = 1 操作バーを保つ。再生成・破棄は最新グループ末尾でのみ有効。
-  // 編集は過去レスポンスでも可（言い回しの手直しは末尾に限らないため）。
-  // 非末尾バブルには編集ボタンだけを出す。1 レスポンスは複数の話者ブロックに
-  // 割れるので、末尾ブロックしか書き換えられないと「無理やり直す」用途に届かない。
+  // onEdit も渡すが、これはアバター列が使えないスマホ幅でのみ表示される（MessageActionBar 側で制御）。
   const actions = editing ? null : isGroupTail ? (
     <MessageActionBar
       copyText={copyText ?? content}
@@ -302,8 +308,9 @@ function GMBubbleRowImpl({
       elapsedMs={elapsedMs}
       logMessageId={logMessageId}
     />
-  ) : onEditCommit ? (
-    <div className="flex items-center gap-0.5 -ml-1 mt-0.5 w-full">
+  ) : editPencil ? (
+    // 非末尾バブルのスマホ幅用。sm 以上では上記の鉛筆がアバター列に出るので隠す。
+    <div className="flex items-center mt-0.5 w-full sm:hidden">
       <EditButton
         onClick={() => setEditing(true)}
         title="この発話を書き換える"
@@ -321,7 +328,10 @@ function GMBubbleRowImpl({
         className="group flex gap-2.5 max-w-full sm:max-w-[88%]"
         style={{ contentVisibility: "auto", containIntrinsicSize: "auto 100px" }}
       >
-        <div style={{ width: 28, flexShrink: 0 }} />
+        {/* アバター列ぶんのスペーサー。空きスペースの下端に編集の鉛筆を置く。 */}
+        <div className="flex flex-col items-center" style={{ width: 28, flexShrink: 0 }}>
+          {editPencil && <div className="mt-auto pb-1 hidden sm:block">{editPencil}</div>}
+        </div>
         <div className="flex-1 min-w-0">
           <div className={mobileBubbleExtendClass}>
             <div
@@ -343,6 +353,7 @@ function GMBubbleRowImpl({
     <CharacterMessageRow
       avatar={<Avatar name={speaker_name} src={avatarSrc} onClick={onAvatarClick} />}
       name={speaker_name}
+      underAvatar={editPencil}
       nameSuffix={
         is_known === false ? (
           <span className="text-[10px] text-ch-t4">(ephemeral)</span>
