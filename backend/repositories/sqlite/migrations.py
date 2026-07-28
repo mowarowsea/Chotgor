@@ -426,6 +426,39 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE scenario_turns ADD COLUMN chronicled_at DATETIME"
                 )
 
+    def _migrate_add_scenario_turn_variants(self) -> None:
+        """`scenario_turns` に枝分かれ（レスポンスガチャ）用の3列を追加する。
+
+        - `is_active`: 本線に含まれるか（0=選ばれなかった枝）
+        - `generation_id`: 1 ストリームリクエストの応答群を束ねる枝キー
+        - `branch_point_index`: 枝が生えた分岐点（直前の活性ターンの turn_index）
+
+        既存行は DEFAULT により `is_active=1` / `generation_id=NULL` /
+        `branch_point_index=-1` となり、枝を持たない一直線として従来通り動く
+        （切替 UI も出ない）。バックフィルは不要。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenario_turns)"
+                ).fetchall()
+            }
+            if "is_active" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_turns "
+                    "ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+                )
+            if "generation_id" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_turns ADD COLUMN generation_id TEXT"
+                )
+            if "branch_point_index" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_turns "
+                    "ADD COLUMN branch_point_index INTEGER NOT NULL DEFAULT -1"
+                )
+
     def _migrate_add_scenario_banner_data(self) -> None:
         """`scenarios` に `banner_data` 列を追加する。
 

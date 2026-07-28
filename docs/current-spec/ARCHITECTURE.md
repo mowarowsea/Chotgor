@@ -206,6 +206,17 @@ frontend useScenarioChat → /api/scenario_chat/... (api/scenario_chat/)
   → PC は pc_slots に一本化（GMプロンプトは中の人が人間かAIかを区別しない）
 ```
 
+**ログの枝分かれ（レスポンスガチャ）** — `scenario_turns` は
+`is_active` / `generation_id` / `branch_point_index` の3列で「本線」と
+「選ばれなかった枝」を表す。1 ストリームリクエストで保存されたターン群が
+1 つの枝（generation）で、同じ `branch_point_index` を持つ generation 同士が
+兄弟枝になる。再生成は物理削除ではなく非活性化 + 追記なので、UI の
+枝ナビ（◀ 2/3 ▶）で引き直した結果を選び直せる。履歴を読む経路は
+`list_scenario_turns`（活性のみ返す）に集約されているため、prompt_builder /
+synopsis / chronicle から枝は見えない。`turn_index` は非活性行を含む max+1 で
+採番するので枝の増減で番号は飛ぶが、親が必ず子より先に採番されるため
+活性行の昇順が会話順になる。詳細は `docs/planned/scenario_turn_variants_plan.md`。
+
 ### うつつ（Usual Days — キャラの無人生活モード）
 
 ユーザ不在のあいだ、キャラが自律的に「生活」し続ける裏の世界。シナリオチャットの

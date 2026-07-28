@@ -754,6 +754,18 @@ class ScenarioTurn(Base):
     # うつつ（usual_days）のやり取りを Chronicle 対象に合流させるための列
     # （ChatMessage.chronicled_at と同じ役割）。通常シナリオのターンでは使われない。
     chronicled_at = Column(DateTime, nullable=True)
+    # ─── 枝分かれ（レスポンスガチャ）── docs/planned/scenario_turn_variants_plan.md ───
+    # この行が現在の本線に含まれるか。0 の行は「生成したが選ばれなかった枝」として残る。
+    # 履歴を読む全経路（prompt_builder / synopsis / chronicle / usual_days 等）は
+    # list_scenario_turns 経由なので、そこの活性フィルタ 1 つで本線だけが見える。
+    is_active = Column(Integer, nullable=False, default=1)
+    # 1 ストリームリクエストで保存されたターン群を束ねるキー（枝の単位）。
+    # ユーザ発話も同じ枝に入る（外すと枝を戻したときユーザ発話だけ取り残されるため）。
+    # intro（stream 外）と既存行は NULL＝枝を持たない。
+    generation_id = Column(String, nullable=True)
+    # この generation が生えた時点の「直前の活性ターンの turn_index」。
+    # 同一 branch_point_index を持つ generation 同士が兄弟枝（ガチャの選択肢）になる。
+    branch_point_index = Column(Integer, nullable=False, default=-1)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 

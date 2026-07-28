@@ -19,6 +19,7 @@ import {
   type SetStateAction,
 } from "react";
 import {
+  activateScenarioGeneration,
   deleteScenarioSession,
   deleteScenarioTurnsFrom,
   fetchScenarioSession,
@@ -26,6 +27,7 @@ import {
   fetchScenarioSynopsis,
   fetchScenarioTurns,
   patchScenarioSynopsis,
+  patchScenarioTurn,
   regenerateScenarioSynopsis,
   startScenarioSession,
   streamScenarioMessage,
@@ -132,7 +134,6 @@ interface UseScenarioChatResult {
   handleScenarioSend: (
     content: string,
     autoAdvance?: boolean,
-    regenerateRequestId?: string,
     yieldTo?: string,
   ) => Promise<void>;
   /** ensemble_pc 専用「ターンを譲る」操作。指定先（PC枠名/"GM"/"ALL"）に発話を回す。
@@ -142,8 +143,12 @@ interface UseScenarioChatResult {
   handleScenarioRegenerate: () => Promise<void>;
   /** GM 応答を 1 レスポンス分破棄してユーザ入力待ちに戻す。 */
   handleScenarioDiscard: () => Promise<void>;
-  /** ユーザバブルの編集確定（以降を削除して再ストリーム）。 */
+  /** ユーザバブルの編集確定（以降を枝ごと削除して再ストリーム）。 */
   handleScenarioEditUserTurn: (turnId: string, newContent: string) => Promise<void>;
+  /** 枝（レスポンスガチャ）の切替。分岐点より後の本線は巻き戻される。 */
+  handleScenarioSwitchVariant: (generationId: string) => Promise<void>;
+  /** GM / PC 発話の手動上書き（枝は生やさず本文だけ差し替える）。 */
+  handleScenarioEditResponse: (turnId: string, newContent: string) => Promise<void>;
   /** あらすじの部分更新（auto/manual）。 */
   handleSynopsisChange: (patch: { auto?: string; manual?: string }) => Promise<void>;
   /** あらすじ作成（強制蒸留）を裏で起動する。 */
@@ -355,13 +360,11 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
    *
    * autoAdvance=true なら「ユーザは無言で続きを促す」モード。
    * content は何が来てもサーバ側で無視され、user turn も保存されない。
-   * regenerateRequestId を指定すると、再生成ログを同一エントリにまとめる。
    */
   const handleScenarioSend = useCallback(
     async (
       content: string,
       autoAdvance: boolean = false,
-      regenerateRequestId?: string,
       yieldTo?: string,
     ) => {
       if (!activeScenarioSession) return;
@@ -382,7 +385,6 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
           sessionId,
           content,
           autoAdvance,
-          regenerateRequestId,
           yieldTo,
         ),
         onEvent: (ev) => {
@@ -526,7 +528,9 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
    *   - 直前に user 発話がなければ auto_advance レスポンス → GM 列の先頭から
    *     auto_advance=true で再ストリーム
    *
-   * 1on1 chat の retry と同じ思想で、「レスポンスの開始点」より後を捨てる方式。
+   * 巻き戻しは非活性化（枝として保持）なので、引き直した結果が気に入らなければ
+   * 枝ナビ（◀ 2/3 ▶）で元のレスポンスへ戻せる。巻き戻し起点をユーザ発話に揃えるのは、
+   * 兄弟枝の分岐点（＝その 1 つ前の turn_index）を毎回同じ値にするため。
    */
   const handleScenarioRegenerate = useCallback(async () => {
     if (!activeScenarioSession) return;
@@ -547,22 +551,17 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
 
     // 直前に user 発話があるかを見て、通常 / auto_advance を判別。
     const prev = lastTurnStart > 0 ? scenarioTurns[lastTurnStart - 1] : null;
-    // 再生成対象の先頭 GM ターン（=先頭話者ブロック）の log_request_id を引き継ぐ（ログをまとめるため）
-    const gmLogRequestId =
-      scenarioTurns[lastTurnStart]?.speaker_type !== "user"
-        ? (scenarioTurns[lastTurnStart]?.log_request_id ?? undefined)
-        : undefined;
     let pivot: ScenarioTurn;
     let resend: () => Promise<void>;
     if (prev && prev.speaker_type === "user") {
-      // 通常レスポンス: user を含めて削除し、同じ発話で再ストリーム
+      // 通常レスポンス: user を含めて巻き戻し、同じ発話で再ストリーム
       pivot = prev;
       const content = prev.content;
-      resend = () => handleScenarioSend(content, false, gmLogRequestId);
+      resend = () => handleScenarioSend(content, false);
     } else if (scenarioTurns[lastTurnStart].speaker_type !== "user") {
-      // auto_advance レスポンス: GM 列先頭から削除して auto_advance で再ストリーム
+      // auto_advance レスポンス: GM 列先頭から巻き戻して auto_advance で再ストリーム
       pivot = scenarioTurns[lastTurnStart];
-      resend = () => handleScenarioSend("", true, gmLogRequestId);
+      resend = () => handleScenarioSend("", true);
     } else {
       // 末尾が user で GM 応答が無い特殊状態（前回ストリームエラー後など）
       pivot = scenarioTurns[lastTurnStart];
@@ -626,7 +625,10 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
    * ユーザバブルの編集確定処理。
    *
    * 編集対象 user turn 以降を全削除し、新しい内容で再ストリームする。
-   * GM 応答の再生成と同じ流れ。
+   *
+   * ここだけ枝を残さず物理削除する（`keepVariants=false`）。発言そのものを
+   * 書き換える以上、その発言に対して引いた過去のガチャはすべて無効だからで、
+   * 内容の違う発話が同じ枝リストに並ぶのも防げる。
    */
   const handleScenarioEditUserTurn = useCallback(
     async (turnId: string, newContent: string) => {
@@ -634,7 +636,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       const target = scenarioTurns.find((t) => t.id === turnId);
       if (!target) return;
       try {
-        await deleteScenarioTurnsFrom(activeScenarioSession.id, turnId);
+        await deleteScenarioTurnsFrom(activeScenarioSession.id, turnId, false);
         setScenarioTurns((prev) =>
           prev.filter((t) => t.turn_index < target.turn_index),
         );
@@ -644,6 +646,53 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       }
     },
     [activeScenarioSession, scenarioTurns, handleScenarioSend, setError],
+  );
+
+  /**
+   * 枝（レスポンスガチャ）を切り替える。
+   *
+   * 対象が過去のレスポンスなら、その分岐点より後の本線はサーバ側で巻き戻される
+   * （下流は復元しない）ため、呼び出し側で確認を取ってから使うこと。
+   */
+  const handleScenarioSwitchVariant = useCallback(
+    async (generationId: string) => {
+      if (!activeScenarioSession) return;
+      try {
+        const turns = await activateScenarioGeneration(
+          activeScenarioSession.id,
+          generationId,
+        );
+        setScenarioTurns(turns);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession, setError],
+  );
+
+  /**
+   * GM / PC / NPC / Narrator の発話をユーザの手で上書きする。
+   *
+   * 枝は生やさず、その場で本文だけを差し替える（先の展開はそのまま残る）。
+   * ユーザ発話の編集（`handleScenarioEditUserTurn`）とは別物。
+   */
+  const handleScenarioEditResponse = useCallback(
+    async (turnId: string, newContent: string) => {
+      if (!activeScenarioSession) return;
+      try {
+        const updated = await patchScenarioTurn(
+          activeScenarioSession.id,
+          turnId,
+          newContent,
+        );
+        setScenarioTurns((prev) =>
+          prev.map((t) => (t.id === turnId ? updated : t)),
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession, setError],
   );
 
   /** あらすじの部分更新（auto/manual）。ScenarioSettingsModal から呼ばれる。 */
@@ -702,12 +751,12 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   /**
    * ensemble_pc の「ターンを譲る」操作。ユーザは無言のまま、指定先へ初動を回す。
    *
-   * 内部は `handleScenarioSend("", autoAdvance=true, undefined, target)` のラッパー。
+   * 内部は `handleScenarioSend("", autoAdvance=true, target)` のラッパー。
    * target に PC枠名を渡せばその PC、"GM" なら GM、"ALL" ならランダム PC へルーティングされる。
    */
   const handleScenarioYieldTo = useCallback(
     async (target: string) => {
-      await handleScenarioSend("", true, undefined, target);
+      await handleScenarioSend("", true, target);
     },
     [handleScenarioSend],
   );
@@ -807,6 +856,8 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     handleScenarioRegenerate,
     handleScenarioDiscard,
     handleScenarioEditUserTurn,
+    handleScenarioSwitchVariant,
+    handleScenarioEditResponse,
     handleSynopsisChange,
     handleSynopsisCreate,
     handleOpenSynopsisCreate,

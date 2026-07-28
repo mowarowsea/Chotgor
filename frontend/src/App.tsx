@@ -227,6 +227,8 @@ export default function App() {
     handleScenarioRegenerate,
     handleScenarioDiscard,
     handleScenarioEditUserTurn,
+    handleScenarioSwitchVariant,
+    handleScenarioEditResponse,
     handleSynopsisChange,
     handleSynopsisCreate,
     handleOpenSynopsisCreate,
@@ -597,6 +599,8 @@ export default function App() {
             onEditUserTurn={handleScenarioEditUserTurn}
             onRegenerate={handleScenarioRegenerate}
             onDiscard={handleScenarioDiscard}
+            onSwitchVariant={handleScenarioSwitchVariant}
+            onEditResponse={handleScenarioEditResponse}
             onHeaderVisibilityChange={setHeaderVisible}
             elapsedMap={elapsedMap}
             scenarioReasoningMap={scenarioReasoningMap}

@@ -45,6 +45,19 @@ current_log_user_message: ContextVar[str | None] = ContextVar("current_log_user_
 # 現在作成中のメインDB行の id（log_front_input で INSERT 後に設定、log_front_output で UPDATE に使用）
 current_log_db_entry_id: ContextVar[int | None] = ContextVar("current_log_db_entry_id", default=None)
 
+# --- シナリオ枝分かれ（レスポンスガチャ）用コンテキスト変数 ---
+# docs/planned/scenario_turn_variants_plan.md 参照。
+# _save_turn の呼び出し元（service / loop_strategies / pc_runner / usual_days）が多く、
+# 引数リレーだと改修点が広がるため ContextVar で引き回す。
+# scenario stream のエントリポイントで設定し、_save_turn が読んで行へ焼き付ける。
+
+# 1 ストリームリクエストで生成された GM/PC 応答群を束ねる枝キー。
+# ユーザ発話・intro は枝を持たないので None のまま。
+current_generation_id: ContextVar[str | None] = ContextVar("current_generation_id", default=None)
+
+# 現リクエストの応答が生える分岐点（開始時点の最後の活性ターンの turn_index）。
+current_branch_point_index: ContextVar[int] = ContextVar("current_branch_point_index", default=-1)
+
 
 def new_message_id() -> str:
     """ログ追跡用の短縮IDを生成して current_message_id にセットして返す。
@@ -64,6 +77,8 @@ def new_message_id() -> str:
     current_log_turn_sequence.set(None)
     current_log_user_message.set(None)
     current_log_db_entry_id.set(None)
+    current_generation_id.set(None)
+    current_branch_point_index.set(-1)
     return msg_id
 
 

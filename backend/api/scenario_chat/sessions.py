@@ -5,10 +5,12 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 
 from backend.api.scenario_chat.schemas import (
+    GenerationActivate,
     SessionStart,
     SessionUpdate,
     SynopsisRegenerate,
     SynopsisUpdate,
+    TurnUpdate,
 )
 from backend.lib.log_context import (
     current_log_feature,
@@ -270,26 +272,87 @@ async def end_session(request: Request, session_id: str):
 
 @router.get("/sessions/{session_id}/turns")
 async def list_turns(request: Request, session_id: str):
-    """セッションの全ターンを時系列昇順で返す。"""
-    sqlite = request.app.state.sqlite
-    if sqlite.get_scenario_session(session_id) is None:
-        raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    return [scenario_turn_to_dict(t) for t in sqlite.list_scenario_turns(session_id)]
+    """セッションの本線ターンを時系列昇順で返す。
 
-
-@router.delete("/sessions/{session_id}/turns/from/{turn_id}")
-async def delete_turns_from(request: Request, session_id: str, turn_id: str):
-    """指定ターン以降（自身を含む）をすべて削除する。
-
-    ユーザ発話の編集・GM ターンの再生成の前処理として呼ぶ。
+    選ばれなかった枝は含まない。各ターンには枝ナビ（◀ 2/3 ▶）用の
+    `variant_index` / `variant_count` を埋めて返すので、フロントは
+    枝の一覧取得に追加リクエストを要しない。
     """
     sqlite = request.app.state.sqlite
     if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    ok = sqlite.delete_scenario_turns_from(session_id, turn_id)
+    variants = sqlite.list_scenario_generation_variants(session_id)
+    return [
+        scenario_turn_to_dict(t, variants)
+        for t in sqlite.list_scenario_turns(session_id)
+    ]
+
+
+@router.delete("/sessions/{session_id}/turns/from/{turn_id}")
+async def delete_turns_from(
+    request: Request, session_id: str, turn_id: str, keep_variants: bool = True
+):
+    """指定ターン以降（自身を含む）を巻き戻す。
+
+    再生成・破棄の前処理として呼ぶ（`keep_variants=True`、既定）。この場合は
+    物理削除せず非活性化するため、巻き戻した内容は枝として残り選び直せる。
+
+    ユーザ発話の編集では `keep_variants=false` で呼ぶ。発言そのものを書き換える
+    以上、その発言に対して引いた過去のガチャは無効なので枝ごと物理削除する。
+    """
+    sqlite = request.app.state.sqlite
+    if sqlite.get_scenario_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+    if keep_variants:
+        ok = sqlite.deactivate_scenario_turns_from(session_id, turn_id)
+    else:
+        ok = sqlite.delete_scenario_turns_from(session_id, turn_id)
     if not ok:
         raise HTTPException(status_code=404, detail="ターンが見つかりません")
     return {"deleted": True}
+
+
+@router.patch("/sessions/{session_id}/turns/{turn_id}")
+async def update_turn(
+    request: Request, session_id: str, turn_id: str, body: TurnUpdate
+):
+    """発話本文をユーザの手で上書きする（枝は生やさない）。
+
+    GM / PC / NPC / Narrator の応答を「無理やり書き換える」ための口。
+    `raw_response` は触らない（モデルが実際に何を出したかの記録を手編集で汚さない）。
+    """
+    sqlite = request.app.state.sqlite
+    if sqlite.get_scenario_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+    updated = sqlite.update_scenario_turn_content(session_id, turn_id, body.content)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="ターンが見つかりません")
+    variants = sqlite.list_scenario_generation_variants(session_id)
+    return scenario_turn_to_dict(updated, variants)
+
+
+@router.post("/sessions/{session_id}/turns/activate")
+async def activate_generation(
+    request: Request, session_id: str, body: GenerationActivate
+):
+    """枝（generation）を本線に切り替える。
+
+    指定枝の分岐点より後の本線はすべて巻き戻される（下流は復元しない）。
+    レスポンスは切替後の本線ターン一覧。
+    """
+    sqlite = request.app.state.sqlite
+    if sqlite.get_scenario_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+    ok = sqlite.activate_scenario_generation(session_id, body.generation_id)
+    if not ok:
+        raise HTTPException(
+            status_code=404, detail="枝が見つからない、または既に選択中です"
+        )
+    variants = sqlite.list_scenario_generation_variants(session_id)
+    return [
+        scenario_turn_to_dict(t, variants)
+        for t in sqlite.list_scenario_turns(session_id)
+    ]
 
 
 @router.get("/sessions/{session_id}/synopsis")

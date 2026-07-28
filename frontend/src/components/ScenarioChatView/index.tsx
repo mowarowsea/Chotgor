@@ -76,6 +76,10 @@ interface Props {
    * 自分の発話を入力したくなった場合。
    */
   onDiscard: () => void;
+  /** 枝（レスポンスガチャ）の切替。分岐点より後の本線は巻き戻される。 */
+  onSwitchVariant: (generationId: string) => void;
+  /** GM / PC 発話の手動書き換え（枝は生やさず本文だけ差し替える）。 */
+  onEditResponse: (turnId: string, newContent: string) => void;
   /**
    * ensemble_pc 専用「ターンを譲る」操作。指定先（PC枠名 / "GM" / "ALL"）に発話を回す。
    * チップ群が押されたときに呼ばれる。バックエンドでは auto_advance=true + yield_to で処理され、
@@ -119,6 +123,8 @@ export default function ScenarioChatView({
   onEditUserTurn,
   onRegenerate,
   onDiscard,
+  onSwitchVariant,
+  onEditResponse,
   onYieldTo,
   onHeaderVisibilityChange,
   elapsedMap,
@@ -377,6 +383,23 @@ export default function ScenarioChatView({
               t.id === lastGMTurnId &&
               session.status === "active" &&
               !sending;
+            const canMutate = session.status === "active" && !sending;
+            const variantCount = t.variant_count ?? 1;
+            const variantIndex = t.variant_index ?? 1;
+            const siblings = t.variant_siblings ?? [];
+            // 枝ナビは「本線の末尾レスポンス以外」だと下流の巻き戻しを伴うため確認を挟む。
+            // 巻き戻した続きは復元しない（docs/planned/scenario_turn_variants_plan.md）。
+            const switchTo = (offset: number) => {
+              const target = siblings[variantIndex - 1 + offset];
+              if (!target) return;
+              if (!isLastGM) {
+                const ok = window.confirm(
+                  "このレスポンスより後のやり取りは巻き戻され、元には戻せません。切り替えますか？",
+                );
+                if (!ok) return;
+              }
+              onSwitchVariant(target);
+            };
             bubble = (
               <GMBubbleRow
                 speaker_type={t.speaker_type}
@@ -389,6 +412,15 @@ export default function ScenarioChatView({
                 copyText={groupCopyText}
                 onRegenerate={onRegenerate}
                 onDiscard={onDiscard}
+                onEditCommit={
+                  canMutate
+                    ? (newContent) => onEditResponse(t.id, newContent)
+                    : undefined
+                }
+                variantIndex={variantIndex}
+                variantCount={canMutate ? variantCount : 1}
+                onPrevVariant={() => switchTo(-1)}
+                onNextVariant={() => switchTo(1)}
                 onAvatarClick={
                   npcForAvatar ? () => setNpcDialogTarget(npcForAvatar) : undefined
                 }

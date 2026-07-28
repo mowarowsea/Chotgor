@@ -5,7 +5,13 @@ import { useState } from "react";
 
 import { fetchLogEntry } from "../../api";
 import type { LogEntry } from "../../api";
-import { CopyButton, DiscardButton, RegenerateButton } from "./buttons";
+import {
+  CopyButton,
+  DiscardButton,
+  EditButton,
+  RegenerateButton,
+  VariantNav,
+} from "./buttons";
 import { RawLogModal, TAG_COLORS, ToolCallRow, ToolTagRow } from "./logViewer";
 
 /**
@@ -39,6 +45,12 @@ export function MessageActionBar({
   regenerateTitle = "再生成",
   onDiscard,
   discardTitle = "この応答を破棄",
+  onEdit,
+  editTitle = "この応答を書き換える",
+  variantIndex,
+  variantCount,
+  onPrevVariant,
+  onNextVariant,
   logMessageId,
   elapsedMs,
 }: {
@@ -52,6 +64,16 @@ export function MessageActionBar({
   onDiscard?: () => void;
   /** 破棄ボタンのツールチップ。 */
   discardTitle?: string;
+  /** 手動書き換えコールバック（無指定で編集ボタン非表示）。 */
+  onEdit?: () => void;
+  /** 編集ボタンのツールチップ。 */
+  editTitle?: string;
+  /** 枝ナビの現在位置と総数。総数が 2 以上のときだけ ◀ n/m ▶ を表示する。 */
+  variantIndex?: number;
+  variantCount?: number;
+  /** 前後の枝へ切り替えるコールバック。 */
+  onPrevVariant?: () => void;
+  onNextVariant?: () => void;
   /** デバッグログフォルダ名（8桁hex）。指定時のみログ折りたたみを表示する。 */
   logMessageId?: string;
   /** モデルリクエスト〜応答完了までの経過時間（ミリ秒）。指定時のみ表示する。 */
@@ -152,14 +174,42 @@ export function MessageActionBar({
             ))}
           </button>
         )}
+        {/* 枝ナビは「他の候補がある」ことを示す情報なので、ホバー非依存で常時表示する。
+            以降の操作ボタンは右端寄せの起点をここへ移す（ml-auto は先頭要素にだけ効く）。 */}
+        {variantCount !== undefined && variantCount > 1 && (
+          <VariantNav
+            index={variantIndex ?? 1}
+            count={variantCount}
+            onPrev={onPrevVariant ?? (() => {})}
+            onNext={onNextVariant ?? (() => {})}
+            className="ml-auto"
+          />
+        )}
+        {onEdit && (
+          <EditButton
+            onClick={onEdit}
+            title={editTitle}
+            className={variantCount !== undefined && variantCount > 1 ? "" : "ml-auto"}
+          />
+        )}
         {onDiscard && (
-          <DiscardButton onClick={onDiscard} title={discardTitle} className="ml-auto" />
+          <DiscardButton
+            onClick={onDiscard}
+            title={discardTitle}
+            className={
+              onEdit || (variantCount !== undefined && variantCount > 1) ? "" : "ml-auto"
+            }
+          />
         )}
         {onRegenerate && (
           <RegenerateButton
             onClick={onRegenerate}
             title={regenerateTitle}
-            className={onDiscard ? "" : "ml-auto"}
+            className={
+              onDiscard || onEdit || (variantCount !== undefined && variantCount > 1)
+                ? ""
+                : "ml-auto"
+            }
           />
         )}
       </div>

@@ -120,6 +120,146 @@ class TestDeleteTurnsFrom:
         assert res.status_code == 404
 
 
+# ─── 枝分かれ（レスポンスガチャ）・手動書き換え ─────────────────────────────
+
+
+def _seed_generation(store, session_id, generation_id, branch_point_index, contents):
+    """1 リクエスト分の応答群（＝1 つの枝）を直接 SQLite へ積むヘルパ。
+
+    実運用では stream エンドポイントが ContextVar へ枝情報を積むため、
+    テストでも同じ経路を通す。
+    """
+    import uuid as _uuid
+
+    from backend.lib.log_context import (
+        current_branch_point_index,
+        current_generation_id,
+    )
+
+    gen_token = current_generation_id.set(generation_id)
+    branch_token = current_branch_point_index.set(branch_point_index)
+    try:
+        saved = []
+        for c in contents:
+            saved.append(
+                store.create_scenario_turn(
+                    turn_id=str(_uuid.uuid4()),
+                    session_id=session_id,
+                    turn_index=store.get_next_scenario_turn_index(session_id),
+                    speaker_type="narrator",
+                    speaker_name="Narrator",
+                    content=c,
+                )
+            )
+        return saved
+    finally:
+        current_generation_id.reset(gen_token)
+        current_branch_point_index.reset(branch_token)
+
+
+class TestTurnVariantsApi:
+    """枝の切替・手動書き換え API を検証する。"""
+
+    def _session(self, sqlite_store):
+        """プリセットとセッションを用意して (client, session_id) を返す。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        return client, _start_session(client, sid)["id"]
+
+    def test_turns_expose_variant_info(self, sqlite_store):
+        """ターン一覧に枝ナビ用の index / count / siblings が乗ること。"""
+        client, sess_id = self._session(sqlite_store)
+        _seed_generation(sqlite_store, sess_id, "gen1", -1, ["A"])
+        turn = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()[0]
+        assert turn["generation_id"] == "gen1"
+        assert turn["variant_index"] == 1
+        assert turn["variant_count"] == 1
+        assert turn["variant_siblings"] == ["gen1"]
+
+    def test_delete_keeps_variants_by_default(self, sqlite_store):
+        """既定の巻き戻しは非活性化で、枝として選び直せること。"""
+        client, sess_id = self._session(sqlite_store)
+        first = _seed_generation(sqlite_store, sess_id, "gen1", -1, ["A"])
+        client.delete(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/from/{first[0].id}"
+        )
+        _seed_generation(sqlite_store, sess_id, "gen2", -1, ["B"])
+
+        body = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()
+        assert [t["content"] for t in body] == ["B"]
+        assert body[0]["variant_count"] == 2  # gen1 が枝として残っている
+
+    def test_delete_with_keep_variants_false_wipes_branches(self, sqlite_store):
+        """keep_variants=false は非活性な枝も含めて物理削除すること。
+
+        起点は gen1 の行（turn_index が最小）。そこから後ろを一掃するので、
+        非活性の gen1 も、その後に生えた gen2 もまとめて消える。
+        """
+        client, sess_id = self._session(sqlite_store)
+        first = _seed_generation(sqlite_store, sess_id, "gen1", -1, ["A"])
+        client.delete(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/from/{first[0].id}"
+        )
+        _seed_generation(sqlite_store, sess_id, "gen2", -1, ["B"])
+
+        res = client.delete(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/from/{first[0].id}"
+            "?keep_variants=false"
+        )
+        assert res.status_code == 200
+        assert client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json() == []
+        assert sqlite_store.list_scenario_generation_variants(sess_id) == {}
+
+    def test_activate_switches_branch(self, sqlite_store):
+        """枝を切り替えると本線が差し替わり、切替後の一覧が返ること。"""
+        client, sess_id = self._session(sqlite_store)
+        first = _seed_generation(sqlite_store, sess_id, "gen1", -1, ["A"])
+        client.delete(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/from/{first[0].id}"
+        )
+        _seed_generation(sqlite_store, sess_id, "gen2", -1, ["B"])
+
+        res = client.post(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/activate",
+            json={"generation_id": "gen1"},
+        )
+        assert res.status_code == 200
+        assert [t["content"] for t in res.json()] == ["A"]
+
+    def test_activate_unknown_generation(self, sqlite_store):
+        """存在しない枝は 404。"""
+        client, sess_id = self._session(sqlite_store)
+        res = client.post(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/activate",
+            json={"generation_id": "nope"},
+        )
+        assert res.status_code == 404
+
+    def test_patch_turn_content(self, sqlite_store):
+        """発話本文を上書きできること（枝は増えない）。"""
+        client, sess_id = self._session(sqlite_store)
+        turns = _seed_generation(sqlite_store, sess_id, "gen1", -1, ["A"])
+
+        res = client.patch(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/{turns[0].id}",
+            json={"content": "書き換え"},
+        )
+        assert res.status_code == 200
+        assert res.json()["content"] == "書き換え"
+        body = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()
+        assert [t["content"] for t in body] == ["書き換え"]
+
+    def test_patch_unknown_turn(self, sqlite_store):
+        """存在しないターンは 404。"""
+        client, sess_id = self._session(sqlite_store)
+        res = client.patch(
+            f"/api/scenario_chat/sessions/{sess_id}/turns/nope",
+            json={"content": "x"},
+        )
+        assert res.status_code == 404
+
+
 # ─── ストリーミング ──────────────────────────────────────────────────────────
 
 

@@ -7,6 +7,7 @@ import React, { useEffect, useState } from "react";
 import {
   Bubble,
   CharacterMessageRow,
+  EditButton,
   MarkdownContent,
   MessageActionBar,
   ThinkingBlock,
@@ -156,10 +157,18 @@ interface GMBubbleRowProps {
    * 自グループ全バブルを `@名前: 本文` 形式で連結した文字列を渡すこと。
    */
   copyText?: string;
-  /** 1 レスポンスまるごと再生成（最終 user 以降を全削除して再ストリーム）。 */
+  /** 1 レスポンスまるごと再生成（最終 user 以降を巻き戻して再ストリーム）。 */
   onRegenerate?: () => void;
   /** 末尾 GM レスポンスを破棄してユーザ入力待ちに戻す（再ストリームしない）。 */
   onDiscard?: () => void;
+  /** 発話の手動書き換え確定。新しい本文を受け取る。 */
+  onEditCommit?: (newContent: string) => void;
+  /** 枝ナビの現在位置と総数（このバブルが属するレスポンスの兄弟枝）。 */
+  variantIndex?: number;
+  variantCount?: number;
+  /** 前後の枝へ切り替える。過去レスポンスでは呼び出し側が確認を挟む。 */
+  onPrevVariant?: () => void;
+  onNextVariant?: () => void;
   /** アバタークリック時のコールバック。既知 NPC のみ渡される（押下可能になる）。 */
   onAvatarClick?: () => void;
   /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。最新グループ末尾でのみ意味がある。 */
@@ -193,25 +202,114 @@ function GMBubbleRowImpl({
   copyText,
   onRegenerate,
   onDiscard,
+  onEditCommit,
+  variantIndex,
+  variantCount,
+  onPrevVariant,
+  onNextVariant,
   onAvatarClick,
   elapsedMs,
   logMessageId,
   reasoning,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
-  // 操作バー（コピー / 破棄 / 再生成 / ログ）。1on1 / グループと共通の MessageActionBar を使う（DRY）。
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(content);
+
+  // content prop がサーバ最新値に入れ替わったら編集テキストも初期化し直す。
+  useEffect(() => {
+    if (!editing) setEditText(content);
+  }, [content, editing]);
+
+  const submitEdit = () => {
+    const text = editText.trim();
+    if (!text) return;
+    setEditing(false);
+    onEditCommit?.(text);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setEditText(content);
+  };
+
+  const onEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && e.ctrlKey) {
+      e.preventDefault();
+      submitEdit();
+    }
+    if (e.key === "Escape") {
+      cancelEdit();
+    }
+  };
+
+  // 本文表示 or 編集フォーム。編集はバブル内で本文だけを差し替える
+  // （ユーザ発話の編集と違い、この書き換えは先の展開に手を触れない）。
+  const body = editing ? (
+    <div className="flex flex-col gap-2 w-full">
+      <textarea
+        value={editText}
+        onChange={(e) => setEditText(e.target.value)}
+        onKeyDown={onEditKeyDown}
+        rows={5}
+        autoFocus
+        className="rounded-lg px-3 py-2 text-sm resize-y focus:outline-none w-full"
+        style={{ background: "rgb(var(--ch-s2))", color: "rgb(var(--ch-t1))" }}
+      />
+      <div className="flex gap-2 justify-end items-center">
+        <p className="text-ch-t4 text-[10px] mr-auto">
+          Ctrl+Enter で確定 / Esc でキャンセル（この応答の本文だけを書き換えます）
+        </p>
+        <button
+          onClick={cancelEdit}
+          className="text-ch-t3 hover:text-ch-t2 text-xs px-3 py-1.5 rounded transition-colors"
+        >
+          キャンセル
+        </button>
+        <button
+          onClick={submitEdit}
+          disabled={!editText.trim()}
+          className="text-white text-xs px-3 py-1.5 rounded font-medium transition-colors disabled:opacity-30"
+          style={{ background: "var(--ch-accent)" }}
+        >
+          確定
+        </button>
+      </div>
+    </div>
+  ) : (
+    <MarkdownContent content={displayContent} />
+  );
+
+  // 操作バー（コピー / 枝ナビ / 編集 / 破棄 / 再生成 / ログ）。
+  // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
   // モデル応答は複数バブルで構成され得るため、グループ末尾のバブルにだけ操作バーを出して
   // 1 応答 = 1 操作バーを保つ。再生成・破棄は最新グループ末尾でのみ有効。
-  const actions = isGroupTail ? (
+  // 編集は過去レスポンスでも可（言い回しの手直しは末尾に限らないため）。
+  // 非末尾バブルには編集ボタンだけを出す。1 レスポンスは複数の話者ブロックに
+  // 割れるので、末尾ブロックしか書き換えられないと「無理やり直す」用途に届かない。
+  const actions = editing ? null : isGroupTail ? (
     <MessageActionBar
       copyText={copyText ?? content}
       onRegenerate={isLastGM ? onRegenerate : undefined}
-      regenerateTitle="このレスポンスを再生成"
+      regenerateTitle="このレスポンスを再生成（前の結果は枝として残る）"
       onDiscard={isLastGM ? onDiscard : undefined}
       discardTitle="この応答を破棄してユーザ入力に戻す"
+      onEdit={onEditCommit ? () => setEditing(true) : undefined}
+      variantIndex={variantIndex}
+      variantCount={variantCount}
+      onPrevVariant={onPrevVariant}
+      onNextVariant={onNextVariant}
       elapsedMs={elapsedMs}
       logMessageId={logMessageId}
     />
+  ) : onEditCommit ? (
+    <div className="flex items-center gap-0.5 -ml-1 mt-0.5 w-full">
+      <EditButton
+        onClick={() => setEditing(true)}
+        title="この発話を書き換える"
+        className="ml-auto"
+      />
+    </div>
   ) : null;
 
   // Narrator は地の文寄せ（アバターなし、見出しなし）。バブル枠を持たず斜体で流す。
@@ -230,7 +328,7 @@ function GMBubbleRowImpl({
               className="text-sm leading-relaxed italic text-ch-t2 break-words"
               style={{ textWrap: "pretty" }}
             >
-              <MarkdownContent content={displayContent} />
+              {body}
             </div>
             {actions}
           </div>
@@ -260,7 +358,7 @@ function GMBubbleRowImpl({
         characterName={speaker_name}
         dashed={is_known === false}
       >
-        <MarkdownContent content={displayContent} />
+        {body}
       </Bubble>
       {actions}
     </CharacterMessageRow>
@@ -301,6 +399,8 @@ export const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
     prev.isGroupTail === next.isGroupTail &&
     prev.isLastGM === next.isLastGM &&
     prev.copyText === next.copyText &&
+    prev.variantIndex === next.variantIndex &&
+    prev.variantCount === next.variantCount &&
     prev.elapsedMs === next.elapsedMs &&
     prev.logMessageId === next.logMessageId &&
     prev.reasoning === next.reasoning

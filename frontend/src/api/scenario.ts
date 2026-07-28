@@ -104,8 +104,17 @@ export interface ScenarioTurn {
   speaker_name: string;
   content: string;
   raw_response: string | null;
-  /** debug_log_entries との紐付け。再生成ログをまとめるために使う。 */
+  /** debug_log_entries との紐付け。枝ごとに別 ID が振られる。 */
   log_request_id?: string | null;
+  /** 枝（レスポンスガチャ）のキー。1 リクエストで保存されたターン群が同じ値を持つ。
+   *  intro など枝を持たないターンは null。 */
+  generation_id?: string | null;
+  /** 兄弟枝の中での位置（1始まり）と兄弟の総数。枝ナビ ◀ 2/3 ▶ の表示に使う。
+   *  枝を持たないターンは 1 / 1。 */
+  variant_index?: number;
+  variant_count?: number;
+  /** 兄弟枝の generation_id を枝番号順に並べたもの。◀ ▶ の切替先を引くために使う。 */
+  variant_siblings?: string[];
   created_at: string;
 }
 
@@ -338,16 +347,60 @@ export async function deleteScenarioSession(sessionId: string): Promise<void> {
   if (!res.ok) throw new Error("シナリオセッションの削除に失敗しました");
 }
 
-/** 指定ターン以降（自身を含む）をすべて削除する。編集・再生成の前処理。 */
+/** 指定ターン以降（自身を含む）を巻き戻す。編集・再生成・破棄の前処理。
+ *
+ * 既定（keepVariants=true）は非活性化で、巻き戻した内容は枝として残り選び直せる。
+ * ユーザ発話の編集では keepVariants=false を渡して枝ごと物理削除する
+ * （発言そのものを変える以上、その発言に対する過去のガチャは無効なため）。
+ */
 export async function deleteScenarioTurnsFrom(
   sessionId: string,
   turnId: string,
+  keepVariants: boolean = true,
 ): Promise<void> {
   const res = await fetch(
-    `/api/scenario_chat/sessions/${sessionId}/turns/from/${turnId}`,
+    `/api/scenario_chat/sessions/${sessionId}/turns/from/${turnId}?keep_variants=${keepVariants}`,
     { method: "DELETE" },
   );
   if (!res.ok) throw new Error("ターンの削除に失敗しました");
+}
+
+/** 発話本文をユーザの手で上書きする（枝は生やさない）。 */
+export async function patchScenarioTurn(
+  sessionId: string,
+  turnId: string,
+  content: string,
+): Promise<ScenarioTurn> {
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/turns/${turnId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  if (!res.ok) throw new Error("発話の書き換えに失敗しました");
+  return res.json();
+}
+
+/** 枝（generation）を本線に切り替える。切替後の本線ターン一覧を返す。
+ *
+ * 指定枝の分岐点より後の本線はすべて巻き戻される（下流は復元しない）。
+ */
+export async function activateScenarioGeneration(
+  sessionId: string,
+  generationId: string,
+): Promise<ScenarioTurn[]> {
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/turns/activate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ generation_id: generationId }),
+    },
+  );
+  if (!res.ok) throw new Error("枝の切り替えに失敗しました");
+  return res.json();
 }
 
 // ─── あらすじ（記憶捏造対策） ──────────────────────────────────────────────
@@ -421,7 +474,6 @@ export async function regenerateScenarioSynopsis(
  *
  * autoAdvance=true なら「ユーザは無言で続きを促す」モードで、
  * content は無視され、user turn も保存されない。
- * regenerateRequestId を指定すると、再生成ログを同一エントリにまとめる。
  * yieldTo は ensemble_pc の「ターンを譲る」UI 用（PC枠名 / "GM" / "ALL"）。
  * autoAdvance=true と組み合わせ、初動ルーティングをサーバ側で直接指定する。
  */
@@ -429,7 +481,6 @@ export async function* streamScenarioMessage(
   sessionId: string,
   content: string,
   autoAdvance: boolean = false,
-  regenerateRequestId?: string,
   yieldTo?: string,
 ): AsyncGenerator<ScenarioStreamEvent> {
   const res = await fetch(
@@ -440,9 +491,6 @@ export async function* streamScenarioMessage(
       body: JSON.stringify({
         content,
         auto_advance: autoAdvance,
-        ...(regenerateRequestId
-          ? { regenerate_request_id: regenerateRequestId }
-          : {}),
         ...(yieldTo ? { yield_to: yieldTo } : {}),
       }),
     },

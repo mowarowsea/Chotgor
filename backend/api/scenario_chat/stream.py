@@ -8,11 +8,12 @@ from fastapi.responses import StreamingResponse
 from backend.api.scenario_chat.schemas import StreamRequest
 from backend.lib.debug_logger import logger as debug_logger
 from backend.lib.log_context import (
+    current_branch_point_index,
+    current_generation_id,
     current_log_feature,
     current_log_session_id,
     current_log_target,
     current_log_turn_sequence,
-    current_message_id,
     new_message_id,
 )
 from backend.services.scenario_chat.service import run_scenario_turn
@@ -26,8 +27,8 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
     既存 chat と同じく、リクエストごとに log_message_id を発行して
     `debug/<8 桁hex>/` フォルダ内に各種ログを保存できるようにする。
     """
-    # リクエスト識別子を発行。再生成時は前ターンの log_request_id を引き継ぐ。
-    new_message_id()
+    # リクエスト識別子を発行。再生成でも引き継がず、枝ごとに別ログとして残す。
+    request_id = new_message_id()
     current_log_session_id.set(session_id)
     current_log_feature.set("scenario")
 
@@ -46,10 +47,15 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
     _next_turn = sqlite.get_next_scenario_turn_index(session_id)
     current_log_turn_sequence.set(_next_turn)
 
-    # 再生成時は前ターンの log_request_id を引き継いで同一ログエントリにまとめる。
-    # 過去ターン編集や新規ターンの場合は引き継がない（新規 ID のまま）。
-    if body.regenerate_request_id:
-        current_message_id.set(body.regenerate_request_id)
+    # 枝分かれ（レスポンスガチャ）用のコンテキストを積む。
+    # 本リクエストで生成される GM/PC 応答群は 1 つの generation として束ねられ、
+    # 分岐点（＝この時点の本線末尾）が同じ generation 同士が兄弟枝になる。
+    # ユーザ発話は枝に含めないので、分岐点は「今の本線の最後のターン」で確定する。
+    _active_turns = sqlite.list_scenario_turns(session_id)
+    current_generation_id.set(request_id)
+    current_branch_point_index.set(
+        int(_active_turns[-1].turn_index) if _active_turns else -1
+    )
 
     debug_logger.log_front_input(body.model_dump())
 

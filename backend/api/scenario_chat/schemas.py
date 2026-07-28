@@ -118,9 +118,9 @@ class StreamRequest(BaseModel):
     auto_advance=True なら「ユーザは無言で続きを促す」モード。
     content は無視され、user turn は保存されない（履歴に痕跡を残さない）。
 
-    regenerate_request_id を指定すると、そのログエントリに追記する形で
-    再生成ログをまとめる。フロントは再生成ボタン押下時のみ前ターンの
-    log_request_id を渡す（過去ターン編集時は渡さない）。
+    再生成しても常に新しい request_id を発行する（枝ごとにログを分ける）。
+    枝が独立して残る以上、「どの枝がどのログか」を追えることを優先するため、
+    旧 `regenerate_request_id`（ログを1エントリにまとめる）は廃止した。
 
     yield_to は ensemble_pc（TRPG モード）の「ターンを譲る」UI 用。auto_advance=True と
     併用し、初動ルーティングをユーザが直接指定する。値は PC枠名 / "GM" / "ALL" の
@@ -129,7 +129,21 @@ class StreamRequest(BaseModel):
 
     content: str = ""
     auto_advance: bool = False
-    regenerate_request_id: str | None = None
     yield_to: str | None = None
+
+
+class TurnUpdate(BaseModel):
+    """発話本文の手動上書きリクエスト（枝は生やさない）。"""
+
+    content: str
+
+
+class GenerationActivate(BaseModel):
+    """枝（generation）の切替リクエスト。
+
+    指定枝の分岐点より後の本線はすべて巻き戻される（下流は復元しない）。
+    """
+
+    generation_id: str
 
 

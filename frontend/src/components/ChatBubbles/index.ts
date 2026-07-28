@@ -19,8 +19,10 @@ export { ThinkingBlock } from "./ThinkingBlock";
 export {
   CopyButton,
   DiscardButton,
+  EditButton,
   RegenerateButton,
   UserMessageActions,
+  VariantNav,
 } from "./buttons";
 export { MessageActionBar } from "./MessageActionBar";
 export {

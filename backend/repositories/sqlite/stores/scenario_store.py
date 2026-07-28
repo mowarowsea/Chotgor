@@ -533,8 +533,19 @@ class ScenarioChatStoreMixin:
             raw_response: GM の単一呼出で得たターン全体の生出力（デバッグ用）。
             log_request_id: debug_log_entries.request_id との紐付け。再生成時に引き継ぐ。
         """
+        from backend.lib.log_context import (
+            current_branch_point_index,
+            current_generation_id,
+        )
+
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import Scenario, ScenarioSession, ScenarioTurn
+            from backend.repositories.sqlite.store import ScenarioTurn
+            # 枝情報は scenario stream のエントリポイントが ContextVar へ積む。
+            # 1 リクエストで保存した全ターン（ユーザ発話含む）が 1 つの枝になる。
+            # ユーザ発話を枝から外すと、枝を戻したときにユーザ発話だけが
+            # 非活性のまま取り残されるため、同じ generation に入れる。
+            # intro（stream 外）は ContextVar 未設定なので None のまま＝枝を持たない。
+            gen_id = current_generation_id.get()
             obj = ScenarioTurn(
                 id=turn_id,
                 session_id=session_id,
@@ -546,65 +557,147 @@ class ScenarioChatStoreMixin:
                 raw_response=raw_response,
                 log_request_id=log_request_id,
                 anticipation=anticipation or None,
+                is_active=1,
+                generation_id=gen_id,
+                branch_point_index=(
+                    current_branch_point_index.get() if gen_id else -1
+                ),
             )
             session.add(obj)
-            # タイムライン封筒 dual-write（scene.turn）— 同一トランザクション。
-            # 「誰のタイムラインか」はシーンに参加しているキャラクター:
-            #   - うつつ（usual_days）: 世界の所有者キャラ（origin="usual"）
-            #   - 通常シナリオ: pc_assignments の character 配役全員（origin="interlude"）
-            # 参加キャラが1人もいないシーン（ユーザとNPCだけ）は封筒を作らない。
-            sess = session.get(ScenarioSession, session_id)
-            if sess is not None:
-                is_usual = sess.engine_type == "usual_days"
-                origin = "usual" if is_usual else "interlude"
-                participant_ids: list[str] = []
-                if is_usual:
-                    scenario = session.get(Scenario, sess.scenario_id)
-                    if scenario is not None and scenario.owner_character_id:
-                        participant_ids = [scenario.owner_character_id]
-                else:
-                    for a in (sess.pc_assignments or []):
-                        if (
-                            isinstance(a, dict)
-                            and a.get("player_type") == "character"
-                            and a.get("character_id")
-                        ):
-                            participant_ids.append(str(a["character_id"]))
-                for char_id in participant_ids:
-                    # actor はタイムライン所有者から見た話者。自分の発話は "character"、
-                    # 他キャラPCはこの世界では場の登場人物なので npc:<名前> に丸める。
-                    if speaker_type == "character" and speaker_id == char_id:
-                        actor = "character"
-                    elif speaker_type == "user":
-                        actor = "user"
-                    elif speaker_type == "narrator":
-                        actor = "narrator"
-                    else:
-                        actor = f"npc:{speaker_name}"
-                    self._append_timeline_event(
-                        session,
-                        character_id=char_id,
-                        event_type="scene.turn",
-                        actor=actor,
-                        origin=origin,
-                        session_id=session_id,
-                        source_table="scenario_turns",
-                        source_id=turn_id,
-                    )
+            self._append_scene_turn_envelopes(session, obj)
             session.commit()
             session.refresh(obj)
             return obj
 
+    def _append_scene_turn_envelopes(self, session, turn) -> None:
+        """`scene.turn` 封筒を dual-write する（同一トランザクション）。
+
+        「誰のタイムラインか」はシーンに参加しているキャラクター:
+          - うつつ（usual_days）: 世界の所有者キャラ（origin="usual"）
+          - 通常シナリオ: pc_assignments の character 配役全員（origin="interlude"）
+        参加キャラが1人もいないシーン（ユーザとNPCだけ）は封筒を作らない。
+
+        ターン生成時と、枝の再活性化時（`activate_scenario_generation`）の双方から呼ぶ。
+        封筒は追記型なので、再活性化では retracted を戻さず新しい封筒を積む
+        （「なかったことが再びあったことになる」不可逆性の破れを避けるため）。
+
+        Args:
+            session: 呼び出し元が開いている SQLAlchemy Session。
+            turn: 対象の ScenarioTurn（未 flush でも属性が埋まっていればよい）。
+        """
+        from backend.repositories.sqlite.store import Scenario, ScenarioSession
+
+        sess = session.get(ScenarioSession, turn.session_id)
+        if sess is None:
+            return
+        is_usual = sess.engine_type == "usual_days"
+        origin = "usual" if is_usual else "interlude"
+        participant_ids: list[str] = []
+        if is_usual:
+            scenario = session.get(Scenario, sess.scenario_id)
+            if scenario is not None and scenario.owner_character_id:
+                participant_ids = [scenario.owner_character_id]
+        else:
+            for a in (sess.pc_assignments or []):
+                if (
+                    isinstance(a, dict)
+                    and a.get("player_type") == "character"
+                    and a.get("character_id")
+                ):
+                    participant_ids.append(str(a["character_id"]))
+        for char_id in participant_ids:
+            # actor はタイムライン所有者から見た話者。自分の発話は "character"、
+            # 他キャラPCはこの世界では場の登場人物なので npc:<名前> に丸める。
+            if turn.speaker_type == "character" and turn.speaker_id == char_id:
+                actor = "character"
+            elif turn.speaker_type == "user":
+                actor = "user"
+            elif turn.speaker_type == "narrator":
+                actor = "narrator"
+            else:
+                actor = f"npc:{turn.speaker_name}"
+            self._append_timeline_event(
+                session,
+                character_id=char_id,
+                event_type="scene.turn",
+                actor=actor,
+                origin=origin,
+                session_id=turn.session_id,
+                source_table="scenario_turns",
+                source_id=turn.id,
+            )
+
     def list_scenario_turns(self, session_id: str) -> list:
-        """セッション内の全ターンを turn_index 昇順で返す。"""
+        """セッション内の本線ターンを turn_index 昇順で返す。
+
+        選ばれなかった枝（`is_active=0`）は除外する。履歴を読む経路は
+        ほぼ全てこのメソッド経由なので、ここのフィルタ 1 つで
+        prompt_builder / synopsis / chronicle / usual_days から枝が見えなくなる。
+
+        `turn_index` は非活性行も含めた max+1 で採番されるため、枝の増減で
+        番号は飛ぶ。ただし親は必ず子より先に採番されるので、活性行を
+        turn_index 昇順に並べれば常に正しい会話順になる。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioTurn
             return (
                 session.query(ScenarioTurn)
-                .filter(ScenarioTurn.session_id == session_id)
+                .filter(
+                    ScenarioTurn.session_id == session_id,
+                    ScenarioTurn.is_active == 1,
+                )
                 .order_by(ScenarioTurn.turn_index.asc(), ScenarioTurn.created_at.asc())
                 .all()
             )
+
+    def list_scenario_generation_variants(self, session_id: str) -> dict:
+        """セッション内の枝（generation）の兄弟関係を返す。
+
+        兄弟枝 = 同一 `branch_point_index` を持つ generation 群。
+        フロントの枝ナビ（◀ 2/3 ▶）が追加リクエストなしで描けるよう、
+        ターン一覧のシリアライズ時に埋め込む用途で使う。
+
+        Returns:
+            {generation_id: {"index": 1始まりの枝番号, "count": 兄弟数,
+                             "siblings": 枝番号順の generation_id リスト}} の辞書。
+            兄弟が1つしかない generation も含む（count=1）。
+            `siblings` はフロントの ◀ ▶ が「どの枝へ切り替えるか」を引くために返す。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioTurn
+            rows = (
+                session.query(
+                    ScenarioTurn.generation_id,
+                    ScenarioTurn.branch_point_index,
+                    ScenarioTurn.turn_index,
+                )
+                .filter(
+                    ScenarioTurn.session_id == session_id,
+                    ScenarioTurn.generation_id.isnot(None),
+                )
+                .order_by(ScenarioTurn.turn_index.asc())
+                .all()
+            )
+            # generation ごとに「分岐点」と「先頭 turn_index（枝の生成順）」を畳む
+            gen_info: dict[str, tuple[int, int]] = {}
+            for gen_id, branch_idx, turn_idx in rows:
+                if gen_id not in gen_info:
+                    gen_info[gen_id] = (int(branch_idx), int(turn_idx))
+            # 分岐点ごとにグループ化し、生成順（先頭 turn_index 昇順）で採番する
+            by_branch: dict[int, list[tuple[int, str]]] = {}
+            for gen_id, (branch_idx, first_turn_idx) in gen_info.items():
+                by_branch.setdefault(branch_idx, []).append((first_turn_idx, gen_id))
+            result: dict[str, dict] = {}
+            for siblings in by_branch.values():
+                siblings.sort()
+                ordered = [gen_id for _, gen_id in siblings]
+                for i, gen_id in enumerate(ordered):
+                    result[gen_id] = {
+                        "index": i + 1,
+                        "count": len(ordered),
+                        "siblings": ordered,
+                    }
+            return result
 
     def get_unchronicled_usual_turns_for_character(self, character_id: str) -> list:
         """chronicle 用: 対象キャラのうつつ世界の未処理ターンを時系列で返す（スケジューラ用）。
@@ -632,6 +725,7 @@ class ScenarioChatStoreMixin:
                     Scenario.owner_character_id == character_id,
                     ScenarioSession.engine_type == "usual_days",
                     ScenarioTurn.chronicled_at == None,  # noqa: E711
+                    ScenarioTurn.is_active == 1,
                 )
                 .order_by(ScenarioTurn.created_at.asc())
                 .all()
@@ -886,31 +980,24 @@ class ScenarioChatStoreMixin:
             session.commit()
 
     def delete_scenario_turns_from(self, session_id: str, turn_id: str) -> bool:
-        """指定 turn_id 以降（自身を含む）のターンをまとめて削除する。
+        """指定 turn_id 以降（自身を含む）を、非活性な枝も含めて物理削除する。
 
-        ユーザ発話の編集・GM ターンの再生成で使う「区切り点以降を一掃する」操作。
-        編集・再生成パターンは既存 chat の `delete_chat_messages_from` と同じ思想。
+        ユーザ発話の編集で使う。発言そのものを書き換える以上、その発言に対して
+        引いた過去のガチャ（兄弟枝）はすべて無効なので、枝ごと一掃する。
+        枝を残したまま巻き戻す再生成・破棄は `deactivate_scenario_turns_from` を使う。
 
-        副作用: 削除域に `synopsis_last_turn_index` が含まれる場合、その値を
-        `pivot.turn_index - 1` までクランプする。クランプを怠ると、ロールバック後の
-        セッションで「すでに削除されたターンまで蒸留済み」という誤認識が残り、
-        以降の `maybe_update_auto_synopsis` が `new_dropped` 空判定で永久に
-        skip される（あらすじが二度と再生成されない）バグになる。
-
-        Args:
-            session_id: 対象セッション ID。
-            turn_id: この turn と、これより後（turn_index が大きいもの）を全削除する。
+        副作用: 封筒は削除せず retracted マーク（不可逆性の担保。データは残す）。
+        `synopsis_last_turn_index` のクランプも行う（理由は deactivate 側と同じ）。
 
         Returns:
             削除を実行した場合は True、turn_id が見つからなければ False。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ScenarioSession, ScenarioTurn
+            from backend.repositories.sqlite.store import ScenarioTurn
             pivot = session.get(ScenarioTurn, turn_id)
             if pivot is None or pivot.session_id != session_id:
                 return False
             pivot_index = int(pivot.turn_index)
-            # 封筒は削除せず retracted マーク（不可逆性の担保。データは残す）
             ids_to_delete = [
                 row[0]
                 for row in session.query(ScenarioTurn.id)
@@ -924,23 +1011,173 @@ class ScenarioChatStoreMixin:
                 session, "scenario_turns", ids_to_delete
             )
             session.query(ScenarioTurn).filter(
-                ScenarioTurn.session_id == session_id,
-                ScenarioTurn.turn_index >= pivot_index,
+                ScenarioTurn.id.in_(ids_to_delete)
             ).delete(synchronize_session=False)
-            # synopsis_last_turn_index のクランプ（ロールバック整合性）
-            sess_obj = session.get(ScenarioSession, session_id)
-            if (
-                sess_obj is not None
-                and sess_obj.synopsis_last_turn_index is not None
-                and int(sess_obj.synopsis_last_turn_index) >= pivot_index
-            ):
-                sess_obj.synopsis_last_turn_index = pivot_index - 1
-                sess_obj.updated_at = datetime.now()
+            self._clamp_synopsis_boundary(session, session_id, pivot_index)
             session.commit()
             return True
 
+    def deactivate_scenario_turns_from(self, session_id: str, turn_id: str) -> bool:
+        """指定 turn_id 以降（自身を含む）の本線ターンをまとめて非活性化する。
+
+        ユーザ発話の編集・GM ターンの再生成・破棄で使う「区切り点以降を巻き戻す」操作。
+        物理削除ではなく `is_active=0` にするため、巻き戻した内容は枝として DB に残り、
+        `activate_scenario_generation` で選び直せる。UI 上は削除と同じく履歴から消える。
+
+        副作用1: 巻き戻した行の封筒に retracted をマークする（不可逆性の担保。データは残す）。
+        副作用2: 巻き戻し域に `synopsis_last_turn_index` が含まれる場合、その値を
+        `pivot.turn_index - 1` までクランプする。クランプを怠ると、ロールバック後の
+        セッションで「すでに巻き戻したターンまで蒸留済み」という誤認識が残り、
+        以降の `maybe_update_auto_synopsis` が `new_dropped` 空判定で永久に
+        skip される（あらすじが二度と再生成されない）バグになる。
+
+        Args:
+            session_id: 対象セッション ID。
+            turn_id: この turn と、これより後（turn_index が大きいもの）を全て巻き戻す。
+
+        Returns:
+            巻き戻しを実行した場合は True、turn_id が見つからなければ False。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioTurn
+            pivot = session.get(ScenarioTurn, turn_id)
+            if pivot is None or pivot.session_id != session_id:
+                return False
+            self._deactivate_from_index(session, session_id, int(pivot.turn_index))
+            session.commit()
+            return True
+
+    def _deactivate_from_index(
+        self, session, session_id: str, pivot_index: int
+    ) -> list[str]:
+        """開いている Session 内で、指定 turn_index 以降の活性行を非活性化する。
+
+        封筒の retract と `synopsis_last_turn_index` のクランプまで行う。
+        commit は呼び出し側の責務（巻き戻しと枝の活性化を1トランザクションに
+        まとめられるようにするため）。
+
+        Returns:
+            非活性化した turn id のリスト。
+        """
+        from backend.repositories.sqlite.store import ScenarioSession, ScenarioTurn
+
+        ids_to_deactivate = [
+            row[0]
+            for row in session.query(ScenarioTurn.id)
+            .filter(
+                ScenarioTurn.session_id == session_id,
+                ScenarioTurn.turn_index >= pivot_index,
+                ScenarioTurn.is_active == 1,
+            )
+            .all()
+        ]
+        if not ids_to_deactivate:
+            return []
+        self._retract_timeline_events_in_session(
+            session, "scenario_turns", ids_to_deactivate
+        )
+        session.query(ScenarioTurn).filter(
+            ScenarioTurn.id.in_(ids_to_deactivate)
+        ).update({"is_active": 0}, synchronize_session=False)
+        self._clamp_synopsis_boundary(session, session_id, pivot_index)
+        return ids_to_deactivate
+
+    def _clamp_synopsis_boundary(
+        self, session, session_id: str, pivot_index: int
+    ) -> None:
+        """巻き戻し域に蒸留境界が含まれる場合、`pivot_index - 1` までクランプする。
+
+        クランプを怠ると「すでに巻き戻したターンまで蒸留済み」という誤認識が残り、
+        以降の `maybe_update_auto_synopsis` が `new_dropped` 空判定で永久に skip される
+        （あらすじが二度と再生成されない）バグになる。
+        """
+        from backend.repositories.sqlite.store import ScenarioSession
+
+        sess_obj = session.get(ScenarioSession, session_id)
+        if (
+            sess_obj is not None
+            and sess_obj.synopsis_last_turn_index is not None
+            and int(sess_obj.synopsis_last_turn_index) >= pivot_index
+        ):
+            sess_obj.synopsis_last_turn_index = pivot_index - 1
+            sess_obj.updated_at = datetime.now()
+
+    def activate_scenario_generation(self, session_id: str, generation_id: str) -> bool:
+        """指定の枝（generation）を本線に切り替える。
+
+        切替は常に「活性パスの末尾」に対して行う。過去の枝を指定した場合は、
+        その分岐点より後の活性行をすべて巻き戻してから対象を活性化する
+        （＝下流は捨てられる。部分木の復元はしない）。
+
+        封筒は追記型なので、再活性化では retracted を戻さず**新しい封筒を積む**。
+        retract の取り消しは「なかったことが再びあったことになる」不可逆性の破れになる。
+
+        Args:
+            session_id: 対象セッション ID。
+            generation_id: 本線にしたい枝のキー。
+
+        Returns:
+            切替を実行した場合は True。generation が見つからない・既に活性の場合は False。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioTurn
+            target = (
+                session.query(ScenarioTurn)
+                .filter(
+                    ScenarioTurn.session_id == session_id,
+                    ScenarioTurn.generation_id == generation_id,
+                )
+                .order_by(ScenarioTurn.turn_index.asc())
+                .all()
+            )
+            if not target:
+                return False
+            if all(int(t.is_active) == 1 for t in target):
+                return False  # 既に本線（切り替える先が今と同じ）
+            # 分岐点より後の活性行を巻き戻してから、対象枝を本線に戻す
+            self._deactivate_from_index(
+                session, session_id, int(target[0].branch_point_index) + 1
+            )
+            for turn in target:
+                turn.is_active = 1
+                self._append_scene_turn_envelopes(session, turn)
+            session.commit()
+            return True
+
+    def update_scenario_turn_content(
+        self, session_id: str, turn_id: str, content: str
+    ):
+        """発話本文をユーザの手で上書きする（枝は生やさない）。
+
+        `raw_response` は触らない。あれはモデルが実際に何を出したかのデバッグ記録であり、
+        手編集で汚さない。封筒も触らない（発話があった事実自体は変わらないため）。
+        あらすじ蒸留済み区間の編集も許可し、境界のクランプはしない
+        （あらすじ本文の整合はユーザの手編集に委ねる方針と揃える）。
+
+        Args:
+            session_id: 対象セッション ID。
+            turn_id: 上書きするターン ID。
+            content: 新しい本文。
+
+        Returns:
+            更新後の ScenarioTurn。見つからなければ None。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ScenarioTurn
+            obj = session.get(ScenarioTurn, turn_id)
+            if obj is None or obj.session_id != session_id:
+                return None
+            obj.content = content
+            session.commit()
+            session.refresh(obj)
+            return obj
+
     def get_next_scenario_turn_index(self, session_id: str) -> int:
-        """次に使うべき turn_index を返す（既存最大値+1、なければ 0）。"""
+        """次に使うべき turn_index を返す（既存最大値+1、なければ 0）。
+
+        非活性な枝も含めた最大値を見るため、セッション内で番号が重複しない。
+        枝の増減で番号は飛ぶが、親が必ず子より先に採番される性質は保たれる。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioTurn
             row = (

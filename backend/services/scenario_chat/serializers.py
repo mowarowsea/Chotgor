@@ -101,10 +101,19 @@ def scenario_npc_to_dict(npc: Any) -> dict:
     }
 
 
-def scenario_turn_to_dict(turn: Any) -> dict:
-    """ScenarioTurn ORM を JSON 化可能な dict に変換する。"""
+def scenario_turn_to_dict(turn: Any, variants: dict | None = None) -> dict:
+    """ScenarioTurn ORM を JSON 化可能な dict に変換する。
+
+    Args:
+        turn: 変換対象の ScenarioTurn。
+        variants: `list_scenario_generation_variants` の戻り値。渡すと枝ナビ用の
+            `variant_index` / `variant_count` を埋める（追加リクエストなしで
+            ◀ 2/3 ▶ を描けるようにするため）。省略時は枝なし（1/1）扱い。
+    """
     if turn is None:
         return {}
+    gen_id = getattr(turn, "generation_id", None)
+    variant = (variants or {}).get(gen_id) if gen_id else None
     return {
         "id": turn.id,
         "session_id": turn.session_id,
@@ -116,6 +125,10 @@ def scenario_turn_to_dict(turn: Any) -> dict:
         "raw_response": turn.raw_response,
         "log_request_id": getattr(turn, "log_request_id", None),
         "anticipation": getattr(turn, "anticipation", None),
+        "generation_id": gen_id,
+        "variant_index": variant["index"] if variant else 1,
+        "variant_count": variant["count"] if variant else 1,
+        "variant_siblings": variant["siblings"] if variant else [],
         "created_at": turn.created_at.isoformat() if turn.created_at else None,
     }
 

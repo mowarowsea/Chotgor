@@ -119,6 +119,80 @@ export function DiscardButton({
 }
 
 /**
+ * バブル下部の編集（鉛筆）ボタン。
+ *
+ * `UserMessageActions` 内の鉛筆と同じ見た目を、GM/PC 発話の手動書き換えでも
+ * 使えるように切り出したもの。
+ */
+export function EditButton({
+  onClick,
+  title = "編集",
+  className = "",
+}: {
+  /** クリック時のコールバック。 */
+  onClick: () => void;
+  /** ホバー時のツールチップ。 */
+  title?: string;
+  /** 追加クラス。 */
+  className?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0 ${className}`}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={12} height={12}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * 枝ナビ（◀ 2/3 ▶）— レスポンスガチャで生えた兄弟枝を切り替える。
+ *
+ * 兄弟が 1 つしかないレスポンスでは呼び出し側が描画しない想定。
+ * 端の枝では対応する矢印を disabled にする（循環させない）。
+ * ホバーで出現する他の操作ボタンと違い、枝を持つレスポンスでは常時表示する
+ * （「他の候補がある」こと自体を見せたいため）。
+ */
+export function VariantNav({
+  index,
+  count,
+  onPrev,
+  onNext,
+  className = "",
+}: {
+  /** 現在の枝番号（1始まり）。 */
+  index: number;
+  /** 兄弟枝の総数。 */
+  count: number;
+  /** 前の枝へ。先頭では呼ばれない。 */
+  onPrev: () => void;
+  /** 次の枝へ。末尾では呼ばれない。 */
+  onNext: () => void;
+  /** 追加クラス（右端寄せの `ml-auto` 等）。 */
+  className?: string;
+}) {
+  const btn =
+    "text-ch-t3 hover:text-ch-t2 disabled:opacity-25 disabled:hover:text-ch-t3 transition-colors px-0.5 leading-none";
+  return (
+    <div className={`flex items-center gap-0.5 text-[11px] select-none ${className}`}>
+      <button onClick={onPrev} disabled={index <= 1} title="前のレスポンス" className={btn}>
+        ◀
+      </button>
+      <span className="text-ch-t4 font-mono text-[10px]">
+        {index}/{count}
+      </span>
+      <button onClick={onNext} disabled={index >= count} title="次のレスポンス" className={btn}>
+        ▶
+      </button>
+    </div>
+  );
+}
+
+/**
  * ユーザー発話バブル下部の操作バー（コピー / 編集）。
  *
  * バブルの直下に置き、親の `items-end` により右寄せされる前提。
