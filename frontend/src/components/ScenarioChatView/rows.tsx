@@ -18,6 +18,29 @@ import {
 import { trimEnd } from "./helpers";
 import { Avatar } from "./npc";
 
+/**
+ * ナレーター（地の文）の行頭マーク。アバターを持たない地の文に、
+ * 話者ブロックの始まりを示す目印を与える。長さを変えた三本線で「文章の行」を表す。
+ * 装飾でしかないので aria-hidden とし、読み上げ対象から外す。
+ */
+function NarratorMark() {
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      className="text-ch-t4"
+      aria-hidden
+    >
+      <path d="M4 7h16M4 12h16M4 17h10" />
+    </svg>
+  );
+}
+
 interface GMBubbleRowProps {
   speaker_type: string;
   speaker_name: string;
@@ -159,8 +182,12 @@ function GMBubbleRowImpl({
         style={{ contentVisibility: "auto", containIntrinsicSize: "auto 100px" }}
         {...rowProps}
       >
-        {/* アバター列ぶんのスペーサー。空きスペースの下端に編集の鉛筆を置く。 */}
+        {/* アバター列ぶんのスペーサー。上端にナレーターマーク、空きスペースの下端に編集の鉛筆を置く。
+            マークの mt は本文 1 行目（text-sm / leading-relaxed）の中心に合わせた値。 */}
         <div className="flex flex-col items-center" style={{ width: 28, flexShrink: 0 }}>
+          <div className="mt-[5px]">
+            <NarratorMark />
+          </div>
           {editPencil && <div className="mt-auto pb-1">{editPencil}</div>}
         </div>
         <div className="flex-1 min-w-0">
