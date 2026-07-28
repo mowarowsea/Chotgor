@@ -183,12 +183,18 @@ function GMBubbleRowImpl({
         {...rowProps}
       >
         {/* アバター列ぶんのスペーサー。上端にナレーターマーク、空きスペースの下端に編集の鉛筆を置く。
-            マークの mt は本文 1 行目（text-sm / leading-relaxed）の中心に合わせた値。 */}
-        <div className="flex flex-col items-center" style={{ width: 28, flexShrink: 0 }}>
+            マークの mt は本文 1 行目（text-sm / leading-relaxed）の中心に合わせた値。
+            鉛筆は絶対配置でフローから外す（CharacterMessageRow と同じ理由 — 短い行で
+            列の高さを押し広げてガタつかせないため）。 */}
+        <div className="relative flex flex-col items-center" style={{ width: 28, flexShrink: 0 }}>
           <div className="mt-[5px]">
             <NarratorMark />
           </div>
-          {editPencil && <div className="mt-auto pb-1">{editPencil}</div>}
+          {editPencil && (
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 z-10 rounded bg-ch-bg/80">
+              {editPencil}
+            </div>
+          )}
         </div>
         <div className="flex-1 min-w-0">
           <div className="w-full">

@@ -35,6 +35,7 @@ export function Bubble({
   if (kind === "user") {
     return (
       <div
+        onPointerUp={onPointerUp}
         className="ch-bubble ch-bubble--user inline-block max-w-full px-3.5 py-1.5 text-sm leading-relaxed overflow-hidden break-words"
         style={{
           background: "rgb(var(--ch-ub))",

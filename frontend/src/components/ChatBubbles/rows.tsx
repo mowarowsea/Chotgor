@@ -64,10 +64,17 @@ export function CharacterMessageRow({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      {/* アバター列。アバターは上端（全モードで位置を統一）、underAvatar は下端へ落とす。 */}
-      <div className="flex flex-col items-center shrink-0">
+      {/* アバター列。アバターは上端（全モードで位置を統一）、underAvatar は下端へ落とす。
+          underAvatar は絶対配置でフローから外す — 行が短いとアバターと縦に取り合って
+          列の高さを押し広げ、ホバーのたびに行がガタつくため。短い行では
+          アバターに重なるので z-10 で上に描く。 */}
+      <div className="relative flex flex-col items-center shrink-0">
         {avatar}
-        {underAvatar && <div className="mt-auto pb-1">{underAvatar}</div>}
+        {underAvatar && (
+          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 z-10 rounded bg-ch-bg/80">
+            {underAvatar}
+          </div>
+        )}
       </div>
       <div className="flex-1 min-w-0">
         {/* 名前行: キャラクター名 + 補足。アバター上端と揃う。 */}
