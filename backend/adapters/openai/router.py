@@ -102,7 +102,13 @@ def _format_completion(model: str, text: str) -> dict:
 
 @router.get("/v1/models")
 async def list_models(request: Request):
-    """利用可能な character@preset_id の組み合わせをモデル一覧として返す。"""
+    """利用可能な character@preset_id の組み合わせをモデル一覧として返す。
+
+    キャラクターごとに「プロバイダー表示順 → プリセット名」でソートして返す。
+    フロントエンドはこの配列順をそのまま表示順に使うため、並びはここが正となる。
+    """
+    from backend.providers.registry import provider_sort_key
+
     state = request.app.state
     settings = state.sqlite.get_all_settings()
     available = _available_providers(settings)
@@ -110,16 +116,21 @@ async def list_models(request: Request):
 
     data = []
     for char in characters:
+        enabled = []
         for preset_id in (char.enabled_providers or {}):
             preset = state.sqlite.get_model_preset(preset_id)
             if preset is None or preset.provider not in available:
                 continue
+            enabled.append(preset)
+        enabled.sort(key=lambda p: (provider_sort_key(p.provider or ""), (p.name or "").lower()))
+        for preset in enabled:
             data.append({
                 "id": f"{char.name}@{preset.name}",
                 "object": "model",
                 "created": int(char.created_at.timestamp()) if char.created_at else 0,
                 "owned_by": "chotgor",
                 "name": f"{char.name} ({preset.name})",
+                "provider": preset.provider,
             })
     return {"object": "list", "data": data}
 

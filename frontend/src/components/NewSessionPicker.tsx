@@ -88,7 +88,12 @@ export default function NewSessionPicker({
 }: Props) {
   const [type, setType] = useState<SessionType>("1on1");
 
-  /** モデル一覧をキャラクター名 → プリセット名配列にグルーピングする。 */
+  /**
+   * モデル一覧をキャラクター名 → プリセット名配列にグルーピングする。
+   *
+   * 並び順は `/v1/models` が返す配列順（プロバイダー表示順 → プリセット名）をそのまま
+   * 引き継ぐ。プロバイダーの表示順は backend の PROVIDER_ORDER が唯一の正本。
+   */
   const charMap = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const m of models) {

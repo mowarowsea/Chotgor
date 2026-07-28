@@ -52,6 +52,17 @@ PROVIDER_LABELS: dict[str, str] = {
 PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "openrouter", "sakura", "ollama"]
 
 
+def provider_sort_key(provider_id: str) -> tuple[int, str]:
+    """プロバイダーの表示順ソートキー。PROVIDER_ORDER 未登録のものは末尾へ回す。
+
+    プリセット一覧の並び（第一キー=プロバイダー）を UI 横断で揃えるために使う。
+    """
+    try:
+        return (PROVIDER_ORDER.index(provider_id), provider_id)
+    except ValueError:
+        return (len(PROVIDER_ORDER), provider_id)
+
+
 def get_default_model(provider_id: str) -> str:
     """Return the default model string for a given provider ID."""
     cls = PROVIDER_REGISTRY.get(provider_id)

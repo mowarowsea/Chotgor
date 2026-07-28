@@ -29,6 +29,8 @@ export function presetNameOf(modelId: string): string {
 export interface Model {
   id: string;   // "{char_name}@{preset_name}"
   object: string;
+  /** プリセットのプロバイダーID（"anthropic" 等）。表示・並び順の根拠として backend が返す。 */
+  provider?: string;
 }
 
 export interface Session {

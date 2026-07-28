@@ -70,9 +70,12 @@
     </section>
 
     {# ── 登録済みモデル一覧 ───────────────────────────── #}
+    {# 一覧は「表示名・プロバイダー・モデルID」に絞る（モバイルで横はみ出しを防ぐ）。
+       思考レベル / タイムアウト / 登録日時 と編集・削除は行クリックのモーダルへ。 #}
     <section class="ch-section">
         <div class="ch-section__head">
             <h2 class="ch-section-title">登録済み</h2>
+            <span class="ch-hint">プロバイダー順 → 表示名順。行をクリックで詳細・編集</span>
         </div>
     {% if presets %}
     <div class="ch-table-wrap">
@@ -82,83 +85,18 @@
                 <th>表示名</th>
                 <th>プロバイダー</th>
                 <th>モデルID</th>
-                <th>思考レベル</th>
-                <th>タイムアウト秒</th>
-                <th>操作</th>
             </tr>
         </thead>
         <tbody>
             {% for preset in presets %}
-            <tr id="row-{{ preset.id }}">
+            <tr data-modal-open="preset-{{ preset.id }}" style="cursor:pointer">
                 <td>
-                    <span class="preset-display" id="name-display-{{ preset.id }}">{{ preset.name }}</span>
-                    <input type="text" class="ch-input preset-edit-field" id="name-edit-{{ preset.id }}"
-                           value="{{ preset.name }}" style="display:none">
-                    <div id="name-edit-error-{{ preset.id }}" class="ch-hint" style="display:none;color:var(--ch-danger)"></div>
+                    {{ preset.name }}
+                    <div class="ch-meta">{{ preset.created_at.strftime('%Y-%m-%d') if preset.created_at else '—' }}</div>
                 </td>
+                <td>{{ provider_labels.get(preset.provider, preset.provider) }}</td>
                 <td>
-                    <span class="preset-display" id="provider-display-{{ preset.id }}">
-                        {{ provider_labels.get(preset.provider, preset.provider) }}
-                    </span>
-                    <select class="ch-select preset-edit-field" id="provider-edit-{{ preset.id }}"
-                            style="display:none">
-                        {% for p in provider_order %}
-                        <option value="{{ p }}" {% if p == preset.provider %}selected{% endif %}>
-                            {{ provider_labels.get(p, p) }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </td>
-                <td>
-                    <span class="preset-display" id="modelid-display-{{ preset.id }}">
-                        {% if preset.model_id %}{{ preset.model_id }}{% else %}<span class="ch-meta">(デフォルト)</span>{% endif %}
-                    </span>
-                    <input type="text" class="ch-input ch-input--mono preset-edit-field" id="modelid-edit-{{ preset.id }}"
-                           value="{{ preset.model_id }}" placeholder="(デフォルト)" style="display:none"
-                           autocomplete="off">
-                </td>
-                <td>
-                    <span class="preset-display" id="thinking-display-{{ preset.id }}">
-                        {{ preset.thinking_level or 'default' }}
-                    </span>
-                    <select class="ch-select preset-edit-field" id="thinking-edit-{{ preset.id }}" style="display:none">
-                        {% for lvl in ['default', 'low', 'medium', 'high'] %}
-                        <option value="{{ lvl }}" {% if (preset.thinking_level or 'default') == lvl %}selected{% endif %}>{{ lvl }}</option>
-                        {% endfor %}
-                    </select>
-                </td>
-                <td>
-                    <span class="preset-display" id="timeout-display-{{ preset.id }}">
-                        {{ preset.timeout_seconds or 300 }}
-                    </span>
-                    <input type="number" class="ch-input preset-edit-field" id="timeout-edit-{{ preset.id }}"
-                           value="{{ preset.timeout_seconds or 300 }}" min="1" step="1" style="display:none">
-                </td>
-                <td>
-                    <!-- td の display は変えず、内側の div に flex を当てる -->
-                    <div class="preset-actions">
-                        <button type="button" class="ch-btn ch-btn--sm"
-                                onclick="startEdit('{{ preset.id }}')" id="edit-btn-{{ preset.id }}">
-                            編集
-                        </button>
-                        <form method="post" action="/ui/model-presets/{{ preset.id }}/edit"
-                              id="edit-form-{{ preset.id }}" style="display:none">
-                            <input type="hidden" name="name" id="edit-name-{{ preset.id }}">
-                            <input type="hidden" name="provider" id="edit-provider-{{ preset.id }}">
-                            <input type="hidden" name="model_id" id="edit-modelid-{{ preset.id }}">
-                            <input type="hidden" name="thinking_level" id="edit-thinking-{{ preset.id }}">
-                            <input type="hidden" name="timeout_seconds" id="edit-timeout-{{ preset.id }}">
-                            <button type="button" class="ch-btn ch-btn--primary ch-btn--sm"
-                                    onclick="submitEdit('{{ preset.id }}')">保存</button>
-                            <button type="button" class="ch-btn ch-btn--sm"
-                                    onclick="cancelEdit('{{ preset.id }}')">キャンセル</button>
-                        </form>
-                        <form method="post" action="/ui/model-presets/{{ preset.id }}/delete"
-                              style="display:contents"
-                              onsubmit="return confirm('{{ preset.name }} を削除しますか？')">
-                            <button type="submit" class="ch-btn ch-btn--danger ch-btn--sm">削除</button>
-                        </form>
-                    </div>
+                    {% if preset.model_id %}{{ preset.model_id }}{% else %}<span class="ch-meta">(デフォルト)</span>{% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -171,6 +109,79 @@
     </div>
     {% endif %}
     </section>
+
+    {# ── 詳細・編集モーダル群 ─────────────────────────── #}
+    {% for preset in presets %}
+    <div class="ch-modal" id="modal-preset-{{ preset.id }}" hidden data-modal>
+        <div class="ch-modal__card">
+            <div class="ch-modal__head">
+                <h3 class="ch-modal__title">{{ preset.name }}</h3>
+                <button type="button" class="ch-modal__close" data-modal-close aria-label="閉じる">✕</button>
+            </div>
+            <div class="ch-modal__body">
+                <form method="post" action="/ui/model-presets/{{ preset.id }}/edit"
+                      id="edit-form-{{ preset.id }}">
+                    <div class="ch-field">
+                        <label class="ch-label">表示名</label>
+                        <input type="text" name="name" class="ch-input"
+                               id="name-edit-{{ preset.id }}" value="{{ preset.name }}" required>
+                        <div id="name-edit-error-{{ preset.id }}" class="ch-hint"
+                             style="display:none;color:var(--ch-danger)"></div>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">プロバイダー</label>
+                        <select name="provider" class="ch-select" id="provider-edit-{{ preset.id }}"
+                                data-model-input="modelid-edit-{{ preset.id }}" required>
+                            {% for p in provider_order %}
+                            <option value="{{ p }}" {% if p == preset.provider %}selected{% endif %}>
+                                {{ provider_labels.get(p, p) }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">モデルID
+                            <span class="ch-hint">空欄 = デフォルト</span>
+                        </label>
+                        <input type="text" name="model_id" class="ch-input ch-input--mono"
+                               id="modelid-edit-{{ preset.id }}" value="{{ preset.model_id }}"
+                               placeholder="(デフォルト)" autocomplete="off">
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">思考レベル</label>
+                        <select name="thinking_level" class="ch-select">
+                            {% for lvl in ['default', 'low', 'medium', 'high'] %}
+                            <option value="{{ lvl }}" {% if (preset.thinking_level or 'default') == lvl %}selected{% endif %}>{{ lvl }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">タイムアウト秒
+                            <span class="ch-hint">既定300=5分</span>
+                        </label>
+                        <input type="number" name="timeout_seconds" class="ch-input"
+                               value="{{ preset.timeout_seconds or 300 }}" min="1" step="1">
+                    </div>
+                    <hr class="ch-divider">
+                    <div class="ch-meta" style="margin-top:12px">
+                        登録日:
+                        <strong>{{ preset.created_at.strftime('%Y-%m-%d %H:%M') if preset.created_at else '—' }}</strong>
+                        · ID: <span class="ch-code">{{ preset.id }}</span>
+                    </div>
+                </form>
+            </div>
+            <div class="ch-modal__actions">
+                <form method="post" action="/ui/model-presets/{{ preset.id }}/delete"
+                      onsubmit="return confirm('{{ preset.name }} を削除しますか？')">
+                    <button type="submit" class="ch-btn ch-btn--danger">削除</button>
+                </form>
+                <button type="button" class="ch-btn" data-modal-close>閉じる</button>
+                <button type="button" class="ch-btn ch-btn--primary"
+                        onclick="submitEdit('{{ preset.id }}')">保存</button>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
 </div>
 
 <script>
@@ -204,6 +215,14 @@ function submitNew() {
     nameInput.closest('form').submit();
 }
 
+/** モーダルの編集内容を検証してから送信する。 */
+function submitEdit(id) {
+    const nameInput = document.getElementById(`name-edit-${id}`);
+    const errorEl = document.getElementById(`name-edit-error-${id}`);
+    if (!validatePresetName(nameInput.value.trim(), errorEl)) return;
+    document.getElementById(`edit-form-${id}`).submit();
+}
+
 /** プロバイダーごとのモデル一覧キャッシュ。 */
 const _modelCache = {};
 
@@ -235,6 +254,7 @@ function fillDatalist(models) {
 /** プロバイダー変更時にモデル候補を更新する。 */
 async function onProviderChange(provider, modelInputId) {
     const modelInput = document.getElementById(modelInputId);
+    if (!modelInput) return;
     const models = await loadModels(provider);
     if (models.length > 0) {
         modelInput.setAttribute('list', 'provider-models-list');
@@ -266,50 +286,52 @@ document.getElementById('new-provider').addEventListener('change', function() {
     if (sel.value) onProviderChange(sel.value, 'new-model-id');
 })();
 
-/** 行を編集モードに切り替える。 */
-function startEdit(id) {
-    ['name', 'provider', 'modelid', 'thinking', 'timeout'].forEach(field => {
-        document.getElementById(`${field}-display-${id}`).style.display = 'none';
-        document.getElementById(`${field}-edit-${id}`).style.display = '';
+// 編集モーダルのプロバイダー変更（data-model-input で対応するモデルID入力を指す）
+document.querySelectorAll('select[data-model-input]').forEach(function(sel) {
+    sel.addEventListener('change', function() {
+        onProviderChange(this.value, this.getAttribute('data-model-input'));
     });
-    document.getElementById(`edit-btn-${id}`).style.display = 'none';
-    document.getElementById(`edit-form-${id}`).style.display = 'inline-flex';
-    document.getElementById(`edit-form-${id}`).style.gap = '4px';
+});
 
-    const provSel = document.getElementById(`provider-edit-${id}`);
-    onProviderChange(provSel.value, `modelid-edit-${id}`);
-    provSel.addEventListener('change', function() {
-        onProviderChange(this.value, `modelid-edit-${id}`);
+/**
+ * モーダル開閉の共通ハンドラ。`data-modal-open="<key>"` を押すと
+ * `#modal-<key>` の hidden 属性を外し、`data-modal-close` または背景クリックで閉じる。
+ */
+(function () {
+    function closeModal(el) {
+        if (!el) return;
+        const modal = el.closest('[data-modal]') || el;
+        modal.hidden = true;
+    }
+    document.addEventListener('click', function (e) {
+        const opener = e.target.closest('[data-modal-open]');
+        if (opener) {
+            const key = opener.getAttribute('data-modal-open');
+            const el = document.getElementById('modal-' + key);
+            if (el) {
+                el.hidden = false;
+                // 開いたモーダルのモデルID候補を、現在のプロバイダーで初期化する
+                const sel = el.querySelector('select[data-model-input]');
+                if (sel) onProviderChange(sel.value, sel.getAttribute('data-model-input'));
+            }
+            return;
+        }
+        if (e.target.closest('[data-modal-close]')) {
+            closeModal(e.target);
+            return;
+        }
+        // 背景クリック（モーダル本体の透明部分）で閉じる
+        if (e.target.matches('[data-modal]')) {
+            closeModal(e.target);
+        }
     });
-}
-
-/** 編集モードをキャンセルして表示モードに戻す。 */
-function cancelEdit(id) {
-    ['name', 'provider', 'modelid', 'thinking', 'timeout'].forEach(field => {
-        document.getElementById(`${field}-display-${id}`).style.display = '';
-        document.getElementById(`${field}-edit-${id}`).style.display = 'none';
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('[data-modal]:not([hidden])').forEach(function (m) {
+                m.hidden = true;
+            });
+        }
     });
-    document.getElementById(`edit-btn-${id}`).style.display = '';
-    document.getElementById(`edit-form-${id}`).style.display = 'none';
-    document.getElementById(`modelid-edit-${id}`).removeAttribute('list');
-}
-
-/** 編集内容を検証してから hidden フィールドにコピーしてフォームを送信する。 */
-function submitEdit(id) {
-    const nameInput = document.getElementById(`name-edit-${id}`);
-    const errorEl = document.getElementById(`name-edit-error-${id}`);
-    if (!validatePresetName(nameInput.value.trim(), errorEl)) return;
-
-    document.getElementById(`edit-name-${id}`).value = nameInput.value;
-    document.getElementById(`edit-provider-${id}`).value =
-        document.getElementById(`provider-edit-${id}`).value;
-    document.getElementById(`edit-modelid-${id}`).value =
-        document.getElementById(`modelid-edit-${id}`).value;
-    document.getElementById(`edit-thinking-${id}`).value =
-        document.getElementById(`thinking-edit-${id}`).value;
-    document.getElementById(`edit-timeout-${id}`).value =
-        document.getElementById(`timeout-edit-${id}`).value;
-    document.getElementById(`edit-form-${id}`).submit();
-}
+})();
 </script>
 {% endblock %}

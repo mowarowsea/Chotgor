@@ -865,11 +865,6 @@ html::-webkit-scrollbar-track,
 .ch-th-sort.is-asc::after { content: "\25B2"; opacity: 1; color: var(--ch-a); }
 .ch-th-sort.is-desc::after { content: "\25BC"; opacity: 1; color: var(--ch-a); }
 
-/* model presets の表示/編集セル（JS が display 切替する要素） */
-.preset-display { font-family: var(--ch-fm); font-size: 12px; color: var(--ch-t2); }
-.preset-edit-field { max-width: 100%; }
-.preset-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-
 /* end 揃えの自動列フォームグリッド（presets 追加フォーム等） */
 .ch-formgrid {
   display: grid;
