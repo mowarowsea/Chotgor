@@ -40,6 +40,8 @@ export function CharacterMessageRow({
   keepAvatarGutter = false,
   style,
   testId,
+  onPointerEnter,
+  onPointerLeave,
   children,
 }: {
   /** アバター要素（CharacterAvatar や NPC 用クリック可能アバター等）。 */
@@ -65,6 +67,9 @@ export function CharacterMessageRow({
   style?: React.CSSProperties;
   /** 行外側 div の data-testid。 */
   testId?: string;
+  /** 行のポインタ出入り。マウスホバーで操作ボタンを出す用途（呼び出し側で pointerType を見る）。 */
+  onPointerEnter?: React.PointerEventHandler<HTMLDivElement>;
+  onPointerLeave?: React.PointerEventHandler<HTMLDivElement>;
   children: React.ReactNode;
 }) {
   return (
@@ -72,6 +77,8 @@ export function CharacterMessageRow({
       className="group flex gap-2.5 max-w-full sm:max-w-[88%]"
       style={style}
       data-testid={testId}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
     >
       {/* アバター列。アバターは上端（全モードで位置を統一）、underAvatar は下端へ落とす。 */}
       <div className="flex flex-col items-center shrink-0">

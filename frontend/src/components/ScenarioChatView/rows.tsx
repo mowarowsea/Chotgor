@@ -2,7 +2,7 @@
  * シナリオチャットのバブル行 — ユーザ行・GM(NPC/narrator/character)行・あらすじ区切り。
  * UserBubbleRow / GMBubbleRow は React.memo 化されており、props が同一なら再描画しない。
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 
 import {
   Bubble,
@@ -12,6 +12,8 @@ import {
   MessageActionBar,
   ThinkingBlock,
   UserMessageActions,
+  revealBubble,
+  useBubbleRevealed,
 } from "../ChatBubbles";
 import { trimEnd } from "./helpers";
 import { Avatar } from "./npc";
@@ -214,8 +216,9 @@ function GMBubbleRowImpl({
   const displayContent = trimEnd(content);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(content);
-  // タッチ環境で鉛筆を出すためのタップ状態。マウス環境はホバー（group-hover）で出すので使わない。
-  const [tapped, setTapped] = useState(false);
+  // 鉛筆の露出先は画面全体で 1 つ（tapReveal ストア）。自分が露出中かだけを購読する。
+  const bubbleId = useId();
+  const revealed = useBubbleRevealed(bubbleId);
 
   // content prop がサーバ最新値に入れ替わったら編集テキストも初期化し直す。
   useEffect(() => {
@@ -285,23 +288,32 @@ function GMBubbleRowImpl({
   // 行が間延びするため。1 レスポンスは複数の話者ブロックに割れるので、末尾かどうかに
   // 関わらず全バブルに出す（末尾ブロックしか直せないと「無理やり直す」用途に届かない）。
   //
-  // ただし全バブルに常時見えていると煩いので、マウス環境は行ホバー、タッチ環境は
-  // バブルのタップで出す。透明なあいだは pointer-events を切って誤タップも防ぐ
-  // （sm 未満＝タッチ想定。sm 以上ではタップ状態を無視してホバーだけで判定する）。
-  const pencilReveal = tapped
-    ? "opacity-100 sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto"
-    : "opacity-0 pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto";
+  // ただし全バブルに常時見えていると煩いうえ、CSS で透明にするだけでは発話数ぶんの
+  // button/svg が DOM に残る。露出中のバブルでのみ描画する（露出先は画面で 1 つ）。
+  const canEdit = !editing && onEditCommit !== undefined;
   const editPencil =
-    !editing && onEditCommit ? (
-      <EditButton
-        onClick={() => setEditing(true)}
-        title="この発話を書き換える"
-        className={pencilReveal}
-      />
+    canEdit && revealed ? (
+      <EditButton onClick={() => setEditing(true)} title="この発話を書き換える" />
     ) : undefined;
 
-  // バブル本体のタップで鉛筆を出し入れする（タッチ環境用）。編集中は無効。
-  const toggleTapped = editing ? undefined : () => setTapped((v) => !v);
+  // 露出のきっかけ: マウスは行ホバー、タッチはバブルのタップ。
+  // タッチ環境でも mouse 相当のイベントが合成されるため、pointerType で振り分ける
+  // （振り分けないと、タップで開いた直後に click 相当が来て即座に閉じてしまう）。
+  const revealHandlers = canEdit
+    ? {
+        onPointerEnter: (e: React.PointerEvent) => {
+          if (e.pointerType === "mouse") revealBubble(bubbleId);
+        },
+        onPointerLeave: (e: React.PointerEvent) => {
+          if (e.pointerType === "mouse") revealBubble(null);
+        },
+      }
+    : {};
+  const onBubblePointerUp = canEdit
+    ? (e: React.PointerEvent) => {
+        if (e.pointerType !== "mouse") revealBubble(revealed ? null : bubbleId);
+      }
+    : undefined;
 
   // 操作バー（コピー / 枝ナビ / 破棄 / 再生成 / ログ）。
   // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
@@ -334,6 +346,7 @@ function GMBubbleRowImpl({
       <div
         className="group flex gap-2.5 max-w-full sm:max-w-[88%]"
         style={{ contentVisibility: "auto", containIntrinsicSize: "auto 100px" }}
+        {...revealHandlers}
       >
         {/* アバター列ぶんのスペーサー。空きスペースの下端に編集の鉛筆を置く。 */}
         <div className="flex flex-col items-center" style={{ width: 28, flexShrink: 0 }}>
@@ -344,7 +357,7 @@ function GMBubbleRowImpl({
             <div
               className="text-sm leading-relaxed italic text-ch-t2 break-words"
               style={{ textWrap: "pretty" }}
-              onClick={toggleTapped}
+              onPointerUp={onBubblePointerUp}
             >
               {body}
             </div>
@@ -370,6 +383,7 @@ function GMBubbleRowImpl({
         ) : undefined
       }
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 130px" }}
+      {...revealHandlers}
     >
       {/* PC ターンの想起記憶・WM・思考ブロックを 1on1 と同じ ThinkingBlock で折りたたみ表示する。 */}
       {reasoning && <div className="mb-1"><ThinkingBlock content={reasoning} /></div>}
@@ -378,7 +392,7 @@ function GMBubbleRowImpl({
         colored
         characterName={speaker_name}
         dashed={is_known === false}
-        onClick={toggleTapped}
+        onPointerUp={onBubblePointerUp}
       >
         {body}
       </Bubble>

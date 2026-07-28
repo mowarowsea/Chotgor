@@ -25,6 +25,7 @@ export {
   VariantNav,
 } from "./buttons";
 export { MessageActionBar } from "./MessageActionBar";
+export { revealBubble, useBubbleRevealed } from "./tapReveal";
 export {
   CharacterBubble,
   CharacterMessageRow,
