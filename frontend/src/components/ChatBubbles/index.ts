@@ -24,13 +24,9 @@ export {
   UserMessageActions,
   VariantNav,
 } from "./buttons";
+export { InlineEditor } from "./InlineEditor";
 export { MessageActionBar } from "./MessageActionBar";
-export { revealBubble, useBubbleRevealed } from "./tapReveal";
-export {
-  CharacterBubble,
-  CharacterMessageRow,
-  UserBubble,
-  mobileBubbleExtendClass,
-} from "./rows";
+export { useRevealControls } from "./tapReveal";
+export { CharacterBubble, CharacterMessageRow, UserBubble } from "./rows";
 export { ImageGrid, ImageModal } from "./images";
 export { MarkdownContent } from "./markdown";

@@ -28,7 +28,7 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
     <button
       onClick={handleCopy}
       title="コピー"
-      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0 ${className}`}
+      className={`text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0 ${className}`}
     >
       {done ? (
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" width={12} height={12}>
@@ -66,7 +66,7 @@ export function RegenerateButton({
     <button
       onClick={onClick}
       title={title}
-      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 text-xs transition-all p-1 rounded ${className}`}
+      className={`text-ch-t3 hover:text-ch-t2 text-xs transition-all p-1 rounded ${className}`}
     >
       ↺
     </button>
@@ -96,7 +96,7 @@ export function DiscardButton({
     <button
       onClick={onClick}
       title={title}
-      className={`opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-red-500 transition-all p-1 rounded ${className}`}
+      className={`text-ch-t3 hover:text-red-500 transition-all p-1 rounded ${className}`}
       aria-label="この応答を破棄"
     >
       <svg
@@ -124,9 +124,9 @@ export function DiscardButton({
  * `UserMessageActions` 内の鉛筆と同じ見た目を、GM/PC 発話の手動書き換えでも
  * 使えるように切り出したもの。
  *
- * 他のボタンと違い出現条件（ホバー / タップ）をクラスに持たない。全バブルに
- * 常時見えていると煩いので、いつ見せるかは呼び出し側が `className` の opacity /
- * pointer-events で決めること。
+ * 他の操作ボタンと同じく、いつ見せるかは呼び出し側が描画の有無で決める
+ * （`useRevealControls` の `revealed`）。CSS で透明にする方式は、発話数ぶんの
+ * button/svg が DOM に残り続けるため使わない。
  */
 export function EditButton({
   onClick,
@@ -199,29 +199,30 @@ export function VariantNav({
  *
  * バブルの直下に置き、親の `items-end` により右寄せされる前提。
  * 1on1 / シナリオのユーザーバブルで見た目・並びを共有する（DRY）。
+ *
+ * ボタンは露出中だけ描画する（発話数ぶんの button/svg を DOM に残さないため）。
+ * 枠は常に描き、高さも固定する — 中身の出入りでバブルの下端が動くと、
+ * 読んでいる最中にレイアウトがずれるため。
  */
 export function UserMessageActions({
   copyText,
   onEdit,
+  revealed = true,
 }: {
   /** コピー対象テキスト。 */
   copyText: string;
   /** 編集開始コールバック（無指定で編集ボタン非表示）。 */
   onEdit?: () => void;
+  /** false のときボタンを描画しない（枠と高さは保つ）。 */
+  revealed?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-0.5 mt-0.5">
-      <CopyButton text={copyText} />
-      {onEdit && (
-        <button
-          onClick={onEdit}
-          title="編集"
-          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-ch-t3 hover:text-ch-t2 transition-all p-1 rounded shrink-0"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={12} height={12}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-          </svg>
-        </button>
+    <div className="flex items-center gap-0.5 mt-0.5 min-h-[20px]">
+      {revealed && (
+        <>
+          <CopyButton text={copyText} />
+          {onEdit && <EditButton onClick={onEdit} />}
+        </>
       )}
     </div>
   );

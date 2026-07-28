@@ -46,6 +46,7 @@ export function MessageActionBar({
   onNextVariant,
   logMessageId,
   elapsedMs,
+  revealed = true,
 }: {
   /** コピーボタンがコピーするテキスト。 */
   copyText: string;
@@ -67,6 +68,11 @@ export function MessageActionBar({
   logMessageId?: string;
   /** モデルリクエスト〜応答完了までの経過時間（ミリ秒）。指定時のみ表示する。 */
   elapsedMs?: number;
+  /**
+   * false のときコピー・破棄・再生成を描画しない（枝ナビ・経過時間・ログは残す）。
+   * 発話数ぶんの button/svg を DOM に積まないための制御で、行の高さは保つ。
+   */
+  revealed?: boolean;
 }) {
   const [logExpanded, setLogExpanded] = useState(false);
   const [entry, setEntry] = useState<LogEntry | null>(null);
@@ -134,9 +140,10 @@ export function MessageActionBar({
 
   return (
     <>
-      {/* 操作行: コピー / 経過時間 / ログ / 再生成（再生成のみ右端へ） */}
-      <div className="flex items-center gap-0.5 -ml-1 mt-0.5 w-full">
-        <CopyButton text={copyText} />
+      {/* 操作行: コピー / 経過時間 / ログ / 枝ナビ・破棄・再生成（後者は右端へ）。
+          露出でボタンが出入りしても行の高さは変えない（読んでいる最中に本文がずれるため）。 */}
+      <div className="flex items-center gap-0.5 -ml-1 mt-0.5 w-full min-h-[24px]">
+        {revealed && <CopyButton text={copyText} />}
         {elapsedMs !== undefined && (
           <span
             className="text-[10px] text-ch-t4 font-mono px-1 select-none"
@@ -174,8 +181,10 @@ export function MessageActionBar({
               onNext={onNextVariant ?? (() => {})}
             />
           )}
-          {onDiscard && <DiscardButton onClick={onDiscard} title={discardTitle} />}
-          {onRegenerate && (
+          {revealed && onDiscard && (
+            <DiscardButton onClick={onDiscard} title={discardTitle} />
+          )}
+          {revealed && onRegenerate && (
             <RegenerateButton onClick={onRegenerate} title={regenerateTitle} />
           )}
         </div>

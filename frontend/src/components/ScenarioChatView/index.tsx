@@ -24,11 +24,11 @@ import type {
   ScenarioTurn,
 } from "../../api";
 import { useHeaderVisibilityOnScroll } from "../../hooks/useHeaderVisibilityOnScroll";
-import { CharacterAvatar } from "../ChatBubbles";
+import { CharacterAvatar, UserBubble } from "../ChatBubbles";
 import MessageInput from "../MessageInput";
 import { trimEnd } from "./helpers";
 import { NpcDetailDialog } from "./npc";
-import { GMBubbleRow, SynopsisDivider, UserBubbleRow } from "./rows";
+import { GMBubbleRow, SynopsisDivider } from "./rows";
 
 /** ストリーミング中の未確定吹き出し情報。
  *
@@ -363,11 +363,17 @@ export default function ScenarioChatView({
           let bubble: React.ReactNode;
           if (t.speaker_type === "user") {
             bubble = (
-              <UserBubbleRow
+              // ユーザ発話バブルは 1on1 と共通（右寄せ・編集フォーム・操作バー）。
+              // 編集確定で以降のターンが消えるため、注記でそれを伝える。
+              <UserBubble
                 content={t.content}
-                speaker_name={t.speaker_name}
-                canEdit={session.status === "active" && !sending}
-                onCommit={(newContent) => onEditUserTurn(t.id, newContent)}
+                userName={t.speaker_name}
+                editNote="Ctrl+Enter で送信 / Esc でキャンセル（この発言以降は削除されます）"
+                onEdit={
+                  session.status === "active" && !sending
+                    ? (newContent) => onEditUserTurn(t.id, newContent)
+                    : undefined
+                }
               />
             );
           } else {

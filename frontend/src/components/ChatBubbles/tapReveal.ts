@@ -10,7 +10,8 @@
  * 一覧コンポーネント全体を再レンダリングさせないため。購読側のスナップショットは
  * boolean なので、状態が実際に変わったバブル（高々 2 つ）だけが再描画される。
  */
-import { useSyncExternalStore } from "react";
+import type React from "react";
+import { useId, useSyncExternalStore } from "react";
 
 let revealedId: string | null = null;
 const listeners = new Set<() => void>();
@@ -23,17 +24,56 @@ function subscribe(onChange: () => void) {
 }
 
 /** 露出させるバブルを差し替える（null で閉じる）。前に開いていたものは自動的に閉じる。 */
-export function revealBubble(id: string | null) {
+function revealBubble(id: string | null) {
   if (revealedId === id) return;
   revealedId = id;
   for (const fn of listeners) fn();
 }
 
 /** 自分が露出中かを購読する。 */
-export function useBubbleRevealed(id: string): boolean {
+function useBubbleRevealed(id: string): boolean {
   return useSyncExternalStore(
     subscribe,
     () => revealedId === id,
     () => false,
   );
+}
+
+/**
+ * 1 バブルぶんの露出制御。1on1 / グループ / シナリオの全モードで共有する。
+ *
+ * 露出のきっかけはマウスが行ホバー、タッチがバブルのタップ。タッチ環境でも
+ * mouse 相当のイベントが合成されるため `pointerType` で振り分ける（振り分けないと、
+ * タップで開いた直後に click 相当が来て即座に閉じてしまう）。
+ *
+ * @param enabled false のときハンドラを配らない（送信中・終了セッション等）。
+ * @returns `revealed`（描画すべきか）、行へ広げる `rowProps`、バブルへ広げる `bubbleProps`。
+ */
+export function useRevealControls(enabled: boolean): {
+  revealed: boolean;
+  rowProps: {
+    onPointerEnter?: React.PointerEventHandler;
+    onPointerLeave?: React.PointerEventHandler;
+  };
+  bubbleProps: { onPointerUp?: React.PointerEventHandler };
+} {
+  const id = useId();
+  const revealed = useBubbleRevealed(id);
+  if (!enabled) return { revealed: false, rowProps: {}, bubbleProps: {} };
+  return {
+    revealed,
+    rowProps: {
+      onPointerEnter: (e) => {
+        if (e.pointerType === "mouse") revealBubble(id);
+      },
+      onPointerLeave: (e) => {
+        if (e.pointerType === "mouse") revealBubble(null);
+      },
+    },
+    bubbleProps: {
+      onPointerUp: (e) => {
+        if (e.pointerType !== "mouse") revealBubble(revealed ? null : id);
+      },
+    },
+  };
 }

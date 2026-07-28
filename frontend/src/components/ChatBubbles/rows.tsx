@@ -8,19 +8,14 @@ import { CharacterAvatar } from "./avatar";
 import { Bubble } from "./Bubble";
 import { UserMessageActions } from "./buttons";
 import { ImageGrid } from "./images";
+import { InlineEditor } from "./InlineEditor";
 import { MarkdownContent } from "./markdown";
 import { MessageActionBar } from "./MessageActionBar";
+import { useRevealControls } from "./tapReveal";
 import { ThinkingBlock } from "./ThinkingBlock";
 
-/**
- * バブル領域をスマホ幅で左へ広げ、左端をアバター左端に揃えるためのクラス。
- *
- * アバター幅(28px) + 余白(gap-2.5 = 10px) = 38px ぶん左へ拡張する。
- * sm 以上では従来どおりアバター右のインデント表示に戻す。
- * 1on1 / グループ / シナリオの全モードで共有する。
- */
-export const mobileBubbleExtendClass =
-  "-ml-[38px] w-[calc(100%_+_38px)] sm:ml-0 sm:w-full";
+/** ユーザ発話バブルの最大幅。キャラクター行（88%）より狭くして左右の非対称を保つ。 */
+const userBubbleMaxWidthClass = "max-w-full sm:max-w-[70%]";
 
 /**
  * キャラクター発話の共通行レイアウト（アバター + 名前行 + バブル領域）。
@@ -30,14 +25,14 @@ export const mobileBubbleExtendClass =
  *
  * - アバターは常に列の上端。
  * - 行全体の最大幅は 88%（アバター込み）。
- * - `children`（バブル本体・操作バー等）はスマホ幅で左端をアバター左端に揃える。
+ * - アバター列は画面幅によらず確保する。列の下端は操作ボタン（鉛筆）の置き場所で、
+ *   スマホ幅でバブルを左へ拡張すると、そこがバブルに覆われてしまうため。
  */
 export function CharacterMessageRow({
   avatar,
   name,
   nameSuffix,
   underAvatar,
-  keepAvatarGutter = false,
   style,
   testId,
   onPointerEnter,
@@ -50,19 +45,8 @@ export function CharacterMessageRow({
   name: string;
   /** 名前の右に添える要素（@プリセット名・(ephemeral) ラベル等）。 */
   nameSuffix?: React.ReactNode;
-  /**
-   * アバター列の下端（バブル左下の余白）へ置く要素。編集の鉛筆など。
-   * スマホ幅でバブルに覆われないよう、`keepAvatarGutter` と併せて使うこと。
-   */
+  /** アバター列の下端（バブル左下の余白）へ置く要素。編集の鉛筆など。 */
   underAvatar?: React.ReactNode;
-  /**
-   * true でスマホ幅でもバブルを左へ拡張せず、アバター列ぶんの余白を残す。
-   *
-   * `underAvatar` の有無で切り替えると、要素が出入りするたびにバブル幅が
-   * 38px 変わってレイアウトががたつく（ストリーミング中は編集不可＝鉛筆なし）。
-   * 幅は行の性格で固定し、要素の有無とは独立させる。
-   */
-  keepAvatarGutter?: boolean;
   /** 行外側 div への追加 style（content-visibility 最適化用）。 */
   style?: React.CSSProperties;
   /** 行外側 div の data-testid。 */
@@ -86,22 +70,12 @@ export function CharacterMessageRow({
         {underAvatar && <div className="mt-auto pb-1">{underAvatar}</div>}
       </div>
       <div className="flex-1 min-w-0">
-        {/*
-         * 名前行: キャラクター名 + 補足。
-         * スマホ幅で下のバブル領域を左へ広げるときは、名前行にアバターと同じ高さ(28px)を
-         * 確保してバブルがアバターへ重ならないようにする。左拡張しない
-         * （underAvatar あり）ときはバブルがアバターの右に収まるので不要。
-         */}
-        <div
-          className={`flex items-center gap-1.5 flex-wrap mb-1 text-[11px] sm:min-h-0 ${
-            keepAvatarGutter ? "" : "min-h-[28px]"
-          }`}
-        >
+        {/* 名前行: キャラクター名 + 補足。アバター上端と揃う。 */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-1 text-[11px]">
           <span className="font-semibold text-ch-t2">{name}</span>
           {nameSuffix}
         </div>
-        {/* バブル領域: スマホ幅では左端をアバター左端に揃える（アバター列を残す行では拡張しない） */}
-        <div className={keepAvatarGutter ? "w-full" : mobileBubbleExtendClass}>{children}</div>
+        <div className="w-full">{children}</div>
       </div>
     </div>
   );
@@ -117,8 +91,12 @@ export function CharacterMessageRow({
  * グループ/シナリオではキャラクター別の配色（cb0〜cb9）を、1on1 ではニュートラル面を使う。
  *
  * 行レイアウトは共通の CharacterMessageRow、操作バーは共通の MessageActionBar に委譲する。
+ *
+ * パフォーマンス: 末尾で `React.memo` 化される（同名定数を後段で再代入）。
+ * 親から inline closure で渡る `onRegenerate` を比較対象から外し、表示に効く
+ * プリミティブ props だけで再レンダ可否を判定する。
  */
-export function CharacterBubble({
+function CharacterBubbleImpl({
   characterName,
   presetName,
   content,
@@ -146,6 +124,9 @@ export function CharacterBubble({
   /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。 */
   elapsedMs?: number;
 }) {
+  // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
+  const { revealed, rowProps, bubbleProps } = useRevealControls(!sending);
+
   return (
     <CharacterMessageRow
       testId="character-bubble"
@@ -157,11 +138,19 @@ export function CharacterBubble({
           <span className="font-mono text-ch-t3 text-[0.95em]">@{presetName}</span>
         ) : undefined
       }
+      // 画面外のレイアウト・ペイントをスキップする（長いセッションでの DOM 肥大対策）。
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 130px" }}
+      {...rowProps}
     >
       {reasoning && <div className="mb-1"><ThinkingBlock content={reasoning} /></div>}
 
       {/* バブル本体 */}
-      <Bubble kind="character" colored={colored} characterName={characterName}>
+      <Bubble
+        kind="character"
+        colored={colored}
+        characterName={characterName}
+        {...bubbleProps}
+      >
         <MarkdownContent content={content} />
       </Bubble>
 
@@ -172,6 +161,7 @@ export function CharacterBubble({
           onRegenerate={onRegenerate}
           logMessageId={logMessageId}
           elapsedMs={elapsedMs}
+          revealed={revealed}
         />
       )}
     </CharacterMessageRow>
@@ -185,44 +175,37 @@ export function CharacterBubble({
 /**
  * ユーザーのチャットメッセージ。
  * 右寄せ・ニュートラルフラットデザイン。インライン編集フォームを内包する。
+ *
+ * パフォーマンス: 末尾で `React.memo` 化される（同名定数を後段で再代入）。
+ * 親から inline closure で渡る `onEdit` は比較対象から外す。
  */
-export function UserBubble({
+function UserBubbleImpl({
   content,
   userName,
   images,
   sending = false,
   onEdit,
+  editNote,
 }: {
   content: string;
   userName: string;
   images?: string[];
   sending?: boolean;
   onEdit?: (newContent: string) => void;
+  /** 編集フォームのボタン行に添える注記（シナリオの「この発言以降は削除されます」等）。 */
+  editNote?: string;
 }) {
   const [editing, setEditing] = useState(false);
-  const [editText, setEditText] = useState(content);
-
-  const handleEditSubmit = () => {
-    const text = editText.trim();
-    if (!text) return;
-    setEditing(false);
-    onEdit?.(text);
-  };
-
-  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 下部の入力欄（MessageInput）と同じく Ctrl+Enter で送信する。
-    if (e.key === "Enter" && e.ctrlKey) {
-      e.preventDefault();
-      handleEditSubmit();
-    }
-    if (e.key === "Escape") {
-      setEditing(false);
-      setEditText(content);
-    }
-  };
+  // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
+  const { revealed, rowProps, bubbleProps } = useRevealControls(!sending && !editing);
 
   return (
-    <div className="group flex flex-col items-end gap-0.5 max-w-full sm:max-w-[70%] ml-auto">
+    <div
+      className={`group flex flex-col items-end gap-0.5 ml-auto ${userBubbleMaxWidthClass}`}
+      // 画面外のレイアウト・ペイントをスキップする（長いセッションでの DOM 肥大対策）。
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
+      {...rowProps}
+    >
       {/* ユーザー名ラベル */}
       <span className="text-[11px] text-ch-t4 pr-1">{userName}</span>
 
@@ -230,43 +213,27 @@ export function UserBubble({
       {images && images.length > 0 && <ImageGrid imageIds={images} />}
 
       {editing ? (
-        <div className="flex flex-col gap-2 w-full">
-          <textarea
-            value={editText}
-            onChange={(e) => setEditText(e.target.value)}
-            onKeyDown={handleEditKeyDown}
-            rows={3}
-            autoFocus
-            className="rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none w-full"
-            style={{ background: "rgb(var(--ch-ub))", color: "rgb(var(--ch-ut))" }}
-          />
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={() => { setEditing(false); setEditText(content); }}
-              className="text-ch-t3 hover:text-ch-t2 text-xs px-3 py-1.5 rounded transition-colors"
-            >
-              キャンセル
-            </button>
-            <button
-              onClick={handleEditSubmit}
-              disabled={!editText.trim()}
-              className="text-white text-xs px-3 py-1.5 rounded font-medium transition-colors disabled:opacity-30"
-              style={{ background: "var(--ch-accent)" }}
-            >
-              送信
-            </button>
-          </div>
-        </div>
+        <InlineEditor
+          value={content}
+          tone="user"
+          note={editNote}
+          onSubmit={(newContent) => {
+            setEditing(false);
+            onEdit?.(newContent);
+          }}
+          onCancel={() => setEditing(false)}
+        />
       ) : (
         <>
           {/* バブル本体（インデント無し・可変幅）。操作ボタンは下部に配置する。 */}
-          <Bubble kind="user">
+          <Bubble kind="user" {...bubbleProps}>
             <MarkdownContent content={content} />
           </Bubble>
           {!sending && (
             <UserMessageActions
               copyText={content}
               onEdit={onEdit ? () => setEditing(true) : undefined}
+              revealed={revealed}
             />
           )}
         </>
@@ -274,3 +241,43 @@ export function UserBubble({
     </div>
   );
 }
+
+/**
+ * CharacterBubble / UserBubble を `React.memo` でラップする。
+ *
+ * 親（MessageList）は各バブルへ inline closure でコールバックを渡すため、既定の
+ * 浅い比較では関数 props の参照が毎レンダリングで変わって memo が無効になる。
+ * 表示に効くプリミティブ props だけを比較し、関数 props は無視する
+ * （シナリオの GMBubbleRow / UserBubbleRow と同じ方針）。
+ *
+ * これにより、ストリーミング中に最新バブルだけが変化しても既存バブルは
+ * 再レンダリングされない。
+ */
+export const CharacterBubble = React.memo(CharacterBubbleImpl, (prev, next) => {
+  return (
+    prev.characterName === next.characterName &&
+    prev.presetName === next.presetName &&
+    prev.content === next.content &&
+    prev.reasoning === next.reasoning &&
+    prev.colored === next.colored &&
+    prev.hue === next.hue &&
+    prev.sending === next.sending &&
+    prev.logMessageId === next.logMessageId &&
+    prev.elapsedMs === next.elapsedMs &&
+    // 関数の同一性は見ないが「渡されているか」は見る（操作の可否が切り替わるため）。
+    (prev.onRegenerate === undefined) === (next.onRegenerate === undefined)
+  );
+});
+
+export const UserBubble = React.memo(UserBubbleImpl, (prev, next) => {
+  return (
+    prev.content === next.content &&
+    prev.userName === next.userName &&
+    prev.sending === next.sending &&
+    prev.editNote === next.editNote &&
+    // 関数の同一性は見ないが「渡されているか」は見る（編集の可否が切り替わるため）。
+    (prev.onEdit === undefined) === (next.onEdit === undefined) &&
+    // 画像は ID の並びで比較する（親が毎回新しい配列を渡しても参照差で落ちないように）。
+    (prev.images ?? []).join(",") === (next.images ?? []).join(",")
+  );
+});
