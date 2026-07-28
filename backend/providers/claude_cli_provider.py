@@ -82,12 +82,28 @@ def _build_tools_flag(allowed_tools: dict) -> str:
     return ""
 
 
-def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default", allowed_tools: dict | None = None) -> list[str]:
+def _build_cli_args(
+    system_prompt: str,
+    model: str = "",
+    effort: str = "default",
+    allowed_tools: dict | None = None,
+    mcp_enabled: bool = True,
+) -> list[str]:
     """claude CLI 呼び出しの共通フラグ列を組み立てる。
 
     model が空文字列の場合は --model フラグを付けない（CLIデフォルトを使用）。
     effort が "default" の場合は --effort フラグを付けない。
     allowed_tools が None または空の場合は --tools "" で全組み込みツールを無効化する。
+
+    Args:
+        mcp_enabled: False なら --strict-mcp-config を付け、Chotgor MCP サーバーを
+            一切接続しない状態で CLI を起動する。chotgor MCP はユーザグローバルの
+            ``~/.claude.json`` に登録されているため、何もしないと cwd に関わらず
+            接続され、ツール無しのはずの問い合わせ（generate()）にもツール一覧が
+            見えてしまう。その経路は character_id を env へ渡していないので、
+            キャラクターがツールへ手を伸ばしても必ず
+            ``[Error: CHOTGOR_CHARACTER_ID が設定されていません]`` になる
+            （debug/2a46c2cb）。「使えない手を見せない」ために閉じる。
     """
     tools_str = _build_tools_flag(allowed_tools or {})
     args = [
@@ -102,6 +118,10 @@ def _build_cli_args(system_prompt: str, model: str = "", effort: str = "default"
         "--thinking-display", "summarized", # thinking blockが出ない問題対応。効かないかも。（ClaudeCodeCLI Issueに記載あり）
         "--include-partial-messages", # 出力のストリーム化。効いてないっぽい。
     ]
+    if not mcp_enabled:
+        # --mcp-config を渡さずに --strict-mcp-config を付けると、参照する MCP 設定が
+        # 「指定なし」に確定し、接続されるサーバーが 0 本になる。
+        args.append("--strict-mcp-config")
     if model:
         args.extend(["--model", model])
     if effort and effort != "default":
@@ -120,6 +140,9 @@ def _mcp_pending_in_init(event: dict) -> bool:
     未接続のままリクエストが走ると、そのターンはツールが一切提供されず、
     キャラクターが「ツール使用の演技」（擬似構文のテキスト出力）に流れる
     事故が起きる（debug/cfd5bf43）。init 以外のイベントには常に False。
+
+    --strict-mcp-config で MCP を意図的に閉じた起動（mcp_enabled=False）では
+    mcp_servers が空リストになるため、判定は自然に False になりリトライも走らない。
     """
     if event.get("type") != "system" or event.get("subtype") != "init":
         return False
@@ -458,6 +481,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         messages: list[dict],
         batch_context: dict | None = None,
         default_origin: str = "real",
+        mcp_enabled: bool = True,
     ) -> str:
         """Claude CLI を呼び出して raw stdout 文字列を返す内部メソッド。
 
@@ -468,6 +492,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                 環境変数として MCP サーバーへ渡る（generate_with_tools 経由のみ使用）。
             default_origin: 記憶/スレッド保存時の origin ラベル（"real" / "usual" / "interlude"）。
                 "real" 以外なら CHOTGOR_DEFAULT_ORIGIN として MCP サーバーへ伝搬される。
+            mcp_enabled: False なら Chotgor MCP を接続せずに起動する（_build_cli_args 参照）。
         """
         has_images = any(
             isinstance(item, dict) and item.get("type") == "image_url"
@@ -502,7 +527,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         })
 
         try:
-            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(batch_context=batch_context, default_origin=default_origin), allowed_tools=self.allowed_tools)
+            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(batch_context=batch_context, default_origin=default_origin), allowed_tools=self.allowed_tools, mcp_enabled=mcp_enabled)
 
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
@@ -541,8 +566,16 @@ class ClaudeCliProvider(BaseLLMProvider):
                     pass
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
-        """Claude CLI を呼び出してテキスト応答を返す。"""
-        raw = await self._run_generate_raw(system_prompt, messages)
+        """Claude CLI を呼び出してテキスト応答を返す（ツール無しの単発問い合わせ）。
+
+        generate() は「ツールを使わせない問い合わせ」の契約であり、呼び出し側
+        （ask_character・ambience judge・計器判定・GM 予定生成・翻訳）はいずれも
+        応答テキストのパース結果だけを使う。それらの経路は provider へ character_id を
+        渡さないため MCP ツールを呼んでも必ず失敗する。使えない手を見せて空振らせない
+        よう、MCP を閉じて起動する（mcp_enabled=False）。
+        ツールが要る問い合わせは ask_character_with_tools → generate_with_tools を使う。
+        """
+        raw = await self._run_generate_raw(system_prompt, messages, mcp_enabled=False)
         return _parse_stream_json(raw)
 
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
@@ -751,10 +784,12 @@ async def _run_claude(
     effort: str = "default",
     env: dict | None = None,
     allowed_tools: dict | None = None,
+    mcp_enabled: bool = True,
 ) -> subprocess.CompletedProcess:
     """Run claude CLI in a thread (Windows asyncio SelectorEventLoop workaround).
 
     env が None の場合は _clean_env() をフォールバックとして使用する。
+    mcp_enabled=False なら Chotgor MCP を接続せずに起動する（_build_cli_args 参照）。
     """
     if env is None:
         env = _clean_env()
@@ -768,7 +803,7 @@ async def _run_claude(
         import threading
 
         proc, pre_lines = _spawn_cli_mcp_guarded(
-            _build_cli_args(system_content, model, effort, allowed_tools),
+            _build_cli_args(system_content, model, effort, allowed_tools, mcp_enabled),
             msg_content.encode("utf-8"),
             env,
         )

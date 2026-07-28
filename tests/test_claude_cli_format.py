@@ -150,6 +150,76 @@ class TestMakeEnvBatchContext:
         assert json.loads(raw) == {"force_insert_memory": True}
 
 
+class TestMcpEnabledFlag:
+    """「ツール無しの問い合わせでは MCP を閉じる」契約のテスト。
+
+    Chotgor MCP サーバはユーザグローバルの ``~/.claude.json`` に登録されているため、
+    CLI をどの cwd で起動しても接続され、ツール一覧がキャラクターへ提示される。
+    一方 ``generate()`` 経路（ask_character・ambience judge・計器判定・GM 予定生成・翻訳）は
+    provider へ character_id を渡さないため、MCP サーバ側で
+    ``[Error: CHOTGOR_CHARACTER_ID が設定されていません]`` になり、ツールは必ず失敗する。
+    実際に Chronicle でキャラクターがスレッド更新ツールを6回叩いて全滅し、
+    JSON 出力へ自力リカバリするという事故が起きた（debug/2a46c2cb）。
+
+    そこで ``generate()`` は ``--strict-mcp-config``（--mcp-config 未指定と組み合わせて
+    MCP サーバ 0 本）で起動し、使えない手を最初から見せない。逆に ``generate_with_tools()``
+    は MCP ループ本体なので、絶対に閉じてはならない。本テスト群はこの左右の振り分けを守る。
+    """
+
+    def _args(self, **kwargs):
+        from backend.providers.claude_cli_provider import _build_cli_args
+
+        return _build_cli_args("sys prompt", **kwargs)
+
+    def test_default_keeps_mcp_connected(self):
+        """既定（mcp_enabled 省略）では --strict-mcp-config を付けないこと。
+
+        tool-use ループ（generate_with_tools）はこの既定で動く。ここに紛れ込むと
+        記憶ツールが丸ごと使えなくなり、キャラクターが記憶を残せなくなる。
+        """
+        assert "--strict-mcp-config" not in self._args()
+
+    def test_disabled_adds_strict_flag_without_mcp_config(self):
+        """mcp_enabled=False で --strict-mcp-config が付き、--mcp-config は付かないこと。
+
+        「--mcp-config を渡さずに --strict-mcp-config を付ける」の組み合わせが
+        サーバー 0 本の条件そのものなので、両方をまとめて検証する。
+        """
+        args = self._args(mcp_enabled=False)
+        assert "--strict-mcp-config" in args
+        assert "--mcp-config" not in args
+
+    async def test_generate_closes_mcp(self, monkeypatch):
+        """generate() が mcp_enabled=False で CLI を起動すること。"""
+        from backend.providers.claude_cli_provider import ClaudeCliProvider
+
+        captured = {}
+
+        async def fake_raw(self, system_prompt, messages, **kwargs):
+            captured.update(kwargs)
+            return ""
+
+        monkeypatch.setattr(ClaudeCliProvider, "_run_generate_raw", fake_raw)
+        await ClaudeCliProvider(character_name="はる").generate("sys", [{"role": "user", "content": "hi"}])
+        assert captured.get("mcp_enabled") is False
+
+    async def test_generate_with_tools_keeps_mcp(self, monkeypatch):
+        """generate_with_tools() は MCP を閉じないこと（mcp_enabled を落とさない）。"""
+        from backend.providers.claude_cli_provider import ClaudeCliProvider
+
+        captured = {}
+
+        async def fake_raw(self, system_prompt, messages, **kwargs):
+            captured.update(kwargs)
+            return ""
+
+        monkeypatch.setattr(ClaudeCliProvider, "_run_generate_raw", fake_raw)
+        await ClaudeCliProvider(character_name="はる", character_id="char-abc").generate_with_tools(
+            "sys", [{"role": "user", "content": "hi"}], None,
+        )
+        assert captured.get("mcp_enabled", True) is True
+
+
 class TestExtractUsageFromStreamJson:
     """Claude CLI の stream-json 出力からトークン使用量を抽出する関数のテスト。
 

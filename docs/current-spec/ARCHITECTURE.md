@@ -175,6 +175,15 @@ frontend useChat
     このため provider は stream-json 先頭の init イベントで `mcp_servers[].status` を
     検査し、未接続なら CLI プロセスを作り直す（最大3回起動、上限到達時は
     未接続のまま続行）。全呼び出し経路（stream 2系統＋非stream `_run_claude`）共通。
+  - **ツール無し問い合わせでは MCP を閉じる**: chotgor MCP はユーザグローバルの
+    `~/.claude.json` に登録されているため、放っておくと cwd に関わらず接続され、
+    ツールを使わせない契約の `generate()` にもツール一覧が見えてしまう。その経路は
+    provider へ character_id を渡さないので、キャラクターが手を伸ばしても必ず
+    `[Error: CHOTGOR_CHARACTER_ID が設定されていません]` になる（debug/2a46c2cb で
+    Chronicle が6回空振り→JSON へ自力リカバリ）。`generate()` は
+    `--strict-mcp-config`（`--mcp-config` 未指定と併せて MCP サーバー0本）で起動し、
+    使えない手を最初から見せない。`generate_with_tools()` は MCP ループ本体なので
+    従来どおり接続する。
 - ツール実行は両経路とも `lib/tool_event_recorder.py` が `tool_call_events` テーブルへ
   実行時記録する（tool-use 経路は `ToolExecutor.execute()` の関門で、タグ経路は各
   `*_from_text` で記録）。Logs 画面のツール使用表示はこのイベントを読むだけで、
@@ -284,6 +293,15 @@ chronicle_job / forget_job など
   → ask_character() / ask_character_with_tools()
   → _collect_wm_blocks() で 1on1 と同じ WM ブロックを注入して LLM コール
 ```
+
+二つの入口はツールの有無で明確に分かれる。`ask_character()` は応答テキストを
+パースするだけの問い合わせ（chronicle の棚卸し JSON・forget のフォールバック
+`[DELETE: ...]`・intent_pickup・圧力インタビュー・ask_visibility）で、provider へ
+character_id を渡さない＝**ツールは提供されない**。ツールを使わせたい処理は
+`ask_character_with_tools()` を使う（forget の昇華ループ・actions/runner・dilemma・
+週次バッチ）。claude_cli では前者が MCP ごと閉じた状態で起動する（上記参照）ため、
+`ask_character()` 側の処理でツールが要るようになったら、プロンプトを足すのではなく
+`ask_character_with_tools()` へ移すこと。
 
 ### めぐり（巡り / Aliveness — タイムラインと動機経済）
 
