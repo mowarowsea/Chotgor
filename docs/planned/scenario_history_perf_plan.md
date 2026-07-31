@@ -131,8 +131,47 @@ false へ戻る）を effect の依存に入れて**購読し直す**ことで�
 | `api/scenario_chat/sessions.py` | `GET /turns` と `POST /turns/activate` に `limit` / `before_index` クエリ |
 | `frontend/src/api/scenario.ts` | `ScenarioTurn.raw_response` → `response_key`、取得系にページング引数 |
 | `frontend/src/hooks/useScenarioChat.ts` | 指紋比較へ差し替え・`sending` 早落とし・世代カウンタ・遡り読み込み |
-| `frontend/src/components/ScenarioChatView/index.tsx` | 指紋比較・遡り読み込みボタン・スクロール制御 |
+| `frontend/src/components/ScenarioChatView/index.tsx` | 指紋比較・遡りセンチネル（無限スクロール）・スクロール制御 |
 | `frontend/src/App.tsx` | エクスポート時の全件取得 |
+
+## 未着手: 1on1 への横展開（優先度: そのうち）
+
+**方針は決定済み — 「共通化する。個別実装はなるべく薄く」**（2026-07-31 合意）。
+1on1 にも同じウィンドウ + 無限スクロールを入れ、スクロール機構は両者で共有する。
+
+### 現状の実測（1on1）
+
+最大セッションで 210 メッセージ / 約 750KB。シナリオ（1098 ターン / 約 2.9MB）ほど
+逼迫していないが、内訳の構造は同じで **`reasoning` がペイロードの 80〜92%** を占める。
+
+### 共有できるもの / できないもの
+
+- **共有する（新規フック）**: センチネル + `IntersectionObserver` + アンカー復元 +
+  「末尾 ID が変わったときだけ最下端追従」。`useInfiniteScrollTop(scrollRef, {...})` として
+  `ScenarioChatView` から抽出し、1on1 と共有する（約 40 行）。
+- **共有しない（取得層）**: 下記の理由で個別実装になる。共通化を狙うと器だけ増える。
+
+### 引っかかる点（着手前に決めること）
+
+1. **1on1 にはメッセージ専用エンドポイントが無い。** `GET /api/chat/sessions/{id}` が
+   `SessionDetail.messages` として同梱で返している。詳細にクエリを生やすか、
+   `GET /sessions/{id}/messages` を新設するか。
+2. **カーソルが無い。** `scenario_turns` の `turn_index`（単調増加の整数）に相当する列が
+   `chat_messages` に無い。`created_at` は同秒衝突があり得るので `(created_at, id)` 複合か
+   offset を選ぶ必要がある。
+3. **`MessageList` の自動スクロールが前方追加と衝突する。** 現在 `bottomRef.scrollIntoView(
+   { behavior: "smooth" })` を `[messages, ...]` 依存で呼んでおり、先頭に足すと
+   スムーズスクロールで最下端へ飛ぶ。コンテナ ref + `scrollTop` 方式へ寄せる
+   （シナリオ側と同じ形にすることが、そのままフック共有の前提になる）。
+4. 枝（variant）機構は 1on1 に無いので、`applyTurnWindow` / `mergeTurnWindow` の
+   使い分けは不要。1on1 はマージ側だけで足りる。
+
+### 保留にした別案（棄却ではない）
+
+- **`reasoning` の遅延取得** — 折りたたみ（`ThinkingBlock` は完了メッセージでは既定で閉）を
+  開いたときに初めて取りに行く。ログビューアが既に同じ形をしている。1on1 のペイロードは
+  1/5〜1/10 になり、件数ページングより効く可能性が高い。ただし**共通化には寄与しない**ため
+  今回の方針では後回し。上記を入れてもまだ重ければこちらを検討する。
 
 ## 残課題
 
