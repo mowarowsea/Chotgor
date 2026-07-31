@@ -48,7 +48,7 @@ interface GMBubbleRowProps {
   content: string;
   avatarSrc: string | null;
   /**
-   * 自分が属する GM レスポンス（= 同一 raw_response の連続 GM バブル列 = 1 LLM 呼出ぶん）の最後尾なら true。
+   * 自分が属する GM レスポンス（= 同一 response_key の連続 GM バブル列 = 1 LLM 呼出ぶん）の最後尾なら true。
    * グループ末尾だけが MessageActionBar（コピー + ログ + 必要なら再生成）を持つ。
    */
   isGroupTail: boolean;

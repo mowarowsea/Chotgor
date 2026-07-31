@@ -3,6 +3,7 @@
 API レスポンス整形に使う軽量ヘルパ群。LLM 呼び出しや DB 書き込みは行わない。
 """
 
+import hashlib
 from typing import Any
 
 
@@ -101,8 +102,27 @@ def scenario_npc_to_dict(npc: Any) -> dict:
     }
 
 
+def response_key(raw_response: str | None) -> str | None:
+    """`raw_response` の同一性だけを表す短い指紋を返す。
+
+    フロントは `raw_response` を表示に使わず、「同じ LLM 呼出で生成されたバブル列か」の
+    等値比較にしか使わない。一方で本文は API ペイロードの 86% を占める（854 ターンの
+    実測で 2.65MB 中 2.3MB）ため、本文の代わりにこの指紋を返す。
+
+    None と "" が別値になる点は元の比較と同じで、グルーピングの挙動は変わらない。
+    別々の呼出がまったく同一のテキストを返すと指紋も一致するが、それは全文比較でも
+    同じく 1 グループに畳まれていたので退行ではない。
+    """
+    if raw_response is None:
+        return None
+    return hashlib.sha1(raw_response.encode("utf-8")).hexdigest()[:16]
+
+
 def scenario_turn_to_dict(turn: Any, variants: dict | None = None) -> dict:
     """ScenarioTurn ORM を JSON 化可能な dict に変換する。
+
+    `raw_response` の本文は返さない（`response_key` の指紋のみ）。DB 側の列は
+    デバッグ記録として残っている。
 
     Args:
         turn: 変換対象の ScenarioTurn。
@@ -122,7 +142,7 @@ def scenario_turn_to_dict(turn: Any, variants: dict | None = None) -> dict:
         "speaker_id": turn.speaker_id,
         "speaker_name": turn.speaker_name,
         "content": turn.content,
-        "raw_response": turn.raw_response,
+        "response_key": response_key(turn.raw_response),
         "log_request_id": getattr(turn, "log_request_id", None),
         "anticipation": getattr(turn, "anticipation", None),
         "generation_id": gen_id,

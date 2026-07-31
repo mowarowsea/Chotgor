@@ -627,7 +627,12 @@ class ScenarioChatStoreMixin:
                 source_id=turn.id,
             )
 
-    def list_scenario_turns(self, session_id: str) -> list:
+    def list_scenario_turns(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_index: int | None = None,
+    ) -> list:
         """セッション内の本線ターンを turn_index 昇順で返す。
 
         選ばれなかった枝（`is_active=0`）は除外する。履歴を読む経路は
@@ -637,18 +642,40 @@ class ScenarioChatStoreMixin:
         `turn_index` は非活性行も含めた max+1 で採番されるため、枝の増減で
         番号は飛ぶ。ただし親は必ず子より先に採番されるので、活性行を
         turn_index 昇順に並べれば常に正しい会話順になる。
+
+        Args:
+            session_id: 対象セッション ID。
+            limit: 指定すると**末尾から**この件数だけ返す（UI の直近ウィンドウ用）。
+                省略時は全件。プロンプト構築・蒸留など履歴の意味を扱う経路は
+                独自に上限を持つので、常に省略して全件を受け取ること。
+            before_index: 指定すると `turn_index` がこの値より小さい行だけを対象にする
+                （遡り読み込み用）。`limit` と併用して「その手前の直近 N 件」を取る。
+
+        Returns:
+            turn_index 昇順の ScenarioTurn リスト（ウィンドウ指定時もその中で昇順）。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioTurn
-            return (
-                session.query(ScenarioTurn)
-                .filter(
-                    ScenarioTurn.session_id == session_id,
-                    ScenarioTurn.is_active == 1,
+            query = session.query(ScenarioTurn).filter(
+                ScenarioTurn.session_id == session_id,
+                ScenarioTurn.is_active == 1,
+            )
+            if before_index is not None:
+                query = query.filter(ScenarioTurn.turn_index < before_index)
+            if limit is None:
+                return query.order_by(
+                    ScenarioTurn.turn_index.asc(), ScenarioTurn.created_at.asc()
+                ).all()
+            # 末尾 limit 件を取るため降順で切り出し、呼び出し側へ返す前に昇順へ戻す。
+            rows = (
+                query.order_by(
+                    ScenarioTurn.turn_index.desc(), ScenarioTurn.created_at.desc()
                 )
-                .order_by(ScenarioTurn.turn_index.asc(), ScenarioTurn.created_at.asc())
+                .limit(limit)
                 .all()
             )
+            rows.reverse()
+            return rows
 
     def list_scenario_generation_variants(self, session_id: str) -> dict:
         """セッション内の枝（generation）の兄弟関係を返す。

@@ -115,7 +115,8 @@ retract を取り消すと「なかったことが再びあったことになる
   枝は生やさない。
 - 対象は GM / PC / NPC / Narrator の発話（活性行のみ）。全ターンで可能（末尾に限らない）。
 - `raw_response` は触らない。あれはモデルが実際に何を出したかのデバッグ記録であり、
-  手編集で汚さない。
+  手編集で汚さない。なお API レスポンスには本文を載せず、同一性判定用の指紋
+  `response_key` だけを返す（→ `scenario_history_perf_plan.md`）。
 - 封筒は触らない（発話があった事実自体は変わらない）。
 - あらすじ蒸留済み区間の編集も許可し、境界のクランプはしない（あらすじ本文の整合は
   ユーザの手編集に委ねる方針と揃える）。
@@ -150,8 +151,8 @@ retract を取り消すと「なかったことが再びあったことになる
 
 | メソッド | パス | 内容 |
 |---------|------|------|
-| GET | `/sessions/{sid}/turns` | 既存。各ターンに `generation_id` / `variant_index` / `variant_count` / `variant_siblings` を追加して返す |
-| POST | `/sessions/{sid}/turns/activate` | body `{generation_id}`。下流を巻き戻して指定枝を活性化し、切替後の本線を返す |
+| GET | `/sessions/{sid}/turns` | 既存。各ターンに `generation_id` / `variant_index` / `variant_count` / `variant_siblings` を追加して返す。`?limit` / `?before_index` でウィンドウ取得（→ `scenario_history_perf_plan.md`） |
+| POST | `/sessions/{sid}/turns/activate` | body `{generation_id}`。下流を巻き戻して指定枝を活性化し、切替後の本線を返す。`?limit` でウィンドウ取得 |
 | PATCH | `/sessions/{sid}/turns/{turn_id}` | body `{content}`。発話の上書き |
 | DELETE | `/sessions/{sid}/turns/from/{turn_id}` | 既存。既定で**非活性化**、`?keep_variants=false` で従来の物理削除 |
 

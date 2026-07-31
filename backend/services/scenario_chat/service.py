@@ -41,6 +41,7 @@ from backend.services.scenario_chat.auto_synopsis import (  # noqa: F401
 )
 from backend.services.scenario_chat.serializers import (  # noqa: F401
     resolve_user_speaker_name,
+    response_key,
     scenario_npc_to_dict,
     scenario_session_to_dict,
     scenario_to_dict,

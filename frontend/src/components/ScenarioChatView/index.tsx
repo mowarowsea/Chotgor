@@ -15,7 +15,13 @@
  *
  * NPC の追加・編集はバックエンドの Scenarios UI で行う。
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type {
   ScenarioNpc,
@@ -52,8 +58,14 @@ interface Props {
   scenario: ScenarioTemplate | null;
   /** シナリオの NPC リスト（既知判定・アバター表示に使う）。 */
   npcs: ScenarioNpc[];
-  /** これまでの確定ターン。 */
+  /** これまでの確定ターン（直近ウィンドウぶん。過去は遡り読み込みで伸びる）。 */
   turns: ScenarioTurn[];
+  /** 表示中ウィンドウより過去のターンが残っているか（遡りボタンの表示可否）。 */
+  hasOlderTurns?: boolean;
+  /** 遡り読み込みの実行中フラグ。 */
+  loadingOlderTurns?: boolean;
+  /** 表示ウィンドウを 1 ページぶん過去へ伸ばす。 */
+  onLoadOlder?: () => void;
   /** 送信中フラグ（true の間は入力欄無効化）。 */
   sending: boolean;
   /** ストリーミング中の未確定吹き出し列。 */
@@ -70,7 +82,7 @@ interface Props {
   /** 最後のユーザターン以降を削除して同内容で再ストリーム。 */
   onRegenerate: () => void;
   /**
-   * 末尾 GM レスポンス（同一 raw_response のバブル列 = 1 LLM 呼出ぶん）を削除する。
+   * 末尾 GM レスポンス（同一 response_key のバブル列 = 1 LLM 呼出ぶん）を削除する。
    * 再ストリームは行わず、ユーザリクエスト待ち状態へ戻す。
    * 主な用途: auto_advance で GM が応答した後、ユーザがその応答を捨てて
    * 自分の発話を入力したくなった場合。
@@ -117,6 +129,9 @@ export default function ScenarioChatView({
   scenario,
   npcs,
   turns,
+  hasOlderTurns = false,
+  loadingOlderTurns = false,
+  onLoadOlder,
   sending,
   pendingBubbles,
   onSend,
@@ -140,11 +155,40 @@ export default function ScenarioChatView({
   /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
   const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
 
-  /** 自動スクロール: turns / pendingBubbles が変わるたびに最下端へ追従。 */
+  /**
+   * 自動スクロール: 末尾ターンが変わったとき / ストリーミング中に最下端へ追従。
+   *
+   * 依存を「末尾ターンの id」にしているのは、遡り読み込み（先頭への追加）で
+   * 最下端へ飛ばされないようにするため。前方に足しても末尾は変わらない。
+   */
+  const lastTurnId = turns.length > 0 ? turns[turns.length - 1].id : null;
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [turns, pendingBubbles]);
+  }, [lastTurnId, pendingBubbles]);
+
+  /**
+   * 遡り読み込みで先頭に追加されたぶん、見ている位置がずれないよう補正する。
+   *
+   * クリック時に「下端からの距離（scrollHeight - scrollTop）」を控えておき、
+   * DOM 反映直後に同じ距離へ戻す。描画前に補正したいので useLayoutEffect を使う。
+   */
+  const olderScrollAnchorRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const anchor = olderScrollAnchorRef.current;
+    if (el && anchor !== null) {
+      el.scrollTop = el.scrollHeight - anchor;
+      olderScrollAnchorRef.current = null;
+    }
+  }, [turns]);
+
+  /** 「以前のやり取りを読み込む」: 復元用のアンカーを控えてから親へ委譲する。 */
+  const handleLoadOlder = () => {
+    const el = scrollRef.current;
+    olderScrollAnchorRef.current = el ? el.scrollHeight - el.scrollTop : null;
+    onLoadOlder?.();
+  };
 
   /** NPC 名 → NPC オブジェクトのマップ（既知判定・アバター取得用）。 */
   const npcByName = useMemo(
@@ -185,16 +229,17 @@ export default function ScenarioChatView({
    * - lastGMTurnId: 「最新グループ」の末尾バブル id。再生成 / 破棄の対象となるのは
    *   このバブルだけ（過去グループはコピー + ログのみ）。末尾が user / turns が空なら null。
    *
-   * グルーピングは raw_response の連続性で判定する: GM の 1 回の LLM 呼出で
-   * 生成された一連の GM 話者ブロックが「同一レスポンス」を構成する。user ターンは境界。
+   * グルーピングは response_key（raw_response の指紋）の連続性で判定する: GM の 1 回の
+   * LLM 呼出で生成された一連の GM 話者ブロックが「同一レスポンス」を構成する。
+   * user ターンは境界。
    */
   const { gmGroupTailById, lastGMTurnId } = useMemo(() => {
     const tailById = new Map<string, string>();
     if (turns.length === 0) {
       return { gmGroupTailById: tailById, lastGMTurnId: null as string | null };
     }
-    // 連続する同 raw_response の GM ターン（=話者ブロック）を 1 レスポンスグループとして畳む。
-    // 末尾に達するか次が user / raw_response 不一致になったらフラッシュする。
+    // 連続する同 response_key の GM ターン（=話者ブロック）を 1 レスポンスグループとして畳む。
+    // 末尾に達するか次が user / response_key 不一致になったらフラッシュする。
     const flushGroup = (start: number, end: number) => {
       const parts: string[] = [];
       for (let i = start; i <= end; i++) {
@@ -206,20 +251,20 @@ export default function ScenarioChatView({
       tailById.set(turns[end].id, parts.join("\n\n"));
     };
     let groupStart = -1;
-    let groupRaw: string | null | undefined = undefined;
+    let groupKey: string | null | undefined = undefined;
     for (let i = 0; i < turns.length; i++) {
       const t = turns[i];
       if (t.speaker_type === "user") {
         if (groupStart >= 0) flushGroup(groupStart, i - 1);
         groupStart = -1;
-        groupRaw = undefined;
+        groupKey = undefined;
         continue;
       }
-      // GM ターン（=話者ブロック）: 既存レスポンスグループと raw_response が一致しなければ新レスポンス
-      if (groupStart < 0 || t.raw_response !== groupRaw) {
+      // GM ターン（=話者ブロック）: 既存レスポンスグループと response_key が一致しなければ新レスポンス
+      if (groupStart < 0 || t.response_key !== groupKey) {
         if (groupStart >= 0) flushGroup(groupStart, i - 1);
         groupStart = i;
-        groupRaw = t.raw_response;
+        groupKey = t.response_key;
       }
     }
     if (groupStart >= 0) flushGroup(groupStart, turns.length - 1);
@@ -346,6 +391,17 @@ export default function ScenarioChatView({
       {/* チャットスクロール（1on1 と同じく最大幅 760px 中央寄せ・浮遊ヘッダー分の上余白） */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
        <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 flex flex-col gap-5">
+        {/* 履歴ウィンドウより過去がある場合の遡り読み込み。押すたびに 1 ページぶん伸びる。 */}
+        {hasOlderTurns && (
+          <button
+            onClick={handleLoadOlder}
+            disabled={loadingOlderTurns}
+            className="self-center text-xs text-ch-t3 hover:text-ch-t1 transition-colors disabled:opacity-50 rounded-lg px-3 py-1.5"
+            style={{ border: "1px solid var(--ch-sep2)" }}
+          >
+            {loadingOlderTurns ? "読み込み中…" : "以前のやり取りを読み込む"}
+          </button>
+        )}
         {turns.length === 0 && pendingBubbles.length === 0 && (
           <div className="text-ch-t3 text-sm text-center mt-8">
             {scenario?.scenario ? (

@@ -103,7 +103,9 @@ export interface ScenarioTurn {
   /** 表示用スナップショット名。 */
   speaker_name: string;
   content: string;
-  raw_response: string | null;
+  /** `raw_response` の同一性だけを表す指紋。同じ LLM 呼出で生成されたバブル列は同じ値を持つ。
+   *  レスポンスグループの畳み込みと再生成対象の探索に使う（本文は API から返らない）。 */
+  response_key: string | null;
   /** debug_log_entries との紐付け。枝ごとに別 ID が振られる。 */
   log_request_id?: string | null;
   /** 枝（レスポンスガチャ）のキー。1 リクエストで保存されたターン群が同じ値を持つ。
@@ -269,9 +271,26 @@ export async function fetchScenarioSession(
   };
 }
 
-/** プレイセッションのターン一覧を取得する。 */
-export async function fetchScenarioTurns(sessionId: string): Promise<ScenarioTurn[]> {
-  const res = await fetch(`/api/scenario_chat/sessions/${sessionId}/turns`);
+/**
+ * プレイセッションのターン一覧を取得する。
+ *
+ * `limit` を渡すと末尾からその件数だけ（直近ウィンドウ）、`beforeIndex` を併せて渡すと
+ * その `turn_index` より手前の直近 `limit` 件（遡り読み込み）を返す。
+ * どちらも省略すると全件（エクスポートなど履歴全体が要る用途向け）。
+ */
+export async function fetchScenarioTurns(
+  sessionId: string,
+  opts?: { limit?: number; beforeIndex?: number },
+): Promise<ScenarioTurn[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts?.beforeIndex !== undefined) {
+    params.set("before_index", String(opts.beforeIndex));
+  }
+  const qs = params.toString();
+  const res = await fetch(
+    `/api/scenario_chat/sessions/${sessionId}/turns${qs ? `?${qs}` : ""}`,
+  );
   if (!res.ok) throw new Error("シナリオターンの取得に失敗しました");
   return res.json();
 }
@@ -386,13 +405,16 @@ export async function patchScenarioTurn(
 /** 枝（generation）を本線に切り替える。切替後の本線ターン一覧を返す。
  *
  * 指定枝の分岐点より後の本線はすべて巻き戻される（下流は復元しない）。
+ * `limit` を渡すと切替後の直近ウィンドウだけを返す（履歴全体を取り直さずに済む）。
  */
 export async function activateScenarioGeneration(
   sessionId: string,
   generationId: string,
+  limit?: number,
 ): Promise<ScenarioTurn[]> {
+  const qs = limit !== undefined ? `?limit=${limit}` : "";
   const res = await fetch(
-    `/api/scenario_chat/sessions/${sessionId}/turns/activate`,
+    `/api/scenario_chat/sessions/${sessionId}/turns/activate${qs}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

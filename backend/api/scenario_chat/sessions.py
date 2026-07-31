@@ -271,12 +271,22 @@ async def end_session(request: Request, session_id: str):
 
 
 @router.get("/sessions/{session_id}/turns")
-async def list_turns(request: Request, session_id: str):
+async def list_turns(
+    request: Request,
+    session_id: str,
+    limit: int | None = None,
+    before_index: int | None = None,
+):
     """セッションの本線ターンを時系列昇順で返す。
 
     選ばれなかった枝は含まない。各ターンには枝ナビ（◀ 2/3 ▶）用の
     `variant_index` / `variant_count` を埋めて返すので、フロントは
     枝の一覧取得に追加リクエストを要しない。
+
+    `limit` を渡すと末尾からその件数だけ返す（UI の直近ウィンドウ）。
+    `before_index` を併せて渡すと、その `turn_index` より手前の直近 `limit` 件を返す
+    （遡り読み込み）。どちらも省略すれば従来どおり全件。
+    フロントは「取得件数 == limit」でまだ上があるかを判定する。
     """
     sqlite = request.app.state.sqlite
     if sqlite.get_scenario_session(session_id) is None:
@@ -284,7 +294,9 @@ async def list_turns(request: Request, session_id: str):
     variants = sqlite.list_scenario_generation_variants(session_id)
     return [
         scenario_turn_to_dict(t, variants)
-        for t in sqlite.list_scenario_turns(session_id)
+        for t in sqlite.list_scenario_turns(
+            session_id, limit=limit, before_index=before_index
+        )
     ]
 
 
@@ -333,12 +345,16 @@ async def update_turn(
 
 @router.post("/sessions/{session_id}/turns/activate")
 async def activate_generation(
-    request: Request, session_id: str, body: GenerationActivate
+    request: Request,
+    session_id: str,
+    body: GenerationActivate,
+    limit: int | None = None,
 ):
     """枝（generation）を本線に切り替える。
 
     指定枝の分岐点より後の本線はすべて巻き戻される（下流は復元しない）。
-    レスポンスは切替後の本線ターン一覧。
+    レスポンスは切替後の本線ターン一覧。`limit` を渡すと末尾からその件数だけ返す
+    （UI の直近ウィンドウ。枝切替を 1 往復で済ませるため GET と同じ形で返す）。
     """
     sqlite = request.app.state.sqlite
     if sqlite.get_scenario_session(session_id) is None:
@@ -351,7 +367,7 @@ async def activate_generation(
     variants = sqlite.list_scenario_generation_variants(session_id)
     return [
         scenario_turn_to_dict(t, variants)
-        for t in sqlite.list_scenario_turns(session_id)
+        for t in sqlite.list_scenario_turns(session_id, limit=limit)
     ]
 
 

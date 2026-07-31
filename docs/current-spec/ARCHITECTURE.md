@@ -217,6 +217,12 @@ synopsis / chronicle から枝は見えない。`turn_index` は非活性行を�
 採番するので枝の増減で番号は飛ぶが、親が必ず子より先に採番されるため
 活性行の昇順が会話順になる。詳細は `docs/planned/scenario_turn_variants_plan.md`。
 
+**履歴の転送・描画** — 長寿命セッション（数百ターン）向けに、UI は履歴を
+**直近ウィンドウ**（`GET /turns?limit=&before_index=`）で読み、先頭のボタンで過去へ
+遡り読み込みする。API レスポンスは `raw_response` 本文を載せず、同一性判定用の指紋
+`response_key` だけを返す（レスポンスグループの畳み込みと再生成対象の探索にしか
+使われないため）。詳細は `docs/planned/scenario_history_perf_plan.md`。
+
 ### うつつ（Usual Days — キャラの無人生活モード）
 
 ユーザ不在のあいだ、キャラが自律的に「生活」し続ける裏の世界。シナリオチャットの

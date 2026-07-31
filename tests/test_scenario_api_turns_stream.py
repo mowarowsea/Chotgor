@@ -64,6 +64,202 @@ class TestListTurns:
         assert res.status_code == 404
 
 
+def _seed_turns(sqlite_store, sess_id: str, count: int, raw: str | None = None):
+    """連番 content のターンを count 件作る（ウィンドウ系テストの下ごしらえ）。
+
+    speaker_type は user / narrator を交互に入れる（グルーピング判定の対象外なので
+    ウィンドウ切り出しの検証には影響しない）。`raw` を渡すと全ターンが同じ
+    raw_response を共有する。
+    """
+    import uuid as _uuid
+
+    for i in range(count):
+        sqlite_store.create_scenario_turn(
+            turn_id=str(_uuid.uuid4()),
+            session_id=sess_id,
+            turn_index=i,
+            speaker_type="user" if i % 2 == 0 else "narrator",
+            speaker_name="P" if i % 2 == 0 else "Narrator",
+            content=str(i),
+            **({"raw_response": raw} if raw is not None else {}),
+        )
+
+
+class TestListTurnsWindow:
+    """履歴ウィンドウ取得（`?limit` / `?before_index`）を検証する。
+
+    UI は数百ターンの履歴を全件描くと重いため、直近ウィンドウだけを読み、
+    「以前のやり取りを読み込む」で 1 ページずつ過去へ伸ばす。その土台となる
+    サーバ側の切り出しを検証する:
+
+    - `limit` のみ: **末尾**から limit 件（＝最新側）。並びは昇順のまま。
+    - `before_index` 併用: その turn_index より手前の直近 limit 件（＝遡り 1 ページ）。
+    - どちらも省略: 従来どおり全件（既存の呼び出し互換）。
+
+    フロントは「取得件数 == limit」でまだ上があるかを判定するので、
+    末尾側から正しい件数で切れていることが振る舞いの要になる。
+    """
+
+    def test_no_limit_returns_all(self, sqlite_store):
+        """クエリ省略時は全件を昇順で返す（従来挙動の互換）。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 10)
+        body = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()
+        assert [t["content"] for t in body] == [str(i) for i in range(10)]
+
+    def test_limit_returns_newest_tail_in_ascending_order(self, sqlite_store):
+        """limit 指定では末尾（最新側）から件数ぶん、昇順で返る。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 10)
+        body = client.get(
+            f"/api/scenario_chat/sessions/{sess_id}/turns", params={"limit": 3}
+        ).json()
+        assert [t["content"] for t in body] == ["7", "8", "9"]
+
+    def test_before_index_returns_previous_page(self, sqlite_store):
+        """before_index 併用で、その手前の直近 limit 件（遡り 1 ページ）が返る。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 10)
+        body = client.get(
+            f"/api/scenario_chat/sessions/{sess_id}/turns",
+            params={"limit": 3, "before_index": 7},
+        ).json()
+        assert [t["content"] for t in body] == ["4", "5", "6"]
+
+    def test_paging_back_covers_history_without_gaps_or_dups(self, sqlite_store):
+        """ウィンドウを繰り返し遡ると、重複・欠落なく全履歴を覆う。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 10)
+        url = f"/api/scenario_chat/sessions/{sess_id}/turns"
+        page = client.get(url, params={"limit": 4}).json()
+        collected = list(page)
+        while len(page) == 4:
+            page = client.get(
+                url,
+                params={"limit": 4, "before_index": page[0]["turn_index"]},
+            ).json()
+            collected = page + collected
+        assert [t["content"] for t in collected] == [str(i) for i in range(10)]
+
+    def test_limit_larger_than_history(self, sqlite_store):
+        """履歴より大きい limit では全件が返り、件数一致しないので上端と判る。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 3)
+        body = client.get(
+            f"/api/scenario_chat/sessions/{sess_id}/turns", params={"limit": 50}
+        ).json()
+        assert len(body) == 3
+
+    def test_before_index_at_head_returns_empty(self, sqlite_store):
+        """先頭より手前は空。フロントはこれで遡りボタンを畳む。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 3)
+        body = client.get(
+            f"/api/scenario_chat/sessions/{sess_id}/turns",
+            params={"limit": 5, "before_index": 0},
+        ).json()
+        assert body == []
+
+
+class TestResponseKey:
+    """API が `raw_response` 本文ではなく指紋 `response_key` を返すことを検証する。
+
+    `raw_response` はペイロードの 86% を占める一方、フロントは表示に使わず
+    「同じ LLM 呼出で生成されたバブル列か」の等値比較にしか使わない。そのため
+    API では本文を落とし、同一性だけを保つ短い指紋を返す:
+
+    - 本文は絶対に載せない（転送量削減の目的そのもの）。
+    - 同一 raw_response のターン同士は同じ key を共有する（レスポンスグループが畳める）。
+    - 異なる raw_response では異なる key になる（レスポンス境界が保たれる）。
+    - raw_response が NULL のターン（ユーザ発話・intro）は key も null。
+    """
+
+    def test_raw_response_body_is_not_exposed(self, sqlite_store):
+        """本文は返らず、代わりに response_key が入る。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 1, raw="@Narrator: 夜が更けた")
+        turn = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()[0]
+        assert "raw_response" not in turn
+        assert turn["response_key"]
+        assert "夜が更けた" not in json.dumps(turn, ensure_ascii=False)
+
+    def test_same_raw_response_shares_key(self, sqlite_store):
+        """同一レスポンス由来のバブル列は同じ key を共有する。"""
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        _seed_turns(sqlite_store, sess_id, 3, raw="@A: ...\n@B: ...")
+        keys = {
+            t["response_key"]
+            for t in client.get(
+                f"/api/scenario_chat/sessions/{sess_id}/turns"
+            ).json()
+        }
+        assert len(keys) == 1
+
+    def test_different_raw_response_differs(self, sqlite_store):
+        """別レスポンスは別 key（グループ境界が保たれる）。"""
+        import uuid as _uuid
+
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        for i, raw in enumerate(["@A: 一回目", "@A: 二回目"]):
+            sqlite_store.create_scenario_turn(
+                turn_id=str(_uuid.uuid4()),
+                session_id=sess_id,
+                turn_index=i,
+                speaker_type="narrator",
+                speaker_name="Narrator",
+                content=str(i),
+                raw_response=raw,
+            )
+        body = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()
+        assert body[0]["response_key"] != body[1]["response_key"]
+
+    def test_null_raw_response_yields_null_key(self, sqlite_store):
+        """raw_response が無いターン（ユーザ発話等）は key も null。"""
+        import uuid as _uuid
+
+        _seed_preset(sqlite_store)
+        client = TestClient(_build_app(sqlite_store))
+        sid = _create_scenario(client)["id"]
+        sess_id = _start_session(client, sid)["id"]
+        sqlite_store.create_scenario_turn(
+            turn_id=str(_uuid.uuid4()),
+            session_id=sess_id,
+            turn_index=0,
+            speaker_type="user",
+            speaker_name="P",
+            content="やあ",
+        )
+        turn = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()[0]
+        assert turn["response_key"] is None
+
+
 # ─── ターン削除（編集・再生成の前処理） ─────────────────────────────────────
 
 

@@ -449,3 +449,72 @@ class TestSynopsisBoundaryClamp:
 
         synopsis = sqlite_store.get_scenario_session_synopsis(session.id)
         assert synopsis["last_turn_index"] == req_a.turn_index
+
+
+class TestTurnWindowWithVariants:
+    """履歴ウィンドウ取得（limit / before_index）が枝と共存することを検証する。
+
+    UI は直近ウィンドウしか読まないため、ウィンドウの切り出しが「本線」に対して
+    行われることが前提になる。非活性の枝行は `turn_index` を消費した状態で DB に
+    残り続けるので、以下が崩れると表示がずれる:
+
+    - 末尾 limit 件は**活性行だけ**を数えて取ること（枝を数に含めない）
+    - `before_index` は活性行の turn_index を境界に使い、枝を飛ばして遡れること
+    - 枝の増減で turn_index が飛んでも、ウィンドウ内の並びが会話順であること
+
+    設計は docs/planned/scenario_history_perf_plan.md を参照。
+    """
+
+    def test_tail_window_counts_active_turns_only(
+        self, sqlite_store, session_with_first_response
+    ):
+        """非活性の枝は末尾 N 件の数に入らない。"""
+        session, req_a = session_with_first_response
+        res_a1 = sqlite_store.list_scenario_turns(session.id)[-1]
+        # genA1 を捨てて genA2 を本線にする（genA1 は非活性で DB に残る）
+        sqlite_store.deactivate_scenario_turns_from(session.id, res_a1.id)
+        _make_generation(
+            sqlite_store, session.id, "genA2", req_a.turn_index, ["resA-2"],
+        )
+
+        window = sqlite_store.list_scenario_turns(session.id, limit=2)
+
+        assert [t.content for t in window] == ["reqA", "resA-2"]
+
+    def test_before_index_skips_inactive_branch(
+        self, sqlite_store, session_with_first_response
+    ):
+        """遡りの境界に枝の turn_index が挟まっても、本線だけを遡れる。"""
+        session, req_a = session_with_first_response
+        res_a1 = sqlite_store.list_scenario_turns(session.id)[-1]
+        sqlite_store.deactivate_scenario_turns_from(session.id, res_a1.id)
+        gen_a2 = _make_generation(
+            sqlite_store, session.id, "genA2", req_a.turn_index, ["resA-2"],
+        )
+        # 本線: reqA → resA-2。resA-2 より手前を遡ると reqA だけが返る。
+        older = sqlite_store.list_scenario_turns(
+            session.id, limit=5, before_index=gen_a2[-1].turn_index,
+        )
+
+        assert [t.content for t in older] == ["reqA"]
+
+    def test_window_keeps_conversation_order(self, sqlite_store):
+        """turn_index が飛んでいてもウィンドウ内は会話順（昇順）で返る。"""
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        for i in range(3):
+            req = _make_turn(sqlite_store, session.id, content=f"req{i}")
+            gen = _make_generation(
+                sqlite_store, session.id, f"gen{i}a", req.turn_index, [f"res{i}a"],
+            )
+            # 各ターンで 1 回引き直す → 捨てた枝が turn_index を消費して番号が飛ぶ
+            sqlite_store.deactivate_scenario_turns_from(session.id, gen[0].id)
+            _make_generation(
+                sqlite_store, session.id, f"gen{i}b", req.turn_index, [f"res{i}b"],
+            )
+
+        window = sqlite_store.list_scenario_turns(session.id, limit=4)
+
+        assert [t.content for t in window] == ["req1", "res1b", "req2", "res2b"]
+        indexes = [t.turn_index for t in window]
+        assert indexes == sorted(indexes)

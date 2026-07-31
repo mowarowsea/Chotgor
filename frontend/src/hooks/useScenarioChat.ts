@@ -52,6 +52,14 @@ interface SynopsisBar {
   danger: boolean;
 }
 
+/**
+ * 履歴ウィンドウ 1 ページぶんのターン数（初回表示・遡り読み込み共通）。
+ *
+ * 数百ターン規模のセッションで全件を取り直すと、転送・パース・全バブルの再構築が
+ * 毎回走って体感が重くなる。表示は直近ウィンドウに限り、過去は明示操作で伸ばす。
+ */
+const TURN_PAGE_SIZE = 60;
+
 /** useScenarioChat が App から受け取る依存（共有 state の setter とセッション情報）。 */
 interface UseScenarioChatDeps {
   /** 現在アクティブなセッション ID。 */
@@ -86,8 +94,14 @@ interface UseScenarioChatResult {
   scenarioPresetName: string | null;
   /** シナリオ NPC 一覧。 */
   scenarioNpcs: ScenarioNpc[];
-  /** 確定ターン履歴。 */
+  /** 確定ターン履歴（直近ウィンドウぶんのみ。過去は遡り読み込みで伸びる）。 */
   scenarioTurns: ScenarioTurn[];
+  /** 表示中ウィンドウより過去のターンがまだ残っているか。 */
+  hasOlderTurns: boolean;
+  /** 遡り読み込みの実行中フラグ。 */
+  loadingOlderTurns: boolean;
+  /** 表示ウィンドウを 1 ページぶん過去へ伸ばす。 */
+  loadOlderScenarioTurns: () => Promise<void>;
   /** ストリーミング中の未確定吹き出し列。 */
   scenarioPending: PendingBubble[];
   /** PC ターンの reasoning（想起記憶・WM・思考）を turn.id → テキストで保持。
@@ -139,7 +153,7 @@ interface UseScenarioChatResult {
   /** ensemble_pc 専用「ターンを譲る」操作。指定先（PC枠名/"GM"/"ALL"）に発話を回す。
    *  内部は handleScenarioSend("", true, undefined, target) のラッパー。 */
   handleScenarioYieldTo: (target: string) => Promise<void>;
-  /** GM 応答を 1 レスポンス（= 同一 raw_response 内の話者ブロック群）丸ごと再生成する。 */
+  /** GM 応答を 1 レスポンス（= 同一 response_key の話者ブロック群）丸ごと再生成する。 */
   handleScenarioRegenerate: () => Promise<void>;
   /** GM 応答を 1 レスポンス分破棄してユーザ入力待ちに戻す。 */
   handleScenarioDiscard: () => Promise<void>;
@@ -227,6 +241,22 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   }, [activeScenarioSession, scenarioPresets]);
   const [scenarioNpcs, setScenarioNpcs] = useState<ScenarioNpc[]>([]);
   const [scenarioTurns, setScenarioTurns] = useState<ScenarioTurn[]>([]);
+  /**
+   * scenarioTurns の最新値を参照するための ref。
+   * 送信完了後のマージなど、setState のクロージャ外で現在の件数を見たい箇所で使う。
+   */
+  const scenarioTurnsRef = useRef<ScenarioTurn[]>([]);
+  scenarioTurnsRef.current = scenarioTurns;
+  /** 表示中ウィンドウより過去のターンがまだ残っているか（遡りボタンの表示可否）。 */
+  const [hasOlderTurns, setHasOlderTurns] = useState(false);
+  /** 遡り読み込みの実行中フラグ（多重発火の抑止と表示用）。 */
+  const [loadingOlderTurns, setLoadingOlderTurns] = useState(false);
+  /**
+   * 送信の世代カウンタ。`turn_complete` で `sending` を早めに落とすため、
+   * 完了後の整合性再取得が着弾する前にユーザが次を送れる。古い送信の後処理が
+   * 新しい送信の結果を上書きしないよう、着弾時にこの値の一致を確認する。
+   */
+  const sendSeqRef = useRef(0);
   /** ストリーミング中の未確定吹き出し列。 */
   const [scenarioPending, setScenarioPending] = useState<PendingBubble[]>([]);
   /** PC ターン の reasoning（想起記憶・WM スレッド・思考ブロック）を turn.id をキーに保持。 */
@@ -234,12 +264,50 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
   const [scenarioSynopsis, setScenarioSynopsis] = useState<ScenarioSynopsis | null>(null);
 
+  /**
+   * 取得した直近ウィンドウを表示に反映する。
+   *
+   * 「まだ上があるか」は取得件数がページ幅ちょうどかで近似する。実際には
+   * ぴったり尽きていた場合に空振りの追加取得が 1 回起きるが、実害はない。
+   */
+  const applyTurnWindow = useCallback((ts: ScenarioTurn[]) => {
+    setScenarioTurns(ts);
+    setHasOlderTurns(ts.length === TURN_PAGE_SIZE);
+  }, []);
+
+  /**
+   * 直近ウィンドウの取得結果を、遡り読み込み済みの過去を保ったまま反映する。
+   *
+   * レスポンス完了後の整合性再取得で使う。`applyTurnWindow` のように丸ごと
+   * 差し替えると、ユーザが遡って読み込んだ履歴が送信のたびに消えてしまう。
+   * 再取得で更新したいのは末尾側だけなので、取得ウィンドウの先頭 `turn_index` を
+   * 境に、それより古い表示中のターンはそのまま残す。
+   *
+   * 枝の切替では分岐点より後が巻き戻り、前方の並びも変わりうるため、こちらではなく
+   * `applyTurnWindow` でウィンドウごとリセットする。
+   */
+  const mergeTurnWindow = useCallback((fresh: ScenarioTurn[]) => {
+    if (fresh.length === 0) return;
+    const cut = fresh[0].turn_index;
+    // 初回（表示が空）だけは上端判定を更新する。既に何か表示していれば、
+    // 前方を保持している以上「まだ上があるか」の答えは変わらない。
+    if (scenarioTurnsRef.current.length === 0) {
+      setHasOlderTurns(fresh.length === TURN_PAGE_SIZE);
+    }
+    setScenarioTurns((prev) => [
+      ...prev.filter((t) => t.turn_index < cut),
+      ...fresh,
+    ]);
+  }, []);
+
   /** シナリオ系 state を初期化する（セッション切り替え・削除時に呼ぶ）。 */
   const resetScenarioState = useCallback(() => {
     setActiveScenarioSession(null);
     setActiveScenarioTemplate(null);
     setScenarioNpcs([]);
     setScenarioTurns([]);
+    setHasOlderTurns(false);
+    setLoadingOlderTurns(false);
     setScenarioPending([]);
     setScenarioReasoningMap({});
     setScenarioSynopsis(null);
@@ -255,18 +323,50 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     try {
       const [detail, ts, syn] = await Promise.all([
         fetchScenarioSession(sessionId),
-        fetchScenarioTurns(sessionId),
+        fetchScenarioTurns(sessionId, { limit: TURN_PAGE_SIZE }),
         fetchScenarioSynopsis(sessionId).catch(() => null),
       ]);
       setActiveScenarioSession(detail);
       setActiveScenarioTemplate(detail.scenario);
       setScenarioNpcs(detail.npcs);
-      setScenarioTurns(ts);
+      applyTurnWindow(ts);
       setScenarioSynopsis(syn);
     } catch (e) {
       setError(String(e));
     }
-  }, [setError]);
+  }, [applyTurnWindow, setError]);
+
+  /**
+   * 表示ウィンドウを 1 ページぶん過去へ伸ばす（「以前のやり取りを読み込む」）。
+   *
+   * 現在の先頭ターンより手前を取得して前方に連結する。取得済みと重ならないよう
+   * `before_index` を境界に使うので、多重呼び出しでも重複はしない。
+   */
+  const loadOlderScenarioTurns = useCallback(async () => {
+    if (!activeScenarioSession) return;
+    if (loadingOlderTurns || !hasOlderTurns) return;
+    const oldest = scenarioTurns[0];
+    if (!oldest) return;
+    setLoadingOlderTurns(true);
+    try {
+      const older = await fetchScenarioTurns(activeScenarioSession.id, {
+        limit: TURN_PAGE_SIZE,
+        beforeIndex: oldest.turn_index,
+      });
+      setScenarioTurns((prev) => [...older, ...prev]);
+      setHasOlderTurns(older.length === TURN_PAGE_SIZE);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoadingOlderTurns(false);
+    }
+  }, [
+    activeScenarioSession,
+    scenarioTurns,
+    hasOlderTurns,
+    loadingOlderTurns,
+    setError,
+  ]);
 
   /** シナリオセッションを削除し一覧から除く。 */
   const deleteScenario = useCallback(async (sessionId: string) => {
@@ -307,14 +407,14 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
         // ここで turns を fetch しないと intro が画面に出ない（リロード後にだけ見える）。
         const [detail, initialTurns, initialSyn] = await Promise.all([
           fetchScenarioSession(created.id),
-          fetchScenarioTurns(created.id),
+          fetchScenarioTurns(created.id, { limit: TURN_PAGE_SIZE }),
           fetchScenarioSynopsis(created.id).catch(() => null),
         ]);
         setActiveSessionId(created.id);
         setActiveScenarioSession(detail);
         setActiveScenarioTemplate(detail.scenario);
         setScenarioNpcs(detail.npcs);
-        setScenarioTurns(initialTurns);
+        applyTurnWindow(initialTurns);
         setScenarioPending([]);
         setScenarioSynopsis(initialSyn);
         window.location.hash = created.id;
@@ -322,7 +422,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
         setError(String(e));
       }
     },
-    [setActiveSessionId, setError],
+    [applyTurnWindow, setActiveSessionId, setError],
   );
 
   /** シナリオセッションの GM プリセットを変更する。
@@ -371,6 +471,10 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       setError(null);
       setSending(true);
       setScenarioPending([]);
+      // この送信の世代。完了後の後処理が着弾する頃に次の送信が始まっていたら、
+      // 古い結果で上書きしないための番号（`sendSeqRef` の説明を参照）。
+      const seq = ++sendSeqRef.current;
+      const isLatestSend = () => seq === sendSeqRef.current;
       // モデルへリクエスト〜turn 完了までの経過時間を計測する開始時刻。
       const turnStartedAt = performance.now();
       // PC ターン進行中に蓄積する reasoning（pc_reasoning の連結）と log_message_id（pc_done で確定）。
@@ -460,6 +564,10 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
                 return next;
               });
             }
+            // レスポンス連鎖はここで終わっている。この後に走る整合性の再取得を待たずに
+            // 入力欄を解放する（待つと、バブルを出し終えたあとに応答待ちインジケータが
+            // 再点灯したまま数秒〜十数秒残る）。
+            if (isLatestSend()) setSending(false);
           } else if (ev.type === "synopsis_progress") {
             // ユーザターン完了直後の進捗。バーの表示/色とモーダル自動表示は
             // synopsisProgress を監視する useEffect 側で判定する。
@@ -487,11 +595,15 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       });
 
       try {
-        // 完了後にサーバから真の turns を取り直して整合性確保
-        if (sessionId === activeSessionIdRef.current) {
+        // 完了後にサーバから真の turns を取り直して整合性確保。
+        // ここは `sending` を落としたあとの裏処理なので、待っている間もユーザは
+        // 次の発話を入力・送信できる。次の送信が始まっていたら着弾を捨てる。
+        if (sessionId === activeSessionIdRef.current && isLatestSend()) {
           try {
-            const ts = await fetchScenarioTurns(sessionId);
-            setScenarioTurns(ts);
+            const ts = await fetchScenarioTurns(sessionId, {
+              limit: TURN_PAGE_SIZE,
+            });
+            if (isLatestSend()) mergeTurnWindow(ts);
           } catch {
             // 取得失敗は無視
           }
@@ -512,18 +624,30 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       } catch (e) {
         setError(String(e));
       } finally {
-        setScenarioPending([]);
-        setSending(false);
+        // `sending` は通常 turn_complete で落ちているが、エラー・中断でそこへ
+        // 到達しなかった場合の保険としてここでも落とす（次の送信中なら触らない）。
+        if (isLatestSend()) {
+          setScenarioPending([]);
+          setSending(false);
+        }
       }
     },
-    [activeScenarioSession, activeSessionIdRef, setSending, setError, setElapsedMap, setMsgLogIds],
+    [
+      activeScenarioSession,
+      activeSessionIdRef,
+      mergeTurnWindow,
+      setSending,
+      setError,
+      setElapsedMap,
+      setMsgLogIds,
+    ],
   );
 
   /**
-   * シナリオの GM 応答を 1 レスポンス（=同一 raw_response 内の話者ブロック群）丸ごと再生成する。
+   * シナリオの GM 応答を 1 レスポンス（=同一 response_key の話者ブロック群）丸ごと再生成する。
    *
-   * レスポンス境界は `raw_response` を共有する連続バブル列で判定する:
-   *   - GM の 1 回の LLM 呼出 = 同一 raw_response の GM バブル列（複数ターン=話者ブロックを含みうる）
+   * レスポンス境界は `response_key` を共有する連続バブル列で判定する:
+   *   - GM の 1 回の LLM 呼出 = 同一 response_key の GM バブル列（複数ターン=話者ブロックを含みうる）
    *   - その直前に user 発話があれば通常レスポンス → user 起点で再ストリーム
    *   - 直前に user 発話がなければ auto_advance レスポンス → GM 列の先頭から
    *     auto_advance=true で再ストリーム
@@ -536,15 +660,15 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     if (!activeScenarioSession) return;
     if (scenarioTurns.length === 0) return;
 
-    // 末尾 GM 列の先頭 index を raw_response 連続性で探す。
+    // 末尾 GM 列の先頭 index を response_key（同一レスポンスの指紋）の連続性で探す。
     // 末尾が user の場合（GM 応答待ち状態）はそのまま user を起点にする。
     let lastTurnStart = scenarioTurns.length - 1;
     if (scenarioTurns[lastTurnStart].speaker_type !== "user") {
-      const tailRaw = scenarioTurns[lastTurnStart].raw_response;
+      const tailKey = scenarioTurns[lastTurnStart].response_key;
       while (lastTurnStart > 0) {
         const prev = scenarioTurns[lastTurnStart - 1];
         if (prev.speaker_type === "user") break;
-        if (prev.raw_response !== tailRaw) break;
+        if (prev.response_key !== tailKey) break;
         lastTurnStart--;
       }
     }
@@ -588,7 +712,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
    * 主な用途: ユーザが auto_advance（無入力 Enter）で GM 続きを促した結果を
    * 気に入らず、その GM 応答を捨てて自分で発話を入力したい場合。
    *
-   * 削除対象は末尾 GM 列のみ（同一 raw_response のバブル列）。
+   * 削除対象は末尾 GM 列のみ（同一 response_key のバブル列）。
    * 直前のユーザ発話があれば残す（そこから次の発話を入力できる）。
    * 末尾が user の状態（GM 未応答）では何もしない。
    */
@@ -599,13 +723,13 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     const lastIndex = scenarioTurns.length - 1;
     if (scenarioTurns[lastIndex].speaker_type === "user") return;
 
-    // 末尾 GM 列の先頭を raw_response の連続性で探す
+    // 末尾 GM 列の先頭を response_key（同一レスポンスの指紋）の連続性で探す
     let groupStart = lastIndex;
-    const tailRaw = scenarioTurns[lastIndex].raw_response;
+    const tailKey = scenarioTurns[lastIndex].response_key;
     while (groupStart > 0) {
       const prev = scenarioTurns[groupStart - 1];
       if (prev.speaker_type === "user") break;
-      if (prev.raw_response !== tailRaw) break;
+      if (prev.response_key !== tailKey) break;
       groupStart--;
     }
 
@@ -661,13 +785,14 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
         const turns = await activateScenarioGeneration(
           activeScenarioSession.id,
           generationId,
+          TURN_PAGE_SIZE,
         );
-        setScenarioTurns(turns);
+        applyTurnWindow(turns);
       } catch (e) {
         setError(String(e));
       }
     },
-    [activeScenarioSession, setError],
+    [activeScenarioSession, applyTurnWindow, setError],
   );
 
   /**
@@ -835,6 +960,9 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     scenarioPresetName,
     scenarioNpcs,
     scenarioTurns,
+    hasOlderTurns,
+    loadingOlderTurns,
+    loadOlderScenarioTurns,
     scenarioPending,
     scenarioReasoningMap,
     setScenarioReasoningMap,

@@ -13,6 +13,7 @@ import {
   fetchCharacters,
   fetchScenarioSessions,
   fetchScenarioPresets,
+  fetchScenarioTurns,
   updateFaceToFaceMode,
 } from "./api";
 import type {
@@ -87,6 +88,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   /** エクスポートダイアログの開閉状態。 */
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  /**
+   * エクスポート用に取り直したシナリオ全ターン。
+   *
+   * 画面表示は直近ウィンドウだけなので、そのまま渡すと履歴の途中までしか出力されない。
+   * ダイアログを開くときに全件を取得してこちらへ入れる（閉じたら破棄）。
+   */
+  const [exportScenarioTurns, setExportScenarioTurns] = useState<
+    ScenarioTurn[] | null
+  >(null);
   /** ライト/ダークテーマの状態と切り替え関数。 */
   const { dark, toggle: toggleTheme } = useTheme();
   /** ヘッダーのモデル切り替えメニューの開閉状態。 */
@@ -207,6 +217,9 @@ export default function App() {
     scenarioPresetName,
     scenarioNpcs,
     scenarioTurns,
+    hasOlderTurns,
+    loadingOlderTurns,
+    loadOlderScenarioTurns,
     scenarioPending,
     scenarioReasoningMap,
     scenarioSynopsis,
@@ -410,6 +423,26 @@ export default function App() {
     }
   }, [activeSessionId, selectedModel, doStream]);
 
+  /**
+   * エクスポートダイアログを開く。
+   *
+   * シナリオは画面に直近ウィンドウしか載せていないため、ここで履歴全体を取り直す
+   * （そのまま渡すと出力が途中までになる）。1on1 は messages が全件なのでそのまま。
+   */
+  const handleOpenExport = useCallback(async () => {
+    if (isScenarioSession && activeScenarioSession) {
+      try {
+        setExportScenarioTurns(
+          await fetchScenarioTurns(activeScenarioSession.id),
+        );
+      } catch (e) {
+        setError(String(e));
+        return;
+      }
+    }
+    setExportDialogOpen(true);
+  }, [isScenarioSession, activeScenarioSession]);
+
   return (
     /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。 */
     <CharacterImageProvider resolve={resolveCharImage}>
@@ -563,7 +596,7 @@ export default function App() {
                 ((isScenarioSession && scenarioTurns.length > 0) ||
                   (!isScenarioSession && messages.length > 0)) && (
                 <button
-                  onClick={() => setExportDialogOpen(true)}
+                  onClick={handleOpenExport}
                   title="会話をエクスポート"
                   className="flex items-center justify-center rounded-lg bg-ch-bg text-ch-t3 hover:text-ch-t1 transition-colors"
                   style={{ border: "1px solid var(--ch-sep2)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", padding: "6px 8px" }}
@@ -592,6 +625,9 @@ export default function App() {
             scenario={activeScenarioTemplate}
             npcs={scenarioNpcs}
             turns={scenarioTurns}
+            hasOlderTurns={hasOlderTurns}
+            loadingOlderTurns={loadingOlderTurns}
+            onLoadOlder={loadOlderScenarioTurns}
             sending={sending}
             pendingBubbles={scenarioPending}
             onSend={handleScenarioSend}
@@ -639,7 +675,10 @@ export default function App() {
         <ExportDialog
           messages={
             isScenarioSession
-              ? scenarioTurnsToExportMessages(scenarioTurns, activeScenarioSession?.id ?? "")
+              ? scenarioTurnsToExportMessages(
+                  exportScenarioTurns ?? scenarioTurns,
+                  activeScenarioSession?.id ?? "",
+                )
               : messages
           }
           userName={
@@ -653,7 +692,10 @@ export default function App() {
               ? activeScenarioSession?.title
               : activeSession?.title
           }
-          onClose={() => setExportDialogOpen(false)}
+          onClose={() => {
+            setExportDialogOpen(false);
+            setExportScenarioTurns(null);
+          }}
         />
       )}
 
