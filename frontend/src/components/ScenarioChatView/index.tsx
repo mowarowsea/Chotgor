@@ -170,7 +170,7 @@ export default function ScenarioChatView({
   /**
    * 遡り読み込みで先頭に追加されたぶん、見ている位置がずれないよう補正する。
    *
-   * クリック時に「下端からの距離（scrollHeight - scrollTop）」を控えておき、
+   * 発火時に「下端からの距離（scrollHeight - scrollTop）」を控えておき、
    * DOM 反映直後に同じ距離へ戻す。描画前に補正したいので useLayoutEffect を使う。
    */
   const olderScrollAnchorRef = useRef<number | null>(null);
@@ -183,12 +183,35 @@ export default function ScenarioChatView({
     }
   }, [turns]);
 
-  /** 「以前のやり取りを読み込む」: 復元用のアンカーを控えてから親へ委譲する。 */
-  const handleLoadOlder = () => {
-    const el = scrollRef.current;
-    olderScrollAnchorRef.current = el ? el.scrollHeight - el.scrollTop : null;
-    onLoadOlder?.();
-  };
+  /**
+   * 無限スクロール: 履歴の上端に近づいたら過去を 1 ページぶん自動で取りに行く。
+   *
+   * `loadingOlderTurns` を依存に入れているのは、読み込み後もセンチネルが可視域に
+   * 残っている（1 ページでは埋まらなかった）ときに再購読で再発火させるため。
+   * IntersectionObserver は交差状態が「変化した」ときしか呼ばれないので、
+   * 購読し直さないと 2 ページ目以降が出ない。
+   */
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  /** 親から渡る関数は毎レンダー変わりうるので、購読を張り直さずに済むよう ref 経由で呼ぶ。 */
+  const onLoadOlderRef = useRef(onLoadOlder);
+  onLoadOlderRef.current = onLoadOlder;
+  useEffect(() => {
+    if (!hasOlderTurns || loadingOlderTurns) return;
+    const root = scrollRef.current;
+    const target = topSentinelRef.current;
+    if (!root || !target) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        olderScrollAnchorRef.current = root.scrollHeight - root.scrollTop;
+        onLoadOlderRef.current?.();
+      },
+      // 上端に届く前から先読みして、遡り続けても途切れて見えないようにする
+      { root, rootMargin: "600px 0px 0px 0px" },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [hasOlderTurns, loadingOlderTurns]);
 
   /** NPC 名 → NPC オブジェクトのマップ（既知判定・アバター取得用）。 */
   const npcByName = useMemo(
@@ -391,16 +414,14 @@ export default function ScenarioChatView({
       {/* チャットスクロール（1on1 と同じく最大幅 760px 中央寄せ・浮遊ヘッダー分の上余白） */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
        <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 flex flex-col gap-5">
-        {/* 履歴ウィンドウより過去がある場合の遡り読み込み。押すたびに 1 ページぶん伸びる。 */}
+        {/* 遡り読み込みのセンチネル。可視域に入ると 1 ページぶん過去へ自動で伸びる。 */}
         {hasOlderTurns && (
-          <button
-            onClick={handleLoadOlder}
-            disabled={loadingOlderTurns}
-            className="self-center text-xs text-ch-t3 hover:text-ch-t1 transition-colors disabled:opacity-50 rounded-lg px-3 py-1.5"
-            style={{ border: "1px solid var(--ch-sep2)" }}
+          <div
+            ref={topSentinelRef}
+            className="self-center text-ch-t4 text-[11px] min-h-[20px] flex items-center"
           >
-            {loadingOlderTurns ? "読み込み中…" : "以前のやり取りを読み込む"}
-          </button>
+            {loadingOlderTurns && <span className="animate-pulse">読み込み中...</span>}
+          </div>
         )}
         {turns.length === 0 && pendingBubbles.length === 0 && (
           <div className="text-ch-t3 text-sm text-center mt-8">
