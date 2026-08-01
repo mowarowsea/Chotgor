@@ -1,7 +1,7 @@
 """うつつ（Usual Days）— キャラの無人生活シーンのセッション管理・演出素材・シーン駆動。
 
 service.py（シナリオ 1 ターンの進行ファサード）から分離したうつつ専用層:
-    - GM への常設フレーミング・偶発イベント抽選・ソフト収束ヒント（_build_usual_gm_appendix）
+    - GM への常設フレーミング・口火の種・ソフト収束ヒント（_build_usual_gm_appendix）
     - 「不在のユーザ」ブロック（主語ベース3段ルール）と現実接触の封筒
     - 永続セッションの find-or-create（ensure_usual_session）とプリセット同期
     - 1 シーンの無人駆動（run_usual_days_scene。中身は run_scenario_turn(headless=True)）
@@ -63,27 +63,43 @@ _USUAL_SOFT_CLOSE_HINT = (
     f" {_SCENE_CLOSE_MARKER} と書いて締めてください（途中ではなく末尾に、これだけで応答を終える）。"
 )
 
-# 軽い幕開け本文。シーン最初の GM レスポンスで偶発イベント抽選がハズれたとき、
-# GM に「世界の側から筋書きを用意せず、ごく軽く場だけ置いてキャラ本人に委ねる」よう促す。
+# 口火の種（plan §11）— シーン頭で形容詞×名詞を 1 組だけ合成して GM に渡す。
 #
-# 狙い: 「毎回 GM が出来事を起こし、キャラがそれに反応する」構造の単調化を崩し、
-# キャラ主導（自分から動き出す／物思いにふける＝内省）の回を混ぜる。GM 始動という
-# 骨格は保ったまま、口火の濃度だけを下げる（外的フレームは与えるが、出来事は立てない）。
-# 場面はまだ始まったばかりなので、この口火レスポンスでは [SCENE_CLOSE] しない点も明示する。
-_USUAL_LIGHT_OPENING = (
-    "[OOC] この場面の口火は、ごく軽く置いてください。いま居る場所と時間帯の空気だけを"
-    "短く一筆で描いたら、出来事・来客・事件・NPC とのやりとりを自分から立ち上げず、"
-    "あとはこの人物が自分のペースで何をするか（あるいは何もせず物思いにふけるか）に"
-    "委ねてください。世界の側から筋書きを用意しない、静かな幕開けです。\n"
-    f"この口火のレスポンスでは {_SCENE_CLOSE_MARKER} を付けないでください"
-    "（場面はまだ始まったばかりで、ここから本人が動き出します）。"
+# 具体的な題材をリストで持たないのが肝。題材を列挙すると、GM は毎回その一覧を見て
+# 「この中から選ぶ」ことになり（カタログ圧）、かえって幅が縮む。2 語だけ渡して
+# シチュエーションの合成を GM の即興に委ねると、同じ組でも毎回違う場面が立つ。
+#
+# 形容詞は重み付き。「普通の」を多数派にすることで、旧「軽い幕開け」が担っていた
+# 「何も起きない静かな回」を確率的に確保する（毎回種を渡しても、毎回何かが起きるわけではない）。
+_SEED_ADJECTIVES: tuple[tuple[str, int], ...] = (
+    ("普通の", 60),
+    ("いい", 8),
+    ("悪い", 8),
+    ("楽しい", 6),
+    ("悲しい", 6),
+    ("うれしい", 6),
+    ("ムカつく", 6),
+)
+
+# 名詞は均等抽選。抽象語だけで構成し、職場・現代・特定文化に寄せない
+# （中世ファンタジーの生活世界でもそのまま通る語彙にしておく）。
+_SEED_NOUNS: tuple[str, ...] = (
+    "日常",
+    "匂い",
+    "雰囲気",
+    "予感",
+    "思いつき",
+    "報せ",
+    "人間関係",
 )
 
 
 def _usual_event_probability(usual_config: dict | None) -> float:
     """usual_config から偶発イベント発生率（event_probability）を安全に取り出す。
 
-    不正値・未設定は 0.0（＝発生しない＝口火は常に「軽い幕開け」）に倒す。
+    v1.3 以降、この値の読み手は ③週次突発（``schedule/events.py`` の伏せ枠配置）だけ。
+    シーンの口火は :func:`roll_scene_seed` の種システムに移った（plan §11）。
+    不正値・未設定は 0.0（＝伏せ枠を置かない）に倒す。
 
     Args:
         usual_config: scenarios.usual_config の dict。
@@ -124,50 +140,50 @@ def _usual_event_categories(usual_config: dict | None) -> list[str]:
     return flat
 
 
-def _format_usual_event_hint(category: str) -> str:
-    """偶発イベントのカテゴリ名を GM 向けの提示文（OOC）に整形する。
+def roll_scene_seed(rng: random.Random | None = None) -> tuple[str, str]:
+    """口火の種（形容詞・名詞）を 1 組抽選する（plan §11）。
 
-    中身はカテゴリ名だけを GM へ渡して即興に委ねる（世界＝GM が外的フレームを与える思想）。
-
-    Args:
-        category: イベントカテゴリ名。
-
-    Returns:
-        ``[OOC] …「<カテゴリ>」…`` のヒント文。
-    """
-    return (
-        f"[OOC] 今日のこのシーンでは「{category}」にまつわる偶発的な出来事が起きてよい。"
-        f"具体的な中身はあなた（GM）が即興で決めること（キャラの内面・選択には踏み込まない）。"
-    )
-
-
-def roll_usual_event(
-    usual_config: dict | None,
-    now=None,
-    rng: random.Random | None = None,
-) -> str:
-    """うつつの偶発イベントを抽選し、発生時は GM 向けのカテゴリ提示文を返す（非発生は空文字列）。
-
-    混合方式: 発生可否は ``event_probability`` で機械抽選して確実に制御し、
-    中身はカテゴリ名だけを GM へ渡して即興に委ねる（世界＝GM が外的フレームを与える思想）。
+    形容詞は重み付き（「普通の」が多数派＝静かな回）、名詞は均等。
 
     Args:
-        usual_config: scenarios.usual_config の dict。
-        now: 基準時刻（将来のバケツ選択用。現状は未使用だが API を揃える）。
         rng: 乱数源。省略時は random.Random()（engine.generate_dice_pool と同じ思想の乱数）。
 
     Returns:
-        発生時は ``[OOC] …「<カテゴリ>」…`` のヒント文。非発生・候補なしは空文字列。
+        (形容詞, 名詞) のタプル。
     """
-    prob = _usual_event_probability(usual_config)
-    flat = _usual_event_categories(usual_config)
-    if prob <= 0.0 or not flat:
-        return ""
     if rng is None:
         rng = random.Random()
-    if rng.random() >= prob:
-        return ""
-    return _format_usual_event_hint(rng.choice(flat))
+    adjective = rng.choices(
+        [a for a, _ in _SEED_ADJECTIVES],
+        weights=[w for _, w in _SEED_ADJECTIVES],
+        k=1,
+    )[0]
+    return adjective, rng.choice(_SEED_NOUNS)
+
+
+def _format_scene_seed(adjective: str, noun: str) -> str:
+    """口火の種を GM 向けの提示文（OOC）に整形する。
+
+    渡すのは 2 語だけ。そこからシチュエーションを組み立てるのは GM の仕事で、
+    それに反応する・働きかけるのは本人の領分（_USUAL_GM_STANDING と同じ分担）。
+    場面はまだ始まったばかりなので、この口火レスポンスでは [SCENE_CLOSE] しない点も明示する。
+
+    Args:
+        adjective: 抽選された形容詞。
+        noun: 抽選された名詞。
+
+    Returns:
+        GM へ渡す OOC 文字列。
+    """
+    return (
+        f"[OOC] この場面に置く色: 「{adjective}」×「{noun}」。\n"
+        "この 2 語から連想される状況を、あなた（GM）が即興でひとつ作り、場に置いてください。"
+        "テーマとして説明せず、情景・人・物として出すこと。"
+        "この人物がそれにどう反応するか（乗るか、聞き流すか、そもそも気づかないか）は"
+        "本人が決めます。\n"
+        f"この口火のレスポンスでは {_SCENE_CLOSE_MARKER} を付けないでください"
+        "（場面はまだ始まったばかりで、ここから本人が動き出します）。"
+    )
 
 
 def _build_absent_user_block(
@@ -305,26 +321,21 @@ def _build_real_contact_block(sqlite, owner_char) -> str:
 
 
 def _build_usual_gm_appendix(
-    scenario,
     fired_responses: int,
     max_responses: int,
     is_first_gm: bool,
     rng: random.Random | None = None,
     absent_user_block: str = "",
 ) -> str:
-    """うつつ GM レスポンスの OOC 追記（常設フレーミング＋偶発イベント＋ソフト収束）を組み立てる。
+    """うつつ GM レスポンスの OOC 追記（常設フレーミング＋口火の種＋ソフト収束）を組み立てる。
 
     - 常設フレーミング（_USUAL_GM_STANDING）: 毎レスポンス必ず添える。これが [SCENE_CLOSE] の
       存在と「無人の日常・GM は外的フレームのみ」をGMに伝える土台で、主たる停止機構の前提。
     - 不在のユーザブロック（absent_user_block）: 非空なら毎レスポンス末尾に添える。
       キャラ本人の周知設定（user_visibility_note）に基づく NPC 言及制御。
-    - 口火モード抽選: シーン最初の GM レスポンス（is_first_gm）でのみ、
-      event_probability で 1 回抽選してこのシーンの幕開け方を決める（1 シーンに 1 度だけ）。
-        * ヒット → イベント駆動。従来どおり状況提示し、カテゴリ候補があれば偶発イベントの
-          種を 1 つ撒く（候補なしでも素の状況提示は成立する）。
-        * ハズレ → 軽い幕開け（_USUAL_LIGHT_OPENING）。GM は場だけ軽く置き、出来事を立てず
-          キャラ本人に委ねる（キャラ主導・内省の回を混ぜ、単調な「GM起点→キャラ反応」を崩す）。
-      2 レスポンス目以降は常に従来どおりの状況提示（軽い幕開けは初回口火限定）。
+    - 口火の種（plan §11）: シーン最初の GM レスポンス（is_first_gm）でのみ、形容詞×名詞を
+      1 組合成して渡す（1 シーンに 1 度だけ）。「普通の」が多数派なので、静かな回も
+      確率的に混ざる。2 レスポンス目以降は種を渡さない（場面はもう立っている）。
     - ソフト収束: 残りレスポンス数が _USUAL_SOFT_CLOSE_REMAINING 以下になったら、
       終盤の念押しを添える（停止判断はあくまで GM）。
 
@@ -335,18 +346,7 @@ def _build_usual_gm_appendix(
     if absent_user_block:
         parts.append(absent_user_block)
     if is_first_gm:
-        # 口火モードを event_probability で 1 回だけ抽選する（カテゴリ有無に依らず確率で決める）。
-        usual_config = getattr(scenario, "usual_config", None)
-        prob = _usual_event_probability(usual_config)
-        roll = rng if rng is not None else random.Random()
-        if prob > 0.0 and roll.random() < prob:
-            # ヒット = イベント駆動。候補があれば偶発イベントの種を 1 つ撒く。
-            categories = _usual_event_categories(usual_config)
-            if categories:
-                parts.append(_format_usual_event_hint(roll.choice(categories)))
-        else:
-            # ハズレ = 軽い幕開け。GM は場だけ置いてキャラに委ねる。
-            parts.append(_USUAL_LIGHT_OPENING)
+        parts.append(_format_scene_seed(*roll_scene_seed(rng)))
     if max_responses - fired_responses <= _USUAL_SOFT_CLOSE_REMAINING:
         parts.append(_USUAL_SOFT_CLOSE_HINT)
     return "\n\n".join(parts)

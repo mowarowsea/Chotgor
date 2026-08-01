@@ -66,6 +66,26 @@ class TestUsualScenarioPersistence:
         assert fetched.owner_character_id is None
         assert fetched.usual_config is None
 
+    def test_usual_scenario_has_no_baked_gm_prompt(self, sqlite_store):
+        """うつつには GM システムプロンプトのスナップショットを焼き込まないこと（plan §11）。
+
+        うつつはキャラ編集画面から作られ、custom_system_prompt の編集欄をどこにも
+        持たない。ここで焼き込むと「UI から見えないのに作成時点のテンプレで凍結された
+        GM プロンプト」が残り、以後 DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE をどう改善しても
+        うつつには永久に届かなくなる（2026-08-01 に実際に発生していた）。
+        NULL のままにしておけば prompt_builder が実行時に最新のデフォルトを使う。
+        """
+        scenario = _make_scenario(
+            sqlite_store, title="はるのうつつ", owner_character_id="char-haru",
+        )
+        assert sqlite_store.get_scenario(scenario.id).custom_system_prompt is None
+
+    def test_generic_scenario_keeps_baked_gm_prompt(self, sqlite_store):
+        """汎用シナリオには従来どおり焼き込むこと（編集画面の csp 欄の起点になる）。"""
+        scenario = _make_scenario(sqlite_store, title="汎用シナリオ")
+        baked = sqlite_store.get_scenario(scenario.id).custom_system_prompt
+        assert baked and "{narrator_name}" in baked
+
     def test_update_usual_config(self, sqlite_store):
         """update_scenario で usual_config（有効化トグル等）を部分更新できること。"""
         scenario = _make_scenario(
@@ -685,40 +705,86 @@ class TestTimeContext:
         assert "夏" in ctx
 
 
-class TestUsualEventRoll:
-    """偶発イベント抽選（混合方式: 確率で機械抽選・中身はカテゴリのみ）を検証する。"""
+class TestSceneSeedRoll:
+    """口火の種（形容詞×名詞のランダム合成）の抽選を検証する（plan §11）。
 
-    def test_zero_probability_never_fires(self):
-        """event_probability=0 では決して発生しないこと。"""
-        cfg = {"event_probability": 0.0, "event_categories": ["来客", "残業"]}
-        assert svc.roll_usual_event(cfg, rng=random.Random(1)) == ""
+    仕様: うつつのシーン頭で、形容詞（重み付き）と名詞（均等）を 1 組ずつ抽選して
+    GM へ渡す。具体的な題材をリストで持たないことで「一覧から選ぶ」圧（カタログ圧）を
+    構造的に排除し、シチュエーションの合成そのものを GM の即興に委ねる設計。
 
-    def test_full_probability_always_fires_with_category(self):
-        """event_probability=1 では必ず発生し、カテゴリ名を含むこと。"""
-        cfg = {"event_probability": 1.0, "event_categories": ["来客"]}
-        hint = svc.roll_usual_event(cfg, rng=random.Random(1))
-        assert "来客" in hint
+    形容詞「普通の」が多数派である点が最も重要な性質で、これが旧「軽い幕開け」の
+    役割（何も起きない静かな回）を確率的に引き継いでいる。ここが崩れると
+    「毎シーン何かが起きる」世界になり、日常が事件の連続に戻ってしまう。
+    """
+
+    def test_seed_comes_from_pools(self):
+        """抽選結果が定義済みプールの語彙に収まること。"""
+        adjective, noun = svc.roll_scene_seed(random.Random(1))
+        assert adjective in [a for a, _ in usual_days_mod._SEED_ADJECTIVES]
+        assert noun in usual_days_mod._SEED_NOUNS
+
+    def test_deterministic_with_same_seed(self):
+        """同じ乱数シードなら同じ種が出ること（再現性）。"""
+        assert svc.roll_scene_seed(random.Random(7)) == svc.roll_scene_seed(random.Random(7))
+
+    def test_plain_adjective_is_majority(self):
+        """「普通の」が多数派で、静かな回が過半を占めること。
+
+        重みは 60/100。多数試行で 5〜7 割に収まることを確認する。
+        """
+        rng = random.Random(12345)
+        plain = sum(1 for _ in range(2000) if svc.roll_scene_seed(rng)[0] == "普通の")
+        assert 0.5 < plain / 2000 < 0.7
+
+    def test_all_adjectives_reachable(self):
+        """重みの小さい形容詞も多数試行では出現すること（実質重み 0 の語彙が無い）。"""
+        rng = random.Random(999)
+        seen = {svc.roll_scene_seed(rng)[0] for _ in range(3000)}
+        assert seen == {a for a, _ in usual_days_mod._SEED_ADJECTIVES}
+
+    def test_hint_carries_both_words(self):
+        """GM への提示文が 2 語とも含み、OOC として渡されること。"""
+        hint = usual_days_mod._format_scene_seed("ムカつく", "人間関係")
         assert "[OOC]" in hint
+        assert "ムカつく" in hint
+        assert "人間関係" in hint
 
-    def test_no_categories_returns_empty(self):
-        """カテゴリ候補が無ければ確率に関わらず空文字列。"""
-        assert svc.roll_usual_event({"event_probability": 1.0}, rng=random.Random(1)) == ""
+    def test_hint_forbids_scene_close_at_opener(self):
+        """口火のレスポンスで [SCENE_CLOSE] を打たない指示が残っていること。
+
+        旧「軽い幕開け」が持っていた制約。これが無いと GM が幕開けと同時に
+        場面を閉じ、1 レスポンスだけのシーンが量産される。
+        """
+        hint = usual_days_mod._format_scene_seed("普通の", "日常")
+        assert "[SCENE_CLOSE]" in hint
+        assert "付けないでください" in hint
+
+
+class TestSuddenEventConfig:
+    """③週次突発が読む event_categories / event_probability のパースを検証する。
+
+    v1.3 でシーンの口火は種システム（TestSceneSeedRoll）へ移り、この 2 つの設定値は
+    ③週次突発（schedule/events.py の伏せ枠配置）専用になった。dict 形式
+    （時間帯/曜日/季節バケツ）を受け付ける建付けは将来の分岐用に維持している。
+    """
+
+    def test_invalid_probability_falls_back_to_zero(self):
+        """不正値・未設定の発生率は 0.0（＝伏せ枠を置かない）に倒れること。"""
+        assert usual_days_mod._usual_event_probability({"event_probability": "abc"}) == 0.0
+        assert usual_days_mod._usual_event_probability({}) == 0.0
+        assert usual_days_mod._usual_event_probability(None) == 0.0
+
+    def test_list_categories(self):
+        """list 形式のカテゴリがそのまま候補になること。"""
+        cats = usual_days_mod._usual_event_categories({"event_categories": ["来客", "残業"]})
+        assert cats == ["来客", "残業"]
 
     def test_dict_categories_flattened(self):
         """event_categories が dict（時間帯/季節別）なら全 value を平坦化して候補にすること。"""
-        cfg = {
-            "event_probability": 1.0,
-            "event_categories": {"朝": ["寝坊"], "夜": ["飲み会"]},
-        }
-        hint = svc.roll_usual_event(cfg, rng=random.Random(0))
-        assert ("寝坊" in hint) or ("飲み会" in hint)
-
-    def test_probability_distribution(self):
-        """確率 0.3 で多数試行したときの発生率がおおむね 0.3 付近に収まること。"""
-        cfg = {"event_probability": 0.3, "event_categories": ["x"]}
-        rng = random.Random(12345)
-        fired = sum(1 for _ in range(2000) if svc.roll_usual_event(cfg, rng=rng))
-        assert 0.25 < fired / 2000 < 0.35
+        cats = usual_days_mod._usual_event_categories(
+            {"event_categories": {"朝": ["寝坊"], "夜": ["飲み会"]}}
+        )
+        assert sorted(cats) == ["寝坊", "飲み会"]
 
 
 class TestSceneCloseAndSoftHint:
@@ -741,11 +807,7 @@ class TestSceneCloseAndSoftHint:
         （文言を変えるたびに哲学が逆戻りしないようガードする目的）。
         """
 
-        class _Scn:
-            usual_config = {"event_probability": 0.0}
-
-        scn = _Scn()
-        mid = svc._build_usual_gm_appendix(scn, fired_responses=2, max_responses=8, is_first_gm=False)
+        mid = svc._build_usual_gm_appendix(fired_responses=2, max_responses=8, is_first_gm=False)
         # うつつの中心概念（本人の日常をそのまま描く）が必ず含まれる
         assert "日常" in mid
         # 中盤でもマーカーの存在を GM に伝える（主たる停止機構）
@@ -761,34 +823,12 @@ class TestSceneCloseAndSoftHint:
     def test_soft_hint_only_near_end(self):
         """終盤の念押し（ソフト収束ヒント）は残りターンが閾値以下のときだけ加わること。"""
 
-        class _Scn:
-            usual_config = {"event_probability": 0.0}
-
-        scn = _Scn()
         # 残り多数 → 常設フレーミングはあるが「畳む頃合い」の念押しは無い
-        early = svc._build_usual_gm_appendix(scn, fired_responses=0, max_responses=8, is_first_gm=False)
+        early = svc._build_usual_gm_appendix(fired_responses=0, max_responses=8, is_first_gm=False)
         assert "畳む頃合い" not in early
         # 残り僅少 → 念押しが加わる
-        late = svc._build_usual_gm_appendix(scn, fired_responses=7, max_responses=8, is_first_gm=False)
+        late = svc._build_usual_gm_appendix(fired_responses=7, max_responses=8, is_first_gm=False)
         assert "畳む頃合い" in late
-
-    def test_event_hint_only_on_first_gm(self):
-        """偶発イベントはシーン最初の GM ターンでのみ抽選されること。"""
-
-        class _Scn:
-            usual_config = {"event_probability": 1.0, "event_categories": ["来客"]}
-
-        scn = _Scn()
-        # is_first_gm=True → イベント抽選される
-        first = svc._build_usual_gm_appendix(
-            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
-        )
-        assert "来客" in first
-        # is_first_gm=False（残りも多い）→ 常設フレーミングはあるがイベントは出ない
-        mid = svc._build_usual_gm_appendix(
-            scn, fired_responses=2, max_responses=8, is_first_gm=False, rng=random.Random(1),
-        )
-        assert "来客" not in mid
 
     def test_extract_scene_close(self):
         """[SCENE_CLOSE] を本文から除去しつつ検出フラグを返すこと（揺れ対応）。"""
@@ -803,96 +843,41 @@ class TestSceneCloseAndSoftHint:
         assert svc.extract_scene_close("つづく") == ("つづく", False)
 
 
-class TestUsualOpenerMode:
-    """シーン最初の GM 口火モード（イベント駆動 / 軽い幕開け）の確率分岐を検証する。
+class TestSceneSeedOpener:
+    """シーン最初の GM レスポンスにだけ口火の種が載ることを検証する（plan §11）。
 
-    仕様: うつつのシーンが始まったとき、最初の GM レスポンスだけは event_probability で
-    1 回抽選し、ヒットすれば従来どおりのイベント駆動（状況提示＋偶発イベントの種）、
-    ハズレなら「軽い幕開け」（GM は場だけ置いてキャラ本人に委ねる）に分岐する。
-    これにより「毎回 GM が出来事を起こし、キャラが反応する」単調化を崩し、
-    キャラ主導・内省の回を混ぜる。2 レスポンス目以降は常に従来どおりの状況提示。
-    抽選はカテゴリ候補の有無に依らず event_probability そのもので決める点も検証する。
+    仕様: うつつのシーンが始まったとき、最初の GM レスポンスにのみ形容詞×名詞の種を
+    1 組添える。2 レスポンス目以降は場面がもう立っているので種を渡さない。
+
+    v1.3 以前は event_probability で「イベント駆動 / 軽い幕開け」の二択に分岐して
+    いたが、ヒット側は依頼・トラブルのカテゴリに偏り、ハズレ側は「NPC とのやりとりを
+    立ち上げるな」の縛りで人のいる場所から人を消してしまい、結果として口火が
+    「依頼が来る」か「黙々と仕事の続き」の二択になっていた。その反省で種システムへ
+    置き換えた経緯があるため、口火が設定値（event_categories / event_probability）に
+    依存しなくなったこと自体がこのクラスの担保対象。
     """
 
-    def test_first_gm_miss_is_light_opening(self):
-        """初回 GM で抽選ハズレ（確率0）なら軽い幕開けになり、偶発イベントは撒かれないこと。"""
-
-        class _Scn:
-            usual_config = {"event_probability": 0.0, "event_categories": ["来客"]}
-
-        scn = _Scn()
+    def test_seed_present_on_first_gm(self):
+        """初回 GM レスポンスに種の提示文が載ること。"""
         out = svc._build_usual_gm_appendix(
-            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
+            fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
         )
-        # 軽い幕開けフレーミングが入る
-        assert "静かな幕開け" in out
-        # イベントの種は撒かれない（"来客" は軽い幕開け文の例示にも含まれるため、
-        # イベントヒント特有の文言「偶発的」で判別する）
-        assert "偶発的" not in out
+        assert "この場面に置く色" in out
 
-    def test_first_gm_hit_is_event_driven(self):
-        """初回 GM で抽選ヒット（確率1）ならイベント駆動になり、軽い幕開けは出ないこと。"""
-
-        class _Scn:
-            usual_config = {"event_probability": 1.0, "event_categories": ["来客"]}
-
-        scn = _Scn()
-        out = svc._build_usual_gm_appendix(
-            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
-        )
-        # 偶発イベントの種が撒かれる（イベントヒント特有の「偶発的」で判別）
-        assert "偶発的" in out
-        assert "来客" in out
-        # 軽い幕開けには倒れない
-        assert "静かな幕開け" not in out
-
-    def test_hit_without_categories_is_plain_opening(self):
-        """ヒットしてもカテゴリ候補が無ければ、軽い幕開けもイベントも付かず素の状況提示になること。
-
-        口火モードは event_probability そのもので決まり、カテゴリ有無に依らない。
-        ヒット時にカテゴリが無ければ偶発イベントの種が無いだけで、状況提示自体は成立する。
-        """
-
-        class _Scn:
-            usual_config = {"event_probability": 1.0}
-
-        scn = _Scn()
-        out = svc._build_usual_gm_appendix(
-            scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
-        )
-        # 軽い幕開けには倒れない（ヒット扱い）
-        assert "静かな幕開け" not in out
-        # 常設フレーミング（GM は外的フレームのみ）は常に存在する
-        assert "外的な状況" in out
-
-    def test_light_opening_only_on_first_gm(self):
-        """軽い幕開けは初回 GM 限定で、2 レスポンス目以降には現れないこと。"""
-
-        class _Scn:
-            usual_config = {"event_probability": 0.0}
-
-        scn = _Scn()
+    def test_seed_absent_after_first_gm(self):
+        """2 レスポンス目以降には種が載らないこと（場面はもう立っている）。"""
         mid = svc._build_usual_gm_appendix(
-            scn, fired_responses=2, max_responses=8, is_first_gm=False, rng=random.Random(1),
+            fired_responses=2, max_responses=8, is_first_gm=False, rng=random.Random(1),
         )
-        assert "静かな幕開け" not in mid
+        assert "この場面に置く色" not in mid
 
-    def test_opener_mode_follows_probability(self):
-        """口火がイベント駆動になる率が event_probability におおむね従うこと（多数試行）。"""
-
-        class _Scn:
-            usual_config = {"event_probability": 0.3, "event_categories": ["来客"]}
-
-        scn = _Scn()
-        rng = random.Random(12345)
-        event_driven = 0
-        for _ in range(2000):
-            out = svc._build_usual_gm_appendix(
-                scn, fired_responses=0, max_responses=8, is_first_gm=True, rng=rng,
-            )
-            if "偶発的" in out:
-                event_driven += 1
-        assert 0.25 < event_driven / 2000 < 0.35
+    def test_seed_coexists_with_standing_framing(self):
+        """種を載せても常設フレーミング（GM は外的フレームのみ）が消えないこと。"""
+        out = svc._build_usual_gm_appendix(
+            fired_responses=0, max_responses=8, is_first_gm=True, rng=random.Random(1),
+        )
+        assert "外的な状況" in out
+        assert "この場面に置く色" in out
 
 
 class TestGmPromptWiring:

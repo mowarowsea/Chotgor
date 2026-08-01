@@ -65,7 +65,7 @@ from backend.services.scenario_chat.usual_days import (  # noqa: F401
     _usual_event_categories,
     _usual_event_probability,
     ensure_usual_session,
-    roll_usual_event,
+    roll_scene_seed,
     run_usual_days_scene,
     sync_usual_session_presets,
     usual_elapsed_note,

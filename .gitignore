@@ -237,3 +237,5 @@ CLAUDE.md
 
 # ビルドキャッシュ
 frontend/tsconfig.tsbuildinfo
+# マイグレーション前バックアップ（data/ 退避物のコピー）
+backup_*/

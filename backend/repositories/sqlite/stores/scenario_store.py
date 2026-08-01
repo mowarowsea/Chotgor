@@ -43,7 +43,8 @@ class ScenarioChatStoreMixin:
         場所・空気・語り口・テンポなどはすべて `scenario` テキストにまとめて記述する。
         intro はセッション開始時に固定ターンとして挿入される導入部（@キャラ: 記法）。
         custom_system_prompt はGMシステムプロンプトの完全カスタマイズ。
-                         空の場合、デフォルトテンプレートが自動設定される。
+                         空かつ汎用シナリオなら、デフォルトテンプレートが自動設定される
+                         （うつつには焼き込まない。理由は下の実装コメント）。
         dice_pool_spec は ensemble_pc エンジン時に毎ターン乱数生成する種別と本数の dict。
                          例: {"d6": 10, "d100": 5}。NULL なら engine 側既定値 {"d6": 10}。
         pc_slots は ensemble_pc エンジン時の PC枠定義。
@@ -61,8 +62,16 @@ class ScenarioChatStoreMixin:
 
         GM の LLM プリセットはテンプレートには持たない（セッション単位で選択する）。
         """
-        # custom_system_prompt が None または空の場合、デフォルトテンプレートを設定
-        if not custom_system_prompt:
+        # custom_system_prompt が空なら、汎用シナリオにはデフォルトテンプレートのスナップショットを
+        # 焼き込む（シナリオ編集画面の csp 欄に編集の起点を用意するため）。
+        #
+        # うつつ（owner_character_id 付き）には焼き込まない。うつつはキャラ編集画面から作られ、
+        # csp の編集欄をどこにも持たないため、焼き込むと「UI から見えないのに作成時点のテンプレで
+        # 凍結された GM プロンプト」が residue として残り、以後 DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE を
+        # どう改善してもうつつには永久に届かなくなる（2026-08-01 に はる・柊なお の両うつつが
+        # 6/15 時点のテンプレで凍結していたのを発見）。NULL なら prompt_builder が実行時に
+        # 最新のデフォルトを使う。
+        if not custom_system_prompt and not owner_character_id:
             from backend.services.scenario_chat.prompt_builder import DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE
             custom_system_prompt = DEFAULT_GM_SYSTEM_PROMPT_TEMPLATE
 

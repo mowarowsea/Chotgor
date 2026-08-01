@@ -280,11 +280,10 @@ class ScenarioTurnExecutor:
         if sc.is_headless:
             current_log_feature.set("usual_days")
 
-        # うつつ向け OOC 追記（常設フレーミング・偶発イベント・ソフト収束ヒント）
+        # うつつ向け OOC 追記（常設フレーミング・口火の種・ソフト収束ヒント）
         gm_ooc = ""
         if sc.is_headless:
             gm_ooc = _build_usual_gm_appendix(
-                sc.scenario,
                 sc.fired_responses,
                 sc.max_responses,
                 is_first_gm=(sc.fired_responses == 0),
