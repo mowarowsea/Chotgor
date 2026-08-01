@@ -23,10 +23,6 @@ interface Props {
   currentGmPresetId: string;
   /** GM プリセット変更時のコールバック。 */
   onApplyGmPreset: (presetId: string) => void;
-  /** 現在セッションに紐付いているあらすじ蒸留プリセット ID。 */
-  currentSynopsisPresetId: string;
-  /** あらすじ蒸留プリセット変更時のコールバック。 */
-  onApplySynopsisPreset: (presetId: string) => void;
   /** セッションのあらすじ（未取得は null）。 */
   synopsis: ScenarioSynopsis | null;
   /** あらすじを部分更新（auto / manual のどちらか / 両方）。 */
@@ -98,8 +94,6 @@ export default function ScenarioSettingsModal({
   presets,
   currentGmPresetId,
   onApplyGmPreset,
-  currentSynopsisPresetId,
-  onApplySynopsisPreset,
   synopsis,
   onSynopsisChange,
   onOpenSynopsisCreate,
@@ -111,7 +105,6 @@ export default function ScenarioSettingsModal({
 
   /* ── モデルタブ用ローカル選択（適用ボタンで確定） ── */
   const [selGmId, setSelGmId] = useState(currentGmPresetId);
-  const [selSynId, setSelSynId] = useState(currentSynopsisPresetId);
 
   /* ── あらすじタブ用ドラフト（SynopsisModal と同じ振る舞い） ── */
   const [autoDraft, setAutoDraft] = useState(synopsis?.auto ?? "");
@@ -129,9 +122,6 @@ export default function ScenarioSettingsModal({
   useEffect(() => {
     setSelGmId(currentGmPresetId);
   }, [currentGmPresetId]);
-  useEffect(() => {
-    setSelSynId(currentSynopsisPresetId);
-  }, [currentSynopsisPresetId]);
 
   // Esc キーで閉じる。
   useEffect(() => {
@@ -142,20 +132,15 @@ export default function ScenarioSettingsModal({
     return () => document.removeEventListener("keydown", fn);
   }, [onClose]);
 
-  /** 「適用」ボタン: 変更されたプリセットだけ親に通知して、モーダルを閉じる。 */
+  /** 「適用」ボタン: GM プリセットが変わっていれば親に通知して、モーダルを閉じる。 */
   const applyPresets = () => {
     if (selGmId && selGmId !== currentGmPresetId) {
       onApplyGmPreset(selGmId);
     }
-    if (selSynId && selSynId !== currentSynopsisPresetId) {
-      onApplySynopsisPreset(selSynId);
-    }
     onClose();
   };
 
-  const presetsDirty =
-    (selGmId !== "" && selGmId !== currentGmPresetId) ||
-    (selSynId !== "" && selSynId !== currentSynopsisPresetId);
+  const presetsDirty = selGmId !== "" && selGmId !== currentGmPresetId;
 
   const saveAuto = async () => {
     if (savingAuto) return;
@@ -249,16 +234,6 @@ export default function ScenarioSettingsModal({
                   presets={presets}
                   selectedId={selGmId}
                   onSelect={setSelGmId}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <div className="text-[11px] text-ch-t3">
-                  あらすじ作成用モデル（履歴の自動蒸留。GM より軽いモデルにできる）
-                </div>
-                <PresetButtons
-                  presets={presets}
-                  selectedId={selSynId}
-                  onSelect={setSelSynId}
                 />
               </div>
               <div className="flex justify-end pt-2">

@@ -1155,7 +1155,7 @@ class TestSyncUsualSessionPresets:
     """
 
     def _build_world(self, store, *, gm_pid: str, pc_pid: str | None = None,
-                     ghost_model: str | None = None):
+                     ghost_model: str | None = None, syn_pid: str | None = None):
         """テスト用のうつつ世界＋セッションを組む。
 
         owner キャラ・GM/PC/Ghost の各プリセットレコードを作成し、usual_config を
@@ -1166,11 +1166,14 @@ class TestSyncUsualSessionPresets:
         store.create_character(cid, "はる", ghost_model=ghost_model)
         store.create_model_preset(gm_pid, "GM用", "anthropic", "claude-x")
         # 追従先候補となる別プリセットも事前に登録（preset 検証で弾かれないため）。
-        for extra in ("preset-gm2", "preset-pc1", "preset-pc2", "preset-ghost"):
+        for extra in ("preset-gm2", "preset-pc1", "preset-pc2", "preset-ghost",
+                      "preset-syn1", "preset-syn2"):
             store.create_model_preset(extra, extra, "anthropic", "claude-y")
         cfg = {"enabled": True, "slots": ["10:00"], "gm_preset_id": gm_pid}
         if pc_pid is not None:
             cfg["pc_preset_id"] = pc_pid
+        if syn_pid is not None:
+            cfg["synopsis_preset_id"] = syn_pid
         scenario = _make_scenario(
             store,
             owner_character_id=cid,
@@ -1234,6 +1237,56 @@ class TestSyncUsualSessionPresets:
         after = sqlite_store.get_scenario_session(session.id)
         char_entries = [a for a in after.pc_assignments if a.get("player_type") == "character"]
         assert char_entries[0]["preset_id"] == "preset-ghost"
+
+    def test_synopsis_preset_defaults_to_gm(self, sqlite_store):
+        """あらすじプリセット未指定なら、セッションは GM プリセットで蒸留すること。"""
+        _scenario, session = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                               pc_pid="preset-pc1")
+        assert session.synopsis_preset_id == "preset-gm1"
+
+    def test_synopsis_preset_is_used_at_session_start(self, sqlite_store):
+        """usual_config.synopsis_preset_id を指定して起動すると、その値が使われること。
+
+        うつつは無人ゆえフロントから蒸留モデルを選べない。蒸留（Sonnet 等の重いモデルだと
+        シーン完走ごとに効いてくる）を GM と別モデルへ落とすための唯一の設定経路。
+        """
+        _scenario, session = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                               pc_pid="preset-pc1", syn_pid="preset-syn1")
+        assert session.gm_preset_id == "preset-gm1"
+        assert session.synopsis_preset_id == "preset-syn1"
+
+    def test_synopsis_preset_change_propagates(self, sqlite_store):
+        """あらすじプリセットの変更が、既存セッションの synopsis_preset_id へ追従すること。"""
+        scenario, session = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                              pc_pid="preset-pc1", syn_pid="preset-syn1")
+        sqlite_store.update_scenario(scenario.id, usual_config={
+            "enabled": True, "slots": ["10:00"],
+            "gm_preset_id": "preset-gm1", "pc_preset_id": "preset-pc1",
+            "synopsis_preset_id": "preset-syn2",
+        })
+        refreshed = sqlite_store.get_scenario(scenario.id)
+        count = svc.sync_usual_session_presets(sqlite_store, refreshed)
+        assert count == 1
+
+        after = sqlite_store.get_scenario_session(session.id)
+        assert after.synopsis_preset_id == "preset-syn2"
+        # GM 側は据え置き。
+        assert after.gm_preset_id == "preset-gm1"
+
+    def test_synopsis_preset_falls_back_to_gm_when_cleared(self, sqlite_store):
+        """あらすじプリセットを空にすると、GM プリセットへ戻して反映されること。"""
+        scenario, session = self._build_world(sqlite_store, gm_pid="preset-gm1",
+                                              pc_pid="preset-pc1", syn_pid="preset-syn1")
+        sqlite_store.update_scenario(scenario.id, usual_config={
+            "enabled": True, "slots": ["10:00"],
+            "gm_preset_id": "preset-gm1", "pc_preset_id": "preset-pc1",
+        })
+        refreshed = sqlite_store.get_scenario(scenario.id)
+        count = svc.sync_usual_session_presets(sqlite_store, refreshed)
+        assert count == 1
+
+        after = sqlite_store.get_scenario_session(session.id)
+        assert after.synopsis_preset_id == "preset-gm1"
 
     def test_ended_session_is_not_updated(self, sqlite_store):
         """status="ended" のセッションは追従対象外。次回起動時に新規セッションが usual_config を拾う前提。"""
@@ -1608,6 +1661,7 @@ class TestUsualFormParsing:
             "usual_slots": "10:00, 13:00\n17:00",
             "usual_gm_preset_id": "gm-p",
             "usual_pc_preset_id": "pc-p",
+            "usual_synopsis_preset_id": "syn-p",
             "usual_event_categories": "来客\n残業\n\n雑談",
             "usual_event_probability": "0.3",
             "usual_max_responses": "6",
@@ -1625,6 +1679,7 @@ class TestUsualFormParsing:
         assert cfg["max_responses_per_scene"] == 6
         assert cfg["gm_preset_id"] == "gm-p"
         assert cfg["pc_preset_id"] == "pc-p"
+        assert cfg["synopsis_preset_id"] == "syn-p"
         # 履歴上限（あらすじ起稿タイミングのノブ）は scenario 列へ保存される
         assert scn_kwargs["history_max_turns"] == 40
         assert scn_kwargs["history_max_chars"] == 30000
@@ -1642,6 +1697,8 @@ class TestUsualFormParsing:
         assert cfg["event_categories"] == []
         assert cfg["event_probability"] == 0.0
         assert cfg["max_responses_per_scene"] == 8
+        # あらすじプリセットは空欄 → 空文字（起動時に GM プリセットへフォールバック）
+        assert cfg["synopsis_preset_id"] == ""
         assert scn_kwargs["scenario"] is None
         # 履歴上限は空欄 → None（設定既定に委ねる）で保存される
         assert scn_kwargs["history_max_turns"] is None

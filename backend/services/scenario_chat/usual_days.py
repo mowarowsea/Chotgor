@@ -606,13 +606,15 @@ def _build_usual_pc_assignments(pc_slots, owner_id: str, pc_pid: str) -> list[di
 def sync_usual_session_presets(sqlite, scenario) -> int:
     """うつつシナリオの ``usual_config`` を、対応する active な ``usual_days`` セッションへ追従させる。
 
-    Backend のうつつ設定 UI で ``gm_preset_id`` / ``pc_preset_id`` を更新した際、
-    既に走っている usual_days セッションの ``session.gm_preset_id`` と
+    Backend のうつつ設定 UI で ``gm_preset_id`` / ``pc_preset_id`` /
+    ``synopsis_preset_id`` を更新した際、既に走っている usual_days セッションの
+    ``session.gm_preset_id`` / ``session.synopsis_preset_id`` と
     ``pc_assignments[*].preset_id``（player_type="character" のもの）を最新値で
     上書きする。後勝ちルール — 最後に変更された側を真とする。
 
     PC 側プリセットの解決順は :func:`ensure_usual_session` と同一：
     ``usual_config.pc_preset_id`` → owner.ghost_model → ``usual_config.gm_preset_id``。
+    あらすじ側は ``usual_config.synopsis_preset_id`` → ``gm_preset_id``。
 
     Args:
         sqlite: SQLiteStore。
@@ -630,6 +632,7 @@ def sync_usual_session_presets(sqlite, scenario) -> int:
     owner_char = sqlite.get_character(owner_id)
     owner_ghost = (getattr(owner_char, "ghost_model", None) or "") if owner_char else ""
     pc_pid = ((cfg.get("pc_preset_id") or "").strip() or owner_ghost.strip() or gm_pid)
+    syn_pid = ((cfg.get("synopsis_preset_id") or "").strip() or gm_pid)
 
     updated = 0
     for s in sqlite.list_scenario_sessions_by_scenario(scenario.id):
@@ -641,6 +644,8 @@ def sync_usual_session_presets(sqlite, scenario) -> int:
         updates: dict = {}
         if (getattr(s, "gm_preset_id", "") or "") != gm_pid:
             updates["gm_preset_id"] = gm_pid
+        if (getattr(s, "synopsis_preset_id", "") or "") != syn_pid:
+            updates["synopsis_preset_id"] = syn_pid
 
         raw = list(getattr(s, "pc_assignments", None) or [])
         new_assignments: list[dict] = []
@@ -729,6 +734,8 @@ def ensure_usual_session(sqlite, scenario):
     owner_char = sqlite.get_character(owner_id) if owner_id else None
     owner_ghost = (getattr(owner_char, "ghost_model", None) or "") if owner_char else ""
     pc_pid = ((cfg.get("pc_preset_id") or "").strip() or owner_ghost.strip() or gm_pid)
+    # あらすじ蒸留は明示指定が無ければ GM と同じプリセットで走らせる。
+    syn_pid = ((cfg.get("synopsis_preset_id") or "").strip() or gm_pid)
     if not gm_pid or not owner_id or not pc_slots:
         logger.warning(
             "うつつ: セッション起動に必要な情報が不足 owner=%s gm_preset=%s slots=%d",
@@ -742,7 +749,7 @@ def ensure_usual_session(sqlite, scenario):
         scenario_id=scenario.id,
         title=getattr(scenario, 'title', 'うつつ'),
         gm_preset_id=gm_pid,
-        synopsis_preset_id=gm_pid,
+        synopsis_preset_id=syn_pid,
         engine_type="usual_days",
         pc_assignments=_build_usual_pc_assignments(pc_slots, owner_id, pc_pid),
     )

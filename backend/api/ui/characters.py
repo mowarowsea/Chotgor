@@ -390,6 +390,9 @@ def _parse_usual_form(
         "max_responses_per_scene": _num("usual_max_responses", 8),
         "gm_preset_id": (form.get("usual_gm_preset_id") or "").strip(),
         "pc_preset_id": (form.get("usual_pc_preset_id") or "").strip(),
+        # あらすじ蒸留用（空なら GM プリセットに委ねる）。うつつは無人ゆえフロントから
+        # 蒸留モデルを選ぶ導線がないため、ここが唯一の設定箇所。
+        "synopsis_preset_id": (form.get("usual_synopsis_preset_id") or "").strip(),
     }
 
     # 主人公 PC 枠（1 枠固定）。description はこの世界での人物像・知っていること。

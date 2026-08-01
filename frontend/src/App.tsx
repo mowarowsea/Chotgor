@@ -235,7 +235,6 @@ export default function App() {
     deleteScenario,
     handleStartScenario,
     handleScenarioPresetChange,
-    handleScenarioSynopsisPresetChange,
     handleScenarioSend,
     handleScenarioYieldTo,
     handleScenarioRegenerate,
@@ -710,8 +709,6 @@ export default function App() {
             presets={scenarioPresets}
             currentGmPresetId={activeScenarioSession.gm_preset_id}
             onApplyGmPreset={handleScenarioPresetChange}
-            currentSynopsisPresetId={activeScenarioSession.synopsis_preset_id}
-            onApplySynopsisPreset={handleScenarioSynopsisPresetChange}
             synopsis={scenarioSynopsis}
             onSynopsisChange={handleSynopsisChange}
             onOpenSynopsisCreate={handleOpenSynopsisCreate}

@@ -273,7 +273,9 @@ main.py うつつ tick（_run_every_minute 同乗・冪等キー=日付+スロ�
   `usual_user_visibility_note`（周囲への開示範囲）→ `characters` テーブルが source of truth。
 
 - データ: `scenarios.owner_character_id`（うつつ世界の所有者）＋ `scenarios.usual_config`（JSON:
-  enabled/slots/event_categories/event_probability/max_turns_per_scene/gm・pc_preset_id）。
+  enabled/slots/event_categories/event_probability/max_turns_per_scene/
+  gm・pc・synopsis_preset_id）。`synopsis_preset_id` は空なら GM プリセットへ
+  フォールバックする（蒸留はシーン完走ごとに走るので、GM と別の軽いモデルを選べる）。
   履歴上限は `scenarios.history_max_turns/chars` 列（うつつフォームで設定）。
   `scenario_sessions.engine_type="usual_days"`（永続1本セッション）。
 - あらすじ（履歴切り捨て時の保険）: 通常シナリオはフロントが進捗バーを見てユーザが

@@ -610,6 +610,21 @@
             </div>
 
             <div class="ch-field">
+                <label class="ch-label" for="usual_synopsis_preset_id">あらすじプリセット
+                    <span class="ch-hint">履歴の自動蒸留に使う LLM。シーン完走ごとに走るので軽いモデルを選べる。未選択なら GM プリセット</span>
+                </label>
+                <select id="usual_synopsis_preset_id" name="usual_synopsis_preset_id" class="ch-select">
+                    <option value="">— GM プリセットと同じ —</option>
+                    {% for preset in model_presets %}
+                    <option value="{{ preset.id }}"
+                        {% if usual_config.get("synopsis_preset_id") == preset.id %}selected{% endif %}>
+                        {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="ch-field">
                 <label class="ch-label" for="usual_event_categories">偶発イベントのカテゴリ
                     <span class="ch-hint">1 行 1 カテゴリ。中身は GM が即興で決める（種だけ渡す）</span>
                 </label>
