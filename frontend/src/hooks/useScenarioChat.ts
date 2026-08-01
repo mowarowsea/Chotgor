@@ -142,6 +142,8 @@ interface UseScenarioChatResult {
   ) => Promise<void>;
   /** GM プリセットを変更する。 */
   handleScenarioPresetChange: (presetId: string) => Promise<void>;
+  /** あらすじ蒸留プリセットを変更する。 */
+  handleScenarioSynopsisPresetChange: (presetId: string) => Promise<void>;
   /** シナリオ発話送信（SSE ストリーム消費）。
    *  yieldTo は ensemble_pc の「ターンを譲る」UI 用（PC枠名 / "GM" / "ALL"）。
    *  autoAdvance=true と組み合わせて初動ルーティングを直接指定する。 */
@@ -446,6 +448,40 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
         setScenarioSessions((prev) =>
           prev.map((s) =>
             s.id === updated.id ? { ...s, gm_preset_id: updated.gm_preset_id } : s,
+          ),
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession, setError],
+  );
+
+  /** シナリオセッションのあらすじ蒸留プリセットを変更する。
+   *
+   * 左上ヘッダーのモーダル「モデル」タブから呼ばれる。うつつ（無人シーン）を含め、
+   * 以降の自動蒸留がこのプリセットで走る。GM モデルとは独立で、蒸留だけ
+   * 軽量モデルに落としてトークン消費を抑えるのが主な用途。
+   */
+  const handleScenarioSynopsisPresetChange = useCallback(
+    async (presetId: string) => {
+      if (!activeScenarioSession) return;
+      if (presetId === activeScenarioSession.synopsis_preset_id) return;
+      setError(null);
+      try {
+        const updated = await updateScenarioSession(activeScenarioSession.id, {
+          synopsis_preset_id: presetId,
+        });
+        setActiveScenarioSession((prev) =>
+          prev
+            ? { ...prev, synopsis_preset_id: updated.synopsis_preset_id }
+            : prev,
+        );
+        setScenarioSessions((prev) =>
+          prev.map((s) =>
+            s.id === updated.id
+              ? { ...s, synopsis_preset_id: updated.synopsis_preset_id }
+              : s,
           ),
         );
       } catch (e) {
@@ -979,6 +1015,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     deleteScenario,
     handleStartScenario,
     handleScenarioPresetChange,
+    handleScenarioSynopsisPresetChange,
     handleScenarioSend,
     handleScenarioYieldTo,
     handleScenarioRegenerate,
