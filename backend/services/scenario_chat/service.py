@@ -188,10 +188,11 @@ async def run_scenario_turn(
     # （無人ループ制御だけが service 側の分岐で異なる）。
     is_pc_mode = engine_type in ("ensemble_pc", "usual_days")
 
-    # うつつの GM レスポンスは PC レスポンス（pc_runner）と同様、独立した MAIN ログ行として扱う。
-    # new_message_id() で log_dir_id を fresh にしないと、既定値 "--------" の旧ログ溜めへ
-    # GM の debug ログが書かれ、数ヶ月前の旧エラー（旧 OpenRouter 402 等）と混在して
+    # うつつはスケジューラ起動で HTTP 層（stream.py）を通らないため、ループ開始前に
+    # log_dir_id を fresh にしておく。これがないと既定値 "--------" の旧ログ溜めへ
+    # debug ログが書かれ、数ヶ月前の旧エラー（旧 OpenRouter 402 等）と混在して
     # /ui/logs が誤検出する。feature ラベルは /ui/logs で識別できるよう "usual_days" にする。
+    # レスポンスごとの MAIN 行はこの後 loop_strategies._run_gm / pc_runner が各自で切る。
     if is_headless:
         new_message_id()
         current_log_feature.set("usual_days")

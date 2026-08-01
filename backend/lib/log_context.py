@@ -82,6 +82,28 @@ def new_message_id() -> str:
     return msg_id
 
 
+def new_log_row_id() -> str:
+    """同一リクエストの途中で、独立したログ行（MAIN 行）用の ID を採番する。
+
+    シナリオは 1 リクエスト中に GM・PC が複数回 LLM を叩くため、レスポンスごとに
+    別の request_id を振らないと provider_request/response が直前のレスポンスの行へ
+    相乗りする（フロントのバブル下ログで別話者のログが混ざる原因）。
+
+    `new_message_id()` との違いは**枝分かれ（レスポンスガチャ）のコンテキストを
+    持ち越す**こと。generation / branch_point は「1 リクエスト = 1 枝」の単位なので、
+    ログ行を切るたびにリセットしてしまうと保存ターンが枝から外れる。
+
+    Returns:
+        生成した8文字の16進数ID。
+    """
+    gen_id = current_generation_id.get()
+    branch_index = current_branch_point_index.get()
+    msg_id = new_message_id()
+    current_generation_id.set(gen_id)
+    current_branch_point_index.set(branch_index)
+    return msg_id
+
+
 def ensure_message_id() -> str:
     """未採番のままログ出力が始まった場合の防御網 — lazy 採番して警告する。
 

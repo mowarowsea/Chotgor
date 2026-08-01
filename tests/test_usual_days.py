@@ -445,6 +445,103 @@ class TestHeadlessLoop:
         assert synopsis_calls[0]["synopsis_preset_id"] == "preset-usual"
 
 
+class TestHeadlessLogRows:
+    """うつつのレスポンスごとに、独立したログ行（request_id）が割り当てられることを検証する。
+
+    背景（回帰防止）:
+        pc_runner は PC ターン冒頭で新しい request_id を採番するが、かつて GM 側には
+        採番がなく、PC の直後に走る GM レスポンスがその request_id を引き継いでいた。
+        結果として scenario_turns.log_request_id が PC ターンと後続 GM ターンで同値になり、
+        フロントのバブル下ログ（log_request_id をキーにログエントリを引く）で
+        「はるのバブルにも GM のログが出る／GM のバブルにも はるのログが出る」という
+        取り違えが発生していた。
+
+    ここでは GM↔PC を 3 レスポンス回し、保存されたターンの log_request_id が
+    レスポンス境界ごとに切り替わることを担保する。
+    """
+
+    def _install_id_tracking_mocks(self, monkeypatch, gm_ids, pc_ids):
+        """request_id の遷移を観測できるモックを差し込む。
+
+        - fake_gm: 呼び出し時点の current_message_id を記録し、実運用と同じく
+          attach_log_request_id=True でターンを保存する。
+        - fake_pc: 本物の pc_runner.stream_pc_response と同様に、冒頭で自分用の
+          ログ行 ID を採番する（この採番こそが GM 側へ漏れていた元凶なので、
+          モックでも再現しないと回帰を検出できない）。
+        """
+        from backend.lib.log_context import current_message_id, new_log_row_id
+
+        async def fake_gm(**kwargs):
+            gm_ids.append(current_message_id.get())
+            text = "Narrator: しずかな時間が流れた。@はる"
+            svc._save_turn(
+                sqlite=kwargs["sqlite"],
+                session_id=kwargs["session_id"],
+                speaker_type="narrator",
+                speaker_name="Narrator",
+                content=text,
+                raw_response=text,
+                attach_log_request_id=True,
+            )
+            return
+            yield  # 到達しないが async generator にするためのダミー
+
+        async def fake_pc(**kwargs):
+            new_log_row_id()
+            pc_ids.append(current_message_id.get())
+            yield ("pc_done", {
+                "character": kwargs["pc"].name,
+                "character_id": kwargs["pc"].character_id,
+                "full_text": "（はるは黙々と仕事を続けた）",
+                "anticipation": None,
+            })
+
+        monkeypatch.setattr(svc, "_run_gm_turn", fake_gm)
+        monkeypatch.setattr(pc_runner_mod, "stream_pc_response", fake_pc)
+        monkeypatch.setattr(svc, "compute_synopsis_progress", lambda *a, **k: None)
+
+        async def fake_synopsis(*a, **k):
+            return None
+
+        monkeypatch.setattr(usual_days_mod, "maybe_update_auto_synopsis", fake_synopsis)
+
+    def test_gm_after_pc_gets_its_own_request_id(self, sqlite_store, monkeypatch):
+        """PC の直後に走る GM が、PC の request_id を引き継がないこと。"""
+        sid, _ = _build_usual_session(sqlite_store, max_responses=3)
+        gm_ids: list[str] = []
+        pc_ids: list[str] = []
+        self._install_id_tracking_mocks(monkeypatch, gm_ids, pc_ids)
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        # GM,PC,GM の 3 レスポンス。2 回目の GM が PC の ID を引き継いでいないこと。
+        assert len(gm_ids) == 2 and len(pc_ids) == 1
+        assert gm_ids[1] != pc_ids[0]
+        # 3 レスポンスすべてが別々のログ行を持つ。
+        assert len({gm_ids[0], pc_ids[0], gm_ids[1]}) == 3
+
+    def test_saved_turns_carry_distinct_request_ids(self, sqlite_store, monkeypatch):
+        """保存済みターンの log_request_id が、レスポンス境界ごとに切り替わること。
+
+        フロントのバブルはこの列を使ってログを引くため、隣接ターンで値が重複すると
+        別話者のログが混ざって表示される。
+        """
+        sid, _ = _build_usual_session(sqlite_store, max_responses=3)
+        self._install_id_tracking_mocks(monkeypatch, [], [])
+
+        asyncio.run(svc.run_usual_days_scene(
+            session_id=sid, sqlite=sqlite_store, settings={}, chat_service=object(),
+        ))
+
+        turns = sqlite_store.list_scenario_turns(sid)
+        assert [t.speaker_type for t in turns] == ["narrator", "pc", "narrator"]
+        req_ids = [t.log_request_id for t in turns]
+        assert all(req_ids), "log_request_id が未設定のターンがある"
+        assert len(set(req_ids)) == 3
+
+
 class TestUsualUserPc:
     """うつつの「不在のユーザ」の扱いを検証する。
 

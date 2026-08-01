@@ -22,7 +22,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
-from backend.lib.log_context import current_log_feature
+from backend.lib.debug_logger import logger as debug_logger
+from backend.lib.log_context import (
+    current_log_feature,
+    current_log_session_id,
+    current_log_target,
+    new_log_row_id,
+)
 from backend.providers.base import LLMApiError
 from backend.services.chat_flow.scene_loop import (
     LoopState,
@@ -275,10 +281,41 @@ class ScenarioTurnExecutor:
         # GM ターン中にプロバイダエラーを検知したら保持する（末尾でシーンを閉じる判定に使う）。
         gm_error: str | None = None
 
-        # PC ターンが feature を "usual_days_pc" に書き換えているため、GM ターン側で
-        # "usual_days" へ戻す（ログの取り違い防止）。
-        if sc.is_headless:
-            current_log_feature.set("usual_days")
+        # GM レスポンスも PC ターン（pc_runner）と同じく、独立した MAIN ログ行として扱う。
+        # これをしないと、直前の PC ターンが採番した request_id をそのまま引き継ぎ、
+        # GM のログが PC の行へ相乗りする（フロントのバブル下ログで、PC バブルと
+        # 後続 GM バブルの双方に両者のログが出る）。
+        # 例外はリクエスト最初の GM で、そこは stream.py が採番・INSERT した
+        # MAIN 行（ユーザ発話が入っている行）をそのまま使う。うつつ（headless）は
+        # stream.py を通らないため、最初の GM から自前で行を作る。
+        history = sc.sqlite.list_scenario_turns(sc.session_id)
+        owns_log_row = sc.is_headless or sc.fired_responses > 0
+        if owns_log_row:
+            new_log_row_id()
+            # new_message_id() 系は session_id / target もリセットするので再セットする
+            # （NULL だと /ui/logs のシナリオ別フィルタが効かなくなる）。
+            current_log_feature.set("usual_days" if sc.is_headless else "scenario_chat")
+            current_log_session_id.set(sc.session_id)
+            current_log_target.set(getattr(sc.scenario, "title", None))
+            # 行の「入力」は直前の発話（pc_runner と同じ組み立て方）。ユーザ発話起点の
+            # 最初の GM だけは body.content がそのまま入力になる。
+            prev_turn = next(
+                (t for t in reversed(history)
+                 if getattr(t, "speaker_type", "") in {"narrator", "npc", "user", "pc"}),
+                None,
+            )
+            prev_speaker = getattr(prev_turn, "speaker_name", "") if prev_turn else ""
+            prev_content = getattr(prev_turn, "content", "") if prev_turn else ""
+            debug_logger.log_front_input({
+                "trigger": "usual_days_gm_turn" if sc.is_headless else "scenario_chat_gm_turn",
+                "scenario_title": getattr(sc.scenario, "title", ""),
+                "preset_id": sc.gm_preset_id,
+                "previous_speaker": prev_speaker,
+                "content": (
+                    sc.user_message if sc.fired_responses == 0 and sc.user_message
+                    else (f"@{prev_speaker}: {prev_content}" if prev_speaker else "")
+                ),
+            })
 
         # うつつ向け OOC 追記（常設フレーミング・口火の種・ソフト収束ヒント）
         gm_ooc = ""
@@ -296,7 +333,7 @@ class ScenarioTurnExecutor:
             engine=sc.engine,
             scenario=sc.scenario,
             npcs=sc.npcs,
-            history=sc.sqlite.list_scenario_turns(sc.session_id),
+            history=history,
             user_message=sc.user_message if sc.fired_responses == 0 else "",
             settings=sc.settings,
             gm_preset_id=sc.gm_preset_id,
@@ -345,6 +382,12 @@ class ScenarioTurnExecutor:
                 gm_last_name = getattr(t, "speaker_name", "") or sc.last_speaker_name
                 gm_last_turn = t
                 break
+
+        # このレスポンスの生出力を、対応する MAIN 行の response カラムへ書き戻す。
+        # 1on1 が service 層で log_front_output を呼ぶのと同じ構図で、行と応答を
+        # 1 対 1 に保つ（API 層で最後に一括で書くと、最終行に全 GM 発話が集まってしまう）。
+        if gm_last_raw:
+            debug_logger.log_front_output(gm_last_raw)
 
         # SCENE_CLOSE 検出時の表示用 content マーカー除去 & 早すぎる SCENE_CLOSE 抑止判定。
         if sc.is_headless and _has_scene_close(gm_last_raw):

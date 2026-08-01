@@ -62,8 +62,6 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
     settings = sqlite.get_all_settings()
 
     async def sse_generator():
-        # GM の発話内容を収集して最後に log_front_output() に渡す
-        _gm_parts: list[str] = []
         # chat_service は app.state に必ず存在する想定だが、テスト用 fixture では未注入のことが
         # あるため getattr で防御する。None でも ensemble モードは動作する（ensemble_pc 時のみ
         # PC ターンがスキップされる）。
@@ -79,16 +77,9 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
         ):
             data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
             yield f"data: {data}\n\n"
-            if event_type == "turn_end":
-                turn = payload.get("turn", {})
-                if turn.get("speaker_type") != "user":
-                    name = turn.get("speaker_name", "")
-                    content = turn.get("content", "")
-                    if content:
-                        _gm_parts.append(content)
-        # ストリーム完了後に DB の response カラムを更新する
-        if _gm_parts:
-            debug_logger.log_front_output("\n\n".join(_gm_parts))
+        # DB の response カラムは各 GM レスポンスが自分の MAIN 行へ書き戻す
+        # （loop_strategies._run_gm）。1 リクエスト中に GM が複数回走るため、
+        # ここで一括して書くと最終行に全レスポンスが集まってしまう。
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

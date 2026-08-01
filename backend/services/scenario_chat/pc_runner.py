@@ -33,7 +33,7 @@ from backend.lib.log_context import (
     current_log_feature,
     current_log_session_id,
     current_log_target,
-    new_message_id,
+    new_log_row_id,
 )
 from backend.services.chat.models import Message
 from backend.services.chat.request_factory import build_character_request
@@ -236,10 +236,12 @@ async def stream_pc_response(
     """
     # PC ターンは「ユーザの 1 リクエスト中に走る独立した LLM 呼び出し」なので、
     # ログ機構上は新しい MAIN 行として扱う（ChotgorLogger._MAIN_SOURCE_TYPES 参照）。
-    # new_message_id() で msg_id / db_entry_id / counter をリセットしてから、
+    # new_log_row_id() で msg_id / db_entry_id / counter をリセットしてから、
     # log_front_input を呼んで MAIN 行を INSERT する。これがないと provider_request /
     # provider_response が紐づく先が無く、Backend/Logs に PC のターンが現れない。
-    new_message_id()
+    # 枝分かれ（レスポンスガチャ）の generation は 1 リクエスト単位なので、
+    # new_message_id() ではなく枝を持ち越す new_log_row_id() を使う。
+    new_log_row_id()
     # うつつ無人ループ（default_origin="usual"）の PC ターンは /ui/logs で
     # 識別できるよう feature ラベルを "usual_days_pc" に分ける。
     current_log_feature.set("usual_days_pc" if default_origin == "usual" else "scenario_chat_pc")

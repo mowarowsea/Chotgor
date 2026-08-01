@@ -196,6 +196,15 @@ frontend useChat
   `ensure_message_id()` が書き込み直前に lazy 採番して警告を出す（`debug/--------/`
   への堆積と `request_id="--------"` 行を構造的に防ぐ防御網）。新機能で警告を見たら
   そのコードパスのエントリポイントに `new_message_id()` を追加する。
+- **ログ行の粒度は「1 LLM レスポンス = 1 MAIN 行」**。1on1 は 1 リクエスト = 1 レスポンス
+  なので一致するが、シナリオ／うつつは 1 リクエスト中に GM・PC が何度も走るため、
+  `loop_strategies._run_gm` と `pc_runner` がレスポンスごとに `new_log_row_id()` で
+  request_id を切り、`log_front_input` で MAIN 行を INSERT する（例外はユーザ発話起点の
+  最初の GM で、そこは `api/scenario_chat/stream.py` が作った行を使う）。行を切らないと
+  後続レスポンスのログが直前の行へ相乗りし、`scenario_turns.log_request_id` が隣接ターンで
+  重複して、フロントのバブル下ログが別話者のログを混ぜて表示する。
+  `new_log_row_id()` は `new_message_id()` と違い枝分かれ（generation / branch_point）を
+  持ち越す — 枝は 1 リクエスト単位なので、行を切るたびにリセットしてはならない。
 
 ### シナリオチャット
 
