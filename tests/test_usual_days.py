@@ -749,6 +749,22 @@ class TestSceneSeedRoll:
         assert "ムカつく" in hint
         assert "人間関係" in hint
 
+    def test_hint_frames_seed_as_temperature_not_event(self):
+        """種が「温度の指定であって出来事の指示ではない」と枠付けされていること。
+
+        2026-08-01、初版の提示文（「2 語から連想される状況を作れ」だけ）で GM が
+        「ムカつく×雰囲気」を場の不穏さと読み、見知らぬ初老の男が本人の部屋を訪ねる
+        場面を作った。抽象 2 語は軽量モデルほど「一番わかりやすい絵」＝事件に落ちるため、
+        規模の枠と、立ち上げてはいけないものの列挙が要る。
+        """
+        hint = usual_days_mod._format_scene_seed("ムカつく", "雰囲気")
+        assert "出来事の指示ではありません" in hint
+        # 立ち上げてはいけないものが具体名で挙がっている
+        for forbidden in ("事件", "来訪者", "知らない人物"):
+            assert forbidden in hint
+        # 生活が地続きであること（この場面で何かが始まらない）
+        assert "昨日までと同じように続きます" in hint
+
     def test_hint_forbids_scene_close_at_opener(self):
         """口火のレスポンスで [SCENE_CLOSE] を打たない指示が残っていること。
 
