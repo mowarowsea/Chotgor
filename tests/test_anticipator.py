@@ -53,6 +53,28 @@ def test_extract_strips_whitespace():
     assert ant == "余白つき予想"
 
 
+def test_extract_multiline_anticipation():
+    """予想が複数行にまたがっても抽出され、本文から除去されること。
+
+    うつつの GM が「NPC それぞれの思惑を併記」した結果、予想タグが改行を含み、
+    タグごと本文に残ってしまった不具合の再現ケース。
+    ログUI（tag_extract）だけが改行に対応していた非対称も、この統一で解消された。
+    """
+    text = (
+        "田中はそう言って席に戻った。\n"
+        "[ANTICIPATE_RESPONSE:\n"
+        "はるは key_holder_id を外部キーとして設計するだろう。\n"
+        "15時の新装データ到着に向けて午後のデスクワークが進んでいく。\n"
+        "]"
+    )
+    clean, ant = extract_anticipation(text)
+
+    assert "key_holder_id" in ant
+    assert "15時の新装データ到着" in ant
+    assert "[ANTICIPATE_RESPONSE:" not in clean
+    assert clean == "田中はそう言って席に戻った。"
+
+
 def test_extract_empty_text():
     """空文字列を渡しても例外なく空の結果を返すこと。"""
     clean, ant = extract_anticipation("")

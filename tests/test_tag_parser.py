@@ -55,7 +55,6 @@ def test_fixed_marker():
 
 def test_multiple_tags_same_type():
     """同一タイプのタグが複数ある場合、すべて抽出されること。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
     text = "[MEMORY:fact|1.0|事実A]\nテキスト\n[MEMORY:user|0.5|ユーザB]"
     clean, matches = parse_tags(text, ["MEMORY"])
@@ -70,7 +69,6 @@ def test_multiple_tags_same_type():
 
 def test_multiple_tag_types():
     """複数タイプのタグが混在する場合、それぞれ正しく抽出されること。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
     text = "[MEMORY:user|1.0|ユーザ情報]\n[MARK:クールに話す]\n普通のテキスト"
     clean, matches = parse_tags(text, ["MEMORY", "MARK"])
@@ -84,93 +82,92 @@ def test_multiple_tag_types():
     assert "普通のテキスト" in clean
 
 
-# ─── 内容テキスト中の ']' （行内rfindで解決） ──────────────────────────────────
+# ─── 内容テキスト中の ']' （最初の ']' で閉じる仕様） ──────────────────────────
+#
+# 閉じ括弧は「本体開始以降で最初の ']'」に統一されている。
+# 本体に ']' を書かれるとそこで切れ、残りは本文に残る。これは仕様であり、
+# LLM 側の形式エラーとして許容する（後続本文を飲み込んで消すより軽い失敗に倒す方針）。
 
 
-def test_closing_bracket_in_content():
-    """内容テキストに ']' が含まれても正しく抽出されること。
+def test_closing_bracket_in_content_truncates_at_first():
+    """本体に ']' が含まれる場合、最初の ']' で本体が切れて残りが本文に残ること。
 
-    行内rfindにより、同一行の最後の ']' を閉じ括弧として取得するため、
-    内容テキスト途中の ']' で誤終了しない。
-    これが旧depth方式で失敗していた直接の報告バグ再現ケース。
+    かつては行内 rfind で最後の ']' を採用して本体を丸ごと救っていたが、
+    改行またぎのタグを扱えない代償が大きく、最初の ']' 固定へ統一した。
     """
     text = "[MEMORY:semantic|1.2|rfindによる最後の]検出と行ベースパースで解決。]"
     clean, matches = parse_tags(text, ["MEMORY"])
 
     assert len(matches["MEMORY"]) == 1
-    body = matches["MEMORY"][0].body
-    assert "rfindによる最後の]検出" in body
-    assert body.endswith("解決。")
-    assert clean == ""
+    assert matches["MEMORY"][0].body == "semantic|1.2|rfindによる最後の"
+    # 切れた残りは本文に残る（消えるのではなく見える形で残ることが重要）
+    assert clean == "検出と行ベースパースで解決。]"
 
 
-def test_multiple_closing_brackets_in_content():
-    """内容テキストに ']' が複数含まれる場合も、最後の ']' が閉じ括弧として正しく使われること。"""
+def test_multiple_closing_brackets_in_content_truncates_at_first():
+    """本体に ']' が複数含まれる場合も、最初の ']' が閉じ括弧として使われること。"""
     text = "[MEMORY:semantic|1.0|A]B]C]"
     clean, matches = parse_tags(text, ["MEMORY"])
 
     assert len(matches["MEMORY"]) == 1
-    # 最後の ] が閉じ括弧なので body は "A]B]C" となる
-    assert matches["MEMORY"][0].body == "semantic|1.0|A]B]C"
-    assert clean == ""
+    assert matches["MEMORY"][0].body == "semantic|1.0|A"
+    assert clean == "B]C]"
 
 
 # ─── ネストした角括弧 ────────────────────────────────────────────────────────────
+#
+# ネストした ']' も「本体中の ']'」に他ならないため、上と同じく最初の ']' で切れる。
+# タグは開始位置以降を素直に切り出すだけで、括弧の対応は追跡しない。
 
 
-def test_nested_bracket_in_content():
-    """コンテンツ内にネストした角括弧が含まれる場合でも正しく抽出されること。
+def test_nested_bracket_in_content_truncates_at_first():
+    """コンテンツ内のネストした角括弧も、最初の ']' で本体が切れること。
 
-    Issue #49 の直接再現ケース:
-    [MEMORY:fact|1.2|[MEMORY:]タグのパースバグで...] という形式で
-    コンテンツ内に [MEMORY:] が含まれるときに失敗していた。
+    かつて Issue #49（[MEMORY:fact|1.2|[MEMORY:]タグのパースバグで...] 形式）への
+    対処として rfind で救っていたケース。最初の ']' 固定へ統一したため、
+    本体は "[MEMORY:" までで終わり、残りは本文に残る。
     """
     text = "[MEMORY:fact|1.2|[MEMORY:]タグのパースバグで、はるの発言末尾に記憶内容が漏れ出す事象が発生。]"
     clean, matches = parse_tags(text, ["MEMORY"])
 
     assert len(matches["MEMORY"]) == 1
-    m = matches["MEMORY"][0]
-    assert m.body.startswith("fact|1.2|")
-    content = m.body.split("|", 2)[2]
-    assert "[MEMORY:]" in content
-    assert "タグのパースバグ" in content
-    # クリーンテキストにマーカーが残らないこと
-    assert clean == ""
+    assert matches["MEMORY"][0].body == "fact|1.2|[MEMORY:"
+    assert clean == "タグのパースバグで、はるの発言末尾に記憶内容が漏れ出す事象が発生。]"
 
 
-def test_nested_bracket_tag_body_preserved():
-    """ネストした括弧がコンテンツに含まれる場合、外側タグの body が完全に取得されること。"""
+def test_nested_bracket_tag_body_truncated_at_first():
+    """本体先頭にネストした括弧があると、その閉じ括弧で本体が切れること。"""
     text = "[MARK:[重要] これを守ること]普通のテキスト"
     clean, matches = parse_tags(text, ["MARK"])
 
     assert len(matches["MARK"]) == 1
-    assert "[重要] これを守ること" in matches["MARK"][0].body
-    assert "普通のテキスト" in clean
+    assert matches["MARK"][0].body == "[重要"
+    assert clean == "これを守ること]普通のテキスト"
 
 
-def test_deeply_nested_brackets():
-    """3段階以上のネストした角括弧でも正しく処理されること。"""
+def test_deeply_nested_brackets_truncate_at_first():
+    """3段階以上のネストでも括弧の対応は追跡せず、最初の ']' で切れること。"""
     text = "[MEMORY:fact|1.0|[A:[B:[C]]]外側の内容]テキスト"
     clean, matches = parse_tags(text, ["MEMORY"])
 
     assert len(matches["MEMORY"]) == 1
-    body = matches["MEMORY"][0].body
-    # 全体のbodyが正しく取れること
-    assert "[A:[B:[C]]]外側の内容" in body
+    assert matches["MEMORY"][0].body == "fact|1.0|[A:[B:[C"
     assert "テキスト" in clean
 
 
 def test_multiple_tags_with_nested_content():
-    """複数のタグそれぞれに角括弧が含まれる場合も正しく処理されること。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
+    """本体に括弧を含むタグが複数あっても、それぞれ独立して抽出されること。
+
+    片方の解析が次のタグを飲み込まないこと（切り取り後の残りテキストから
+    次のタグ探索が再開されること）を確認する。
     """
     text = "[MEMORY:fact|1.0|[MARK:]の内容A]\n[MEMORY:user|0.5|[他の括弧]B]\nテキスト"
     clean, matches = parse_tags(text, ["MEMORY"])
 
     assert len(matches["MEMORY"]) == 2
     bodies = [m.body for m in matches["MEMORY"]]
-    assert any("[MARK:]の内容A" in b for b in bodies)
-    assert any("[他の括弧]B" in b for b in bodies)
+    assert bodies == ["fact|1.0|[MARK:", "user|0.5|[他の括弧"]
+    assert "テキスト" in clean
 
 
 # ─── バッククォート処理 ────────────────────────────────────────────────────────
@@ -228,7 +225,6 @@ def test_prefix_collision_resolved_by_auto_sort():
 
     呼び出し側が列挙順を意識しなくても、内部の長さ降順ソートで正しく照合されること。
     どちらの順序で渡しても結果が同じであることを両方向で検証する。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
     text = "[MARK_RESET]\n[MARK:新しい指針]"
 
@@ -246,7 +242,6 @@ def test_prefix_collision_resolved_by_auto_sort():
 
 def test_auto_sort_with_longer_shared_prefix():
     """プレフィックスが3文字以上共通するタグ名でも、列挙順によらず正しく照合されること。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
     text = "[SEARCH_RESET]\n[SEARCH:クエリ内容]"
 
@@ -265,18 +260,28 @@ def test_auto_sort_with_longer_shared_prefix():
 # ─── マルチライン ──────────────────────────────────────────────────────────────
 
 
-def test_multiline_content_is_not_supported():
-    """タグは1行に収まる前提。改行前に ] がなければタグとして認識されない。
+def test_multiline_content_is_extracted():
+    """改行をまたぐタグ内容も抽出され、本文から除去されること。
 
-    行内rfindにより、タグの閉じ括弧は同一行内の最後の ] として取得する。
-    よって改行をまたぐタグ内容は未サポートであり、タグとして抽出されない。
+    うつつの GM が [ANTICIPATE_RESPONSE:...] を複数行で書いたときに、
+    タグが本文へ丸ごと残った不具合の再現ケース（行内探索の廃止で解消）。
     """
     text = "[MEMORY:identity|0.9|1行目\n2行目\n3行目]後のテキスト"
     clean, matches = parse_tags(text, ["MEMORY"])
 
-    # 最初の行に ] がないためタグとして認識されない
-    assert matches["MEMORY"] == []
-    assert "[MEMORY:identity|0.9|1行目" in clean
+    assert len(matches["MEMORY"]) == 1
+    assert matches["MEMORY"][0].body == "identity|0.9|1行目\n2行目\n3行目"
+    assert clean == "後のテキスト"
+
+
+def test_multiline_tag_followed_by_another_tag():
+    """改行をまたぐタグの後ろに別のタグが続いても、飲み込まずに分割されること。"""
+    text = "[MEMORY:fact|1.0|複数行の\n内容]間のテキスト[MARK:単一行]"
+    clean, matches = parse_tags(text, ["MEMORY", "MARK"])
+
+    assert matches["MEMORY"][0].body == "fact|1.0|複数行の\n内容"
+    assert matches["MARK"][0].body == "単一行"
+    assert clean == "間のテキスト"
 
 
 # ─── 未閉じタグ（マルフォーム） ───────────────────────────────────────────────
@@ -341,21 +346,21 @@ def test_arbitrary_fixed_marker():
     assert "よろしく。" in clean
 
 
-def test_arbitrary_tag_with_nested_brackets():
-    """任意タグ TOOL_CALL のコンテンツにネストした括弧が含まれても正しく処理されること。"""
+def test_arbitrary_tag_with_nested_brackets_truncates_at_first():
+    """任意タグでも同様に、コンテンツ中の ']' で本体が切れること。
+
+    タグ名に依存しない共通の規則であることの確認（TOOL_CALL でも MEMORY でも同じ）。
+    """
     text = "[TOOL_CALL:web_search|{\"query\": \"[検索用] キーワード\"}]テキスト続く"
     clean, matches = parse_tags(text, ["TOOL_CALL"])
 
     assert len(matches["TOOL_CALL"]) == 1
-    body = matches["TOOL_CALL"][0].body
-    assert "web_search" in body
-    assert "[検索用]" in body
+    assert matches["TOOL_CALL"][0].body == "web_search|{\"query\": \"[検索用"
     assert "テキスト続く" in clean
 
 
 def test_arbitrary_multiple_tag_types_coexist():
     """将来追加される複数の任意タグが混在しても互いに干渉しないこと。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
     text = "[SEARCH:クエリA]\n[WEBHOOK:https://example.com]\n[SEARCH:クエリB]\nテキスト"
     clean, matches = parse_tags(text, ["SEARCH", "WEBHOOK"])
@@ -374,7 +379,6 @@ def test_arbitrary_tag_with_reset_variant():
 
     現在の実装（長さ降順ソート）により、列挙順によらず FOO_RESET が FOO に
     誤照合されないことを確認する。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
     text = "[FOO_RESET]\n[FOO:コンテンツ]"
 
@@ -388,7 +392,6 @@ def test_arbitrary_tag_with_reset_variant():
 
 def test_arbitrary_tag_unknown_names_not_in_result():
     """指定していないタグ名はマッチ結果に含まれず、テキストにも残ること。
-    タグはそれぞれ別行に記述する（行内rfindの制約）。
     """
     text = "[KNOWN:内容]\n[UNKNOWN:除去しない]"
     clean, matches = parse_tags(text, ["KNOWN"])

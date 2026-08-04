@@ -277,7 +277,7 @@ def _last_anticipation_tag(text: str) -> list[dict]:
         構造化タグ辞書のリスト（0件 or 1件）。
     """
     try:
-        _, matches = parse_tags(text, [ANTICIPATE_RESPONSE_TAG_NAME], multiline=True)
+        _, matches = parse_tags(text, [ANTICIPATE_RESPONSE_TAG_NAME])
     except Exception:
         return []
     found = matches.get(ANTICIPATE_RESPONSE_TAG_NAME, [])
@@ -323,7 +323,7 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
 
     # ツール呼び出しが見つからなければタグ方式（Ollama等）としてフォールバック
     try:
-        _, matches = parse_tags(text, _KNOWN_TAG_NAMES, multiline=True)
+        _, matches = parse_tags(text, _KNOWN_TAG_NAMES)
     except Exception:
         return anticipation_tags
 

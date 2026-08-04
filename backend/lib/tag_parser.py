@@ -4,21 +4,24 @@ LLM応答テキストから [INSCRIBE_MEMORY:...] / [CARVE_NARRATIVE:...] など
 正規表現ではなく文字単位でスキャンし、正確に抽出するためのユーティリティ。
 
 特徴:
-  - 閉じ括弧 `]` の検出ロジック（2段階）:
-    1. ']' の直後が `[UPPERCASE...:` や `[UPPERCASE...]` 形式（タグ形式）で始まれば
-       そこをタグ境界として閉じ括弧とみなす。認識済みかどうかは問わない。
-       これにより同一行に複数タグが連続する場合や、認識外タグの直前でも正しく分割できる。
-    2. 上記に該当する ']' が見つからない場合は rfind フォールバック。
-       検索範囲は multiline=False なら同一行内、multiline=True なら文末まで。
-       これにより内容テキストに ']' が含まれる場合も正しくパースできる（本体に ']' を含むタグ対策）。
+  - 閉じ括弧 `]` は、本体開始位置以降で**最初に現れる `]`** とする。改行はまたいでよい。
   - バッククォートインラインコード・コードフェンス内はスキャンをスキップする
   - タグ定義は呼び出し側が渡すため、任意のタグ名を自由に追加できる抽象設計
   - タグ名の列挙順を呼び出し側が意識しなくてよいよう、内部で長さ降順ソートする
     (短いタグ名が長いタグ名の接頭辞になっていても、長い方を必ず先に照合できる)
 
-multiline パラメータ:
-  - False（デフォルト）: 改行をまたぐタグ内容は非対応。同一行内の rfind を使用。
-  - True: 改行をまたぐタグ内容に対応。文末まで rfind を使用。api/logs_ui/tag_extract.py が使用する。
+【閉じ括弧を「最初の `]`」に統一した経緯 — 2026-08-04】
+かつては `multiline` フラグで挙動を切り替えていた（False=同一行内の最後の `]`、
+True=文末までの最初の `]`）。False 側は「本体に `]` を含むタグ」を救うためのもので、
+実行時の抽出（anticipator / inscriber / carver）が False、ログ表示だけが True だったため、
+**改行を含むタグが本文から切り取られないのに、ログUIの表示だけは出る**という非対称が
+生まれていた（うつつの ANTICIPATE_RESPONSE で顕在化）。
+
+「本体に `]` を含む」と「タグの後に普通の本文が続く」はテキスト上で区別できないため、
+どちらの規則を採っても一方は壊れる。そこで失敗モードの軽い方へ倒した:
+  - 最初の `]`（現行）: 本体が途中で切れ、残骸が本文に**見える形で**残る
+  - 最後の `]`（旧 False）: 後続の本文をまるごと飲み込んで**消す**
+LLM が本体に `]` を書いた場合の取りこぼしは、形式エラーとして許容する方針。
 
 新規タグを追加するには:
   1. 処理モジュール（inscriber.py 相当）を新規作成し parse_tags() を呼ぶだけでよい
@@ -66,105 +69,14 @@ def _skip_backtick(text: str, pos: int, n: int) -> int:
         return (end + 1) if end != -1 else n
 
 
-def _line_end(text: str, pos: int, n: int) -> int:
-    """pos 以降の改行位置（排他）を返す。改行がなければ n を返す。
-
-    Args:
-        text: スキャン対象テキスト。
-        pos: 検索開始位置。
-        n: テキスト長 (= len(text))。
-
-    Returns:
-        改行文字の位置（改行がなければ n）。
-    """
-    nl = text.find("\n", pos)
-    return nl if nl != -1 else n
-
-
-def _is_tag_like(text: str, pos: int, n: int) -> bool:
-    """pos 以降のテキストがタグ形式 [UPPERCASE...: または [UPPERCASE...] で始まるか判定する。
-
-    '[' に続いて大文字アルファベット・アンダースコア・数字が1文字以上並び、
-    ':' または ']' で終わる場合にタグ形式とみなす。
-    日本語・記号などはこの条件を満たさないため、通常の括弧内テキストと区別できる。
-
-    Args:
-        text: スキャン対象テキスト。
-        pos: 判定開始位置。
-        n: テキスト長 (= len(text))。
-
-    Returns:
-        タグ形式で始まる場合 True。
-    """
-    if pos >= n or text[pos] != "[":
-        return False
-    end = pos + 1
-    while end < n and (text[end].isupper() or text[end] == "_" or text[end].isdigit()):
-        end += 1
-    # タグ名が1文字以上あり、':' または ']' で終わること
-    if end >= n or end == pos + 1:
-        return False
-    return text[end] in (":", "]")
-
-
-def _find_closing_bracket(
-    text: str, body_start: int, end_of_search: int, n: int, multiline: bool
-) -> int:
-    """タグの閉じ括弧 ']' の位置を返す。
-
-    検出ロジック（2段階）:
-    1. ']' の直後がタグ形式（[UPPERCASE...: など）で始まれば即タグ境界として返す。
-       これにより連続タグが認識外タグも含め正しく分割される。
-       例: "[INSCRIBE_MEMORY:...][INSCRIBE_MEMORY:...]" → 1つ目の ']' 直後に "[INSCRIBE_MEMORY:" → 即返す
-       例: "[INSCRIBE_MEMORY:...][CARVE_NARRATIVE:...]"  → ']' 直後に "[CARVE_NARRATIVE:" → 即返す（認識外でもOK）
-
-    2. 上記に該当しない場合のフォールバック:
-       - multiline=False: rfind（最後の ']'）を返す。
-         内容中に ']' を含むタグに対応（本体に ']' を含むケース対策）。
-         例: "[INSCRIBE_MEMORY:cat|0.5|内容に]が含まれる]" → 最後の ']' が閉じ括弧。
-       - multiline=True: find（最初の ']'）を返す。
-         rfind にすると "普通のテキスト" をまたいで次タグの ']' まで飲み込んでしまうため。
-         例: "[CARVE_NARRATIVE:文B]普通のテキスト[CARVE_NARRATIVE:文C]" の 2つ目解析時、
-             最初の ']'（文B 直後）を正しく閉じ括弧とする。
-
-    Args:
-        text: スキャン対象テキスト。
-        body_start: タグ本体の開始位置（プレフィックスの直後）。
-        end_of_search: 検索の上限位置（排他）。multiline=False なら行末、True なら文末。
-        n: テキスト長 (= len(text))。
-        multiline: フォールバック挙動の切り替え。
-
-    Returns:
-        閉じ括弧 ']' の位置。見つからない場合は -1。
-    """
-    pos = body_start
-    while pos < end_of_search:
-        cand = text.find("]", pos, end_of_search)
-        if cand == -1:
-            break
-        # ']' の直後がタグ形式なら即タグ境界として返す
-        if _is_tag_like(text, cand + 1, n):
-            return cand
-        pos = cand + 1
-
-    # フォールバック
-    if multiline:
-        # multiline=True: 最初の ']' を使う（普通テキストをまたいだ誤飲み込みを防ぐ）
-        return text.find("]", body_start, end_of_search)
-    else:
-        # multiline=False: 最後の ']' を使う（内容中の ']' をスキップするため）
-        return text.rfind("]", body_start, end_of_search)
-
-
 def parse_tags(
     text: str,
     tag_names: list[str],
-    *,
-    multiline: bool = False,
 ) -> tuple[str, dict[str, list[TagMatch]]]:
     """テキストからツールタグを文字単位で抽出する。
 
-    文字単位でスキャンし、各タグの閉じ括弧を _find_closing_bracket() で取得する。
+    文字単位でスキャンし、タグ本体開始以降で最初に現れる ']' を閉じ括弧とする
+    （改行をまたぐタグ内容も抽出できる。規則の根拠はモジュール docstring 参照）。
     バッククォートコードブロック内のタグ形式テキストはスキップする。
 
     タグ名の列挙順は呼び出し側が意識しなくてよい。
@@ -175,9 +87,6 @@ def parse_tags(
         text: パース対象のテキスト。
         tag_names: 認識するタグ名のリスト (例: ["INSCRIBE_MEMORY", "CARVE_NARRATIVE", "END_SESSION"])。
                    "[TAG]" 形式の固定マーカーも "[TAG:...]" 形式のコンテンツタグも両対応。
-        multiline: True の場合、改行をまたぐタグ内容を許容する。
-                   False（デフォルト）の場合、タグは同一行に収まることを前提とする。
-                   api/logs_ui/tag_extract.py のみ True を使用する。
 
     Returns:
         tuple:
@@ -224,10 +133,8 @@ def parse_tags(
             if text[i : i + len(prefix)] == prefix:
                 body_start = i + len(prefix)
 
-                # multiline=False なら同一行内、True なら文末まで検索する
-                end_of_search = n if multiline else _line_end(text, body_start, n)
-
-                j = _find_closing_bracket(text, body_start, end_of_search, n, multiline)
+                # 閉じ括弧は本体開始以降で最初の ']'（改行をまたいでよい）
+                j = text.find("]", body_start)
 
                 if j != -1:
                     tag_end = j + 1  # ']' の次

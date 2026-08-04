@@ -69,11 +69,12 @@ def test_extract_multiple_markers_all_extracted():
 # ─── _extract: Issue #49 由来のネストした角括弧処理 ─────────────────────────────
 
 
-def test_extract_nested_bracket_in_content_is_parsed_correctly():
-    """コンテンツ内に [INSCRIBE_MEMORY:] が含まれる場合も正しく抽出されること (Issue #49 相当)。
+def test_extract_nested_bracket_truncates_at_first_closing():
+    """コンテンツ内に ']' があると、そこで内容が切れること (Issue #49 の逆転)。
 
-    旧実装では ([^]]+) がネストした ']' で止まり、残りのテキストが
-    キャラクターの発言に漏れ出すバグがあった。
+    かつては行内 rfind で最後の ']' を閉じ括弧として本体を救っていたが、
+    改行をまたぐタグを扱えない代償が大きく「最初の ']'」へ統一した
+    （tag_parser.py のモジュール docstring 参照）。内容が途中で切れるのは仕様。
     """
     text = "[INSCRIBE_MEMORY:contextual|1.2|[INSCRIBE_MEMORY:]タグのパースバグで発言末尾に内容が漏れる事象。恥ずかしい。]"
     clean, mems = extract_inscribe_memory_tags(text)
@@ -82,21 +83,18 @@ def test_extract_nested_bracket_in_content_is_parsed_correctly():
     category, impact, content = mems[0]
     assert category == "contextual"
     assert impact == "1.2"
-    assert "[INSCRIBE_MEMORY:]" in content
-    assert "タグのパースバグ" in content
-    # クリーンテキストに内容が漏れ出していないこと
-    assert "タグのパースバグ" not in clean
+    assert content == "[INSCRIBE_MEMORY:"
+    # 切れた残りは本文に残る（消えるのではなく見える形で残ることが重要）
+    assert "タグのパースバグ" in clean
 
 
-def test_extract_nested_bracket_does_not_leak_to_clean_text():
-    """ネストした角括弧を含むマーカーがクリーンテキストに漏れ出さないこと (Issue #49 相当)。"""
+def test_extract_nested_bracket_leaves_remainder_in_clean_text():
+    """ネストした ']' で切れた残りが本文に残り、タグ自体は除去されること。"""
     text = "今日は元気です。[INSCRIBE_MEMORY:contextual|1.2|[INSCRIBE_MEMORY:]タグのバグ発生。恥ずかしい。]また話しましょう。"
     clean, _ = extract_inscribe_memory_tags(text)
 
     assert "[INSCRIBE_MEMORY:" not in clean
-    assert "タグのバグ" not in clean
-    assert "今日は元気です。" in clean
-    assert "また話しましょう。" in clean
+    assert clean == "今日は元気です。タグのバグ発生。恥ずかしい。]また話しましょう。"
 
 
 # ─── _extract: バッククォート内は無視 ──────────────────────────────────────────
