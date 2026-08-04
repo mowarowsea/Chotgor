@@ -2069,6 +2069,10 @@ details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
   z-index: 60;
   width: max-content;
   max-width: min(340px, calc(100vw - 44px));
+  /* テンプレートタグ一覧のような長い注記でも画面をはみ出さないよう内側でスクロールさせる */
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 10px 12px;
   font-family: var(--ch-f);
   font-size: 11.5px;

@@ -87,17 +87,24 @@
         function place(help) {
           var body = help.querySelector('.ch-help__body');
           if (!body) return;
+          body.style.maxHeight = '';  // CSS の上限に戻してから素の高さを測る
           var anchor = help.getBoundingClientRect();
           var box = body.getBoundingClientRect();
+
           var left = Math.min(anchor.left - GAP, window.innerWidth - MARGIN - box.width);
-          var top = anchor.bottom + GAP;
-          // 下にはみ出すなら上へ出す（上にも入らないならそのまま下）
-          if (top + box.height > window.innerHeight - MARGIN
-              && anchor.top - GAP - box.height > MARGIN) {
-            top = anchor.top - GAP - box.height;
-          }
           body.style.left = Math.max(left, MARGIN) + 'px';
-          body.style.top = Math.max(top, MARGIN) + 'px';
+
+          // ⓘ の下に入るなら下、入らないなら上。どちらにも入らないときは
+          // 広い方へ出して、その高さに収まるよう内側スクロールさせる。
+          var below = window.innerHeight - MARGIN - (anchor.bottom + GAP);
+          var above = anchor.top - GAP - MARGIN;
+          if (box.height <= below || below >= above) {
+            if (box.height > below) body.style.maxHeight = below + 'px';
+            body.style.top = (anchor.bottom + GAP) + 'px';
+          } else {
+            if (box.height > above) body.style.maxHeight = above + 'px';
+            body.style.top = Math.max(anchor.top - GAP - Math.min(box.height, above), MARGIN) + 'px';
+          }
         }
         // 開いている間に画面が動いたら追随させる（fixed は自動で付いてこないため）
         var pending = false;

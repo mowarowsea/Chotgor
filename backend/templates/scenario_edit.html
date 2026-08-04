@@ -6,6 +6,9 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
 {% endblock %}
 
+{# 長い注意書きはラベル脇の ⓘ に畳む（インラインの ch-hint は一言だけに留める） #}
+{% from "macros.html" import ch_help %}
+
 {% block content %}
 <div class="ch-shell">
     {# ── ヒーロー ─────────────────────────────────────── #}
@@ -35,7 +38,9 @@
             <!-- バナー画像 -->
             <div class="ch-field">
                 <span class="ch-label">Banner
-                    <span class="ch-hint">PNG / JPG / WebP — 2MB まで・3:1 で切り抜き。一覧やセッション開始画面に表示される</span>
+                    <span class="ch-hint">PNG / JPG / WebP — 2MB まで</span>{{ ch_help(
+                        '3:1 に切り抜かれます。シナリオ一覧とセッション開始画面に表示されます。'
+                    ) }}
                 </span>
                 <div id="banner-preview-container">
                     {% if scenario and scenario.banner_data %}
@@ -58,8 +63,10 @@
 
             <!-- シナリオ概要 -->
             <div class="ch-field">
-                <label class="ch-label" for="scenario">Scenario / World
-                    <span class="ch-hint">世界観・場所・空気感・Narratorの語り口・テンポなど、必要な前提を自由記述。GM の system prompt に注入されます</span>
+                <label class="ch-label" for="scenario">Scenario / World{{ ch_help(
+                    '世界観・場所・空気感・Narrator の語り口・テンポなど、必要な前提を自由記述します。'
+                    'ここに書いた内容は GM の system prompt に注入されます。'
+                ) }}
                 </label>
                 <textarea id="scenario" name="scenario" class="ch-textarea" style="min-height:200px"
                     placeholder="e.g. 魔導書を探す旅。雨の中、古城の門前に到着した。Narrator は詩的に語る。テンポは ゆっくり。">{% if scenario %}{{ scenario.scenario or '' }}{% endif %}</textarea>
@@ -67,8 +74,11 @@
 
             <!-- 導入部 -->
             <div class="ch-field">
-                <label class="ch-label" for="intro">Intro / Prologue
-                    <span class="ch-hint">セッション開始時に固定で挿入される導入部。`@キャラ: 本文` 記法で各話者の発話を記述（`@Narrator:` / `@&lt;PC枠名&gt;:` も使用可）</span>
+                <label class="ch-label" for="intro">Intro / Prologue{{ ch_help(
+                    '<p>セッション開始時に固定で挿入される導入部です。</p>'
+                    '<p><code>@キャラ: 本文</code> 記法で各話者の発話を書きます'
+                    '（<code>@Narrator:</code> / <code>@&lt;PC枠名&gt;:</code> も使えます）。</p>'
+                ) }}
                 </label>
                 <textarea id="intro" name="intro" class="ch-textarea" style="min-height:200px"
                     placeholder="@Narrator: 雨の中、古城の門前に到着した。
@@ -79,16 +89,18 @@
             <!-- 履歴上限 -->
             <div class="ch-formgrid">
                 <div class="ch-field">
-                    <label class="ch-label" for="history_max_turns">History Max Turns
-                        <span class="ch-hint">送信履歴のターン（@話者:ブロック）上限（空欄: 設定既定）</span>
+                    <label class="ch-label" for="history_max_turns">History Max Turns{{ ch_help(
+                        'GM に送る履歴のターン（<code>@話者:</code> ブロック）上限。空欄なら設定の既定値。'
+                    ) }}
                     </label>
                     <input type="number" id="history_max_turns" name="history_max_turns" class="ch-input"
                         value="{% if scenario and scenario.history_max_turns %}{{ scenario.history_max_turns }}{% endif %}"
                         min="0" placeholder="100">
                 </div>
                 <div class="ch-field">
-                    <label class="ch-label" for="history_max_chars">History Max Chars
-                        <span class="ch-hint">送信履歴の文字数上限（空欄: 設定既定）</span>
+                    <label class="ch-label" for="history_max_chars">History Max Chars{{ ch_help(
+                        'GM に送る履歴の文字数上限。空欄なら設定の既定値。'
+                    ) }}
                     </label>
                     <input type="number" id="history_max_chars" name="history_max_chars" class="ch-input"
                         value="{% if scenario and scenario.history_max_chars %}{{ scenario.history_max_chars }}{% endif %}"
@@ -98,12 +110,13 @@
 
             <!-- ダイスプール仕様（ensemble_pc 専用） -->
             <div class="ch-field">
-                <label class="ch-label" for="dice_pool_spec">Dice Pool Spec
-                    <span class="ch-hint">
-                        engine_type=ensemble_pc のセッションで、毎レスポンス GM のシステムプロンプトに自動注入する乱数プール。
-                        JSON で「種別: 本数」を指定（例: <code>{"d6": 10}</code> / <code>{"d6": 10, "d100": 5}</code>）。
-                        空欄なら既定の <code>{"d6": 10}</code> を使用。ensemble エンジン（PC配役なし）のセッションでは使われません。
-                    </span>
+                <label class="ch-label" for="dice_pool_spec">Dice Pool Spec{{ ch_help(
+                    '<p><code>engine_type=ensemble_pc</code> のセッションで、毎レスポンス GM のシステムプロンプトへ'
+                    '自動注入する乱数プールです。</p>'
+                    '<p>JSON で「種別: 本数」を指定します（例: <code>{"d6": 10}</code> / '
+                    '<code>{"d6": 10, "d100": 5}</code>）。空欄なら既定の <code>{"d6": 10}</code>。</p>'
+                    '<p>ensemble エンジン（PC配役なし）のセッションでは使われません。</p>'
+                ) }}
                 </label>
                 <input type="text" id="dice_pool_spec" name="dice_pool_spec" class="ch-input"
                     value="{% if scenario and scenario.dice_pool_spec %}{{ scenario.dice_pool_spec|tojson }}{% endif %}"
@@ -116,25 +129,23 @@
 
             <!-- カスタムシステムプロンプト -->
             <div class="ch-field">
-                <label class="ch-label" for="custom_system_prompt">Custom System Prompt
-                    <span class="ch-hint">
-                    設定するとGMへの自動生成プロンプト（役割定義・出力規則等）を完全に置き換えます。直近の履歴とプレイヤー発話は末尾に自動追加されます。
-                    <br/>
-                    <strong>使用可能なテンプレートタグ:</strong>
-                    <code>{user_alias}</code> (ユーザPC名),
-                    <code>{narrator_name}</code> (ナレーター名),
-                    <code>{scenario}</code> (シナリオテキスト),
-                    <code>{npcs_summary}</code> (NPC一覧),
-                    <code>{auto_synopsis}</code> (自動あらすじ),
-                    <code>{synopsis_manual}</code> (プレイヤー補足),
-                    <code>{previous_anticipation}</code> (GMが考える次の展開の期待),
-                    <code>{npc_details}</code> (NPC詳細),
-                    <code>{history_block}</code> (直近の流れ),
-                    <code>{pc_summary}</code> (PC配役一覧 / ensemble_pc 専用),
-                    <code>{dice_pool}</code> (このレスポンスで使えるダイス / ensemble_pc 専用)
-                    <br/>
-                    空欄に戻すと通常の自動生成ロジックが復活します。
-                    </span>
+                <label class="ch-label" for="custom_system_prompt">Custom System Prompt{{ ch_help(
+                    '<p>設定すると GM への自動生成プロンプト（役割定義・出力規則等）を完全に置き換えます。'
+                    '直近の履歴とプレイヤー発話は末尾に自動追加されます。'
+                    '空欄に戻すと通常の自動生成ロジックが復活します。</p>'
+                    '<p><strong>使用可能なテンプレートタグ</strong></p>'
+                    '<p><code>{user_alias}</code> ユーザPC名<br>'
+                    '<code>{narrator_name}</code> ナレーター名<br>'
+                    '<code>{scenario}</code> シナリオテキスト<br>'
+                    '<code>{npcs_summary}</code> NPC一覧<br>'
+                    '<code>{auto_synopsis}</code> 自動あらすじ<br>'
+                    '<code>{synopsis_manual}</code> プレイヤー補足<br>'
+                    '<code>{previous_anticipation}</code> GMが考える次の展開の期待<br>'
+                    '<code>{npc_details}</code> NPC詳細<br>'
+                    '<code>{history_block}</code> 直近の流れ<br>'
+                    '<code>{pc_summary}</code> PC配役一覧（ensemble_pc 専用）<br>'
+                    '<code>{dice_pool}</code> このレスポンスで使えるダイス（ensemble_pc 専用）</p>'
+                ) }}
                 </label>
                 <textarea id="custom_system_prompt" name="custom_system_prompt" class="ch-textarea" style="min-height:200px"
                     placeholder="e.g. あなたは……">{% if scenario %}{{ scenario.custom_system_prompt or '' }}{% endif %}</textarea>
@@ -157,23 +168,22 @@
     {# ── PC 枠（ensemble_pc 専用） ─────────────────── #}
     <section class="ch-section">
         <div class="ch-section__head">
-            <h2 class="ch-section-title">PC Slots</h2>
+            <h2 class="ch-section-title">PC Slots{{ ch_help(
+                '<code>engine_type=ensemble_pc</code> のセッションで使う「PC枠」の一覧です。'
+                'セッション開始時に「ユーザ／AI キャラのどちらが演じるか」を割り当てます。'
+            ) }}</h2>
         </div>
-        <p class="ch-prose" style="margin-bottom:18px">
-            engine_type=ensemble_pc のセッションで使う「PC枠」一覧。
-            セッション開始時に「ユーザ／AI キャラが演じる」をユーザが割り当てます。
-        </p>
         <div id="pcCardGrid" class="ch-cardgrid"></div>
     </section>
 
     {# ── NPC ───────────────────────────────────────── #}
     <section class="ch-section">
         <div class="ch-section__head">
-            <h2 class="ch-section-title">NPCs</h2>
+            <h2 class="ch-section-title">NPCs{{ ch_help(
+                'このシナリオに登場する NPC を定義します。'
+                '定義した名前は <code>@名前:</code> の発話タグとして使われます。'
+            ) }}</h2>
         </div>
-        <p class="ch-prose" style="margin-bottom:18px">
-            このシナリオに登場する NPC を定義します。`@名前:` の発話タグとして使われます。
-        </p>
 
         <div class="ch-cardgrid">
             {% if npcs %}
@@ -320,8 +330,9 @@
                     </div>
                 </div>
                 <div class="ch-field">
-                    <label class="ch-label" for="pcModalSlotId">Slot ID
-                        <span class="ch-hint">セッション開始時の割当てキー（半角英数推奨）。重複不可</span>
+                    <label class="ch-label" for="pcModalSlotId">Slot ID{{ ch_help(
+                        'セッション開始時に配役を割り当てるためのキー（半角英数推奨）。シナリオ内で重複不可。'
+                    ) }}
                     </label>
                     <input type="text" id="pcModalSlotId" class="ch-input" placeholder="pc1">
                 </div>
