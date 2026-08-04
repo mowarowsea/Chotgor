@@ -79,21 +79,38 @@
             if (el !== except) el.classList.remove('is-open');
           });
         }
-        // 画面端で見切れないよう left を補正する。visibility:hidden でも矩形は取れるので、
-        // 表示直前（hover/focus が入った時点）に測って inline style で寄せる。
-        // .ch-help__body は .ch-help 基準の絶対配置なので、ビューポート座標で決めた
-        // 位置をアンカー基準のオフセットに直して入れる。
-        var MARGIN = 12;
+        // .ch-help__body は position: fixed（横スクロール防止。理由は chotgor.css 21章）なので、
+        // 位置はここで viewport 座標として与える。visibility:hidden でも矩形は取れるため、
+        // 表示直前（hover/focus/クリック）と、開いたままのスクロール・リサイズ時に測り直す。
+        var MARGIN = 12;   // 画面端に残す余白
+        var GAP = 7;       // ⓘ とポップオーバーの隙間
         function place(help) {
           var body = help.querySelector('.ch-help__body');
           if (!body) return;
-          body.style.left = '';  // 素の幅を測るため既定位置へ戻す
           var anchor = help.getBoundingClientRect();
-          var width = body.getBoundingClientRect().width;
-          var left = Math.min(anchor.left - 7, window.innerWidth - MARGIN - width);
-          left = Math.max(left, MARGIN);
-          body.style.left = (left - anchor.left) + 'px';
+          var box = body.getBoundingClientRect();
+          var left = Math.min(anchor.left - GAP, window.innerWidth - MARGIN - box.width);
+          var top = anchor.bottom + GAP;
+          // 下にはみ出すなら上へ出す（上にも入らないならそのまま下）
+          if (top + box.height > window.innerHeight - MARGIN
+              && anchor.top - GAP - box.height > MARGIN) {
+            top = anchor.top - GAP - box.height;
+          }
+          body.style.left = Math.max(left, MARGIN) + 'px';
+          body.style.top = Math.max(top, MARGIN) + 'px';
         }
+        // 開いている間に画面が動いたら追随させる（fixed は自動で付いてこないため）
+        var pending = false;
+        function replaceOpen() {
+          if (pending) return;
+          pending = true;
+          requestAnimationFrame(function () {
+            pending = false;
+            document.querySelectorAll('.ch-help.is-open, .ch-help:hover').forEach(place);
+          });
+        }
+        window.addEventListener('scroll', replaceOpen, { passive: true, capture: true });
+        window.addEventListener('resize', replaceOpen);
         document.addEventListener('click', function (e) {
           var btn = e.target.closest && e.target.closest('.ch-help__btn');
           if (!btn) { closeAll(null); return; }

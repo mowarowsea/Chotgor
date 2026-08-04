@@ -2019,8 +2019,11 @@ details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
    ------------------------------------------------------------
    長い注意書きをラベル脇の ⓘ に畳むための共通アトム。
    hover / focus-within で開き、クリックで固定（タッチ端末・長文用）。
-   クリック固定と、画面端で見切れないための left 補正（inline style）は
-   base.html のスクリプトが担当する。ここでの left は JS 無効時の既定値。
+   実際の表示位置（top/left）は base.html のスクリプトが viewport 座標で入れる。
+   【不変条件】.ch-help__body は必ず position: fixed にする。absolute だと
+   閉じている間もレイアウト箱が残り、画面右へはみ出した分がスクロール可能領域を
+   広げてしまう（＝狭い画面で横スクロールが出る）。fixed は祖先のスクロール可能
+   領域に寄与しないためこれが起きない。
    【落とし穴】<summary> や <label> の中に置かれるため、ボタンは必ず
    type="button" とし、クリックは JS 側で握り潰すこと（details の開閉や
    checkbox のトグルを誘発させない）。
@@ -2060,9 +2063,9 @@ details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
 }
 
 .ch-help__body {
-  position: absolute;
-  top: calc(100% + 7px);
-  left: -7px;
+  position: fixed;
+  top: 0;
+  left: 0;   /* 実位置は JS が viewport 座標で上書きする */
   z-index: 60;
   width: max-content;
   max-width: min(340px, calc(100vw - 44px));
