@@ -1,0 +1,17 @@
+{#
+  全ページ共通の Jinja マクロ置き場。
+  使い方: {% from "macros.html" import ch_help %}
+#}
+
+{#
+  ch_help(text) — ラベル脇に ⓘ を置き、hover/クリックで補足を出す。
+
+  長い注意書きを常時表示せずに畳むための共通部品。text は
+  テンプレート著者が書く信頼済み文字列として `|safe` で埋め込むため、
+  <code> や <strong> をそのまま渡せる。ユーザ入力を渡さないこと。
+  見た目は chotgor.css の `.ch-help`（21章）、
+  クリック固定と右端の見切れ回避は base.html のスクリプトが担当。
+#}
+{% macro ch_help(text, label="補足を表示") -%}
+<span class="ch-help"><button type="button" class="ch-help__btn" aria-label="{{ label }}">i</button><span class="ch-help__body" role="tooltip">{{ text|safe }}</span></span>
+{%- endmacro %}

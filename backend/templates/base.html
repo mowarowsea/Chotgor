@@ -68,6 +68,53 @@
           });
         });
       })();
+
+      // ⓘ ヘルプポップオーバー（.ch-help）。開閉自体は CSS の :hover / :focus-within が担い、
+      // ここではクリック固定（タッチ端末・長文を読む用）と右端の見切れ回避だけを足す。
+      // .ch-help は <summary> や <label> の中に置かれるため、クリックは必ず握り潰す
+      // （details の開閉や checkbox のトグルを誘発させない）。
+      (function () {
+        function closeAll(except) {
+          document.querySelectorAll('.ch-help.is-open').forEach(function (el) {
+            if (el !== except) el.classList.remove('is-open');
+          });
+        }
+        // 画面端で見切れないよう left を補正する。visibility:hidden でも矩形は取れるので、
+        // 表示直前（hover/focus が入った時点）に測って inline style で寄せる。
+        // .ch-help__body は .ch-help 基準の絶対配置なので、ビューポート座標で決めた
+        // 位置をアンカー基準のオフセットに直して入れる。
+        var MARGIN = 12;
+        function place(help) {
+          var body = help.querySelector('.ch-help__body');
+          if (!body) return;
+          body.style.left = '';  // 素の幅を測るため既定位置へ戻す
+          var anchor = help.getBoundingClientRect();
+          var width = body.getBoundingClientRect().width;
+          var left = Math.min(anchor.left - 7, window.innerWidth - MARGIN - width);
+          left = Math.max(left, MARGIN);
+          body.style.left = (left - anchor.left) + 'px';
+        }
+        document.addEventListener('click', function (e) {
+          var btn = e.target.closest && e.target.closest('.ch-help__btn');
+          if (!btn) { closeAll(null); return; }
+          e.preventDefault();
+          e.stopPropagation();
+          var help = btn.closest('.ch-help');
+          var willOpen = !help.classList.contains('is-open');
+          closeAll(help);
+          place(help);
+          help.classList.toggle('is-open', willOpen);
+        });
+        ['mouseover', 'focusin'].forEach(function (type) {
+          document.addEventListener(type, function (e) {
+            var help = e.target.closest && e.target.closest('.ch-help');
+            if (help && !help.classList.contains('is-open')) place(help);
+          });
+        });
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') closeAll(null);
+        });
+      })();
     </script>
     {% block scripts %}{% endblock %}
 </body>

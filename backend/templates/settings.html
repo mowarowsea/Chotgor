@@ -2,6 +2,9 @@
 {% block title %}settings &mdash; Chotgor{% endblock %}
 {% block breadcrumb %}/ <a href="/ui/settings" class="ch-crumb">settings</a>{% endblock %}
 
+{# 長い注意書きはラベル脇の ⓘ に畳む（インラインの ch-hint は一言だけに留める） #}
+{% from "macros.html" import ch_help %}
+
 {#
   masked_api_key_input: APIキー入力フィールドの共通マクロ。
   既存値はマスク表示（●連打）し、フォーカス時にクリアして入力可能にする。
@@ -138,8 +141,9 @@
 
             <label class="ch-switch-row">
                 <span class="ch-switch-row__text">
-                    <span class="ch-switch-row__label">Qwen3 thinking モードを無効化（/no_think）</span>
-                    <span class="ch-switch-row__note">qwen3 系モデルで文字化けが起きる場合に有効にする。<code>think: false</code> APIフラグが効かないモデルに対して、/no_think コントロールトークンを最後のuserメッセージ先頭に追加します。</span>
+                    <span class="ch-switch-row__label">Qwen3 thinking モードを無効化（/no_think）{{ ch_help(
+                        'qwen3 系モデルで文字化けが起きる場合に有効にします。<code>think: false</code> APIフラグが効かないモデルに対して、<code>/no_think</code> コントロールトークンを最後の user メッセージ先頭に追加します。'
+                    ) }}</span>
                 </span>
                 <span class="ch-toggle">
                     <input type="checkbox" id="ollama_no_think" name="ollama_no_think" value="true"
@@ -157,8 +161,10 @@
 
             <!-- コンテキストウィンドウ圧縮 -->
             <div class="ch-field">
-                <label class="ch-label" for="context_window_max_chronicled">コンテキストウィンドウ（chronicle済みメッセージ上限）
-                    <span class="ch-hint">chronicle済みメッセージの保持件数。未chronicle分は常に全件保持。0 = chronicle済みを完全除外</span>
+                <label class="ch-label" for="context_window_max_chronicled">コンテキストウィンドウ（chronicle済みメッセージ上限）{{ ch_help(
+                    '<p>chronicle 済みメッセージを何件まで文脈に残すかの上限です。</p>'
+                    '<p>未 chronicle のメッセージは常に全件保持されます。<code>0</code> にすると chronicle 済みを完全に除外します。</p>'
+                ) }}
                 </label>
                 <input type="number" id="context_window_max_chronicled" name="context_window_max_chronicled"
                        value="{{ settings.get('context_window_max_chronicled', '10') }}"
@@ -167,8 +173,11 @@
 
             <!-- キャラ自発リクエスト（Spontaneous Initiative）— めぐり §5.1 -->
             <div class="ch-field">
-                <label class="ch-label" for="spontaneous_initiative_daily_cap">キャラクター自発リクエスト（日次上限）
-                    <span class="ch-hint">あなたの発言を起点としない、キャラクターの自発的な LLM 呼び出し（うつつからの連絡・時限発話の発火）の 1 日あたり上限。0 = 自発的な連絡を止める。あなたが送ったメッセージへの返信（預かりの配達）はユーザ起点なので、この上限は消費しません</span>
+                <label class="ch-label" for="spontaneous_initiative_daily_cap">キャラクター自発リクエスト（日次上限）{{ ch_help(
+                    '<p>あなたの発言を起点としない、キャラクター自身の LLM 呼び出し（うつつからの連絡・時限発話の発火）の 1 日あたり上限です。'
+                    '<code>0</code> にすると自発的な連絡を止めます。</p>'
+                    '<p>あなたが送ったメッセージへの返信（預かりの配達）はユーザ起点なので、この上限は消費しません。</p>'
+                ) }}
                 </label>
                 <input type="number" id="spontaneous_initiative_daily_cap" name="spontaneous_initiative_daily_cap"
                        value="{{ settings.get('spontaneous_initiative_daily_cap', '12') }}"
@@ -177,8 +186,9 @@
 
             <!-- Chronicle Time -->
             <div class="ch-field">
-                <label class="ch-label" for="chronicle_time">Chronicle Time
-                    <span class="ch-hint">毎日この時刻に self_history / relationship_state を更新します</span>
+                <label class="ch-label" for="chronicle_time">Chronicle Time{{ ch_help(
+                    '毎日この時刻に <code>self_history</code> / <code>relationship_state</code> を更新します。'
+                ) }}
                 </label>
                 <input type="time" id="chronicle_time" name="chronicle_time"
                        value="{{ settings.get('chronicle_time', '03:00') }}"
@@ -188,8 +198,9 @@
             <!-- 時間認識 -->
             <label class="ch-switch-row">
                 <span class="ch-switch-row__text">
-                    <span class="ch-switch-row__label">日時と経過時間の連携を有効にする</span>
-                    <span class="ch-switch-row__note">現在時刻と前回の会話からの経過時間をキャラクターに伝えます。</span>
+                    <span class="ch-switch-row__label">日時と経過時間の連携を有効にする{{ ch_help(
+                        '現在時刻と、前回の会話からの経過時間をキャラクターに伝えます。'
+                    ) }}</span>
                 </span>
                 <span class="ch-toggle">
                     <input type="checkbox" id="enable_time_awareness" name="enable_time_awareness" value="true"
@@ -200,8 +211,10 @@
 
             <!-- 翻訳モデル -->
             <div class="ch-field" style="margin-bottom:0">
-                <label class="ch-label" for="translation_preset_id">翻訳モデル
-                    <span class="ch-hint">ThinkingBlock / Thoughts の翻訳に使用するモデル</span>
+                <label class="ch-label" for="translation_preset_id">翻訳モデル{{ ch_help(
+                    'ThinkingBlock / Thoughts の翻訳に使うモデルです。'
+                    '選択したモデルが、チャット画面とログ画面の翻訳ボタンで使用されます。'
+                ) }}
                 </label>
                 <select id="translation_preset_id" name="translation_preset_id" class="ch-select">
                     <option value="" {% if not settings.get('translation_preset_id') %}selected{% endif %}>（未設定）</option>
@@ -212,7 +225,6 @@
                     </option>
                     {% endfor %}
                 </select>
-                <p class="ch-hint">選択したモデルがチャット画面・ログ画面の翻訳ボタンで使用されます。</p>
             </div>
             </details>
         </form>
@@ -221,14 +233,13 @@
     {# ── Embedding 設定: 再インデックスを伴うため明示ボタン保存 ── #}
     <details class="ch-section ch-section--collapsible">
         <summary class="ch-section__head">
-            <h2 class="ch-section-title">Embedding Model</h2>
+            <h2 class="ch-section-title">Embedding Model{{ ch_help(
+                '<p>記憶のベクトル化に使うモデルです。</p>'
+                '<p>変更すると全キャラクターの記憶が再インデックスされるため、'
+                'この項目だけは自動保存せず、下のボタンで明示的に保存します。</p>'
+            ) }}</h2>
         </summary>
         <form method="post" action="/ui/settings/embedding">
-            <p class="ch-prose" style="margin-bottom:18px">
-                記憶のベクトル化に使うモデル。変更すると全キャラクターの記憶が再インデックスされるため、
-                この項目だけは下のボタンで明示的に保存します。
-            </p>
-
             <div class="ch-field">
                 <label class="ch-label" for="embedding_provider">Embedding Provider</label>
                 <select id="embedding_provider" name="embedding_provider" class="ch-select"
@@ -294,9 +305,12 @@
     {# ── 記憶の修復 ───────────────────────────────────── #}
     <details class="ch-section ch-section--collapsible">
         <summary class="ch-section__head">
-            <h2 class="ch-section-title">記憶の修復</h2>
+            <h2 class="ch-section-title">記憶の修復{{ ch_help(
+                'Embedding モデルを変更したあと記憶が想起されなくなった場合に、'
+                '現在の設定で全記憶を再インデックスします。'
+                'SQLite に記憶データが残っていれば復元されます。'
+            ) }}</h2>
         </summary>
-        <p class="ch-prose" style="margin-bottom:14px">Embedding モデル変更後に記憶が想起されなくなった場合、現在の設定で全記憶を再インデックスします。SQLite に記憶データが残っていれば復元されます。</p>
         <form method="post" action="/ui/settings/reindex"
               onsubmit="return confirm('全キャラクターの記憶を再インデックスします。完了まで時間がかかる場合があります。続けますか？')">
             <button type="submit" class="ch-btn">記憶を再インデックス</button>

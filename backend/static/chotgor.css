@@ -36,6 +36,7 @@
                                （accordion / icon upload / crop modal）。JSが参照するため改名不可。
    19. INFO BOX / ACTION BAR — ch-info / ch-actionbar
    20. LOGS                  — 旧 .log-* を chotgor 側で上書き（最後に置き、base の後で@mediaが効く）
+   21. HELP POPOVER          — ch-help（ⓘ アイコン＋補足ポップオーバー）
 
    【不変条件】レスポンシブ上書き（@media）は、対象セレクタの base 定義より必ず
    "後ろ" に置く。前に置くと後勝ちで base に負け、モバイルで上書きが効かなくなる。
@@ -2012,3 +2013,94 @@ details[open] > summary > .log-toggle-icon { transform: rotate(90deg); }
   .log-row { grid-template-columns: 1fr; row-gap: 4px; }
   .log-detail { padding-left: 16px; margin-left: 8px; }
 }
+
+/* ============================================================
+   21. HELP POPOVER — ⓘ 注記
+   ------------------------------------------------------------
+   長い注意書きをラベル脇の ⓘ に畳むための共通アトム。
+   hover / focus-within で開き、クリックで固定（タッチ端末・長文用）。
+   クリック固定と、画面端で見切れないための left 補正（inline style）は
+   base.html のスクリプトが担当する。ここでの left は JS 無効時の既定値。
+   【落とし穴】<summary> や <label> の中に置かれるため、ボタンは必ず
+   type="button" とし、クリックは JS 側で握り潰すこと（details の開閉や
+   checkbox のトグルを誘発させない）。
+   ============================================================ */
+.ch-help {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 5px;
+}
+/* baseline 揃えの見出し（ch-section-title）内では中央に揃える */
+.ch-section-title > .ch-help { align-self: center; }
+
+.ch-help__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  font-family: var(--ch-fm);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ch-t3);
+  background: transparent;
+  border: 1px solid var(--ch-sep2);
+  border-radius: var(--ch-radius-full);
+  cursor: help;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.ch-help__btn:hover,
+.ch-help__btn:focus-visible,
+.ch-help.is-open > .ch-help__btn {
+  color: var(--ch-a);
+  border-color: var(--ch-a);
+  background: var(--ch-a-faint);
+}
+
+.ch-help__body {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: -7px;
+  z-index: 60;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 44px));
+  padding: 10px 12px;
+  font-family: var(--ch-f);
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.75;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+  color: var(--ch-t2);
+  background: var(--ch-bg);
+  border: 1px solid var(--ch-sep2);
+  border-radius: var(--ch-radius-md);
+  box-shadow: var(--ch-shadow);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-3px);
+  transition: opacity .12s, transform .12s, visibility .12s;
+}
+.ch-help:hover > .ch-help__body,
+.ch-help:focus-within > .ch-help__body,
+.ch-help.is-open > .ch-help__body {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+.ch-help__body code {
+  font-family: var(--ch-fm);
+  font-size: 10.5px;
+  color: var(--ch-a);
+  background: var(--ch-code-bg);
+  border-radius: var(--ch-radius-sm);
+  padding: 1px 5px;
+}
+.ch-help__body strong { color: var(--ch-t); font-weight: 500; }
+.ch-help__body p { margin: 0; }
+.ch-help__body p + p { margin-top: 7px; }
