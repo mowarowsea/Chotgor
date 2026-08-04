@@ -36,6 +36,7 @@ LANCE_DB_PATH = os.getenv("LANCE_DB_PATH", str(_PROJECT_ROOT / "data" / "lancedb
 UPLOADS_DIR = os.getenv("UPLOADS_DIR", str(_PROJECT_ROOT / "data" / "uploads"))
 TEMPLATES_DIR = str(Path(__file__).parent / "templates")
 STATIC_DIR = str(Path(__file__).parent / "static")
+SPA_DIST_DIR = str(_PROJECT_ROOT / "frontend" / "dist")
 
 
 @asynccontextmanager
@@ -857,6 +858,24 @@ class ImmutableStaticFiles(StaticFiles):
         return response
 
 
+class SpaStaticFiles(StaticFiles):
+    """ビルド済み React SPA（`frontend/dist`）を配信する StaticFiles。
+
+    Vite の出力は `assets/index-<hash>.js` のようにファイル名へ内容ハッシュが載るため、
+    実体ファイルは 1年 immutable にできる。一方 index.html はそのハッシュ名を指す入口なので、
+    キャッシュさせると再ビルドしても古い JS を掴み続ける。両者でキャッシュ方針を分ける。
+    """
+
+    async def get_response(self, path, scope):
+        """assets 配下は長期 immutable、それ以外（index.html）は毎回検証させる。"""
+        response = await super().get_response(path, scope)
+        if path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # 静的ファイルをマウントする（immutable キャッシュ付き）
 if os.path.exists(STATIC_DIR):
     app.mount("/static", ImmutableStaticFiles(directory=STATIC_DIR), name="static")
@@ -878,3 +897,12 @@ app.include_router(mcp_tools_module.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ビルド済み SPA を /app/ で配信する（`cd frontend && npm run build` で生成）。
+# vite dev server (:3000) の HMR クライアントは、タブ復帰で WebSocket 再接続に成功すると
+# 無条件で location.reload() する（vite/dist/client/client.mjs）。スマホはタブを離れるたびに
+# WebSocket が切れるため毎回リロードされる。常用経路はこちらの静的配信を使う。
+# ルーター登録より後にマウントすることで、/api /v1 /ui /static /health が先に解決される。
+if os.path.exists(SPA_DIST_DIR):
+    app.mount("/app", SpaStaticFiles(directory=SPA_DIST_DIR, html=True), name="spa")

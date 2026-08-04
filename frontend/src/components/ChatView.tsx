@@ -91,6 +91,7 @@ export default function ChatView({
       <div className="flex flex-col flex-1 h-full overflow-hidden relative" style={wrapperStyle}>
         <MessageList
           messages={messages}
+          sessionId={sessionId}
           userName={userName}
           sending={sending}
           reasoningMap={reasoningMap}

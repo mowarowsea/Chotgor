@@ -36,10 +36,11 @@
 ```
 ┌──────────────────────────┐      ┌─────────────────────────────────┐
 │ React frontend (vite)    │      │ Chotgor backend (FastAPI)        │
-│ localhost:3000           │─────▶│ Windowsホスト直実行 port 8000    │
+│ 開発: localhost:3000     │─────▶│ Windowsホスト直実行 port 8000    │
 │ /api /v1 /ui をproxy     │      │ 起動: run.bat                    │
-└──────────────────────────┘      │                                  │
-                                  │  ├ 管理UI (Jinja2)  /ui/         │
+│ 常用: npm run build →   │      │                                  │
+│  frontend/dist           │      │  ├ チャットUI(SPA)  /app/        │
+└──────────────────────────┘      │  ├ 管理UI (Jinja2)  /ui/         │
 ┌──────────────────────────┐      │  ├ OpenAI互換API    /v1/         │
 │ Claude Code CLI          │      │  ├ チャットAPI      /api/...     │
 │ (claude_cliプロバイダー) │      │  └ 夜間バッチスケジューラー      │
@@ -54,6 +55,16 @@
                                        └────────────┘ └─────────────┘
 ```
 
+- **常用アクセスはビルド済みSPA（`/app/`）**。`cd frontend && npm run build` の出力
+  `frontend/dist` を backend が配信する（`main.py: SpaStaticFiles`）。vite dev server (:3000) は
+  開発中だけ使う。dev server の HMR クライアントは、切れた WebSocket の再接続に成功すると
+  無条件で `location.reload()` するため（`vite/dist/client/client.mjs`）、タブを離れるたびに
+  WebSocket が切れるモバイルでは「タブを開くたび毎回リロード」になる。
+  - 資産は内容ハッシュ付きファイル名なので immutable、`index.html` は `no-cache`
+    （キャッシュさせると再ビルドしても古い JS を掴み続ける）。
+  - 棄却案: `server.hmr: false` で dev server のまま常用する。変更は1行で済むが PC 側の
+    開発でも HMR を失う。ビルド配信なら初回表示も速く（dev は数百モジュールを個別配信する）、
+    API が同一オリジンになり proxy も不要なので、そちらを採った。
 - **backendはWindowsホスト直実行**（Docker不可。uvicornのSelectorEventLoopでは
   `asyncio.create_subprocess_exec` が使えないため、subprocessは
   `asyncio.to_thread(subprocess.run, ...)` で回避している）。
@@ -132,6 +143,7 @@
 | `api/` | backend 呼び出し層。`chat.ts` / `scenario.ts` / `logs.ts` / `translate.ts` / `sse.ts`（SSE共通処理） |
 | `hooks/` | 状態管理フック。`useSessions` / `useChat` / `useScenarioChat` ほか |
 | `components/` | UI。`ChatBubbles/` と `ScenarioChatView/` は責務別ディレクトリに分割済み |
+| `lib/` | UI に依存しない補助。`sessionSnapshot.ts`（1on1 の画面状態とスクロール位置を sessionStorage へ退避し、リロード復帰で API 応答を待たずに即描画する） |
 
 ### data/（gitignore対象）
 

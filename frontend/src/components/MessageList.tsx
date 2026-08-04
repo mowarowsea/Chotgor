@@ -2,14 +2,21 @@
  * メッセージ一覧表示共通コンポーネント。
  * メッセージのループ表示、自動スクロール、キャラクターごとのカラー設定、考え中インジケーターを管理する。
  */
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import type { UIEvent } from "react";
 import type { ChatMessage } from "../api";
 import { CharacterBubble, CharacterAvatar, CharacterMessageRow, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
 import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
+import { loadScrollPos, saveScrollPos } from "../lib/sessionSnapshot";
 
 interface Props {
     /** 表示するメッセージ一覧 */
     messages: ChatMessage[];
+    /**
+     * セッションID。スクロール位置の退避・復元のキーに使う。
+     * 未指定なら復元しない（常に最下部へ寄せる従来動作）。
+     */
+    sessionId?: string;
     /** ユーザ名（表示用） */
     userName: string;
     /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
@@ -45,6 +52,7 @@ interface Props {
  */
 export default function MessageList({
     messages,
+    sessionId,
     userName,
     sending,
     reasoningMap,
@@ -61,8 +69,34 @@ export default function MessageList({
     translucentBubbles = false,
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
+    /** スクロールコンテナ。位置の退避・復元に使う。 */
+    const scrollRef = useRef<HTMLDivElement>(null);
+    /** 位置復元を済ませたセッションID。セッションごとに 1 回だけ復元するための番人。 */
+    const restoredForRef = useRef<string | null>(null);
+    /** 退避処理の多重予約を防ぐフラグ（スクロールは連続発火するため rAF で間引く）。 */
+    const savePendingRef = useRef(false);
     /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
     const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
+
+    /**
+     * ヘッダー表示判定に加えて、スクロール位置を退避する onScroll ハンドラ。
+     * 1 フレームに 1 回へ間引く（sessionStorage への書き込みが毎イベント走るのを避ける）。
+     */
+    const handleScrollAndSave = useCallback((e: UIEvent<HTMLDivElement>) => {
+        handleScroll(e);
+        const el = e.currentTarget;
+        if (!sessionId || savePendingRef.current) return;
+        savePendingRef.current = true;
+        requestAnimationFrame(() => {
+            savePendingRef.current = false;
+            saveScrollPos(sessionId, {
+                scrollTop: el.scrollTop,
+                // 最下部付近なら位置ではなく「最新を見ていた」として扱う。
+                // 復帰後にメッセージが増えていても最新に追従させたいため。
+                atBottom: el.scrollHeight - el.scrollTop - el.clientHeight < 80,
+            });
+        });
+    }, [handleScroll, sessionId]);
 
     /**
      * キャラクター別配色バブル（cb0〜cb9）を使うかどうか。
@@ -70,15 +104,35 @@ export default function MessageList({
      */
     const colored = participantNames.length > 0;
 
-    /** メッセージ追加・ストリーミング・待機中は最下部へスクロールする。 */
+    /**
+     * メッセージ追加・ストリーミング・待機中は最下部へスクロールする。
+     *
+     * セッションを開いた最初の 1 回だけは例外で、退避した位置があればそこへ戻す
+     * （過去ログを読んでいる最中にリロードされても、読んでいた場所に戻る）。
+     * その初回移動は smooth にしない。長い履歴だと最下部まで延々と流れて見えるため。
+     */
     useEffect(() => {
+        if (sessionId && restoredForRef.current !== sessionId) {
+            // メッセージ描画前に走ると移動先が定まらないので、中身が入るまで待つ。
+            if (messages.length === 0) return;
+            restoredForRef.current = sessionId;
+            const saved = loadScrollPos(sessionId);
+            const container = scrollRef.current;
+            if (container && saved && !saved.atBottom) {
+                container.scrollTop = saved.scrollTop;
+                return;
+            }
+            bottomRef.current?.scrollIntoView({ behavior: "auto" });
+            return;
+        }
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, sending, streamingContent, waitingCharacter]);
+    }, [messages, sending, streamingContent, waitingCharacter, sessionId]);
 
     return (
         <div
+            ref={scrollRef}
             className={"flex-1 overflow-y-auto overflow-x-hidden" + (translucentBubbles ? " ch-face-to-face-bg" : "")}
-            onScroll={handleScroll}
+            onScroll={handleScrollAndSave}
         >
           {/* pt-16: 浮遊ヘッダー分の上余白。 */}
           <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 space-y-3">

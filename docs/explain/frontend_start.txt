@@ -1,6 +1,22 @@
- run.bat -debug on
+■ 常用（スマホ含む）: ビルド済みSPAを backend から配信
+
+  cd frontend
+  npm run build          ← フロントを変更したら都度これ
+
+  run.bat -debug on
+
+  http://localhost:8000/app/
+  （Tailscale 経由なら http://desktop-u5iqsk1.tailffadb2.ts.net:8000/app/）
+
+  ※ vite dev server を常用しないこと。HMR クライアントが、切れた WebSocket の
+    再接続に成功すると無条件で location.reload() するため、タブを離れるたびに
+    WebSocket が切れるスマホでは「タブを開くたび毎回リロード」になる。
+
+■ 開発（PC・HMR あり）
+
+  run.bat -debug on
 
   cd frontend
   npm run dev
 
-http://localhost:3000
+  http://localhost:3000

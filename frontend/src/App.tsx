@@ -19,6 +19,7 @@ import {
 import type {
   Model,
   Session,
+  SessionDetail,
   ChatMessage,
   Character,
   ScenarioSession,
@@ -35,6 +36,11 @@ import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubble
 import CharPresetMenu from "./components/CharPresetMenu";
 import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
 import SynopsisCreateModal from "./components/SynopsisCreateModal";
+import {
+  loadSessionSnapshot,
+  saveSessionSnapshot,
+  clearSessionSnapshot,
+} from "./lib/sessionSnapshot";
 import { useTheme } from "./hooks/useTheme";
 import { useSessions } from "./hooks/useSessions";
 import { useChat } from "./hooks/useChat";
@@ -293,8 +299,54 @@ export default function App() {
     (s) => s.id === activeSessionId,
   )?.session_type === "scenario";
 
-  /** 初期データ取得。URL ハッシュに対応するセッションがあれば自動選択する。 */
+  /**
+   * 1on1 セッション詳細を画面 state へ反映する。
+   * 初回のハッシュ復元とセッション選択の双方から呼ぶ。
+   */
+  const applySessionDetail = useCallback((detail: SessionDetail) => {
+    if (detail.model_id) {
+      setSelectedModel(detail.model_id);
+    }
+    setMessages(detail.messages);
+    // DBに保存された reasoning と log_message_id をメッセージIDに紐付けて復元する
+    const restored: Record<string, string> = {};
+    const restoredLogIds: Record<string, string> = {};
+    for (const msg of detail.messages) {
+      if (msg.reasoning) {
+        restored[msg.id] = msg.reasoning;
+      }
+      if (msg.log_message_id) {
+        restoredLogIds[msg.id] = msg.log_message_id;
+      }
+    }
+    setReasoningMap(restored);
+    setMsgLogIds(restoredLogIds);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * 初期データ取得。URL ハッシュに対応するセッションがあれば自動選択する。
+   *
+   * リロード復帰の待ち時間を削るため、ハッシュがある場合はセッション詳細も同じ Promise.all で
+   * 並行して取りに行く（一覧の到着を待ってから詳細を要求すると往復が直列2段になり、
+   * その間ずっと空画面になる）。詳細取得は種別が判明する前に投げるので、1on1 でなければ
+   * null が返る。その場合だけシナリオとして読み直す。
+   *
+   * さらに手前で、前回描いた内容のスナップショットがあれば同期的に描いてしまう。
+   * ネットワークを待たずに画面が戻るので、リロードされたこと自体が目に付きにくくなる。
+   */
   useEffect(() => {
+    const hashSessionId = window.location.hash.slice(1);
+    if (hashSessionId) {
+      const snap = loadSessionSnapshot(hashSessionId);
+      if (snap) {
+        setActiveSessionId(snap.sessionId);
+        setMessages(snap.messages);
+        setReasoningMap(snap.reasoningMap);
+        setMsgLogIds(snap.msgLogIds);
+        if (snap.modelId) setSelectedModel(snap.modelId);
+      }
+    }
     Promise.all([
       fetchModels(),
       fetchSessions(),
@@ -302,31 +354,60 @@ export default function App() {
       fetchCharacters(),
       fetchScenarioSessions().catch(() => [] as ScenarioSession[]),
       fetchScenarioPresets().catch(() => [] as ScenarioPreset[]),
+      hashSessionId
+        ? fetchSession(hashSessionId).catch(() => null)
+        : Promise.resolve(null),
     ])
-      .then(([m, s, u, c, sc, sp]) => {
+      .then(([m, s, u, c, sc, sp, detail]) => {
         setModels(m);
-        if (m.length > 0) setSelectedModel(m[0].id);
+        // 復元したセッションのモデルを一覧先頭で上書きしないこと。
+        // 上書きすると最初の送信が別キャラへ届く（handleNewChat のコメント参照）。
+        if (m.length > 0 && !detail?.model_id) setSelectedModel(m[0].id);
         setSessions(s);
         setUserName(u);
         setCharacters(c);
         setScenarioSessions(sc);
         setScenarioPresets(sp);
-        // ref も即座に更新する。次行の handleSelectSession() がこの ref を
+        // ref も即座に更新する。下の handleSelectSession() がこの ref を
         // 読みに来るため、setState の非同期反映を待たずに同期反映が必要。
         scenarioSessionsRef.current = sc;
         // URL ハッシュからセッションを復元する（chat / scenario の両方をチェック）
-        const hashSessionId = window.location.hash.slice(1);
-        if (hashSessionId) {
-          if (s.find((sess) => sess.id === hashSessionId)) {
-            handleSelectSession(hashSessionId);
-          } else if (sc.find((sess) => sess.id === hashSessionId)) {
-            handleSelectSession(hashSessionId);
-          }
+        if (!hashSessionId) return;
+        if (detail) {
+          setActiveSessionId(hashSessionId);
+          applySessionDetail(detail);
+        } else if (sc.find((sess) => sess.id === hashSessionId)) {
+          handleSelectSession(hashSessionId);
+        } else {
+          // ハッシュ先が消えている（別端末で削除した等）。
+          // スナップショットで先に描いた内容が残ってしまうので片付ける。
+          clearSessionSnapshot();
+          setActiveSessionId(null);
+          setMessages([]);
         }
       })
       .catch((e) => setError(String(e)));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * 1on1 の画面状態をスナップショットとして退避する（リロード復帰時の即描画用）。
+   * ストリーミング中は内容が確定していないので、送信が落ち着いてから書く。
+   */
+  useEffect(() => {
+    if (!activeSessionId || isScenarioSession || sending) return;
+    if (messages.length === 0) return;
+    // セッション切替の途中では「新しい ID + 前セッションのメッセージ」で 1 レンダー走る。
+    // その中身を書くと復帰時に別セッションの内容を描いてしまうので弾く。
+    if (messages[0].session_id !== activeSessionId) return;
+    saveSessionSnapshot({
+      sessionId: activeSessionId,
+      modelId: selectedModel,
+      messages,
+      reasoningMap,
+      msgLogIds,
+    });
+  }, [activeSessionId, isScenarioSession, sending, messages, reasoningMap, msgLogIds, selectedModel]);
 
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
@@ -351,29 +432,11 @@ export default function App() {
     }
 
     try {
-      const [detail] = await Promise.all([
-        fetchSession(sessionId),
-      ]);
-      if (detail.model_id) {
-        setSelectedModel(detail.model_id);
-      }
-      setMessages(detail.messages);
-      // DBに保存された reasoning と log_message_id をメッセージIDに紐付けて復元する
-      const restored: Record<string, string> = {};
-      const restoredLogIds: Record<string, string> = {};
-      for (const msg of detail.messages) {
-        if (msg.reasoning) {
-          restored[msg.id] = msg.reasoning;
-        }
-        if (msg.log_message_id) {
-          restoredLogIds[msg.id] = msg.log_message_id;
-        }
-      }
-      setReasoningMap(restored);
-      setMsgLogIds(restoredLogIds);
+      applySessionDetail(await fetchSession(sessionId));
     } catch (e) {
       setError(String(e));
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** セッション削除。session_type を判別して適切な API を呼ぶ。 */
