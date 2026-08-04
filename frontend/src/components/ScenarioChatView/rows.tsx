@@ -5,6 +5,7 @@
  */
 import React, { useState } from "react";
 
+import { useEditingLock } from "../../hooks/useEditingLock";
 import {
   Bubble,
   CharacterMessageRow,
@@ -119,6 +120,9 @@ function GMBubbleRowImpl({
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
   const [editing, setEditing] = useState(false);
+  // 編集中は下部の新規メッセージ入力・送信を無効化する。
+  // 書き換え自体は先の展開に触れないが、送信すると編集フォームごと流れて内容が失われるため。
+  useEditingLock(editing);
   // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
   const { revealed, rowProps, bubbleProps } = useRevealControls(!editing);
 
