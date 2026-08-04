@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useDraft } from "../hooks/useDraft";
+import { useEditingLocked } from "../hooks/useEditingLock";
 
 interface Props {
     /** セッションID（下書きキャッシュのキー）。省略時はキャッシュしない。 */
@@ -45,6 +46,14 @@ export default function MessageInput({
     // 下書きの localStorage 連携は useDraft hook に集約済み。
     // setInput("") を呼ぶと hook 内の useEffect が走り、localStorage の該当キーも削除される。
     const [input, setInput] = useDraft(sessionId);
+    /**
+     * バブルのインライン編集中フラグ。
+     * 編集中の誤送信は「以降のターンを巻き戻して再ストリーム」を走らせ、
+     * 編集内容ごと失わせるため、入力・送信をまとめて止める。
+     */
+    const editingLocked = useEditingLocked();
+    /** 入力を受け付けない状態（送信処理中 or バブル編集中）。 */
+    const disabled = sending || editingLocked;
     /** 送信前の添付ファイルリスト */
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -76,7 +85,7 @@ export default function MessageInput({
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const text = input.trim();
-        if (sending) return;
+        if (disabled) return;
         if (!text && !allowEmptySend) return;
 
         const files = [...pendingFiles];
@@ -113,7 +122,12 @@ export default function MessageInput({
     };
 
     /** 送信可能かどうか。送信ボタンの配色に使う（空送信許可時は常に点灯）。 */
-    const canSend = !sending && (!!input.trim() || allowEmptySend);
+    const canSend = !disabled && (!!input.trim() || allowEmptySend);
+
+    /** 入力欄が空のときに出す擬似 placeholder。編集中はその旨を伝える。 */
+    const placeholderText = editingLocked
+        ? "メッセージを編集中は送信できません"
+        : placeholder;
 
     return (
         <form
@@ -157,7 +171,7 @@ export default function MessageInput({
                         // 2行目もボタン上に描画されてしまう。要件「2行目はボタンと同じ行に出したい」を
                         // 満たすため placeholder 属性は使わず、下で擬似 placeholder を被せる。
                         rows={1}
-                        disabled={sending}
+                        disabled={disabled}
                         className="w-full block bg-transparent text-ch-t1 text-sm resize-none focus:outline-none disabled:opacity-40 pt-1.5 leading-relaxed"
                         style={{
                             minHeight: "32px",
@@ -187,7 +201,7 @@ export default function MessageInput({
                             className="absolute inset-x-0 top-0 text-ch-t3 text-sm leading-relaxed pt-1.5 pointer-events-none"
                             style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
                         >
-                            {placeholder}
+                            {placeholderText}
                         </div>
                     )}
 
@@ -206,7 +220,7 @@ export default function MessageInput({
                                 <button
                                     type="button"
                                     onClick={() => fileInputRef.current?.click()}
-                                    disabled={sending}
+                                    disabled={disabled}
                                     title="画像を添付"
                                     className="text-ch-t3 hover:text-ch-t2 disabled:opacity-30 transition-colors p-0.5 rounded"
                                 >
@@ -220,7 +234,7 @@ export default function MessageInput({
                             <button
                                 type="button"
                                 onClick={onSkip}
-                                disabled={sending}
+                                disabled={disabled}
                                 className="text-xs text-ch-t3 hover:text-ch-t2 disabled:opacity-30 rounded px-1.5 py-0.5 transition-colors"
                             >
                                 スキップ

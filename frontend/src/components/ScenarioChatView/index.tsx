@@ -29,6 +29,7 @@ import type {
   ScenarioTemplate,
   ScenarioTurn,
 } from "../../api";
+import { EditingLockProvider, useEditingLocked } from "../../hooks/useEditingLock";
 import { useHeaderVisibilityOnScroll } from "../../hooks/useHeaderVisibilityOnScroll";
 import { CharacterAvatar, UserBubble } from "../ChatBubbles";
 import MessageInput from "../MessageInput";
@@ -123,8 +124,8 @@ interface Props {
   synopsisLastTurnIndex?: number;
 }
 
-/** メイン: シナリオチャットビュー本体。 */
-export default function ScenarioChatView({
+/** メイン: シナリオチャットビュー本体（編集ロックの Provider 内で描画される）。 */
+function ScenarioChatViewInner({
   session,
   scenario,
   npcs,
@@ -154,6 +155,12 @@ export default function ScenarioChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
   const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
+  /**
+   * ユーザ発話バブルが編集中か。編集中は「発話の送信」に類する操作をすべて止める。
+   * 入力欄本体は MessageInput が自分で無効化するので、ここでは入力欄の外にある
+   * 宛先トグル・「ターンを譲る」チップ群を抑える。
+   */
+  const editingLocked = useEditingLocked();
 
   /**
    * 自動スクロール: 末尾ターンが変わったとき / ストリーミング中に最下端へ追従。
@@ -390,7 +397,7 @@ export default function ScenarioChatView({
       <button
         type="button"
         onClick={cycleMentionTarget}
-        disabled={sending}
+        disabled={sending || editingLocked}
         title={
           mentionTarget
             ? `宛先: @${mentionTarget}（クリックで切替）`
@@ -603,7 +610,7 @@ export default function ScenarioChatView({
               <button
                 key={name}
                 onClick={() => onYieldTo(name)}
-                disabled={sending}
+                disabled={sending || editingLocked}
                 title={`${name} に発話を譲る`}
                 className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-30"
                 style={{
@@ -618,7 +625,7 @@ export default function ScenarioChatView({
             {pcSlotNames.length > 1 && (
               <button
                 onClick={() => onYieldTo("ALL")}
-                disabled={sending}
+                disabled={sending || editingLocked}
                 title="@ALL（PCの誰かに発話を譲る）"
                 className="rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-30"
                 style={{
@@ -631,7 +638,7 @@ export default function ScenarioChatView({
             )}
             <button
               onClick={() => onYieldTo("GM")}
-              disabled={sending}
+              disabled={sending || editingLocked}
               title="@GM（語り手に場を進めてもらう）"
               className="rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-30"
               style={{
@@ -671,5 +678,19 @@ export default function ScenarioChatView({
         onClose={() => setNpcDialogTarget(null)}
       />
     </div>
+  );
+}
+
+/**
+ * 編集ロックのスコープを張る薄いラッパ。
+ *
+ * 本体（Inner）自身も `useEditingLocked()` を読む（宛先トグル・「ターンを譲る」チップの
+ * 無効化）ため、Provider は本体の JSX 内ではなく外側に置く必要がある。
+ */
+export default function ScenarioChatView(props: Props) {
+  return (
+    <EditingLockProvider>
+      <ScenarioChatViewInner {...props} />
+    </EditingLockProvider>
   );
 }

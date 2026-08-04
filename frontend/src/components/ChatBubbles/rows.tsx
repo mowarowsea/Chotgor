@@ -4,6 +4,7 @@
  */
 import React, { useState } from "react";
 
+import { useEditingLock } from "../../hooks/useEditingLock";
 import { CharacterAvatar } from "./avatar";
 import { Bubble } from "./Bubble";
 import { UserMessageActions } from "./buttons";
@@ -203,6 +204,9 @@ function UserBubbleImpl({
   editNote?: string;
 }) {
   const [editing, setEditing] = useState(false);
+  // 編集中は下部の新規メッセージ入力・送信を無効化する。
+  // 誤送信で以降のターンが巻き戻ると、編集中の内容ごと失われるため。
+  useEditingLock(editing);
   // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
   const { revealed, rowProps, bubbleProps } = useRevealControls(!sending && !editing);
 

@@ -9,6 +9,7 @@
  *   - モード切替トグルは App.tsx のヘッダー右側ボタン群に統合された。
  */
 import type { ChatMessage } from "../api";
+import { EditingLockProvider } from "../hooks/useEditingLock";
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
 
@@ -85,27 +86,30 @@ export default function ChatView({
     : {};
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative" style={wrapperStyle}>
-      <MessageList
-        messages={messages}
-        userName={userName}
-        sending={sending}
-        reasoningMap={reasoningMap}
-        streamingContent={streamingContent}
-        streamingReasoning={streamingReasoning}
-        characterName={characterName}
-        onRetry={onRetry}
-        onHeaderVisibilityChange={onHeaderVisibilityChange}
-        msgLogIds={msgLogIds}
-        elapsedMap={elapsedMap}
-        translucentBubbles={faceToFaceMode && !!faceToFaceBgUrl}
-      />
-      <MessageInput
-        sessionId={sessionId}
-        sending={sending}
-        onSend={onSend}
-        allowImages={true}
-      />
-    </div>
+    // バブルの編集中は下部の入力欄を無効化する（誤送信で編集内容が巻き戻るのを防ぐ）。
+    <EditingLockProvider>
+      <div className="flex flex-col flex-1 h-full overflow-hidden relative" style={wrapperStyle}>
+        <MessageList
+          messages={messages}
+          userName={userName}
+          sending={sending}
+          reasoningMap={reasoningMap}
+          streamingContent={streamingContent}
+          streamingReasoning={streamingReasoning}
+          characterName={characterName}
+          onRetry={onRetry}
+          onHeaderVisibilityChange={onHeaderVisibilityChange}
+          msgLogIds={msgLogIds}
+          elapsedMap={elapsedMap}
+          translucentBubbles={faceToFaceMode && !!faceToFaceBgUrl}
+        />
+        <MessageInput
+          sessionId={sessionId}
+          sending={sending}
+          onSend={onSend}
+          allowImages={true}
+        />
+      </div>
+    </EditingLockProvider>
   );
 }
