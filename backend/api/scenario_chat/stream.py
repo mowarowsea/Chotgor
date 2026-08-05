@@ -1,12 +1,11 @@
 """シナリオチャット API — SSE ストリーム実行とデフォルトプロンプト取得。"""
 
-import json
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from backend.api.scenario_chat.schemas import StreamRequest
 from backend.lib.debug_logger import logger as debug_logger
+from backend.lib.sse_runner import stream_sse
 from backend.lib.log_context import (
     current_branch_point_index,
     current_generation_id,
@@ -61,7 +60,12 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
 
     settings = sqlite.get_all_settings()
 
-    async def sse_generator():
+    async def event_source():
+        """1 ターン分のイベントを yield する。SSE への変換は stream_sse が行う。
+
+        この関数は独立タスクで走るため、クライアントが切断しても最後まで完走する
+        （＝ scenario_turns への保存が接続の生死に左右されない）。
+        """
         # chat_service は app.state に必ず存在する想定だが、テスト用 fixture では未注入のことが
         # あるため getattr で防御する。None でも ensemble モードは動作する（ensemble_pc 時のみ
         # PC ターンがスキップされる）。
@@ -75,15 +79,14 @@ async def stream_turn(request: Request, session_id: str, body: StreamRequest):
             chat_service=_chat_service,
             yield_to=body.yield_to,
         ):
-            data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
-            yield f"data: {data}\n\n"
+            yield (event_type, payload)
         # DB の response カラムは各 GM レスポンスが自分の MAIN 行へ書き戻す
         # （loop_strategies._run_gm）。1 リクエスト中に GM が複数回走るため、
         # ここで一括して書くと最終行に全レスポンスが集まってしまう。
-        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        yield ("done", {})
 
     return StreamingResponse(
-        sse_generator(),
+        stream_sse(event_source, label="scenario"),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

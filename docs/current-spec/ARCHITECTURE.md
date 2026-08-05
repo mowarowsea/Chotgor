@@ -93,7 +93,7 @@
 | `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / switch / WMスレッド操作…）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
 | `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00）と `forget_job.py`（長期記憶の忘却、04:00固定） |
-| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth） |
+| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用） |
 | `mcp_server.py` | Claude CLI 用 MCP stdio サーバー（backendへのHTTPプロキシ） |
 | `templates/` + `static/` | 管理UIのJinja2テンプレートと `chotgor.css`（デザインシステム。規約は CLAUDE.md） |
 
@@ -177,6 +177,14 @@ frontend useChat
       7.  debug_logger がログ記録
 ```
 
+- **SSE 送出と生成は分離されている（`lib/sse_runner.py`。1on1／シナリオ共用）**。
+  生成本体（LLM 呼び出し〜DB 保存）は `asyncio.Task` で走り、送出側は Queue を読むだけ。
+  **クライアントが切断してもタスクは cancel せず完走させる** — 保存が `yield` より後ろに
+  ある構造上、素朴に書くと切断で応答が丸ごと巻き戻る（LLM は完走・課金済みなのに
+  `scenario_turns` / `chat_messages` に何も残らない事故が実際に起きた）。あわせて無通信時は
+  heartbeat（`: ping` コメント行）を流し、切断そのものを減らす。切断は
+  `log_warning("sse_disconnect", ...)` で MAIN 行に記録される。経緯・不採用案は
+  `docs/planned/sse_disconnect_resilience_plan.md`。
 - tool-use 対応プロバイダーはネイティブ function calling、非対応（Claude CLI / Ollama 等）は
   `lib/tag_parser.py` による `[TAG:...]` 抽出でツールを実行する（二経路ある点に注意）。
 - claude_cli プロバイダーだけは特殊で、CLI を subprocess 起動し MCP（mcp_server.py）経由で

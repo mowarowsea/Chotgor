@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.chat.models import Message
 from backend.lib.debug_logger import logger
+from backend.lib.sse_runner import stream_sse
 from backend.lib.log_context import (
     new_message_id,
     current_log_session_id,
@@ -439,8 +440,12 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     except HTTPException:
         raise
 
-    async def sse_generator():
-        """通常チャット向けSSEジェネレーター。"""
+    async def event_source():
+        """通常チャット 1 ターン分のイベントを yield する。SSE 変換は stream_sse が行う。
+
+        この関数は独立タスクで走るため、クライアントが切断しても最後まで完走する
+        （＝ キャラ発話の `create_chat_message` が接続の生死に左右されない）。
+        """
         nonlocal effective_model_id
         full_text = ""
         accumulated_reasoning = ""
@@ -465,37 +470,31 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
                     display = format_memories_for_sse(content)
                     if display:
                         accumulated_reasoning += display
-                        data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
-                        yield f"data: {data}\n\n"
+                        yield ("reasoning", {"content": display})
                 elif chunk_type == "recall_error":
                     # 想起失敗メッセージを reasoning 行として流す。
                     # 記憶行/スレッド行のパターンに一致しないため、フロントではスケッチ欄に表示される。
                     display = content + "\n"
                     accumulated_reasoning += display
-                    data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
+                    yield ("reasoning", {"content": display})
                 elif chunk_type == "working_memory_threads":
                     display = format_recalled_threads(content)
                     if display:
                         accumulated_reasoning += display
-                        data = json.dumps({"type": "reasoning", "content": display}, ensure_ascii=False)
-                        yield f"data: {data}\n\n"
+                        yield ("reasoning", {"content": display})
                 elif chunk_type == "thinking":
                     if content:
                         accumulated_reasoning += content
-                        data = json.dumps({"type": "reasoning", "content": content}, ensure_ascii=False)
-                        yield f"data: {data}\n\n"
+                        yield ("reasoning", {"content": content})
                 elif chunk_type == "text":
                     full_text += content
                     if content:
-                        data = json.dumps({"type": "chunk", "content": content}, ensure_ascii=False)
-                        yield f"data: {data}\n\n"
+                        yield ("chunk", {"content": content})
                 elif chunk_type == "anticipation":
                     # キャラクターの予想（期待）。UIには本文として流さず、DB保存して次ターンに注入する。
                     anticipation_text = content
         except Exception as e:
-            err_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
-            yield f"data: {err_data}\n\n"
+            yield ("error", {"message": str(e)})
             return
 
         clean_text = full_text
@@ -534,16 +533,14 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
         state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)
 
-        done_data = json.dumps({
-            "type": "done",
+        yield ("done", {
             "log_message_id": log_msg_id,
             "user_message": message_to_dict(user_msg),
             "character_message": message_to_dict(char_msg),
-        }, ensure_ascii=False)
-        yield f"data: {done_data}\n\n"
+        })
 
     return StreamingResponse(
-        sse_generator(),
+        stream_sse(event_source, label="chat"),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
