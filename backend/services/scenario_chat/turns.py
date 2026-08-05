@@ -21,12 +21,15 @@ def _save_turn(
     raw_response: str | None = None,
     attach_log_request_id: bool = False,
     anticipation: str | None = None,
+    reasoning: str | None = None,
 ):
     """ターンを次の turn_index で保存して返す共通ヘルパ。
 
     attach_log_request_id=True のとき、現在の current_message_id を log_request_id として保存する。
     GM ターン保存時のみ True にする（ユーザーターン・intro はログとの紐付け不要）。
     anticipation は GM がターン末尾に書いた予想（期待）。ターンに1つなので、最後の発話行にのみ渡す。
+    reasoning は想起記憶・WM・思考（スケッチ）の連結。1レスポンス＝1スケッチなので、
+    GM では最初の発話行にのみ渡す（anticipation が末尾行なのと対になる）。
     """
     turn_id = str(uuid.uuid4())
     next_index = sqlite.get_next_scenario_turn_index(session_id)
@@ -42,6 +45,7 @@ def _save_turn(
         raw_response=raw_response,
         log_request_id=log_req_id,
         anticipation=anticipation,
+        reasoning=reasoning,
     )
     # 計器 Tier 2: LLM 産の発話（GM/NPC/Narrator/キャラPC）を外形スキャンする。
     # ユーザ発話・intro（人間の手書き）は対象外。誤検知許容の smell 記録であり、

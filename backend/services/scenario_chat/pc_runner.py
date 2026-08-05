@@ -224,6 +224,7 @@ async def stream_pc_response(
         ("error",       {"character": role_name, "character_id": cid, "message": str})  — エラー
         ("pc_done",     {"character": role_name, "speaker_id": cid,
                           "full_text": str, "anticipation": str | None,
+                          "reasoning": str | None,
                           "log_message_id": str | None}) — PC レスポンス完了通知
 
     event 名は 1on1（chunk/reasoning/error）と互換になっており、
@@ -377,27 +378,30 @@ async def stream_pc_response(
     request.default_origin = default_origin
 
     full_text = ""
-    memory_text = ""
-    recall_error_text = ""
-    wm_text = ""
-    thinking_parts: list[str] = []
+    # 想起記憶・想起失敗・WM スレッド・思考（スケッチ）を流した順に溜める。
+    # 1on1 の accumulated_reasoning と同じもので、pc_done で上へ返し
+    # scenario_turns.reasoning へ保存される（リロード後もスケッチが残る）。
+    reasoning_parts: list[str] = []
     anticipation_text = ""
+
+    def _emit_reasoning(text: str) -> tuple[str, dict]:
+        """reasoning テキストを蓄積しつつ SSE イベントに包む。"""
+        reasoning_parts.append(text)
+        return ("reasoning", {"character": pc.name, "content": text})
 
     async for chunk_type, content in chat_service.execute_stream(request):
         if chunk_type == "inscribed_memories":
             memory_text = format_recalled_memories(content)
             if memory_text:
-                yield ("reasoning", {"character": pc.name, "content": memory_text})
+                yield _emit_reasoning(memory_text)
         elif chunk_type == "recall_error":
-            recall_error_text = content + "\n"
-            yield ("reasoning", {"character": pc.name, "content": recall_error_text})
+            yield _emit_reasoning(content + "\n")
         elif chunk_type == "working_memory_threads":
             wm_text = format_recalled_threads(content)
             if wm_text:
-                yield ("reasoning", {"character": pc.name, "content": wm_text})
+                yield _emit_reasoning(wm_text)
         elif chunk_type == "thinking":
-            thinking_parts.append(content)
-            yield ("reasoning", {"character": pc.name, "content": content})
+            yield _emit_reasoning(content)
         elif chunk_type == "text":
             full_text += content
             if content:
@@ -442,6 +446,7 @@ async def stream_pc_response(
         "preset_name": preset.name,
         "full_text": clean_text,
         "anticipation": anticipation_text or None,
+        "reasoning": "".join(reasoning_parts) or None,
         "log_message_id": current_log_dir_id.get(),
     })
 

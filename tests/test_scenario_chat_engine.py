@@ -8,6 +8,7 @@ LLM プロバイダはモック化する: provider_factory を差し替えて
 
 検証する観点:
     - UtteranceDelta と TurnRecord が期待通りの順序で yield されること
+    - thinking は ThinkingDelta として本文と別系統で流れること（パーサに混ざらない）
     - 既知 NPC は speaker_id を持ち、未知 NPC は None になること
     - GM のユーザ代弁ブロックは UtteranceDelta も TurnRecord も発行しないこと
     - 複数話者の境界で正しく TurnRecord が確定されること
@@ -25,6 +26,7 @@ from backend.services.scenario_chat.engine import (
     DEFAULT_DICE_POOL_SPEC,
     EngineResult,
     EnsembleEngine,
+    ThinkingDelta,
     TurnRecord,
     generate_dice_pool,
 )
@@ -286,14 +288,16 @@ class TestUserAliasSuppression:
 
 
 class TestNonTextChunks:
-    """thinking など非 text チャンクは無視されることを検証する。
+    """thinking チャンクが本文と別系統（ThinkingDelta）で流れることを検証する。
 
-    GM ロールに思考可視化を出さない方針。
+    GM のスケッチも UI に出す方針だが、思考は話者ブロック記法の解析対象では
+    ないため、パーサにも raw_response にも混ぜてはならない。混ぜると
+    「@名前:」を含む思考で話者判定が壊れ、思考が発話として保存されてしまう。
     """
 
     @pytest.mark.asyncio
-    async def test_thinking_ignored(self):
-        """thinking チャンクは UtteranceDelta も生まないこと。"""
+    async def test_thinking_becomes_thinking_delta(self):
+        """thinking チャンクは ThinkingDelta になり、UtteranceDelta は生まないこと。"""
         chunks = [
             ("thinking", "(内心) どう答えるか…"),
             ("text", "@レイカ: 答えるよ\n"),
@@ -311,8 +315,35 @@ class TestNonTextChunks:
             )
         )
         deltas = [i for i in items if isinstance(i, UtteranceDelta)]
-        # 内心テキストは UtteranceDelta に含まれない
+        thinking = [i for i in items if isinstance(i, ThinkingDelta)]
+        # 内心テキストは UtteranceDelta には含まれず、ThinkingDelta として届く
         assert all("内心" not in d.content_delta for d in deltas)
+        assert [t.content for t in thinking] == ["(内心) どう答えるか…"]
+
+    @pytest.mark.asyncio
+    async def test_thinking_with_speaker_prefix_is_not_parsed(self):
+        """`@名前:` を含む思考でも話者として解釈されないこと（パーサへ通さないことの担保）。"""
+        chunks = [
+            ("thinking", "@レイカ: と書きたくなるが違う\n"),
+            ("text", "@トウコ: こんばんは\n"),
+        ]
+        engine, _ = _make_engine(chunks)
+        npcs = [
+            FakeNpc(id="npc-r", name="レイカ"),
+            FakeNpc(id="npc-t", name="トウコ"),
+        ]
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=npcs,
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        assert [r.speaker_name for r in records] == ["トウコ"]
 
 
 # ─── EngineResult ────────────────────────────────────────────────────────────

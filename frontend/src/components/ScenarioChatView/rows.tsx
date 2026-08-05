@@ -81,9 +81,11 @@ interface GMBubbleRowProps {
   elapsedMs?: number;
   /** デバッグログフォルダ名（8桁 hex）。指定時のみ ▼ログ 折りたたみを表示する。 */
   logMessageId?: string;
-  /** 想起記憶・WM・思考ブロック（pc_reasoning の連結）。PC ターンでのみ非空になる。
+  /** 想起記憶・WM・スケッチ。PC ターンは自分自身、GM は 1 レスポンスの先頭バブルにだけ入る。
    *  指定時はバブル先頭に折りたたみ ThinkingBlock を表示し、1on1 のキャラクター応答と同じ見た目にする。 */
   reasoning?: string;
+  /** 生成中のライブ表示か。ThinkingBlock を自動展開して ● を点滅させる。 */
+  reasoningStreaming?: boolean;
 }
 
 /**
@@ -117,6 +119,7 @@ function GMBubbleRowImpl({
   elapsedMs,
   logMessageId,
   reasoning,
+  reasoningStreaming = false,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
   const [editing, setEditing] = useState(false);
@@ -152,6 +155,15 @@ function GMBubbleRowImpl({
     !editing && onEditCommit && revealed ? (
       <EditButton onClick={() => setEditing(true)} title="この発話を書き換える" />
     ) : undefined;
+
+  // 想起記憶・スケッチの折りたたみ。1on1 のキャラクター応答と同じ ThinkingBlock を使う。
+  // Narrator（地の文）にも出す — GM のスケッチはレスポンス先頭バブルに載り、
+  // その先頭はたいてい Narrator だから。ここで落とすと GM のスケッチが見えなくなる。
+  const sketch = reasoning ? (
+    <div className="mb-1">
+      <ThinkingBlock content={reasoning} streaming={reasoningStreaming} />
+    </div>
+  ) : null;
 
   // 操作バー（コピー / 枝ナビ / 破棄 / 再生成 / ログ）。
   // 1on1 / グループと共通の MessageActionBar を使う（DRY）。
@@ -202,6 +214,7 @@ function GMBubbleRowImpl({
         </div>
         <div className="flex-1 min-w-0">
           <div className="w-full">
+            {sketch}
             <div
               className="text-sm leading-relaxed italic text-ch-t2 break-words"
               style={{ textWrap: "pretty" }}
@@ -231,8 +244,7 @@ function GMBubbleRowImpl({
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 130px" }}
       {...rowProps}
     >
-      {/* PC ターンの想起記憶・WM・思考ブロックを 1on1 と同じ ThinkingBlock で折りたたみ表示する。 */}
-      {reasoning && <div className="mb-1"><ThinkingBlock content={reasoning} /></div>}
+      {sketch}
       <Bubble
         kind="character"
         colored
@@ -277,6 +289,7 @@ export const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
     prev.elapsedMs === next.elapsedMs &&
     prev.logMessageId === next.logMessageId &&
     prev.reasoning === next.reasoning &&
+    prev.reasoningStreaming === next.reasoningStreaming &&
     // 関数の同一性は見ないが「渡されているか」は見る（書き換えの可否が切り替わるため）。
     (prev.onEditCommit === undefined) === (next.onEditCommit === undefined)
   );

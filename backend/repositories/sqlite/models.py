@@ -750,6 +750,11 @@ class ScenarioTurn(Base):
     # ANTICIPATE_RESPONSE: GM がターン末尾に書いた「次の展開への予想（期待）」。
     # ターンに1つ。次ターンの GM システムプロンプトに「前回の予想」として注入される。
     anticipation = Column(Text, nullable=True)
+    # 想起記憶・WM スレッド・思考（スケッチ）の連結テキスト。1on1 の
+    # `chat_messages.reasoning` と同じ役割で、UI の ThinkingBlock がこれを描く。
+    # 1 レスポンスが複数ターン（narrator + npc…）に割れる GM では、先頭ターンにだけ入る
+    # （バブル列の頭に 1 つだけスケッチを出すため）。PC ターンは自分自身に入る。
+    reasoning = Column(Text, nullable=True)
     # クロニクル処理日時: NULL=未処理、タイムスタンプあり=処理済み。
     # うつつ（usual_days）のやり取りを Chronicle 対象に合流させるための列
     # （ChatMessage.chronicled_at と同じ役割）。通常シナリオのターンでは使われない。

@@ -227,7 +227,7 @@ export default function App() {
     loadingOlderTurns,
     loadOlderScenarioTurns,
     scenarioPending,
-    scenarioReasoningMap,
+    scenarioStreamingReasoning,
     scenarioSynopsis,
     synopsisGenerating,
     synopsisModalOpen,
@@ -702,7 +702,7 @@ export default function App() {
             onEditResponse={handleScenarioEditResponse}
             onHeaderVisibilityChange={setHeaderVisible}
             elapsedMap={elapsedMap}
-            scenarioReasoningMap={scenarioReasoningMap}
+            scenarioStreamingReasoning={scenarioStreamingReasoning}
             synopsisBar={synopsisBar}
             synopsisGenerating={synopsisGenerating}
             onOpenSynopsisCreate={handleOpenSynopsisCreate}

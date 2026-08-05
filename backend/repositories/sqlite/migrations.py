@@ -407,6 +407,26 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE scenario_turns ADD COLUMN anticipation TEXT"
                 )
 
+    def _migrate_add_scenario_turn_reasoning(self) -> None:
+        """`scenario_turns` に `reasoning` 列を追加する。
+
+        想起記憶・WM スレッド・思考（スケッチ）の連結テキストを保存する列。
+        1on1 の `chat_messages.reasoning` と同じ役割で、リロード後もスケッチを
+        描けるようにする。既存行は NULL のまま（生成時のテキストは残っていないので
+        バックフィルしない）。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(scenario_turns)"
+                ).fetchall()
+            }
+            if "reasoning" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE scenario_turns ADD COLUMN reasoning TEXT"
+                )
+
     def _migrate_add_scenario_turn_chronicled_at(self) -> None:
         """`scenario_turns` に `chronicled_at` 列を追加する。
 

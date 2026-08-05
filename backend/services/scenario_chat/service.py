@@ -29,6 +29,7 @@ from backend.services.scenario_chat.engine import (
     EngineResult,
     EnsembleEngine,
     SceneEngine,
+    ThinkingDelta,
     TurnRecord,
 )
 from backend.services.scenario_chat.parser import UtteranceDelta
@@ -246,6 +247,7 @@ async def run_scenario_turn(
                     )
 
     from backend.services.scenario_chat.mention import (
+        find_last_routing_mention,
         format_pc_summary,
         normalize_pc_assignments,
         normalize_pc_slots,
@@ -451,6 +453,9 @@ async def _run_gm_turn(
     raw_response = ""
     turn_records_pending: list[TurnRecord] = []
     provider_error: str | None = None
+    # GM の思考（スケッチ）。ストリーム中は逐次 SSE へ流し、最後にレスポンス先頭ターンの
+    # reasoning 列へ保存する（1 レスポンス＝1 スケッチ）。
+    reasoning_text = ""
 
     async for item in engine.generate_stream(
         scenario=scenario,
@@ -482,6 +487,11 @@ async def _run_gm_turn(
                     },
                 ), None)
             yield (("chunk", {"text": item.content_delta}), None)
+        elif isinstance(item, ThinkingDelta):
+            # GM のスケッチ。1on1 / PC と同じ ``reasoning`` イベント名で流す
+            # （フロントは character の有無で GM / PC を見分ける）。
+            reasoning_text += item.content
+            yield (("reasoning", {"content": item.content}), None)
         elif isinstance(item, TurnRecord):
             turn_records_pending.append(item)
         elif isinstance(item, EngineResult):
@@ -536,6 +546,9 @@ async def _run_gm_turn(
             raw_response=raw_response,
             attach_log_request_id=True,
             anticipation=turn_anticipation if i == last_index else None,
+            # スケッチは 1 レスポンスに 1 つ。先頭ターンにだけ載せて、UI では
+            # バブル列の頭に 1 度だけ表示させる（anticipation が末尾なのと対）。
+            reasoning=reasoning_text if i == 0 else None,
         )
         saved_turn_ids.append(saved.id)
         yield (("turn_end", {"turn": scenario_turn_to_dict(saved)}), None)

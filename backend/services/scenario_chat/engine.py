@@ -1,7 +1,7 @@
 """シナリオチャット用 シーンエンジン。
 
 SceneEngine は「セッション状態 + NPC + 履歴 + プレイヤー発話」を受け取り、
-UtteranceDelta / TurnRecord の列を非同期 yield する抽象。
+UtteranceDelta / ThinkingDelta / TurnRecord の列を非同期 yield する抽象。
 
 実装済みエンジン:
     - EnsembleEngine    : GM が単一 LLM 呼出で Narrator + 全 NPC を演じる（既存）
@@ -146,6 +146,20 @@ class TurnRecord:
 
 
 @dataclass
+class ThinkingDelta:
+    """GM の思考（スケッチ）差分。
+
+    プロバイダの ``thinking`` チャンクをそのまま運ぶ。本文（UtteranceDelta）とは
+    別系統で、パーサにも raw_response にも入れない — 話者ブロック記法の解析対象は
+    あくまで本文であり、思考を混ぜると話者判定が壊れるため。
+    上位（service._run_gm_turn）が連結して SSE の ``reasoning`` として流し、
+    レスポンス先頭ターンの ``scenario_turns.reasoning`` に保存する。
+    """
+
+    content: str
+
+
+@dataclass
 class EngineResult:
     """エンジンが 1 ターンを完了したときに残す副産物。
 
@@ -193,6 +207,7 @@ class SceneEngine(Protocol):
 
         Yields:
             UtteranceDelta: ストリーミング中の発話差分。
+            ThinkingDelta: GM の思考（スケッチ）差分。本文とは別系統。
             TurnRecord: 話者の発話末尾（speaker_end 相当）。
             EngineResult: ターン完了時の副産物（最後に 1 回だけ）。
         """
@@ -277,7 +292,7 @@ class EnsembleEngine:
                 suppress（ensemble 既存挙動）。
 
         Yields:
-            UtteranceDelta | TurnRecord | EngineResult
+            UtteranceDelta | ThinkingDelta | TurnRecord | EngineResult
 
         Raises:
             ValueError: preset_id に対応するプリセットが見つからない場合。
@@ -411,7 +426,8 @@ class EnsembleEngine:
                 yield d
 
         # generate_stream_typed は (type, content) を yield する。
-        # text 以外（thinking 等）は無視する（GM ロールには思考可視化を出さない方針）。
+        # thinking は ThinkingDelta として本文と別系統で上へ流す（パーサには通さない）。
+        # それ以外の未知チャンクは無視する。
         # error はプロバイダ由来エラーで、ストリームを即時中断し EngineResult に乗せて
         # 上位（run_scenario_turn）へ伝える。途中まで届いた raw_chunks も EngineResult
         # 側で破棄される（部分応答を SQLite やあらすじへ混入させないため）。
@@ -422,6 +438,10 @@ class EnsembleEngine:
             if chunk_type == "error":
                 provider_error = content or "[provider error]"
                 break
+            if chunk_type == "thinking":
+                if content:
+                    yield ThinkingDelta(content=content)
+                continue
             if chunk_type != "text" or not content:
                 continue
             raw_chunks.append(content)

@@ -31,7 +31,7 @@ import type {
 } from "../../api";
 import { EditingLockProvider, useEditingLocked } from "../../hooks/useEditingLock";
 import { useHeaderVisibilityOnScroll } from "../../hooks/useHeaderVisibilityOnScroll";
-import { CharacterAvatar, UserBubble } from "../ChatBubbles";
+import { CharacterAvatar, ThinkingBlock, UserBubble } from "../ChatBubbles";
 import MessageInput from "../MessageInput";
 import { trimEnd } from "./helpers";
 import { NpcDetailDialog } from "./npc";
@@ -103,9 +103,9 @@ interface Props {
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** turn_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
   elapsedMap?: Record<string, number>;
-  /** PC ターンの reasoning（想起記憶・WM・思考）。turn.id → テキスト。
-   *  1on1 と同じく ThinkingBlock 折りたたみで表示する。 */
-  scenarioReasoningMap?: Record<string, string>;
+  /** 生成中レスポンスの reasoning（想起記憶・WM・スケッチ）。1on1 の streamingReasoning と同じ役割で、
+   *  未確定バブルの頭にライブ表示する。確定ターンぶんは `ScenarioTurn.reasoning` が持つ。 */
+  scenarioStreamingReasoning?: string | null;
   /**
    * あらすじ作成バーの表示内容。null なら非表示。
    * `text` は「あらすじ未作成（X/Yターン）」等、`danger` が true（80%超）なら赤系で表示する。
@@ -144,7 +144,7 @@ function ScenarioChatViewInner({
   onYieldTo,
   onHeaderVisibilityChange,
   elapsedMap,
-  scenarioReasoningMap,
+  scenarioStreamingReasoning,
   synopsisBar,
   synopsisGenerating,
   onOpenSynopsisCreate,
@@ -518,7 +518,7 @@ function ScenarioChatViewInner({
                   t.id === lastGMTurnId ? elapsedMap?.[t.id] : undefined
                 }
                 logMessageId={t.log_request_id ?? undefined}
-                reasoning={scenarioReasoningMap?.[t.id]}
+                reasoning={t.reasoning ?? undefined}
               />
             );
           }
@@ -529,7 +529,7 @@ function ScenarioChatViewInner({
             </React.Fragment>
           );
         })}
-        {pendingBubbles.map((b) => {
+        {pendingBubbles.map((b, i) => {
           const npcForAvatar =
             b.speaker_type === "npc" || b.speaker_type === "character"
               ? npcByName[b.speaker_name] ?? null
@@ -547,9 +547,19 @@ function ScenarioChatViewInner({
               onAvatarClick={
                 npcForAvatar ? () => setNpcDialogTarget(npcForAvatar) : undefined
               }
+              // 生成中のスケッチは先頭バブルの上に 1 つだけ。1 レスポンスが複数の
+              // 話者ブロックに割れても、スケッチはそのレスポンス全体に 1 つだから。
+              reasoning={i === 0 ? scenarioStreamingReasoning ?? undefined : undefined}
+              reasoningStreaming={i === 0}
             />
           );
         })}
+        {/* 本文が始まる前のスケッチ（思考が先に流れてくるモデル）。バブルはまだ無いので単独で出す。 */}
+        {pendingBubbles.length === 0 && scenarioStreamingReasoning && (
+          <div className="max-w-full sm:max-w-[88%]">
+            <ThinkingBlock content={scenarioStreamingReasoning} streaming />
+          </div>
+        )}
         {sending && pendingBubbles.length === 0 && (
           <div className="text-ch-t3 text-xs italic self-start">
             GM が考えています…

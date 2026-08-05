@@ -145,6 +145,8 @@ def scenario_turn_to_dict(turn: Any, variants: dict | None = None) -> dict:
         "response_key": response_key(turn.raw_response),
         "log_request_id": getattr(turn, "log_request_id", None),
         "anticipation": getattr(turn, "anticipation", None),
+        # 想起記憶・WM・スケッチ。UI の ThinkingBlock がこれを描く（GM は先頭ターンのみ非空）。
+        "reasoning": getattr(turn, "reasoning", None),
         "generation_id": gen_id,
         "variant_index": variant["index"] if variant else 1,
         "variant_count": variant["count"] if variant else 1,

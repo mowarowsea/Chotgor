@@ -231,9 +231,19 @@ frontend useChat
 ```
 frontend useScenarioChat → /api/scenario_chat/... (api/scenario_chat/)
   → services/scenario_chat/engine.py (SceneEngine) が
-    セッション状態 + NPC + 履歴 + プレイヤー発話から UtteranceDelta / TurnRecord を yield
+    セッション状態 + NPC + 履歴 + プレイヤー発話から
+    UtteranceDelta / ThinkingDelta / TurnRecord を yield
   → PC は pc_slots に一本化（GMプロンプトは中の人が人間かAIかを区別しない）
 ```
+
+**スケッチ（想起記憶・WM・思考）** — GM・PC とも 1on1 と同じ `reasoning` SSE イベントで
+流し、`scenario_turns.reasoning` に保存する（1on1 の `chat_messages.reasoning` と対）。
+フロントは確定ターンではこの列を、生成中は `scenarioStreamingReasoning` を
+共通の `ThinkingBlock` に渡す。GM の思考は `ThinkingDelta` として本文と別系統で運ぶ
+（パーサにも `raw_response` にも入れない — `@名前:` を含む思考で話者判定が壊れるため）。
+1 レスポンスが複数の話者ブロックに割れる GM では、スケッチは**先頭ターン**にだけ載せる
+（末尾ターンに載る `anticipation` と対）。既存ターンは NULL のまま（生成時のテキストが
+残っていないためバックフィルしない）。
 
 **ログの枝分かれ（レスポンスガチャ）** — `scenario_turns` は
 `is_active` / `generation_id` / `branch_point_index` の3列で「本線」と

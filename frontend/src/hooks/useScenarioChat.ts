@@ -104,11 +104,9 @@ interface UseScenarioChatResult {
   loadOlderScenarioTurns: () => Promise<void>;
   /** ストリーミング中の未確定吹き出し列。 */
   scenarioPending: PendingBubble[];
-  /** PC ターンの reasoning（想起記憶・WM・思考）を turn.id → テキストで保持。
-   *  1on1 の reasoningMap と同じ役割で、シナリオ PC バブルでも折りたたみ表示できる。 */
-  scenarioReasoningMap: Record<string, string>;
-  /** scenarioReasoningMap の setter（セッション選択時の復元・テスト用に公開）。 */
-  setScenarioReasoningMap: Dispatch<SetStateAction<Record<string, string>>>;
+  /** 生成中レスポンスの reasoning（想起記憶・WM・スケッチ）。1on1 の streamingReasoning と同じ役割。
+   *  確定後は `ScenarioTurn.reasoning`（DB 保存）が表示を引き継ぐため、turn_end で null に戻す。 */
+  scenarioStreamingReasoning: string | null;
   /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
   scenarioSynopsis: ScenarioSynopsis | null;
   /** 裏であらすじ蒸留が走っている最中か。 */
@@ -259,8 +257,9 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   const sendSeqRef = useRef(0);
   /** ストリーミング中の未確定吹き出し列。 */
   const [scenarioPending, setScenarioPending] = useState<PendingBubble[]>([]);
-  /** PC ターン の reasoning（想起記憶・WM スレッド・思考ブロック）を turn.id をキーに保持。 */
-  const [scenarioReasoningMap, setScenarioReasoningMap] = useState<Record<string, string>>({});
+  /** 生成中レスポンスの reasoning（想起記憶・WM スレッド・スケッチ）。確定ターンぶんは
+   *  `ScenarioTurn.reasoning` が持つので、ここは「まだ確定していない今のぶん」だけを持つ。 */
+  const [scenarioStreamingReasoning, setScenarioStreamingReasoning] = useState<string | null>(null);
   /** セッションのあらすじ（記憶捏造対策）。未取得は null。 */
   const [scenarioSynopsis, setScenarioSynopsis] = useState<ScenarioSynopsis | null>(null);
 
@@ -309,7 +308,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     setHasOlderTurns(false);
     setLoadingOlderTurns(false);
     setScenarioPending([]);
-    setScenarioReasoningMap({});
+    setScenarioStreamingReasoning(null);
     setScenarioSynopsis(null);
     setSynopsisProgress(null);
     setSynopsisModalOpen(false);
@@ -471,15 +470,18 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       setError(null);
       setSending(true);
       setScenarioPending([]);
+      setScenarioStreamingReasoning(null);
       // この送信の世代。完了後の後処理が着弾する頃に次の送信が始まっていたら、
       // 古い結果で上書きしないための番号（`sendSeqRef` の説明を参照）。
       const seq = ++sendSeqRef.current;
       const isLatestSend = () => seq === sendSeqRef.current;
       // モデルへリクエスト〜turn 完了までの経過時間を計測する開始時刻。
       const turnStartedAt = performance.now();
-      // PC ターン進行中に蓄積する reasoning（pc_reasoning の連結）と log_message_id（pc_done で確定）。
-      // 直後の turn_end でその turn.id をキーに reasoningMap / msgLogIds へ確定格納する。
-      let pendingPcReasoning = "";
+      // 生成中レスポンスの reasoning。GM・PC いずれも `reasoning` イベントでここへ溜まり、
+      // 未確定バブルの上にライブ表示される。確定（turn_end）時点で DB 保存済みの
+      // `ScenarioTurn.reasoning` へ表示が引き継がれるので、ここは空へ戻す。
+      let pendingReasoning = "";
+      // log_message_id は pc_done で届き、直後の turn_end で turn.id へ紐付ける。
       let pendingPcLogMessageId: string | null = null;
       const sessionId = activeScenarioSession.id;
       const newPending: PendingBubble[] = [];
@@ -521,27 +523,24 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
               setScenarioPending([...newPending]);
             }
           } else if (ev.type === "reasoning") {
-            // 想起記憶・WM スレッド・思考ブロックを連結保持し、後続 turn_end で turn.id に紐付ける。
-            pendingPcReasoning += ev.content;
+            // 想起記憶・WM スレッド・スケッチ。GM（character なし）と PC（character あり）で
+            // 同じ扱い ── いま生成中のレスポンス 1 つぶんとして溜め、ライブ表示する。
+            pendingReasoning += ev.content;
+            setScenarioStreamingReasoning(pendingReasoning);
           } else if (ev.type === "turn_end") {
             // 確定ターンとしてリストに追加し、対応する未確定吹き出しを除く
             setScenarioTurns((prev) => [...prev, ev.turn]);
             if (newPending.length > 0) newPending.shift();
             setScenarioPending([...newPending]);
-            // 直前 PC ターンの reasoning / log_message_id が溜まっていれば、
-            // この turn_end の turn.id に紐付けて確定格納する（PC ターン以外では発生しない）。
-            if (ev.turn.speaker_type === "pc") {
-              if (pendingPcReasoning) {
-                const turnId = ev.turn.id;
-                const reasoning = pendingPcReasoning;
-                setScenarioReasoningMap((prev) => ({ ...prev, [turnId]: reasoning }));
-              }
-              if (pendingPcLogMessageId) {
-                const turnId = ev.turn.id;
-                const logId = pendingPcLogMessageId;
-                setMsgLogIds((prev) => ({ ...prev, [turnId]: logId }));
-              }
-              pendingPcReasoning = "";
+            // 確定ターンが reasoning を持って返ってくる（GM はレスポンス先頭ターン、PC は自分自身）。
+            // ライブ表示の役目はここで終わりなので畳む。
+            pendingReasoning = "";
+            setScenarioStreamingReasoning(null);
+            // 直前 PC ターンの log_message_id が溜まっていれば、この turn_end の turn.id へ紐付ける。
+            if (ev.turn.speaker_type === "pc" && pendingPcLogMessageId) {
+              const turnId = ev.turn.id;
+              const logId = pendingPcLogMessageId;
+              setMsgLogIds((prev) => ({ ...prev, [turnId]: logId }));
               pendingPcLogMessageId = null;
             }
           } else if (ev.type === "pc_done") {
@@ -555,6 +554,9 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             // 残った未確定吹き出しは捨てる（turn_end でほぼ消えるはず）。
             newPending.length = 0;
             setScenarioPending([]);
+            // ターンが確定しないまま終わった場合（PC が本文ゼロ等）のライブスケッチも畳む。
+            pendingReasoning = "";
+            setScenarioStreamingReasoning(null);
             // 経過時間を記録する。同一レスポンス内の全GMバブル（複数話者ブロック）に同じ値を共有する。
             const elapsed = performance.now() - turnStartedAt;
             if (ev.turn_ids.length > 0) {
@@ -593,6 +595,9 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
           setError(String(e));
         },
       });
+
+      // ストリーム終了時（エラー・切断含む）に残ったライブスケッチを畳む。
+      setScenarioStreamingReasoning(null);
 
       try {
         // 完了後にサーバから真の turns を取り直して整合性確保。
@@ -964,8 +969,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     loadingOlderTurns,
     loadOlderScenarioTurns,
     scenarioPending,
-    scenarioReasoningMap,
-    setScenarioReasoningMap,
+    scenarioStreamingReasoning,
     scenarioSynopsis,
     synopsisGenerating,
     synopsisModalOpen,

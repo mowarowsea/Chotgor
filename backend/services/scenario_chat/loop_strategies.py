@@ -457,6 +457,7 @@ class ScenarioTurnExecutor:
 
         full_text = ""
         anticipation_text: str | None = None
+        reasoning_text: str | None = None
         # プロバイダ由来エラー（Claude CLI の MCP 起動レースによる異常終了など）は
         # 一過性であることが多いので 1 回だけ再試行する。GM の投げかけ直後に PC の返事
         # だけ落ちると、シーンを閉じたとき問いかけが宙に浮くため。
@@ -465,6 +466,7 @@ class ScenarioTurnExecutor:
         for attempt in range(_PC_PROVIDER_ERROR_ATTEMPTS):
             full_text = ""
             anticipation_text = None
+            reasoning_text = None
             last_error = None
             try:
                 async for ev_type, payload in stream_pc_response(
@@ -482,6 +484,7 @@ class ScenarioTurnExecutor:
                     if ev_type == "pc_done":
                         full_text = payload["full_text"]
                         anticipation_text = payload.get("anticipation")
+                        reasoning_text = payload.get("reasoning")
                     yield (ev_type, payload)
                 break
             except LLMApiError as e:
@@ -534,6 +537,7 @@ class ScenarioTurnExecutor:
                 speaker_id=pc.character_id,
                 attach_log_request_id=True,
                 anticipation=anticipation_text,
+                reasoning=reasoning_text,
             )
             sc.saved_turn_ids.append(saved.id)
             yield ("turn_end", {"turn": scenario_turn_to_dict(saved)})

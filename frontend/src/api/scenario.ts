@@ -108,6 +108,9 @@ export interface ScenarioTurn {
   response_key: string | null;
   /** debug_log_entries との紐付け。枝ごとに別 ID が振られる。 */
   log_request_id?: string | null;
+  /** 想起記憶・WM スレッド・スケッチの連結テキスト（ThinkingBlock の材料）。
+   *  GM は 1 レスポンスの先頭ターンにだけ入る。持たないターンは null。 */
+  reasoning?: string | null;
   /** 枝（レスポンスガチャ）のキー。1 リクエストで保存されたターン群が同じ値を持つ。
    *  intro など枝を持たないターンは null。 */
   generation_id?: string | null;
@@ -179,8 +182,9 @@ export type ScenarioStreamEvent =
   // 現在進行中の話者の本文チャンク。GM は text、PC は character + content。
   | { type: "chunk"; text: string }
   | { type: "chunk"; character: string; content: string }
-  // 現在進行中の話者の reasoning（想起記憶・WM スレッド・思考ブロック）。1on1 と統一。
-  | { type: "reasoning"; character: string; content: string }
+  // 現在進行中の話者の reasoning（想起記憶・WM スレッド・スケッチ）。1on1 と統一。
+  // character は PC ターンのみ付く（GM ターンは付かない）。
+  | { type: "reasoning"; character?: string; content: string }
   // 話者ブロック確定通知。turn は DB 保存済み ScenarioTurn。
   | { type: "turn_end"; turn: ScenarioTurn }
   // ── ensemble_pc 専用イベント ─────────────────────────────

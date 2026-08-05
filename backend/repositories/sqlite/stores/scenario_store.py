@@ -527,6 +527,7 @@ class ScenarioChatStoreMixin:
         raw_response: str | None = None,
         log_request_id: str | None = None,
         anticipation: str | None = None,
+        reasoning: str | None = None,
     ):
         """発話ターンを作成する。
 
@@ -541,6 +542,8 @@ class ScenarioChatStoreMixin:
                         user / narrator / 未知 NPC は NULL。
             raw_response: GM の単一呼出で得たターン全体の生出力（デバッグ用）。
             log_request_id: debug_log_entries.request_id との紐付け。再生成時に引き継ぐ。
+            reasoning: 想起記憶・WM スレッド・思考（スケッチ）の連結テキスト。
+                GM レスポンスでは先頭ターンにだけ渡す（バブル列の頭に 1 つ出すため）。
         """
         from backend.lib.log_context import (
             current_branch_point_index,
@@ -566,6 +569,7 @@ class ScenarioChatStoreMixin:
                 raw_response=raw_response,
                 log_request_id=log_request_id,
                 anticipation=anticipation or None,
+                reasoning=reasoning or None,
                 is_active=1,
                 generation_id=gen_id,
                 branch_point_index=(
