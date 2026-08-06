@@ -73,10 +73,12 @@ class FakeProvider:
         self.chunks = chunks
         self.raises = raises
         self.received_system_prompt: str | None = None
+        self.received_messages: list[dict] | None = None
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """テスト用の固定出力をストリーミング風に返す。"""
         self.received_system_prompt = system_prompt
+        self.received_messages = messages
         if self.raises is not None:
             raise self.raises
         for typ, content in self.chunks:
@@ -140,6 +142,36 @@ class TestBuildSynopsisSystemPrompt:
         assert "圧縮" in out
         # 古い経緯でも事実関係は残す方針が含まれること
         assert "事実" in out
+
+    def test_existing_auto_adds_inheritance_rules(self):
+        """既存 auto があるとき「継承規則」が上乗せされること。
+
+        あらすじは全体置き換えで保存され前世代を残さないため、モデルが
+        既存あらすじを無視して新規履歴だけを要約すると物語の前半が永久に失われる
+        （本番ログで 2000 字超 → 直近 1 シーンのみ 500 字への転落が複数回発生）。
+        その再発防止として、以下 3 点がプロンプトに含まれることを固定する:
+            - 与えられる履歴は「続き」であって物語全体ではない
+            - 出力は物語の冒頭から書き始める
+            - 既存あらすじの区間は圧縮してよいが削除は禁止
+        """
+        out = build_synopsis_system_prompt(
+            FakeScenario(), existing_auto="勇者はレイカと出会った。"
+        )
+        assert "継承規則" in out
+        assert "続き" in out
+        assert "冒頭" in out
+        assert "削除しない" in out or "削除することでは行わない" in out
+
+    def test_no_existing_auto_omits_inheritance_rules(self):
+        """既存 auto が空なら、継承規則も「これまでのあらすじ」への言及も出ないこと。
+
+        初回蒸留・全消し後の再蒸留では引き継ぐ前世代が存在しない。
+        存在しないブロックを参照する指示を渡すと、モデルが「前半は与えられている
+        はず」と誤認して欠落を捏造で埋める余地が生まれるため、文言ごと落とす。
+        """
+        out = build_synopsis_system_prompt(FakeScenario(), existing_auto="   \n ")
+        assert "継承規則" not in out
+        assert "これまでのあらすじ" not in out
 
 
 # ─── update_auto_synopsis（end-to-end with mock provider） ──────────────────
@@ -259,6 +291,53 @@ class TestUpdateAutoSynopsis:
         )
         assert provider.received_system_prompt is not None
         assert "統合対象の既存記述" in provider.received_system_prompt
+
+    @pytest.mark.asyncio
+    async def test_user_message_repeats_constraint_after_history(self):
+        """既存 auto があるとき、履歴の**後ろ**にも継承制約の念押しが置かれること。
+
+        新規履歴は数万字に達することがあり、その場合モデルの注意は履歴本文へ
+        強く引かれる。system prompt 側の指示だけでは「履歴＝物語の全体」と
+        誤認され、直近の場面だけを要約して既存あらすじを消し飛ばす事故が起きる。
+        履歴の末尾（＝モデルが最後に読む位置）に制約を再掲することでこれを抑える。
+        """
+        provider = FakeProvider(chunks=[("text", "x")])
+        await update_auto_synopsis(
+            scenario=FakeScenario(),
+            new_turns=[
+                FakeTurn(speaker_type="user", speaker_name="P", content="A")
+            ],
+            existing_auto="既存のあらすじ",
+            settings={},
+            preset_loader=_loader_for(FakePreset()),
+            synopsis_preset_id="preset-001",
+            provider_factory=_factory_for(provider),
+        )
+        assert provider.received_messages is not None
+        content = provider.received_messages[0]["content"]
+        # 履歴本文より後ろに制約が来ていること（位置関係まで含めて検証）
+        pos_history = content.find("A")
+        pos_tail = content.find("これは物語の**続き**であり全体ではありません")
+        assert pos_tail > pos_history > 0
+
+    @pytest.mark.asyncio
+    async def test_user_message_without_existing_has_no_tail(self):
+        """既存 auto が無いときは、存在しない前世代を参照する念押しを付けないこと。"""
+        provider = FakeProvider(chunks=[("text", "x")])
+        await update_auto_synopsis(
+            scenario=FakeScenario(),
+            new_turns=[
+                FakeTurn(speaker_type="user", speaker_name="P", content="A")
+            ],
+            existing_auto="",
+            settings={},
+            preset_loader=_loader_for(FakePreset()),
+            synopsis_preset_id="preset-001",
+            provider_factory=_factory_for(provider),
+        )
+        assert provider.received_messages is not None
+        content = provider.received_messages[0]["content"]
+        assert "これまでのあらすじ" not in content
 
     @pytest.mark.asyncio
     async def test_provider_exception_returns_none(self):
