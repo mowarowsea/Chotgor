@@ -52,6 +52,9 @@
 
 - 無人連鎖ループ: `services/scenario_chat/service.py` の `run_scenario_turn`（`while fired_turns < _MAX_TURNS_PER_USER_TURN`）と `auto_advance`
 - PCの記憶接続: `services/scenario_chat/pc_runner.py`（1on1同等の `ChatService.execute_stream` を通り、想起・WM・inscribe が効く。`default_origin` で origin 付与）
+  - **注意**: うつつは統合履歴を単一 user メッセージで渡すため、想起クエリは「末尾 N 文字」に
+    切られる（1on1 と同じ単一規則。`current-spec/memory_recall_algorithm.md` §0）。上限が無いと
+    embedding が 422／先頭切り捨てになり、想起が全滅する事故が実際に起きた（2026-07-21〜08-06）
 - GMプロンプト: `services/scenario_chat/prompt_builder.py`（`custom_system_prompt` でシナリオ個別にテンプレ可、タグ置換機構あり）
 - 中の人秘匿: `services/scenario_chat/mention.py` `format_pc_summary`
 - ダイス乱数源: `services/scenario_chat/engine.py` `generate_dice_pool`（イベント抽選にも流用）

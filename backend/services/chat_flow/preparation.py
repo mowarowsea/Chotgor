@@ -36,6 +36,19 @@ from backend.services.chat.request_builder import (
 )
 
 
+# 自動想起（pre-recall）クエリの最大文字数。超過分は**先頭を捨てて末尾を残す**。
+#
+# 末尾を残す理由: 会話でも統合履歴でも「いま応答すべき最新の発話」は末尾にある。
+# embedding モデル（ruri-v3-310m 等）はモデル最大長を超えた入力を先頭優先で切り捨てるため、
+# 長いクエリを素通しすると「一番古い発話」でクエリしてしまう。
+#
+# 上限が必要な理由: うつつPC は1日ぶんの全シーンを単一 user メッセージとして渡す設計
+# （external_scenes.build_unified_pc_messages）で、クエリが数十万文字になる。infinity の
+# 入力上限 122,880 文字を超えると HTTP 422 で保存記憶想起と WM heat 想起が両方落ちる。
+# 1on1 の通常メッセージはこの値を下回るので挙動は変わらない。
+RECALL_QUERY_MAX_CHARS = 2000
+
+
 def extract_text_content(content: str | list | None) -> str:
     """メッセージの content (str or list) からプレーンテキストのみを抽出する。"""
     if not content:
@@ -96,6 +109,10 @@ async def prepare_context(
             last_user_msg = re.sub(r"<[^>]+>", "", raw).strip()
             break
 
+    # 想起クエリは末尾 RECALL_QUERY_MAX_CHARS 文字に絞る（理由は定数の説明を参照）。
+    # URL 自動fetch は全文を対象にしたいので、last_user_msg 自体は切らずに別変数へ分ける。
+    recall_query = last_user_msg[-RECALL_QUERY_MAX_CHARS:]
+
     recalled_identity: list[dict] = []
     recalled: list[dict] = []
     recall_error: str | None = None
@@ -103,10 +120,10 @@ async def prepare_context(
     # True なら build_system_prompt が運用告知ブロックをキャラクター本人へ注入する
     # （recall_error はユーザ向け UI 通知、こちらはキャラクター向け通知と役割を分ける）。
     memory_degraded = False
-    if last_user_msg:
+    if recall_query:
         try:
             recalled_identity, recalled = memory_manager.recall_with_identity(
-                request.character_id, last_user_msg
+                request.character_id, recall_query
             )
         except EmbeddingError as e:
             # embedding サーバ（infinity 等）に接続できないケース。原因が分かるよう専用メッセージにする。
@@ -140,10 +157,10 @@ async def prepare_context(
             wm_fixed_threads = (
                 working_memory_manager.get_fixed_threads(request.character_id) or None
             )
-            if last_user_msg:
+            if recall_query:
                 wm_recalled_threads = (
                     working_memory_manager.recall_threads(
-                        request.character_id, last_user_msg
+                        request.character_id, recall_query
                     )
                     or None
                 )

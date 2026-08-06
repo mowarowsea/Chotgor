@@ -162,6 +162,8 @@ frontend useChat
   → POST /api/chat/sessions/{id}/messages/stream   (api/chat.py)
   → ChatService (services/chat/service.py)
       1.  長期記憶を想起（RAG）→ 想起記憶ブロック（ターン注釈側 {block_memories}）
+          クエリは「最新userメッセージのタグ除去後・末尾 N 文字」。末尾なのは最新発話が
+          末尾にあり、embedding が超過分を先頭優先で切るため（current-spec/memory_recall_algorithm.md §0）
       1b. ワーキングメモリ取得 → 全スレッド一覧/固定注入（システム {block_wm_all} / {block_wm_fixed}）
           + heat 想起（ターン注釈側 {block_wm_recalled}）
       2.  メッセージ内URLの自動fetch → fetched ブロック（ターン注釈側 {block_fetched}）

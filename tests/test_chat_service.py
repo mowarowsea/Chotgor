@@ -707,6 +707,136 @@ async def test_prepare_context_memory_degraded_false_on_success():
     assert mock_build.call_args.kwargs["memory_degraded"] is False
 
 
+# --- prepare_context — 想起クエリの長さガード（RECALL_QUERY_MAX_CHARS） ---
+#
+# うつつ（Usual Days）PC ターンは external_scenes.build_unified_pc_messages が「1日ぶんの
+# 全シーン」を単一 user メッセージとして渡すため、素朴に最新 user メッセージ全文を想起
+# クエリにすると数十万文字になる。実際に infinity の入力上限（122,880 文字）を超えて
+# HTTP 422 → EmbeddingError となり、2026-07-21〜08-06 のうつつPCターン 56 件で
+# 「保存記憶の想起・WM heat 想起が両方ゼロ + キャラへ記憶縮退告知」が発生した。
+# さらに上限未満でも embedding モデルは超過分を「先頭を残して」切り捨てるため、シーンが
+# 昇順に並ぶ統合履歴では最古のシーン冒頭でクエリしてしまい実質無意味だった。
+# ここでは「末尾を残して切る」ことと、1on1 が無変化であることを回帰防止する。
+
+
+def _build_prepare_context_mocks(long_content: str):
+    """想起クエリ検証用の memory_manager / WM / request / provider をまとめて用意する。"""
+    memory_manager = MagicMock()
+    memory_manager.recall_with_identity.return_value = ([], [])
+
+    working_memory_manager = MagicMock()
+    working_memory_manager.list_all_threads.return_value = []
+    working_memory_manager.get_fixed_threads.return_value = []
+    working_memory_manager.recall_threads.return_value = []
+
+    request = ChatRequest(
+        character_id="char-1",
+        character_name="Alice",
+        provider="anthropic",
+        model="",
+        messages=[Message(role="user", content=long_content)],
+    )
+
+    fake_provider = AsyncMock()
+    fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
+    return memory_manager, working_memory_manager, request, fake_provider
+
+
+@pytest.mark.asyncio
+async def test_recall_query_truncated_to_tail_for_long_user_message():
+    """巨大な user メッセージでも、想起クエリが上限以内かつ「末尾側」になること。
+
+    うつつの統合履歴を模して、古いシーン（先頭）と最新シーン（末尾）を識別可能な
+    マーカー付きで並べる。クエリに残るのは末尾マーカー側でなければならない
+    （先頭が残ると「最古のシーンで想起する」という元のバグに戻る）。
+    """
+    from backend.services.chat_flow.preparation import RECALL_QUERY_MAX_CHARS
+
+    oldest = "一番古いシーンの描写。" * 3000   # 上限を大きく超える長さ
+    newest = "いま応答すべき最新のナレーション。"
+    long_content = f"OLDEST_MARKER{oldest}{newest}NEWEST_MARKER"
+
+    memory_manager, wm, request, fake_provider = _build_prepare_context_mocks(long_content)
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager, working_memory_manager=wm)
+        await _collect_stream_events(service, request)
+
+    query = memory_manager.recall_with_identity.call_args.args[1]
+    assert len(query) <= RECALL_QUERY_MAX_CHARS
+    assert "NEWEST_MARKER" in query
+    assert "OLDEST_MARKER" not in query
+
+
+@pytest.mark.asyncio
+async def test_recall_query_truncation_applies_to_wm_heat_recall_too():
+    """WM heat 想起にも同じ切り詰め済みクエリが渡ること。
+
+    422 は recall_with_identity と recall_threads の両方を落としていたため、
+    片方だけ直しても縮退は解消しない。
+    """
+    from backend.services.chat_flow.preparation import RECALL_QUERY_MAX_CHARS
+
+    long_content = "長い履歴。" * 5000 + "NEWEST_MARKER"
+    memory_manager, wm, request, fake_provider = _build_prepare_context_mocks(long_content)
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager, working_memory_manager=wm)
+        await _collect_stream_events(service, request)
+
+    wm_query = wm.recall_threads.call_args.args[1]
+    assert len(wm_query) <= RECALL_QUERY_MAX_CHARS
+    assert "NEWEST_MARKER" in wm_query
+    assert wm_query == memory_manager.recall_with_identity.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_recall_query_unchanged_for_short_user_message():
+    """上限以下の通常メッセージ（1on1）はそのままクエリになること（乖離を作らない回帰防止）。"""
+    memory_manager, wm, request, fake_provider = _build_prepare_context_mocks("今日の調子どう？")
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager, working_memory_manager=wm)
+        await _collect_stream_events(service, request)
+
+    assert memory_manager.recall_with_identity.call_args.args[1] == "今日の調子どう？"
+
+
+@pytest.mark.asyncio
+async def test_url_autofetch_still_scans_full_user_message():
+    """URL 自動fetch の走査対象は切り詰め前の全文であること。
+
+    想起クエリの上限を last_user_msg 自体に被せてしまうと、長文の頭に貼られた URL を
+    1on1 で取り落とす。切り詰めは想起クエリ専用の措置である、という分離を保証する。
+    """
+    long_content = "https://example.com/head-url を見て。" + "あとは雑談。" * 3000
+    memory_manager, wm, request, fake_provider = _build_prepare_context_mocks(long_content)
+    request.default_origin = "real"  # URL自動fetch は 1on1 限定
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]) as mock_find,
+    ):
+        service = ChatService(memory_manager=memory_manager, working_memory_manager=wm)
+        await _collect_stream_events(service, request)
+
+    assert "https://example.com/head-url" in mock_find.call_args.args[0]
+
+
 # --- ChatService.execute_stream — プロバイダ由来エラー（provider_error） ---
 
 @pytest.mark.asyncio
