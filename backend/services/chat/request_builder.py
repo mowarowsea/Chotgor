@@ -564,7 +564,13 @@ def _build_previous_anticipation_block(previous_anticipation: str) -> str:
     text = (previous_anticipation or "").strip()
     if not text:
         return ""
-    return f"## 前回のあなたの期待（予想）\n\n前回あなたは、このあとの展開をこう期待していました：\n\n> {text}"
+    return (
+        "## 前回のあなたの期待（予想）\n\n"
+        "前回あなたは、相手の反応をこう期待していました：\n\n"
+        f"> {text}\n\n"
+        "これは予想であって決定事項ではありません。実際の反応とのズレも含めて受け取り、"
+        "あなたが何を返すかはいま決めてください。"
+    )
 
 
 def _build_chotgor_block(

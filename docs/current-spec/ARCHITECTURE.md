@@ -130,7 +130,7 @@
 | `rescheduler.py` | `override_schedule`（1on1専用・当日予定の一時上書き）。state=OnTime/haru/adhoc/occupancy0.85 のエントリを insert するだけ（占有圧最大が勝つ読み取り解決）。`parse_until_time` は 24時超え表記対応・常に24h以内 |
 | `later_speaker.py` | `speak_later`（1on1専用・キャラ発の時限発話の仕掛け）。時刻＋用件メモを speech_reservations へ pending insert（本文は発火時に本人が生成）。未来 availability は無風仮定で仕掛け時にエラー判定・72h horizon・同一セッションの pending は superseded に倒して置き直し。発火は `services/gate/speech_reservation.py` |
 | `context_tools.py` | **コンテキスト別ツール出し分けの単一判定点**。reach_out=うつつのみ（cap到達日は非露出）／visit_user=1on1かつ対面OFF／override_schedule=1on1かつ生活カレンダー有効／speak_later=1on1かつ発話予約有効（speak_later_enabled=1）。消費者は3系統: ①flow.py→provider.extra_tools（in-process tool-use）②mcp_server.py→GET /api/mcp/tools?character_id&origin&session_id（claude_cli）③flow.py→build_system_prompt(context_tool_hints) |
-| `anticipator.py` | `[ANTICIPATE_RESPONSE:]` タグ抽出（次の展開への期待） |
+| `anticipator.py` | `[ANTICIPATE_RESPONSE:]` タグ抽出（相手の反応への期待）。**予想の対象は相手（1on1=ユーザ／シナリオ GM=PC）の反応だけ**に限定し、それを受けた自分・NPC の返し方は書かせない（予想が次ターンの台本になる自己成就の遮断。GM 側の同趣旨の規則は `scenario_chat/prompt_builder.py` の出力規則） |
 | `ambience_judge.py` | なりゆき judge（判定）: LLM がキャラクターの感情状態を毎ターン外部判定。judge プリセットは `judge_preset_id`。将来は場所ラベル等の軸も担う |
 | `character_context.py` | 通常チャット以外でキャラクターとして問い合わせる際の共通コンテキストブロック構築 |
 | `tool_tags.py` | ツール名⇔タグ名・ログ表示ラベル/色の集約 |
