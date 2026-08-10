@@ -425,13 +425,15 @@ html::-webkit-scrollbar-track,
   padding: 6px 14px;
   border-radius: var(--ch-radius);
   border: 1px solid var(--ch-sep2);
-  background: transparent;
-  color: var(--ch-t2);
+  /* 既定から面（背景）を持たせる。透明だと文中に埋もれて押せると気づかれないため、
+     旧 hover 相当を平常時の見た目にし、hover はさらに一段強める。 */
+  background: var(--ch-sep);
+  color: var(--ch-t);
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
   white-space: nowrap;
 }
-.ch-btn:hover { color: var(--ch-t); border-color: var(--ch-t4); background: var(--ch-sep); }
+.ch-btn:hover { color: var(--ch-t); border-color: var(--ch-t3); background: var(--ch-sep2); }
 .ch-btn:disabled { cursor: wait; opacity: 0.5; }
 
 .ch-btn--primary {
@@ -441,11 +443,12 @@ html::-webkit-scrollbar-track,
 }
 .ch-btn--primary:hover { background: var(--ch-a-strong); color: var(--ch-on-a); }
 
+/* 枠線だけを落とした控えめ版（面は残す） */
 .ch-btn--ghost { border-color: transparent; }
-.ch-btn--ghost:hover { background: var(--ch-sep); }
+.ch-btn--ghost:hover { background: var(--ch-sep2); border-color: transparent; }
 
-.ch-btn--danger { color: var(--ch-danger); border-color: transparent; }
-.ch-btn--danger:hover { color: var(--ch-danger); background: var(--ch-danger-bg); border-color: transparent; }
+.ch-btn--danger { color: var(--ch-danger); background: var(--ch-danger-bg); border-color: transparent; }
+.ch-btn--danger:hover { color: var(--ch-danger); background: var(--ch-danger-bg); border-color: var(--ch-danger); }
 
 .ch-btn--sm { font-size: 11px; padding: 4px 10px; }
 .ch-btn--xs { font-size: 10px; padding: 2px 8px; }
@@ -459,14 +462,14 @@ html::-webkit-scrollbar-track,
   height: 28px;
   border-radius: var(--ch-radius);
   border: 1px solid var(--ch-sep2);
-  background: transparent;
-  color: var(--ch-t2);
+  background: var(--ch-sep);
+  color: var(--ch-t);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
 }
-.ch-iconbtn:hover { color: var(--ch-t); background: var(--ch-sep); }
+.ch-iconbtn:hover { color: var(--ch-t); background: var(--ch-sep2); border-color: var(--ch-t3); }
 
 /* ============================================================
    ATOMS — pills / badges / dot
@@ -1192,6 +1195,15 @@ html::-webkit-scrollbar-track,
   gap: 20px;
   margin-bottom: 8px;
 }
+/* アバターと、その直下に置く操作（差し替え・削除）の縦列 */
+.ch-pagehead__avatarslot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.ch-pagehead__avataracts { display: flex; gap: 4px; }
 .ch-pagehead__avatar {
   width: 84px;
   height: 84px;

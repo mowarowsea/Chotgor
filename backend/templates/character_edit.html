@@ -17,12 +17,25 @@
         {# ── ページヘッド（編集時はアバター・メタ、新規時は見出し） ── #}
         {% if character %}
         <div class="ch-pagehead">
-            <div id="icon-preview-container">
-                {% if character.image_data %}
-                <img src="{{ character.image_data }}" class="ch-pagehead__avatar" alt="{{ character.name }}">
-                {% else %}
-                <div class="ch-pagehead__avatar ch-pagehead__avatar--ph">{{ character.name[0] }}</div>
-                {% endif %}
+            {# アイコンの差し替え・削除はアバターの真下に置く（identity セクションからここへ移動） #}
+            <div class="ch-pagehead__avatarslot">
+                <div id="icon-preview-container">
+                    {% if character.image_data %}
+                    <img src="{{ character.image_data }}" class="ch-pagehead__avatar" alt="{{ character.name }}">
+                    {% else %}
+                    <div class="ch-pagehead__avatar ch-pagehead__avatar--ph">{{ character.name[0] }}</div>
+                    {% endif %}
+                </div>
+                <input type="file" id="image-file-input" name="image" accept="image/*"
+                    style="display:none" data-no-autosave>
+                <input type="hidden" id="remove-image-flag" name="remove_image" value="">
+                <div class="ch-pagehead__avataracts">
+                    <button type="button" class="ch-btn ch-btn--xs"
+                        onclick="document.getElementById('image-file-input').click()">画像</button>
+                    <button type="button" id="remove-image-btn" class="ch-btn ch-btn--xs ch-btn--ghost"
+                        style="{% if not character.image_data %}display:none{% endif %}"
+                        onclick="removeImage()">削除</button>
+                </div>
             </div>
             <div class="ch-pagehead__body">
                 <div class="ch-pagehead__title">
@@ -61,32 +74,32 @@
         {% endif %}
 
         {# ── identity ・ 自我 ── #}
-        <details class="ch-section ch-section--collapsible" open>
+        <details class="ch-section ch-section--collapsible">
             <summary class="ch-section__head">
                 <h3 class="ch-section-title">identity <small>・ 自我</small></h3>
             </summary>
 
-            {# アイコン #}
+            {# アイコン（新規作成時のみ。既存キャラはページヘッドのアバター脇で操作する） #}
+            {% if not character %}
             <div class="ch-field">
                 <span class="ch-label">アイコン <span class="ch-hint">PNG / JPG / WebP — 2MB まで</span></span>
                 <div class="image-upload-row">
-                    {% if not character %}
                     <div id="icon-preview-container">
                         <div class="icon-placeholder">?</div>
                     </div>
-                    {% endif %}
                     <input type="file" id="image-file-input" name="image" accept="image/*"
                         style="display:none" data-no-autosave>
                     <div style="display:flex;flex-direction:column;gap:6px">
                         <button type="button" class="ch-btn ch-btn--sm"
                             onclick="document.getElementById('image-file-input').click()">画像を選択</button>
                         <button type="button" id="remove-image-btn" class="ch-btn ch-btn--sm ch-btn--ghost"
-                            style="{% if not (character and character.image_data) %}display:none{% endif %}"
+                            style="display:none"
                             onclick="removeImage()">削除</button>
                     </div>
                 </div>
             </div>
             <input type="hidden" id="remove-image-flag" name="remove_image" value="">
+            {% endif %}
 
             {# 名前 #}
             <div class="ch-field">
@@ -279,7 +292,7 @@
         </div>
 
         {# ── models ・ 利用モデル ── #}
-        <details class="ch-section ch-section--collapsible" open>
+        <details class="ch-section ch-section--collapsible">
             <summary class="ch-section__head">
                 <h3 class="ch-section-title">models <small>・ 利用モデル</small></h3>
             </summary>
@@ -340,14 +353,21 @@
 
         </details>
 
-        {# ── めぐり ・ 会話外行動権（Phase 6） ──
+        {# ════════════ CHAPTER 3 — めぐり ════════════ #}
+        {# 会話の外側でこのキャラが動くための設定一式（行動権・発話予約・圧力の体質・生活時間割）。 #}
+        <div class="ch-chapter">
+            <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 3</span></div>
+            <h2 class="ch-chapter__title">めぐり <small>— 会話の外の時間（Aliveness）</small></h2>
+        </div>
+
+        {# ── 会話外行動権（Phase 6） ──
            閾値超えの意図があるとき、本人への問い合わせを経て実行される行動のメニュー。
            個別 ON/OFF（全 OFF = 行動権スケジューラの評価対象外）。
            「調べるかどうかも本人任せ」— ここで許可するのは可能性だけで、
            実行するかは毎回キャラクター本人が選ぶ。 #}
         <details class="ch-section ch-section--collapsible">
             <summary class="ch-section__head">
-                <h3 class="ch-section-title">meguri <small>・ 会話外行動</small>{{ ch_help(
+                <h3 class="ch-section-title">actions <small>・ 会話外行動</small>{{ ch_help(
                     '心に残った「〜したい」（意図）の圧が高まったとき、本人に「いま、これをする？」と'
                     '問い合わせて、本人が選べば実行される行動のメニュー。'
                     'ここで許可するのは可能性だけで、実行するかは毎回キャラクター本人が決めます。'
@@ -421,7 +441,7 @@
             </div>
         </details>
 
-        {# ── 体質インタビュー（めぐり Phase 3）──
+        {# ── 体質インタビュー（Phase 3）──
            圧力（社会圧・退屈圧・体調圧）の体質係数を、本人への体験の質問で初期化する。
            数値は聞かず、選択肢＋本人の言葉を固定ルーブリックで係数へ写像する。
            本人からの更新経路は作らない（圧力＝物理）。ここはユーザ（守護者）の介入枠。 #}
@@ -449,7 +469,7 @@
         </details>
         {% endif %}
 
-        {# ── 生活時間割（めぐり / Aliveness §5.1）──
+        {# ── 生活時間割（Aliveness §5.1）──
            応答できない時間帯（仕事・睡眠など）。ここに入れた時間帯の間はメッセージを
            預かり、本人には席に戻ったときにまとめて届く（availability ゲート）。
            編集内容は JS が availability_schedule_json（隠しフィールド）へ直列化して保存。 #}
@@ -529,10 +549,16 @@
             {% endif %}
         </details>
 
-        {# ── ambience ・ なりゆき（場の判定）の judge プリセット ── #}
+        {# ════════════ CHAPTER 4 — なりゆき ════════════ #}
+        <div class="ch-chapter">
+            <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 4</span></div>
+            <h2 class="ch-chapter__title">なりゆき <small>— 場の判定（Ambience）</small></h2>
+        </div>
+
+        {# ── なりゆき（場の判定）の judge プリセット ── #}
         <details class="ch-section ch-section--collapsible">
             <summary class="ch-section__head">
-                <h3 class="ch-section-title">ambience <small>・ なりゆき</small></h3>
+                <h3 class="ch-section-title">judge <small>・ 判定モデル</small></h3>
             </summary>
             <div class="ch-field" style="margin-bottom:0">
                 <label class="ch-label" for="judge_preset_id">judge モデル{{ ch_help(
@@ -552,14 +578,14 @@
             </div>
         </details>
 
-        {# ════════════ CHAPTER 3 — うつつ ════════════ #}
+        {# ════════════ CHAPTER 5 — うつつ ════════════ #}
         <div class="ch-chapter">
-            <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 3</span></div>
+            <div class="ch-chapter__mark"><span class="ch-eyebrow">chapter · 5</span></div>
             <h2 class="ch-chapter__title">うつつ <small>— 生活世界（Usual Days）</small></h2>
         </div>
 
         {# ── 生活世界（Usual Days）── 主人公（このキャラ）の無人生活モード。owner 付きシナリオとして保存される ── #}
-        <details class="ch-section ch-section--collapsible" open>
+        <details class="ch-section ch-section--collapsible">
             <summary class="ch-section__head">
                 <h3 class="ch-section-title">usual <small>・ 生活世界</small>{{ ch_help(
                     'ユーザ不在のあいだ、このキャラが自律的に「生活」し続ける裏の世界。'
