@@ -50,9 +50,9 @@
             <div class="ch-pagehead__actions">
                 <a href="/ui/inscribed_memories/{{ character.id }}" class="ch-btn ch-btn--sm">memories</a>
                 <a href="/ui/working-memory/{{ character.id }}" class="ch-btn ch-btn--sm">working memory</a>
-                <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                <button type="button" class="ch-btn ch-btn--sm ch-btn--llm"
                         onclick="runBatch(this, '{{ character.id }}', 'chronicle')">Chronicle</button>
-                <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                <button type="button" class="ch-btn ch-btn--sm ch-btn--llm"
                         onclick="runBatch(this, '{{ character.id }}', 'forget')">Forget</button>
             </div>
         </div>
@@ -197,7 +197,7 @@
                 >{% if character %}{{ character.user_visibility_note }}{% endif %}</textarea>
                 {% if character %}
                 <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-                    <button type="button" class="ch-btn ch-btn--sm ch-btn--ghost"
+                    <button type="button" class="ch-btn ch-btn--sm ch-btn--llm"
                             onclick="askUserVisibility(this, '{{ character.id }}')">キャラに聞く</button>
                     <span class="ch-hint" id="ask-visibility-status"></span>
                 </div>
@@ -456,7 +456,7 @@
             </summary>
             {% set has_interview = character.pressure_profile and character.pressure_profile.get('interview') %}
             <div class="ch-field" style="margin-bottom:0;flex-direction:row;align-items:center;gap:12px">
-                <button type="button" class="ch-btn ch-btn--sm"
+                <button type="button" class="ch-btn ch-btn--sm ch-btn--llm"
                     onclick="runPressureInterview(this, '{{ character.id }}')">
                     {% if has_interview %}体質を聞き直す{% else %}体質インタビューを実施{% endif %}
                 </button>
@@ -539,7 +539,7 @@
                     <option value="current">今週</option>
                     <option value="next">来週</option>
                 </select>
-                <button type="button" class="ch-btn ch-btn--sm"
+                <button type="button" class="ch-btn ch-btn--sm ch-btn--llm"
                     onclick="rebuildWeeklySchedule(this, '{{ character.id }}')">
                     予定を作り直してもらう</button>
                 <span id="weekly-rebuild-status" class="ch-hint">

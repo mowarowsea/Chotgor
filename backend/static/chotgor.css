@@ -105,6 +105,13 @@
   --ch-sep:       rgba(196, 212, 228, 0.07);    /* 区切り線（弱） */
   --ch-sep2:      rgba(196, 212, 228, 0.13);    /* 区切り線（中）・枠線 */
 
+  /* コントロールの「浮いた面」（ボタン地）。地の面より一段持ち上げ、区切り線より強い
+     枠線とセットで「押せる物」を色を使わずに示す。dark は明るめグレー、light は白＋影。 */
+  --ch-face:        rgba(196, 212, 228, 0.13);
+  --ch-face-hi:     rgba(196, 212, 228, 0.20);  /* hover 時の面 */
+  --ch-line:        rgba(196, 212, 228, 0.26);  /* コントロールの枠線 */
+  --ch-face-shadow: none;
+
   --ch-code-bg:     rgba(0, 0, 0, 0.25);
   --ch-code-border: rgba(196, 212, 228, 0.10);
 
@@ -154,6 +161,11 @@
 
   --ch-sep:       rgba(24, 36, 58, 0.08);
   --ch-sep2:      rgba(24, 36, 58, 0.14);
+
+  --ch-face:        #ffffff;
+  --ch-face-hi:     #ffffff;
+  --ch-line:        rgba(24, 36, 58, 0.20);
+  --ch-face-shadow: 0 1px 2px rgba(24, 36, 58, 0.10);
 
   --ch-code-bg:     rgba(24, 36, 58, 0.05);
   --ch-code-border: rgba(24, 36, 58, 0.09);
@@ -427,37 +439,63 @@ html::-webkit-scrollbar-track,
   line-height: 1.4;
   padding: 6px 14px;
   border-radius: var(--ch-radius);
-  /* 地のグレー面から色系統ごと切り離す（アクセント淡）。無彩色の濃淡だけだと
-     文字・区切り線と同化して「押せる物」に見えないため、平常時からジェードで着色し、
-     hover でベタ塗りへ上げる。 */
-  border: 1px solid color-mix(in oklch, var(--ch-a) 35%, transparent);
-  background: var(--ch-a-soft);
-  color: var(--ch-a-strong);
+  /* 平常時は無彩色のまま、地より一段明るい面（--ch-face）＋区切り線より強い枠
+     （--ch-line）で「押せる物」を示す。色を足すと画面がアクセントまみれになるため、
+     ジェードは hover と primary に取っておく。 */
+  border: 1px solid var(--ch-line);
+  background: var(--ch-face);
+  box-shadow: var(--ch-face-shadow);
+  color: var(--ch-t);
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
   white-space: nowrap;
 }
-.ch-btn:hover { background: var(--ch-a); color: var(--ch-on-a); border-color: transparent; }
+.ch-btn:hover {
+  background: var(--ch-face-hi);
+  color: var(--ch-a-strong);
+  border-color: color-mix(in oklch, var(--ch-a) 55%, transparent);
+}
 .ch-btn:disabled { cursor: wait; opacity: 0.5; }
 
-/* 主要ボタン — 平常時からベタ塗り（淡いアクセントの一段上） */
+/* 主要ボタン — ここだけアクセントのベタ塗り */
 .ch-btn--primary {
   background: var(--ch-a);
   color: var(--ch-on-a);
   border-color: transparent;
+  box-shadow: none;
 }
-.ch-btn--primary:hover { background: var(--ch-a-strong); color: var(--ch-on-a); }
+.ch-btn--primary:hover { background: var(--ch-a-strong); color: var(--ch-on-a); border-color: transparent; }
 
-/* 枠線だけを落とした控えめ版（面は残す） */
-.ch-btn--ghost { border-color: transparent; }
-.ch-btn--ghost:hover { border-color: transparent; }
-
-.ch-btn--danger {
-  color: var(--ch-danger);
-  background: var(--ch-danger-bg);
-  border-color: color-mix(in oklch, var(--ch-danger) 35%, transparent);
+/* 控えめ版。枠を落とし面も一段沈めるが、完全な透明にはしない（透明だとボタンに
+   見えないという元の問題に戻るため）。hover で通常ボタンの見た目まで浮上する。 */
+.ch-btn--ghost {
+  background: var(--ch-sep);
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--ch-t2);
 }
-.ch-btn--danger:hover { color: var(--ch-on-a); background: var(--ch-danger); border-color: transparent; }
+.ch-btn--ghost:hover { background: var(--ch-face); border-color: var(--ch-line); color: var(--ch-t); }
+
+/* LLM への問い合わせが走るボタン（バッチ実行・本人への質問など）。
+   押すとリクエスト＝課金と待ち時間が発生するので、面と枠を必ず持たせ（ghost にしない）、
+   末尾の ✦ で「ここから先はモデルを叩く」ことを一目で分かるようにする。 */
+.ch-btn--llm {
+  background: var(--ch-face);
+  border-color: var(--ch-line);
+  box-shadow: var(--ch-face-shadow);
+  color: var(--ch-t);
+}
+.ch-btn--llm::after {
+  content: "✦";
+  font-size: 0.95em;
+  line-height: 1;
+  color: var(--ch-a-strong);
+}
+.ch-btn--llm:hover::after { color: inherit; }
+
+/* 危険操作 — 面は通常ボタンと同じ。文字色だけ赤にし、hover で赤面へ上げる */
+.ch-btn--danger { color: var(--ch-danger); background: var(--ch-face); border-color: var(--ch-line); }
+.ch-btn--danger:hover { color: var(--ch-danger); background: var(--ch-danger-bg); border-color: var(--ch-danger); }
 
 .ch-btn--sm { font-size: 11px; padding: 4px 10px; }
 .ch-btn--xs { font-size: 10px; padding: 2px 8px; }
@@ -470,15 +508,20 @@ html::-webkit-scrollbar-track,
   width: 28px;
   height: 28px;
   border-radius: var(--ch-radius);
-  border: 1px solid color-mix(in oklch, var(--ch-a) 35%, transparent);
-  background: var(--ch-a-soft);
-  color: var(--ch-a-strong);
+  border: 1px solid var(--ch-line);
+  background: var(--ch-face);
+  box-shadow: var(--ch-face-shadow);
+  color: var(--ch-t);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
 }
-.ch-iconbtn:hover { color: var(--ch-on-a); background: var(--ch-a); border-color: transparent; }
+.ch-iconbtn:hover {
+  color: var(--ch-a-strong);
+  background: var(--ch-face-hi);
+  border-color: color-mix(in oklch, var(--ch-a) 55%, transparent);
+}
 
 /* ============================================================
    ATOMS — pills / badges / dot
