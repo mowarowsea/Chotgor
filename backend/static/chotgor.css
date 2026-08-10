@@ -222,7 +222,10 @@ body.ch-root {
   transition: background .25s ease, color .25s ease;
 }
 
-.ch-root a { color: inherit; text-decoration: none; }
+/* リンクは既定で本文色を継承する。ただしボタンアトムを着た <a> は、
+   このルールの方が詳細度で勝ってしまうため除外する（ボタン色を殺さない）。 */
+.ch-root a:not(.ch-btn):not(.ch-iconbtn) { color: inherit; }
+.ch-root a { text-decoration: none; }
 .ch-root img { max-width: 100%; }
 .ch-root button { font-family: inherit; }
 /* 素の <code>/<strong>（ヒント文・散文中。専用クラスが無い場合の既定） */
@@ -424,18 +427,20 @@ html::-webkit-scrollbar-track,
   line-height: 1.4;
   padding: 6px 14px;
   border-radius: var(--ch-radius);
-  border: 1px solid var(--ch-sep2);
-  /* 既定から面（背景）を持たせる。透明だと文中に埋もれて押せると気づかれないため、
-     旧 hover 相当を平常時の見た目にし、hover はさらに一段強める。 */
-  background: var(--ch-sep);
-  color: var(--ch-t);
+  /* 地のグレー面から色系統ごと切り離す（アクセント淡）。無彩色の濃淡だけだと
+     文字・区切り線と同化して「押せる物」に見えないため、平常時からジェードで着色し、
+     hover でベタ塗りへ上げる。 */
+  border: 1px solid color-mix(in oklch, var(--ch-a) 35%, transparent);
+  background: var(--ch-a-soft);
+  color: var(--ch-a-strong);
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
   white-space: nowrap;
 }
-.ch-btn:hover { color: var(--ch-t); border-color: var(--ch-t3); background: var(--ch-sep2); }
+.ch-btn:hover { background: var(--ch-a); color: var(--ch-on-a); border-color: transparent; }
 .ch-btn:disabled { cursor: wait; opacity: 0.5; }
 
+/* 主要ボタン — 平常時からベタ塗り（淡いアクセントの一段上） */
 .ch-btn--primary {
   background: var(--ch-a);
   color: var(--ch-on-a);
@@ -445,10 +450,14 @@ html::-webkit-scrollbar-track,
 
 /* 枠線だけを落とした控えめ版（面は残す） */
 .ch-btn--ghost { border-color: transparent; }
-.ch-btn--ghost:hover { background: var(--ch-sep2); border-color: transparent; }
+.ch-btn--ghost:hover { border-color: transparent; }
 
-.ch-btn--danger { color: var(--ch-danger); background: var(--ch-danger-bg); border-color: transparent; }
-.ch-btn--danger:hover { color: var(--ch-danger); background: var(--ch-danger-bg); border-color: var(--ch-danger); }
+.ch-btn--danger {
+  color: var(--ch-danger);
+  background: var(--ch-danger-bg);
+  border-color: color-mix(in oklch, var(--ch-danger) 35%, transparent);
+}
+.ch-btn--danger:hover { color: var(--ch-on-a); background: var(--ch-danger); border-color: transparent; }
 
 .ch-btn--sm { font-size: 11px; padding: 4px 10px; }
 .ch-btn--xs { font-size: 10px; padding: 2px 8px; }
@@ -461,15 +470,15 @@ html::-webkit-scrollbar-track,
   width: 28px;
   height: 28px;
   border-radius: var(--ch-radius);
-  border: 1px solid var(--ch-sep2);
-  background: var(--ch-sep);
-  color: var(--ch-t);
+  border: 1px solid color-mix(in oklch, var(--ch-a) 35%, transparent);
+  background: var(--ch-a-soft);
+  color: var(--ch-a-strong);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
 }
-.ch-iconbtn:hover { color: var(--ch-t); background: var(--ch-sep2); border-color: var(--ch-t3); }
+.ch-iconbtn:hover { color: var(--ch-on-a); background: var(--ch-a); border-color: transparent; }
 
 /* ============================================================
    ATOMS — pills / badges / dot
