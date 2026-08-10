@@ -89,6 +89,13 @@
 
 /* 既定は dark。OS が light 設定のときだけ末尾の @media で上書きする（OS追従）。 */
 :root {
+  /* 【必須】自前でテーマを持っていることをブラウザに宣言する。未宣言だと Chromium 系
+     （Android Chrome / Brave）の「Web コンテンツの自動ダークテーマ」が"未対応サイト"と
+     判定して独自に色を作り替え、地に沈めた文字（placeholder = --ch-t4 など）を明るく
+     持ち上げてしまう。併せて time/number 等のネイティブ部品・スクロールバー・オート
+     フィル背景もテーマに追従する。 */
+  color-scheme: dark;
+
   --ch-bg:        #131b26;  /* アプリ背景 */
   --ch-bg-s:      #0e1620;  /* 沈んだ面（入力・コード・アバター地） */
   --ch-t:         #c4d4e4;  /* 主要テキスト */
@@ -146,6 +153,8 @@
 
 @media (prefers-color-scheme: light) {
 :root {
+  color-scheme: light;
+
   --ch-bg:        #f4f6f9;
   --ch-bg-s:      #ebeef4;
   --ch-t:         #18243a;
