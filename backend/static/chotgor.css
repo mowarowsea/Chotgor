@@ -591,6 +591,8 @@ html::-webkit-scrollbar-track,
    FORM CONTROLS
    ============================================================ */
 .ch-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+/* 横並びフィールド。ボタン等を内容幅のまま左寄せで並べる（縦積みの stretch を打ち消す） */
+.ch-field--inline { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px; }
 /* ラベル（フォーム見出し・ログ詳細行ラベル等、全ページ共通の唯一のラベル） */
 .ch-label {
   font-family: var(--ch-fm);

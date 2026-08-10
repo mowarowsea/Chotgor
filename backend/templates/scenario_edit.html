@@ -153,7 +153,7 @@
 
             <!-- デフォルトに戻すボタン（既存シナリオのみ） -->
             {% if scenario %}
-            <div class="ch-field">
+            <div class="ch-field ch-field--inline">
                 <button type="button" class="ch-btn" onclick="resetCustomSystemPrompt()">Reset to Default</button>
             </div>
             {% endif %}
@@ -382,8 +382,10 @@
 <script>
 /**
  * カスタムシステムプロンプトを既定テンプレートに戻す。
+ * 入力欄の内容は未保存のまま破棄されるため、事前に確認を取る。
  */
 function resetCustomSystemPrompt() {
+    if (!confirm('Custom System Prompt を既定テンプレートで上書きします。\n今入力されている内容は保存されずに失われますが、よろしいですか？')) return;
     fetch('/api/scenario_chat/default-system-prompt-template')
         .then(response => response.json())
         .then(data => {
