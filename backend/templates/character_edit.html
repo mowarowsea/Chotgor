@@ -493,8 +493,40 @@
                 </div>
                 {% endfor %}
             </div>
+            {# ── 例外日（schedule_plan.md §2）──
+               「今週の水曜だけ休み」を曜日テンプレを壊さずに表現する。時間帯は書かず
+               「この日は日曜ということにする」で既存の曜日テンプレを流用する。
+               過ぎた日付は保存時にサーバ側で自動削除される（戻し忘れが起きない）。 #}
+            <div class="ch-schedule__day" id="schedule-exceptions">
+                <div class="ch-schedule__dayhead">
+                    <span class="ch-schedule__dayname">例外日{{ ch_help(
+                        '<p>単発の休み・出勤日を、曜日テンプレを書き換えずに指定します。'
+                        '「この日は日曜ということにする」＝その曜日の時間帯をそのまま適用。</p>'
+                        '<p>「予定なし」はその日の時間帯を全部外します（終日そのままの時間）。</p>'
+                        '<p>過ぎた日付は保存時に自動で消えるので、元に戻す操作は要りません。</p>'
+                    ) }}</span>
+                    <button type="button" class="ch-btn ch-btn--xs ch-btn--ghost"
+                        onclick="addScheduleException()">+ 例外日</button>
+                </div>
+                <div class="ch-schedule__blocks" data-exceptions></div>
+            </div>
             <input type="hidden" name="availability_schedule_json" id="availability_schedule_json"
                 value='{{ (character.availability_schedule or {}) | tojson if character else "{}" }}'>
+            {# 週次バッチの手動再生成（§3 実行契機）。時間割を直した直後に押す想定。 #}
+            {% if character %}
+            <div class="ch-field" style="margin-bottom:0;flex-direction:row;align-items:center;gap:10px;flex-wrap:wrap">
+                <select id="weekly-rebuild-week" class="ch-select" style="width:auto">
+                    <option value="current">今週</option>
+                    <option value="next">来週</option>
+                </select>
+                <button type="button" class="ch-btn ch-btn--sm"
+                    onclick="rebuildWeeklySchedule(this, '{{ character.id }}')">
+                    予定を作り直してもらう</button>
+                <span id="weekly-rebuild-status" class="ch-hint">
+                    時間割を直したら押す（本人とGMに聞き直すので1〜2分かかります）
+                </span>
+            </div>
+            {% endif %}
         </details>
 
         {# ── ambience ・ なりゆき（場の判定）の judge プリセット ── #}
@@ -1129,7 +1161,45 @@
     return row;
   }
 
-  /** 隠しフィールドの JSON から各曜日の行を描画する（初期ロード用）。 */
+  // 例外日（schedule_plan.md §2）の as 選択肢。曜日キー＋ off（予定なし）。
+  const SCHEDULE_EXCEPTION_AS = [
+    ['mon', '月曜と同じ'], ['tue', '火曜と同じ'], ['wed', '水曜と同じ'],
+    ['thu', '木曜と同じ'], ['fri', '金曜と同じ'], ['sat', '土曜と同じ'],
+    ['sun', '日曜と同じ'], ['off', '予定なし（終日そのまま）'],
+  ];
+
+  /**
+   * 例外日1件の行要素を生成する。
+   * @param {string} dateStr - YYYY-MM-DD。
+   * @param {object} value - {as, label}。
+   * @returns {HTMLElement} .ch-schedule__block 要素。
+   */
+  function makeScheduleExceptionRow(dateStr, value) {
+    value = value || {};
+    const row = document.createElement('div');
+    row.className = 'ch-schedule__block';
+    const day = document.createElement('input');
+    day.type = 'date'; day.className = 'ch-input ch-input--mono'; day.dataset.role = 'date';
+    day.value = dateStr || '';
+    const as = document.createElement('select');
+    as.className = 'ch-input'; as.dataset.role = 'as';
+    SCHEDULE_EXCEPTION_AS.forEach(function (pair) {
+      const opt = document.createElement('option');
+      opt.value = pair[0]; opt.textContent = pair[1];
+      as.appendChild(opt);
+    });
+    as.value = SCHEDULE_EXCEPTION_AS.some(p => p[0] === value.as) ? value.as : 'sun';
+    const label = document.createElement('input');
+    label.type = 'text'; label.className = 'ch-input'; label.dataset.role = 'label';
+    label.placeholder = 'メモ（例: お盆休み）'; label.value = value.label || '';
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'ch-btn ch-btn--xs ch-btn--ghost'; del.textContent = '✕';
+    del.onclick = function () { removeScheduleException(del); };
+    row.append(day, as, label, del);
+    return row;
+  }
+
+  /** 隠しフィールドの JSON から各曜日の行と例外日を描画する（初期ロード用）。 */
   function renderSchedule() {
     const hidden = document.getElementById('availability_schedule_json');
     if (!hidden) return;
@@ -1141,6 +1211,14 @@
       container.innerHTML = '';
       (sched[day] || []).forEach(function (b) { container.appendChild(makeScheduleBlockRow(b)); });
     });
+    const exContainer = document.querySelector('#schedule-exceptions [data-exceptions]');
+    if (exContainer) {
+      exContainer.innerHTML = '';
+      const exceptions = sched.exceptions || {};
+      Object.keys(exceptions).sort().forEach(function (d) {
+        exContainer.appendChild(makeScheduleExceptionRow(d, exceptions[d]));
+      });
+    }
   }
 
   /** DOM を走査して隠しフィールドへ直列化する。両端が揃った時間帯だけ採用。 */
@@ -1164,6 +1242,20 @@
       });
       if (blocks.length) out[day] = blocks;
     });
+    // 例外日（日付が入っている行だけ採用。過去日の掃除はサーバ側が行う）
+    const exContainer = document.querySelector('#schedule-exceptions [data-exceptions]');
+    if (exContainer) {
+      const exceptions = {};
+      exContainer.querySelectorAll('.ch-schedule__block').forEach(function (row) {
+        const d = row.querySelector('[data-role="date"]').value.trim();
+        if (!d) return;
+        const item = { as: row.querySelector('[data-role="as"]').value };
+        const label = row.querySelector('[data-role="label"]').value.trim();
+        if (label) item.label = label;
+        exceptions[d] = item;
+      });
+      if (Object.keys(exceptions).length) out.exceptions = exceptions;
+    }
     const hidden = document.getElementById('availability_schedule_json');
     if (hidden) hidden.value = JSON.stringify(out);
   }
@@ -1191,13 +1283,71 @@
     if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
   }
 
+  /** 例外日の行を追加する（既定は今日・日曜扱い）。追加は確定操作なので即時保存。 */
+  function addScheduleException() {
+    const container = document.querySelector('#schedule-exceptions [data-exceptions]');
+    if (!container) return;
+    const today = new Date();
+    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-`
+      + String(today.getDate()).padStart(2, '0');
+    container.appendChild(makeScheduleExceptionRow(iso, { as: 'sun' }));
+    serializeSchedule();
+    if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
+  }
+
+  /**
+   * 例外日の行を削除する（削除は確定操作なので即時保存）。
+   * @param {HTMLElement} btn - 行内の削除ボタン。
+   */
+  function removeScheduleException(btn) {
+    const row = btn.closest('.ch-schedule__block');
+    if (row) row.remove();
+    serializeSchedule();
+    if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
+  }
+
+  /**
+   * 生活カレンダーの週次バッチを手動で回し直す（GM＋本人へ聞き直すので数分かかる）。
+   * @param {HTMLElement} btn - クリックされたボタン要素。
+   * @param {string} characterId - キャラクターID。
+   */
+  async function rebuildWeeklySchedule(btn, characterId) {
+    const status = document.getElementById('weekly-rebuild-status');
+    const weekSel = document.getElementById('weekly-rebuild-week');
+    const week = weekSel ? weekSel.value : 'current';
+    const prev = btn.textContent;
+    btn.textContent = '作成中…';
+    btn.disabled = true;
+    if (status) status.textContent = '本人とGMに今週の予定を聞いています…';
+    try {
+      const res = await fetch(
+        `/api/characters/${characterId}/weekly_schedule/rebuild?week=${week}`,
+        { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (status) status.textContent = `失敗: ${data.detail || res.status}`;
+      } else if (status) {
+        status.textContent = `完了 — ${data.week} 世界${data.world}件(${data.world_mode}) `
+          + `本人${data.haru}件(${data.haru_mode}) 伏せ枠${data.events}件`;
+      }
+    } catch (e) {
+      if (status) status.textContent = `通信エラー: ${e.message}`;
+    }
+    btn.textContent = prev;
+    btn.disabled = false;
+  }
+
   (function setupSchedule() {
     const editor = document.getElementById('schedule-editor');
     if (!editor) return;
     renderSchedule();
     // 行内の時刻・ラベル変更を拾って隠しフィールドへ再直列化（form 側 autosave は自然に起動）。
-    editor.addEventListener('input', serializeSchedule);
-    editor.addEventListener('change', serializeSchedule);
+    // 例外日は #schedule-editor の外にあるので別に張る（同じ隠しフィールドへ直列化される）。
+    [editor, document.getElementById('schedule-exceptions')].forEach(function (el) {
+      if (!el) return;
+      el.addEventListener('input', serializeSchedule);
+      el.addEventListener('change', serializeSchedule);
+    });
   })();
 </script>
 {% endblock %}

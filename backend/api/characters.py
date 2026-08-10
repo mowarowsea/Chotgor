@@ -204,6 +204,59 @@ async def run_pressure_interview(request: Request, character_id: str):
     return result
 
 
+@router.post("/{character_id}/weekly_schedule/rebuild")
+async def rebuild_weekly_schedule(request: Request, character_id: str, week: str = "current"):
+    """生活カレンダーの週次バッチ（①GM→②本人）を手動で回し直す。
+
+    生活時間割（テンプレ層・例外日）を直した直後に、その週の実現層を作り直すための口。
+    バッチ本体が「対象週の template を消して入れ直す」冪等設計なので再実行がそのまま
+    成立する（③④の adhoc エントリは温存される）。自動実行との二重生成を避けるため、
+    冪等キー `weekly_schedule_done_{id}` も対象週まで進める。
+
+    Args:
+        week: "current"（今週・既定）か "next"（来週）。
+
+    Returns:
+        生成件数と経路（{"world":n, "haru":n, "world_mode":..., "events":n}）＋対象週。
+    """
+    from datetime import date, timedelta
+
+    from backend.services.schedule import (
+        run_weekly_schedule_batch,
+        week_key,
+        week_start_of,
+    )
+
+    state = request.app.state
+    char = state.sqlite.get_character(character_id)
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if not int(getattr(char, "living_schedule_enabled", 0) or 0):
+        raise HTTPException(status_code=400, detail="生活カレンダーが無効です")
+    if week not in ("current", "next"):
+        raise HTTPException(status_code=400, detail="week は current / next のみ")
+
+    target = week_start_of(date.today())
+    if week == "next":
+        target += timedelta(days=7)
+    try:
+        summary = await run_weekly_schedule_batch(state, char, target)
+    except Exception as e:
+        logger.exception("週次バッチ手動再生成に失敗 char=%s", character_id)
+        raise HTTPException(status_code=500, detail=f"再生成に失敗: {e}")
+
+    done_key = f"weekly_schedule_done_{character_id}"
+    wkey = week_key(target)
+    # 自動実行の冪等キーは「最後に生成した週」。手動で先へ進めた分だけ前進させる
+    if str(state.sqlite.get_setting(done_key, "") or "") < wkey:
+        state.sqlite.set_setting(done_key, wkey)
+    state.sqlite.record_scheduler_decision(
+        "weekly_schedule", "fired", character_id=character_id,
+        reason=f"手動再生成（{wkey}）", details={"week": wkey, "manual": True, **(summary or {})},
+    )
+    return {"character_id": character_id, "week": wkey, **(summary or {})}
+
+
 @router.get("/{character_id}/pressures")
 async def get_pressures(request: Request, character_id: str):
     """現在の圧力3変数（読み取り時計算）を返す。デバッグ・管理UI用。"""

@@ -34,6 +34,7 @@ from backend.services.schedule.plan_parser import (
     PlanEntry,
     entries_from_template,
     format_plan_lines,
+    format_template_exceptions,
     layer_has_offline,
     parse_plan_lines,
 )
@@ -272,10 +273,10 @@ async def _ask_gm_for_world_plan(state, char, week_start: date) -> str | None:
         logger.warning("週次バッチ①: GM プリセット未解決 char=%s", char.name)
         return None
 
-    template_entries = entries_from_template(
-        getattr(char, "availability_schedule", None), week_start
-    )
+    schedule = getattr(char, "availability_schedule", None)
+    template_entries = entries_from_template(schedule, week_start)
     template_text = format_plan_lines(template_entries) or "（固定時間割は未設定）"
+    exceptions_text = format_template_exceptions(schedule, week_start)
     synopsis_text = _usual_synopsis_text(sqlite, scenario)
 
     system_prompt = (
@@ -296,6 +297,11 @@ async def _ask_gm_for_world_plan(state, char, week_start: date) -> str | None:
         f"今週（{_format_week_days(week_start)}）の世界側予定を確定してください。\n\n"
         f"# 固定時間割（テンプレート）\n{template_text}\n"
     )
+    # 展開後のブロックには「なぜその日だけ違うのか」が残らないので例外日は別立てで見せる
+    if exceptions_text:
+        user_content += (
+            f"\n# 今週の例外日（上の固定時間割はこの指定で置き換え済み）\n{exceptions_text}\n"
+        )
     if synopsis_text:
         user_content += f"\n# 先週の生活のあらすじ\n{synopsis_text}\n"
 
@@ -313,8 +319,9 @@ async def _ask_gm_for_world_plan(state, char, week_start: date) -> str | None:
         )
     except Exception as e:
         logger.warning(
+            # NameError で握り潰しが破れないよう、未定義の gm_preset_id ではなく preset を見る
             "週次バッチ①: GM リクエスト失敗 char=%s preset=%s error=%s",
-            char.name, gm_preset_id, e,
+            char.name, preset.name, e,
         )
         return None
 

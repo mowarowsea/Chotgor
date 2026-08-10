@@ -401,7 +401,11 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
   へ一般化（キャラ単位トグル characters.living_schedule_enabled）。1on1 同期 SSE は OnTime
   のみ・active/busy/offline は escrow →能動配達がチェック間隔格子×決定論 reply_rate で配達
   （busy 中もチェック点で配達しうる）。うつつシーンは有効キャラで②固定予定から導出（手動
-  slots は無効キャラのみ）。対面は起動ガード＋聖域化（対面中は③④保留・②シーンは捨てる）
+  slots は無効キャラのみ）。対面は起動ガード＋聖域化（対面中は③④保留・②シーンは捨てる）。
+  テンプレ層 characters.availability_schedule は曜日繰り返し＋例外日（"exceptions" に
+  日付キー・`as: 曜日/off` で「この日は日曜ということにする」・過去日は保存時に自動削除）。
+  解決は gate/availability.resolve_day_blocks に集約。週次バッチは日曜夜の定時／
+  コールドスタートに加え、手動再生成 POST /api/characters/{id}/weekly_schedule/rebuild
 行動: services/actions — 2時間格子＋決定論ジッターで評価（main.py の action tick）、
   push / research / 臨時うつつ（characters.action_menu トグル）、帰還で fulfilled 宣言
 ダイヤル: characters.timeline_dial（0〜3）を /ui/timeline で適用・切替

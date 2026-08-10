@@ -409,3 +409,108 @@ class TestParseAvailabilitySchedule:
             })
         }
         assert parse(form) is None
+
+    def test_exceptions_normalized_and_past_dropped(self):
+        """例外日は as/label だけに正規化され、過ぎた日付と不正 as は捨てられる。
+
+        「テンプレを書き換えて翌週に戻す」運用をやめるための機構なので、
+        過去日をここで落とすことが仕様（戻し忘れが構造的に起きない）。
+        """
+        import json
+        from datetime import date, timedelta
+        parse = self._parser()
+        today = date.today()
+        future = (today + timedelta(days=3)).isoformat()
+        past = (today - timedelta(days=1)).isoformat()
+        form = {
+            "availability_schedule_json": json.dumps({
+                "mon": [{"from": "09:00", "to": "18:00"}],
+                "exceptions": {
+                    future: {"as": "sun", "label": "お盆休み", "noise": 1},
+                    today.isoformat(): {"as": "off"},
+                    past: {"as": "sun"},          # 過去日 → 捨てる
+                    "2026-99-99": {"as": "sun"},  # 日付として不正 → 捨てる
+                    (today + timedelta(days=4)).isoformat(): {"as": "holiday"},  # 不正 as
+                },
+            })
+        }
+        result = parse(form)
+        assert result["exceptions"] == {
+            future: {"as": "sun", "label": "お盆休み"},
+            today.isoformat(): {"as": "off"},
+        }
+
+    def test_exceptions_dropped_when_no_weekday_blocks(self):
+        """曜日テンプレが空なら例外日は上書きする相手が無いので載らない（None へ倒れる）。"""
+        import json
+        from datetime import date, timedelta
+        parse = self._parser()
+        form = {
+            "availability_schedule_json": json.dumps({
+                "exceptions": {(date.today() + timedelta(days=1)).isoformat(): {"as": "sun"}},
+            })
+        }
+        assert parse(form) is None
+
+
+class TestResolveDayBlocks:
+    """例外日の解決 resolve_day_blocks（schedule_plan.md §2）を検証するテストクラス。
+
+    曜日の繰り返しだけでは「今週の水曜だけ休み」を表現できないため、同じ JSON 内の
+    exceptions に日付キーの上書きを置ける。ここで検証するのは以下:
+
+        1. 例外なしの日は素の曜日テンプレが返ること。
+        2. as: <曜日> はその曜日のブロックを流用すること（「この日は日曜ということにする」）。
+        3. as: "off" は空（予定なし）を返すこと。
+        4. 壊れた例外（未知の as・非 dict・日付キー違い）は無視され曜日テンプレに戻ること。
+        5. 二値経路 _schedule_block が同じ解決を通ること（例外日は応答可否にも効く）。
+    """
+
+    SCHEDULE = {
+        "wed": [{"from": "09:00", "to": "18:00", "label": "仕事"}],
+        "sun": [{"from": "13:00", "to": "15:00", "label": "昼寝"}],
+    }
+
+    def _resolve(self):
+        from backend.services.gate.availability import resolve_day_blocks
+        return resolve_day_blocks
+
+    def test_no_exception_uses_weekday(self):
+        """例外が無ければその日の曜日テンプレがそのまま返る。"""
+        from datetime import date
+        assert self._resolve()(self.SCHEDULE, date(2026, 8, 12)) == self.SCHEDULE["wed"]
+
+    def test_exception_borrows_other_weekday(self):
+        """as: <曜日> はその曜日のブロックを流用する（水曜を日曜扱い）。"""
+        from datetime import date
+        sched = dict(self.SCHEDULE, exceptions={"2026-08-12": {"as": "sun"}})
+        assert self._resolve()(sched, date(2026, 8, 12)) == self.SCHEDULE["sun"]
+        # 例外を張っていない翌週の水曜は素の曜日テンプレのまま
+        assert self._resolve()(sched, date(2026, 8, 19)) == self.SCHEDULE["wed"]
+
+    def test_exception_off_returns_empty(self):
+        """as: "off" はその日の時間帯を全部外す（終日そのままの時間）。"""
+        from datetime import date
+        sched = dict(self.SCHEDULE, exceptions={"2026-08-12": {"as": "off"}})
+        assert self._resolve()(sched, date(2026, 8, 12)) == []
+
+    def test_broken_exception_falls_back_to_weekday(self):
+        """未知の as・非 dict の例外は無視され、曜日テンプレへ戻る。"""
+        from datetime import date
+        resolve = self._resolve()
+        for broken in ({"as": "holiday"}, {"as": ""}, "sun", None, []):
+            sched = dict(self.SCHEDULE, exceptions={"2026-08-12": broken})
+            assert resolve(sched, date(2026, 8, 12)) == self.SCHEDULE["wed"]
+        # exceptions 自体が dict でない場合も曜日テンプレ
+        assert resolve(dict(self.SCHEDULE, exceptions="x"), date(2026, 8, 12)) \
+            == self.SCHEDULE["wed"]
+
+    def test_binary_gate_sees_exception(self):
+        """二値経路（_schedule_block）も例外日を通す — 休みの日は仕事ラベルが出ない。"""
+        from datetime import datetime
+        from backend.services.gate.availability import _schedule_block
+        sched = dict(self.SCHEDULE, exceptions={"2026-08-12": {"as": "sun"}})
+        # 水曜 10:00 は本来「仕事」だが、日曜扱いなので該当なし
+        assert _schedule_block(sched, datetime(2026, 8, 12, 10, 0)) is None
+        # 日曜テンプレの昼寝時間には掛かる
+        assert _schedule_block(sched, datetime(2026, 8, 12, 14, 0)) == "昼寝"

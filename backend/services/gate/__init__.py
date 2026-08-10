@@ -16,6 +16,7 @@ from backend.services.gate.availability import (  # noqa: F401
     format_escrow_annotation,
     is_usual_scene_running,
     mark_usual_scene_running,
+    resolve_day_blocks,
 )
 from backend.services.gate.fatigue import (  # noqa: F401
     check_fatigue_leave,

@@ -30,6 +30,7 @@ from backend.services.gate.delivery import resolve_delivery_due
 from backend.services.schedule import (
     entries_from_template,
     format_plan_lines,
+    format_template_exceptions,
     layer_has_offline,
     parse_plan_lines,
     week_key,
@@ -469,6 +470,61 @@ class TestEntriesFromTemplate:
         assert entries_from_template(None, _WEEK) == []
         assert entries_from_template({"mon": "broken"}, _WEEK) == []
 
+    def test_exception_day_applies_to_that_date_only(self):
+        """例外日（§2）は対象週の該当日だけ別曜日のブロックへ差し替わる。
+
+        _WEEK は 2026-07-06（月）始まり。7/8（水）を日曜扱いにすると、水曜には
+        日曜テンプレの就寝が展開され、水曜テンプレの仕事は出ない。
+        """
+        schedule = {
+            "wed": [{"from": "09:00", "to": "18:00", "label": "仕事"}],
+            "sun": [{"from": "01:00", "to": "09:00", "label": "就寝", "state": "offline"}],
+            "exceptions": {"2026-07-08": {"as": "sun", "label": "有休"}},
+        }
+        got = entries_from_template(schedule, _WEEK)
+        labels = sorted((e.start_at.date(), e.label) for e in got)
+        assert labels == [
+            (date(2026, 7, 8), "就寝"),   # 水曜が日曜扱いになった
+            (date(2026, 7, 12), "就寝"),  # 素の日曜
+        ]
+
+    def test_exception_off_removes_the_day(self):
+        """as: "off" の日は展開されない（終日そのままの時間 = 隙間 OnTime）。"""
+        schedule = {
+            "wed": [{"from": "09:00", "to": "18:00", "label": "仕事"}],
+            "exceptions": {"2026-07-08": {"as": "off"}},
+        }
+        assert entries_from_template(schedule, _WEEK) == []
+
+
+class TestFormatTemplateExceptions:
+    """例外日の GM 向け整形 format_template_exceptions を検証するテストクラス。
+
+    展開後のブロックには「なぜその日だけ違うのか」が残らないため、①GM には
+    例外日を別立てのテキストで見せる。対象週に掛からない例外は出さない。
+    """
+
+    def test_lists_only_this_week(self):
+        """対象週に掛かる例外だけが、曜日・扱い・メモ付きで1行ずつ並ぶ。"""
+        schedule = {
+            "exceptions": {
+                "2026-07-08": {"as": "sun", "label": "有休"},
+                "2026-07-09": {"as": "off"},
+                "2026-07-20": {"as": "sun"},   # 翌々週 → 出さない
+                "2026-07-10": {"as": "bogus"},  # 不正 as → 出さない
+            },
+        }
+        assert format_template_exceptions(schedule, _WEEK) == (
+            "- 7/8（水）: 日曜と同じ扱い — 有休\n"
+            "- 7/9（木）: 予定なし（終日そのままの時間）"
+        )
+
+    def test_no_exceptions_returns_empty(self):
+        """例外が無い／テンプレ自体が空なら空文字列（プロンプトに節を足さない）。"""
+        assert format_template_exceptions(None, _WEEK) == ""
+        assert format_template_exceptions({"mon": []}, _WEEK) == ""
+        assert format_template_exceptions({"exceptions": "x"}, _WEEK) == ""
+
 
 def _make_state(sqlite_store):
     """週次バッチ用の app.state スタブ（sqlite だけ持つ）を作るヘルパ。"""
@@ -664,6 +720,102 @@ class TestWeeklyBatchScheduling:
         assert week_key(date(2026, 7, 6)) == "2026-W28"
         assert week_key(date(2026, 12, 28)) < week_key(date(2027, 1, 4))
         assert week_start_of(date(2026, 7, 9)) == date(2026, 7, 6)
+
+
+class TestManualRebuildEndpoint:
+    """手動再生成 POST /api/characters/{id}/weekly_schedule/rebuild を検証するテストクラス。
+
+    生活時間割（テンプレ層・例外日）を直した直後に、その週の実現層を作り直すための口。
+    ここで検証するのは以下:
+
+        1. 今週／来週の対象週が正しく決まり、バッチ本体へ渡ること。
+        2. 自動実行の冪等キー（weekly_schedule_done_{id}）が対象週まで前進すること
+           — 手動生成した週を、自動側がもう一度作り直さないため。
+        3. 生活カレンダー無効キャラ・不正な week 指定・存在しないキャラを弾くこと。
+
+    バッチ本体（LLM 2発）はスタブへ差し替える。
+    """
+
+    def _client(self, sqlite_store):
+        """characters ルーターだけを積んだテストクライアントを返すヘルパ。"""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from backend.api.characters import router
+
+        app = FastAPI()
+        app.include_router(router)
+        app.state.sqlite = sqlite_store
+        return TestClient(app)
+
+    def _patch_batch(self, monkeypatch):
+        """バッチ本体を記録用スタブへ差し替え、呼び出された週のリストを返す。"""
+        import backend.services.schedule as schedule_pkg
+
+        calls: list = []
+
+        async def _fake(state, char, week_start):
+            calls.append(week_start)
+            return {"world": 2, "haru": 1, "world_mode": "gm", "haru_mode": "haru",
+                    "events": 0}
+
+        monkeypatch.setattr(schedule_pkg, "run_weekly_schedule_batch", _fake)
+        return calls
+
+    def test_current_week_rebuilds_and_advances_key(self, sqlite_store, monkeypatch):
+        """既定（week=current）は今週を作り直し、冪等キーを今週まで進める。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        calls = self._patch_batch(monkeypatch)
+        resp = self._client(sqlite_store).post(
+            f"/api/characters/{char.id}/weekly_schedule/rebuild"
+        )
+        assert resp.status_code == 200
+        this_week = week_start_of(date.today())
+        assert calls == [this_week]
+        assert resp.json()["week"] == week_key(this_week)
+        assert sqlite_store.get_setting(f"weekly_schedule_done_{char.id}", "") \
+            == week_key(this_week)
+
+    def test_next_week(self, sqlite_store, monkeypatch):
+        """week=next は翌週を対象にし、冪等キーも翌週まで進む（自動側の二重生成を防ぐ）。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        calls = self._patch_batch(monkeypatch)
+        resp = self._client(sqlite_store).post(
+            f"/api/characters/{char.id}/weekly_schedule/rebuild?week=next"
+        )
+        assert resp.status_code == 200
+        next_week = week_start_of(date.today()) + timedelta(days=7)
+        assert calls == [next_week]
+        assert sqlite_store.get_setting(f"weekly_schedule_done_{char.id}", "") \
+            == week_key(next_week)
+
+    def test_key_not_rewound_by_current_week_rebuild(self, sqlite_store, monkeypatch):
+        """翌週まで生成済みの状態で今週を作り直しても、冪等キーは巻き戻らない。"""
+        char = _make_character(sqlite_store, living_schedule_enabled=1)
+        next_key = week_key(week_start_of(date.today()) + timedelta(days=7))
+        sqlite_store.set_setting(f"weekly_schedule_done_{char.id}", next_key)
+        self._patch_batch(monkeypatch)
+        self._client(sqlite_store).post(
+            f"/api/characters/{char.id}/weekly_schedule/rebuild"
+        )
+        assert sqlite_store.get_setting(f"weekly_schedule_done_{char.id}", "") == next_key
+
+    def test_rejects_disabled_bad_week_and_missing(self, sqlite_store, monkeypatch):
+        """無効キャラは 400・不正 week は 400・存在しないキャラは 404。"""
+        calls = self._patch_batch(monkeypatch)
+        client = self._client(sqlite_store)
+        disabled = _make_character(sqlite_store, name="無効キャラ")
+        enabled = _make_character(sqlite_store, living_schedule_enabled=1)
+        assert client.post(
+            f"/api/characters/{disabled.id}/weekly_schedule/rebuild"
+        ).status_code == 400
+        assert client.post(
+            f"/api/characters/{enabled.id}/weekly_schedule/rebuild?week=last"
+        ).status_code == 400
+        assert client.post(
+            "/api/characters/no-such-id/weekly_schedule/rebuild"
+        ).status_code == 404
+        assert calls == []
 
 
 def _async_return(value):

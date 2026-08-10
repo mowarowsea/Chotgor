@@ -85,6 +85,39 @@ def _parse_hhmm(value: str) -> tuple[int, int] | None:
     return (h, m)
 
 
+def resolve_day_blocks(schedule: dict | None, target_date) -> list:
+    """その日付に適用する時間帯ブロック列を返す（例外日 > 曜日テンプレ・schedule_plan.md §2）。
+
+    曜日の繰り返しだけでは「今週の水曜だけ休み」を表現できないため、同じ JSON 内の
+    ``exceptions`` に日付キーの上書きを置ける。`as` はその日に適用する**曜日キー**
+    （mon〜sun。「この日は日曜ということにする」）か ``off``（予定なし）。
+
+        {"mon": [...], "exceptions": {"2026-08-12": {"as": "sun", "label": "お盆休み"}}}
+
+    Args:
+        schedule: characters.availability_schedule の値。
+        target_date: 対象日（date。datetime を渡しても .weekday()/.isoformat() が
+            日付そのものにならないため、呼び出し側で date へ落としてから渡すこと）。
+
+    Returns:
+        その日に適用するブロックのリスト（該当なし・`as: off` なら空リスト）。
+    """
+    if not schedule or not isinstance(schedule, dict):
+        return []
+    day_key = _WEEKDAY_KEYS[target_date.weekday()]
+    exceptions = schedule.get("exceptions")
+    if isinstance(exceptions, dict):
+        override = exceptions.get(target_date.isoformat())
+        if isinstance(override, dict):
+            as_key = str(override.get("as") or "").strip().lower()
+            if as_key == "off":
+                return []
+            if as_key in _WEEKDAY_KEYS:
+                day_key = as_key
+    blocks = schedule.get(day_key)
+    return blocks if isinstance(blocks, list) else []
+
+
 def _schedule_block(schedule: dict | None, now: datetime) -> str | None:
     """生活時間割から現在時刻が「応答不可時間帯」に入っているか判定する。
 
@@ -97,10 +130,8 @@ def _schedule_block(schedule: dict | None, now: datetime) -> str | None:
         該当する時間帯のラベル。該当なし（応答可能）なら None。
         from > to の指定は日跨ぎ（例 23:00〜06:00）として扱う。
     """
-    if not schedule or not isinstance(schedule, dict):
-        return None
-    blocks = schedule.get(_WEEKDAY_KEYS[now.weekday()]) or []
-    if not isinstance(blocks, list):
+    blocks = resolve_day_blocks(schedule, now.date())
+    if not blocks:
         return None
     minutes_now = now.hour * 60 + now.minute
     for block in blocks:

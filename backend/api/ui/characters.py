@@ -6,6 +6,7 @@
 
 import json
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -255,6 +256,43 @@ def _valid_hhmm(value: str) -> bool:
     return 0 <= h < 24 and 0 <= m < 60
 
 
+def _parse_schedule_exceptions(parsed: dict, today: date) -> dict:
+    """例外日（schedule_plan.md §2）を検証・正規化する。過ぎた日付は捨てる。
+
+    「テンプレを書き換えて翌週に戻す」運用をやめるための機構なので、**戻し忘れが
+    起きないよう過去日をここで落とす**（保存のたびに掃除される）。
+
+    Args:
+        parsed: フォーム由来の生活時間割 dict（"exceptions" を持ちうる）。
+        today: 基準日（これより前の例外日は捨てる）。
+
+    Returns:
+        {"2026-08-12": {"as": "sun", "label": "お盆休み"}} 形式。該当なしなら空 dict。
+    """
+    raw = parsed.get("exceptions")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    for key, value in raw.items():
+        if not isinstance(value, dict):
+            continue
+        try:
+            day = date.fromisoformat(str(key))
+        except (ValueError, TypeError):
+            continue
+        if day < today:
+            continue  # 過ぎた例外日は自動で消す（戻し忘れ対策）
+        as_key = str(value.get("as") or "").strip().lower()
+        if as_key not in _SCHEDULE_WEEKDAY_KEYS and as_key != "off":
+            continue
+        item = {"as": as_key}
+        label = str(value.get("label") or "").strip()
+        if label:
+            item["label"] = label
+        out[day.isoformat()] = item
+    return out
+
+
 def _parse_availability_schedule(form) -> dict | None:
     """フォームの生活時間割（めぐり / Aliveness §5.1）を検証して dict へ変換する。
 
@@ -267,7 +305,8 @@ def _parse_availability_schedule(form) -> dict | None:
         form: リクエストフォーム（availability_schedule_json を持つ）。
 
     Returns:
-        {"mon": [{"from": "09:00", "to": "18:00", "label": "仕事"}], ...} 形式の dict。
+        {"mon": [{"from": "09:00", "to": "18:00", "label": "仕事"}], ...,
+        "exceptions": {"2026-08-12": {"as": "sun"}}} 形式の dict。
         空 / 不正 / 全曜日空なら None。
     """
     raw = (form.get("availability_schedule_json") or "").strip()
@@ -304,6 +343,10 @@ def _parse_availability_schedule(form) -> dict | None:
             clean_blocks.append(block)
         if clean_blocks:
             schedule[day] = clean_blocks
+    exceptions = _parse_schedule_exceptions(parsed, date.today())
+    # 曜日テンプレが空なら例外日は上書きする相手が無いので載せない
+    if exceptions and schedule:
+        schedule["exceptions"] = exceptions
     return schedule or None
 
 

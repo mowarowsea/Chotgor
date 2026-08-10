@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from backend.services.gate.availability import resolve_day_blocks
+
 # 占有圧の4段ラベル → 内部値（schedule_plan.md §4。初期値・計器で調整）
 PRESSURE_VALUES: dict[str, float] = {"弱": 0.25, "中": 0.5, "強": 0.75, "激強": 1.0}
 
@@ -260,9 +262,12 @@ def entries_from_template(
     （既定 active）・隙間は OnTime。占有圧は初期値として offline=中(0.5)・
     それ以外=強(0.75) を割り当てる（固定予定 = 世界の拘束力高めの流儀・§4 表）。
 
+    各日に適用するブロックは `resolve_day_blocks` が決める（例外日 > 曜日テンプレ・§2）。
+    週の各日を日付で引くので「今週の水曜だけ日曜扱い」がそのまま反映される。
+
     Args:
         schedule: {"mon": [{"from": "09:00", "to": "18:00", "label": "仕事",
-            "state": "offline"?}], ...} 形式（Phase 0 で任意 state 欄を追加済み）。
+            "state": "offline"?}], ..., "exceptions": {...}} 形式。
         week_start: 対象週の月曜日の日付。
 
     Returns:
@@ -270,15 +275,13 @@ def entries_from_template(
     """
     if not schedule or not isinstance(schedule, dict):
         return []
-    day_keys = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
     entries: list[PlanEntry] = []
-    for day_idx, day_key in enumerate(day_keys):
-        blocks = schedule.get(day_key) or []
-        if not isinstance(blocks, list):
+    for day_idx in range(7):
+        day = week_start + timedelta(days=day_idx)
+        blocks = resolve_day_blocks(schedule, day)
+        if not blocks:
             continue
-        base = datetime(week_start.year, week_start.month, week_start.day) + timedelta(
-            days=day_idx
-        )
+        base = datetime(day.year, day.month, day.day)
         for block in blocks:
             if not isinstance(block, dict):
                 continue
@@ -298,6 +301,46 @@ def entries_from_template(
                 )
             )
     return entries
+
+
+def format_template_exceptions(schedule: dict | None, week_start: date) -> str:
+    """対象週に掛かる例外日（§2）を GM プロンプト用のテキストへ整形する。
+
+    展開後のブロックには「なぜその日だけ違うのか」が残らないため、①GM には例外日を
+    別立てで見せる（「8/12 は日曜と同じ扱い（お盆休み）」）。
+
+    Args:
+        schedule: characters.availability_schedule の値。
+        week_start: 対象週の月曜日の日付。
+
+    Returns:
+        1行1例外のテキスト。対象週に例外が無ければ空文字列。
+    """
+    if not schedule or not isinstance(schedule, dict):
+        return ""
+    exceptions = schedule.get("exceptions")
+    if not isinstance(exceptions, dict):
+        return ""
+    day_labels = ("月", "火", "水", "木", "金", "土", "日")
+    lines = []
+    for day_idx in range(7):
+        day = week_start + timedelta(days=day_idx)
+        override = exceptions.get(day.isoformat())
+        if not isinstance(override, dict):
+            continue
+        as_key = str(override.get("as") or "").strip().lower()
+        if as_key == "off":
+            as_text = "予定なし（終日そのままの時間）"
+        elif as_key in _DAY_INDEX:
+            as_text = f"{day_labels[_DAY_INDEX[as_key]]}曜と同じ扱い"
+        else:
+            continue
+        label = str(override.get("label") or "").strip()
+        lines.append(
+            f"- {day.month}/{day.day}（{day_labels[day.weekday()]}）: {as_text}"
+            + (f" — {label}" if label else "")
+        )
+    return "\n".join(lines)
 
 
 def _pressure_label(occupancy: float) -> str:
