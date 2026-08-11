@@ -42,6 +42,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from backend.lib.lenient_json import parse_lenient_json
 from backend.lib.log_context import new_message_id, current_log_feature, current_log_target
 from backend.lib.tool_event_recorder import result_looks_like_error
 from backend.repositories.sqlite.store import SQLiteStore
@@ -459,22 +460,18 @@ def _parse_chronicle_response(response_text: str) -> dict | None:
     コードブロック（```json ... ```）で囲まれていても対応する。
     LLM が null だけを返した場合は None を返して「変更なし」を示す。
 
+    素直な json.loads で失敗した場合は json-repair で修復パースする。
+    LLM が日本語文中で強調に `"..."` を使うと文字列値に裸のダブルクォートが
+    混入して JSON が壊れる（実例: 2026-08-09〜11 の chronicle）。修復パースは
+    このタイプの LLM 出力ミスから復旧するためのフォールバック。
+
     Args:
         response_text: LLM の応答テキスト。
 
     Returns:
         パース済み辞書。null 応答は None。パース失敗は空辞書。
     """
-    text = response_text.strip()
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start != -1 and end > start:
-        text = text[start:end]
-    try:
-        result = json.loads(text)
-        return result if isinstance(result, dict) else None
-    except Exception:
-        return {}
+    return parse_lenient_json(response_text, feature_label="chronicle")
 
 
 def _apply_working_memory_updates(
@@ -696,6 +693,8 @@ async def run_chronicle(
     character_id: str,
     sqlite: SQLiteStore,
     target_date: str | None = None,   # "YYYY-MM-DD" — 省略時は chronicled_at IS NULL で選択
+    *,
+    prefetched_response_text: str | None = None,
     settings: dict | None = None,
     vector_store: "LanceStore" | None = None,
     memory_manager: InscribedMemoryManager | None = None,
@@ -720,6 +719,10 @@ async def run_chronicle(
             事前計算した「このキャラが PC 参加している ensemble_pc セッション ID」を渡すと、
             get_*_trpg_turns_for_character の内部スキャンをスキップする（findings #13）。
             単体実行時は None でよい。
+        prefetched_response_text: 既に取得済みの LLM 応答テキスト。指定された場合は
+            LLM を呼び直さず、そのテキストを解釈して WM 更新・inscribe・mark を実行する。
+            過去に JSON パース失敗などで反映できなかった応答を、修復パーサ経由で
+            事後 replay する救済用途（例: 2026-08-09〜11 の裸ダブルクォート問題）。
 
     Returns:
         処理結果辞書 {status, counts, error (optional)}。
@@ -829,25 +832,31 @@ async def run_chronicle(
         farewell_config=farewell_config_text,
     )
 
-    try:
-        if settings is None:
-            settings = sqlite.get_all_settings()
-        logger.debug("LLM呼び出し char=%s target_date=%s", char_label, target_date or "unchronicled")
-        response_text = await ask_character(
-            character_id=character_id,
-            preset_id=char.ghost_model,
-            messages=[{"role": "user", "content": prompt_text}],
-            sqlite=sqlite,
-            settings=settings,
-            recall_query=None,
-            feature_label="chronicle",
-            working_memory_manager=working_memory_manager,
-        )
-    except Exception as e:
-        logger.exception("エラー char=%s", char_label)
-        return {"status": "error", "error": str(e)}
-    if response_text is None:
-        return {"status": "error", "error": "LLMからの応答が取得できませんでした"}
+    if settings is None:
+        settings = sqlite.get_all_settings()
+    if prefetched_response_text is not None:
+        # 救済 replay 経路: 過去の debug ログ等から取得済みの応答をそのまま解釈する
+        logger.info("prefetched_response_text を使用（replay 経路） char=%s len=%d",
+                    char_label, len(prefetched_response_text))
+        response_text = prefetched_response_text
+    else:
+        try:
+            logger.debug("LLM呼び出し char=%s target_date=%s", char_label, target_date or "unchronicled")
+            response_text = await ask_character(
+                character_id=character_id,
+                preset_id=char.ghost_model,
+                messages=[{"role": "user", "content": prompt_text}],
+                sqlite=sqlite,
+                settings=settings,
+                recall_query=None,
+                feature_label="chronicle",
+                working_memory_manager=working_memory_manager,
+            )
+        except Exception as e:
+            logger.exception("エラー char=%s", char_label)
+            return {"status": "error", "error": str(e)}
+        if response_text is None:
+            return {"status": "error", "error": "LLMからの応答が取得できませんでした"}
 
     parsed = _parse_chronicle_response(response_text)
     if parsed is None:
