@@ -32,7 +32,7 @@ import type { AnySession } from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import ScenarioChatView from "./components/ScenarioChatView";
 import ExportDialog from "./components/ExportDialog";
-import { CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
+import { BubbleColorProvider, CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
 import CharPresetMenu from "./components/CharPresetMenu";
 import ScenarioSettingsModal from "./components/ScenarioSettingsModal";
 import SynopsisCreateModal from "./components/SynopsisCreateModal";
@@ -199,6 +199,16 @@ export default function App() {
       const id = idByName.get(name);
       return id ? `/api/characters/${id}/image` : undefined;
     };
+  }, [characters]);
+  /**
+   * キャラクター名→バブル配色スロットのリゾルバ（キャラクター編集画面での明示指定）。
+   * 未指定のキャラは null を返し、名前ハッシュによる自動配色に落ちる。
+   */
+  const resolveCharBubbleColor = useMemo(() => {
+    const colorByName = new Map(
+      characters.map((c) => [c.name, c.bubble_color ?? null]),
+    );
+    return (name: string): number | null => colorByName.get(name) ?? null;
   }, [characters]);
   /** char_msg_id → log_message_id（8桁hex）のマッピング。バブルのログ折りたたみに使用する。 */
   const [msgLogIds, setMsgLogIds] = useState<Record<string, string>>({});
@@ -507,8 +517,11 @@ export default function App() {
   }, [isScenarioSession, activeScenarioSession]);
 
   return (
-    /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。 */
+    /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。
+       BubbleColorProvider: バブル配色の明示指定をアプリ全体へ供給する（シナリオ画面は
+       内側で NPC 用のリゾルバを重ね、そこで未指定ならここへ委譲される）。 */
     <CharacterImageProvider resolve={resolveCharImage}>
+    <BubbleColorProvider resolve={resolveCharBubbleColor}>
     {/* h-[100dvh]: モバイルブラウザのアドレスバーを除いた実際の表示領域に合わせる */}
     <div className="flex h-[100dvh] overflow-hidden bg-ch-bg text-ch-t1 relative">
       {/* モバイル時: サイドバー背後のオーバーレイ。タップで閉じる。 */}
@@ -794,6 +807,7 @@ export default function App() {
           />
         )}
     </div>
+    </BubbleColorProvider>
     </CharacterImageProvider>
   );
 }

@@ -7,7 +7,7 @@
 {% endblock %}
 
 {# 長い注意書きはラベル脇の ⓘ に畳む（インラインの ch-hint は一言だけに留める） #}
-{% from "macros.html" import ch_help %}
+{% from "macros.html" import ch_help, ch_swatches %}
 
 {% block content %}
 <div class="ch-shell">
@@ -107,6 +107,24 @@
                 <input type="text" id="name" name="name" class="ch-input"
                     value="{% if character %}{{ character.name }}{% endif %}"
                     placeholder="例: Aria, Sage, Luna" required>
+            </div>
+
+            {# バブルの色 #}
+            <div class="ch-field">
+                <label class="ch-label">バブルの色
+                    <span class="ch-hint">A = 自動</span>{{ ch_help(
+                        'チャット画面での吹き出しの色です。'
+                        '<code>A</code>（自動）は名前から色を決めるため、'
+                        '同席する相手とたまたま同じ色になることがあります。'
+                        'その場合だけ手で振り分けてください。'
+                        '右上に点が付いた色は、他のキャラクターが既に選んでいます。'
+                    ) }}
+                </label>
+                {{ ch_swatches(
+                    character.bubble_color if character else None,
+                    bubble_color_owners,
+                    character.name if character else ""
+                ) }}
             </div>
 
             {# キャラクター定義 #}

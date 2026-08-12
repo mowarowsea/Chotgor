@@ -75,6 +75,8 @@ export interface SessionDetail extends Session {
 export interface Character {
   id: string;
   name: string;
+  /** チャットバブルの配色スロット（0〜9）。null は自動（名前ハッシュ）。 */
+  bubble_color?: number | null;
   /** 対面モードの現在値（0=テキスト / 1=対面）。 */
   face_to_face_mode?: number;
   /** 対面背景画像が登録済みか。実画像は `/api/characters/{id}/face_to_face_bg_image` から取得。 */

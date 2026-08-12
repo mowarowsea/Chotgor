@@ -46,6 +46,8 @@ def char_to_dict(char) -> dict:
         "cleanup_config": char.cleanup_config,
         "ghost_model": char.ghost_model,
         "allowed_tools": getattr(char, "allowed_tools", None) or {},
+        # チャットバブルの配色スロット（0〜9）。None は自動配色（フロントが名前ハッシュで決める）。
+        "bubble_color": getattr(char, "bubble_color", None),
         "face_to_face_mode": int(getattr(char, "face_to_face_mode", 0) or 0),
         "has_face_to_face_bg_image": bool(bg_entries),
         "face_to_face_bg_labels": [e.get("label", "") for e in bg_entries],

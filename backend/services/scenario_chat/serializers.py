@@ -97,6 +97,7 @@ def scenario_npc_to_dict(npc: Any) -> dict:
         "name": npc.name,
         "description": npc.description,
         "image_data": npc.image_data,
+        "bubble_color": getattr(npc, "bubble_color", None),
         "promoted_character_id": npc.promoted_character_id,
         "created_at": npc.created_at.isoformat() if npc.created_at else None,
     }

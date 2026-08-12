@@ -219,12 +219,14 @@ class ScenarioChatStoreMixin:
         name: str,
         description: str | None = None,
         image_data: str | None = None,
+        bubble_color: int | None = None,
     ):
         """シナリオテンプレート内 NPC を作成する。
 
         Args:
             description: 人物像・口調・話し方を自由テキストで記述。
             image_data: アバター画像（base64 data URI 形式）。
+            bubble_color: チャットバブルの配色スロット（0〜9）。None は自動配色。
         """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ScenarioNpc
@@ -234,6 +236,7 @@ class ScenarioChatStoreMixin:
                 name=name,
                 description=description,
                 image_data=image_data,
+                bubble_color=bubble_color,
             )
             session.add(obj)
             session.commit()

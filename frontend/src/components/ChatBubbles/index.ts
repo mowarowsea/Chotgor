@@ -11,7 +11,8 @@
  *   ユーザーメッセージ     — 右寄せ、ニュートラルなフラット背景。
  *   ボーダー/サーフェス    — すべてニュートラルグレー。緑はキャラ名・アクセントのみ。
  */
-export { charHue, bubbleClassFor } from "./colors";
+export { charHue, bubbleClassFor, BubbleColorProvider } from "./colors";
+export type { BubbleColorResolver } from "./colors";
 export { CharacterAvatar, CharacterImageProvider } from "./avatar";
 export type { CharImageResolver } from "./avatar";
 export { Bubble } from "./Bubble";

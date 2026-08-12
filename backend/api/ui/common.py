@@ -53,6 +53,40 @@ async def _read_image_data(form, field: str = "image") -> str | None:
     return f"data:{content_type};base64,{b64}"
 
 
+#: チャットバブルの配色パレット数。フロント側 `cb0〜cb9`（index.css）と対になる。
+BUBBLE_PALETTE_SIZE = 10
+
+
+def _parse_bubble_color(form) -> int | None:
+    """フォームの `bubble_color` を 0〜BUBBLE_PALETTE_SIZE-1 の整数か None に正規化する。
+
+    空文字（＝「自動」を選択）・未送信・範囲外・非数値はすべて None（自動配色）にする。
+    """
+    raw = (form.get("bubble_color") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if 0 <= value < BUBBLE_PALETTE_SIZE else None
+
+
+def _bubble_color_owners(items) -> dict[int, list[str]]:
+    """バブル配色スロット → その色を明示指定している名前一覧、のマップを作る。
+
+    スウォッチUIで「この色は誰かが使用中」を示すために使う（重複選択は禁止しない）。
+    自動配色（bubble_color=None）の相手は色が確定しないのでマップに載せない。
+    """
+    owners: dict[int, list[str]] = {}
+    for item in items or []:
+        color = getattr(item, "bubble_color", None)
+        if color is None:
+            continue
+        owners.setdefault(int(color), []).append(getattr(item, "name", "") or "")
+    return owners
+
+
 def _is_ajax(request: Request) -> bool:
     """fetch / XHR からのリクエストかどうかを X-Requested-With ヘッダで判定する。"""
     return request.headers.get("x-requested-with", "").lower() in (

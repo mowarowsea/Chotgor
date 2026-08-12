@@ -61,6 +61,8 @@ export interface ScenarioNpc {
   name: string;
   description: string | null;
   image_data: string | null;
+  /** チャットバブルの配色スロット（0〜9）。null は自動（名前ハッシュ）。 */
+  bubble_color: number | null;
   promoted_character_id: string | null;
   created_at: string;
 }

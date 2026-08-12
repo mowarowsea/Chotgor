@@ -11,7 +11,13 @@ from datetime import date
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from backend.api.ui.common import _read_image_data, _save_response, get_templates
+from backend.api.ui.common import (
+    _bubble_color_owners,
+    _parse_bubble_color,
+    _read_image_data,
+    _save_response,
+    get_templates,
+)
 from backend.lib.log_context import current_log_target, new_message_id
 from backend.providers.registry import PROVIDER_LABELS
 from backend.services.character_query import ask_character
@@ -60,6 +66,10 @@ async def new_character_form(request: Request):
             # 新規作成時はまだ うつつ 世界が存在しない（空の既定値でフォームを描画する）
             "usual_scenario": None,
             "usual_config": {},
+            # スウォッチUIの「使用中」表示用（色 → その色を選んでいるキャラ名）。
+            "bubble_color_owners": _bubble_color_owners(
+                request.app.state.sqlite.list_characters()
+            ),
         },
     )
 
@@ -108,6 +118,10 @@ async def create_character(request: Request):
     # 発話予約（speak_later）有効化トグルも同様（既定 OFF のオプトイン）。
     if form.get("speak_later_enabled"):
         request.app.state.sqlite.update_character(char_id, speak_later_enabled=1)
+    # バブル配色スロット。create_character は引数を持たないので、指定時のみ後追いで入れる。
+    bubble_color = _parse_bubble_color(form)
+    if bubble_color is not None:
+        request.app.state.sqlite.update_character(char_id, bubble_color=bubble_color)
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     _persist_usual_world(request.app.state.sqlite, char_id, name, form)
     return RedirectResponse(url="/ui/characters", status_code=303)
@@ -132,6 +146,10 @@ async def edit_character_form(request: Request, character_id: str):
             "provider_labels": PROVIDER_LABELS,
             "usual_scenario": usual_scenario,
             "usual_config": usual_config,
+            # スウォッチUIの「使用中」表示用（色 → その色を選んでいるキャラ名）。
+            "bubble_color_owners": _bubble_color_owners(
+                request.app.state.sqlite.list_characters()
+            ),
         },
     )
 
@@ -163,6 +181,8 @@ async def update_character(request: Request, character_id: str):
         living_schedule_enabled=1 if form.get("living_schedule_enabled") else 0,
         # 発話予約（speak_later）有効化トグル。未チェックなら 0（既定 OFF）。
         speak_later_enabled=1 if form.get("speak_later_enabled") else 0,
+        # チャットバブルの配色スロット。「自動」選択なら None に戻す。
+        bubble_color=_parse_bubble_color(form),
     )
     # 名前は空欄なら更新しない（自動保存中の一時的な空入力で名前を消さない）。
     name = (form.get("name") or "").strip()

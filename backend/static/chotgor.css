@@ -20,7 +20,7 @@
    4.  ATOMS — typography    — brand / eyebrow / display / section-title / prose / meta
    5.  ATOMS — buttons       — ch-btn(各modifier) / ch-iconbtn
    6.  ATOMS — pills/badges  — ch-dot / ch-pill / ch-badge / ch-tag(memoryカテゴリ)
-   7.  FORM CONTROLS         — field/label/input/textarea/select/toggle/segment
+   7.  FORM CONTROLS         — field/label/input/textarea/select/toggle/segment/swatch
    8.  FILTER BAR            — ch-filterbar / ch-filters / ch-filter
    9.  LIST                  — ch-list / ch-row（区切り線ベース行）
    10. MEMORY LIST           — ch-memlist / ch-memitem / ch-imp（記憶一覧）
@@ -693,6 +693,66 @@ html::-webkit-scrollbar-track,
   color: var(--ch-t);
   background: var(--ch-bg);
   border-color: var(--ch-sep2);
+}
+
+/* スウォッチ（配色ラジオ: チャットバブルの色選択）
+   色の実体はチップ1つにつき色相変数 --ch-sw-h だけを差し替える。明度・彩度は
+   frontend/src/index.css の .cb0〜.cb9（バブル本体）と同じ式を使い、実物と同じ
+   見え方にする。番号 → 色相の対応を変えるときは両方を揃えること。 */
+.ch-swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ch-swatch { position: relative; display: inline-flex; cursor: pointer; }
+.ch-swatch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ch-swatch__chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--ch-radius-sm);
+  border: 1px solid;
+  font-family: var(--ch-fm);
+  font-size: 10px;
+  color: var(--ch-t3);
+  transition: box-shadow .15s;
+  /* dark 既定。light は末尾の @media で上書きする。 */
+  background: oklch(26% 0.04 var(--ch-sw-h));
+  border-color: oklch(38% 0.05 var(--ch-sw-h) / 0.55);
+}
+.ch-swatch:hover .ch-swatch__chip { box-shadow: 0 0 0 1px var(--ch-line); }
+.ch-swatch input:checked + .ch-swatch__chip {
+  box-shadow: 0 0 0 2px var(--ch-bg), 0 0 0 3px var(--ch-a);
+}
+/* 「自動」— 色を持たないので無彩色のコントロール面にする。 */
+.ch-swatch--auto .ch-swatch__chip { background: var(--ch-face); border-color: var(--ch-line); }
+/* 他の相手が既に選んでいる色の目印。禁止ではなく注意喚起（title に名前が出る）。 */
+.ch-swatch.is-used .ch-swatch__chip::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--ch-radius-full);
+  background: var(--ch-t2);
+  border: 1px solid var(--ch-bg);
+}
+.ch-swatch--0 { --ch-sw-h: 212; }
+.ch-swatch--1 { --ch-sw-h: 155; }
+.ch-swatch--2 { --ch-sw-h: 38; }
+.ch-swatch--3 { --ch-sw-h: 290; }
+.ch-swatch--4 { --ch-sw-h: 18; }
+.ch-swatch--5 { --ch-sw-h: 250; }
+.ch-swatch--6 { --ch-sw-h: 180; }
+.ch-swatch--7 { --ch-sw-h: 100; }
+.ch-swatch--8 { --ch-sw-h: 330; }
+.ch-swatch--9 { --ch-sw-h: 60; }
+@media (prefers-color-scheme: light) {
+  .ch-swatch__chip {
+    background: oklch(96% 0.03 var(--ch-sw-h));
+    border-color: oklch(85% 0.06 var(--ch-sw-h) / 0.55);
+  }
+  .ch-swatch--auto .ch-swatch__chip { background: var(--ch-face); border-color: var(--ch-line); }
 }
 
 /* ============================================================

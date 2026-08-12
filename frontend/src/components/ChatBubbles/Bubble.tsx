@@ -3,7 +3,7 @@
  */
 import React from "react";
 
-import { bubbleClassFor } from "./colors";
+import { useBubbleClass } from "./colors";
 
 /**
  * 吹き出しの外観（背景・角丸・枠線）を担う共通プリミティブ。
@@ -12,6 +12,8 @@ import { bubbleClassFor } from "./colors";
  * - kind="user": 紺地・右下角を欠いた角丸
  * - kind="character": 左上角を欠いた角丸。colored 時はキャラクター別配色（cb0〜cb9）、
  *   それ以外はニュートラル面（bg-ch-s1）。
+ *
+ * colored 時の色は BubbleColorProvider の明示指定を優先し、無ければ名前ハッシュで決まる。
  */
 export function Bubble({
   kind,
@@ -32,6 +34,8 @@ export function Bubble({
   onPointerUp?: React.PointerEventHandler<HTMLDivElement>;
   children: React.ReactNode;
 }) {
+  // フックは早期 return より前で呼ぶ必要があるため、user バブルでも一度引く（副作用なし）。
+  const coloredClass = useBubbleClass(characterName);
   if (kind === "user") {
     return (
       <div
@@ -50,7 +54,7 @@ export function Bubble({
   return (
     <div
       onPointerUp={onPointerUp}
-      className={`ch-bubble ch-bubble--character inline-block max-w-full px-3.5 py-2 text-ch-t1 text-sm leading-relaxed break-words ${colored ? bubbleClassFor(characterName) : "bg-ch-s1"}`}
+      className={`ch-bubble ch-bubble--character inline-block max-w-full px-3.5 py-2 text-ch-t1 text-sm leading-relaxed break-words ${colored ? coloredClass : "bg-ch-s1"}`}
       style={{
         borderRadius: "4px 14px 14px 14px",
         border: dashed ? "1px dashed" : "1px solid",

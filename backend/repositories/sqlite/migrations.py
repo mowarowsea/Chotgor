@@ -1502,3 +1502,34 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE characters DROP COLUMN self_reflection_n_turns"
                 )
 
+
+    def _migrate_add_bubble_color(self) -> None:
+        """チャットバブルの配色スロット列を追加する。
+
+        - `characters.bubble_color` (INTEGER, NULL 可)
+        - `scenario_npcs.bubble_color` (INTEGER, NULL 可)
+
+        いずれも 0〜9 のパレット番号で、NULL は「自動」（フロントが名前ハッシュから決定）。
+        既存行はすべて NULL となり、従来どおり自動配色のまま見た目が変わらない。
+        新規DBは ORM 定義で既に列を持つため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            for table in ("characters", "scenario_npcs"):
+                if table not in tables:
+                    continue
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                }
+                if "bubble_color" not in cols:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE {table} ADD COLUMN bubble_color INTEGER"
+                    )

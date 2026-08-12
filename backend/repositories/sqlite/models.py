@@ -116,6 +116,9 @@ class Character(Base):
     enabled_providers = Column(JSON, nullable=False, default=dict)
     ghost_model = Column(String, nullable=True)  # chronicle/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
+    # チャットバブルの配色スロット（0〜9）。NULL は「自動」でフロントが名前ハッシュから決める。
+    # 同席者と色が被ったときに手動で振り分けるための指定。
+    bubble_color = Column(Integer, nullable=True)
     # 別れ検出（farewell）の judge LLM に使うモデルプリセットID
     judge_preset_id = Column(String, nullable=True)
     # キャラクター自己更新フィールド: chronicle 処理で更新される
@@ -376,6 +379,8 @@ class ScenarioNpc(Base):
     name = Column(String, nullable=False)                          # @タグに使う シナリオ内ユニーク名
     description = Column(Text, nullable=True)                      # 人物像・口調・話し方を自由記述
     image_data = Column(Text, nullable=True)                       # アバター画像 (base64 data URI)
+    # チャットバブルの配色スロット（0〜9）。NULL は「自動」で名前ハッシュから決まる。
+    bubble_color = Column(Integer, nullable=True)
     promoted_character_id = Column(String, nullable=True)          # P2 予約。P1 では常に NULL
     created_at = Column(DateTime, default=lambda: datetime.now())
 

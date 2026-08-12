@@ -16,6 +16,7 @@
  * NPC の追加・編集はバックエンドの Scenarios UI で行う。
  */
 import React, {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -31,7 +32,12 @@ import type {
 } from "../../api";
 import { EditingLockProvider, useEditingLocked } from "../../hooks/useEditingLock";
 import { useHeaderVisibilityOnScroll } from "../../hooks/useHeaderVisibilityOnScroll";
-import { CharacterAvatar, ThinkingBlock, UserBubble } from "../ChatBubbles";
+import {
+  BubbleColorProvider,
+  CharacterAvatar,
+  ThinkingBlock,
+  UserBubble,
+} from "../ChatBubbles";
 import MessageInput from "../MessageInput";
 import { trimEnd } from "./helpers";
 import { NpcDetailDialog } from "./npc";
@@ -226,6 +232,15 @@ function ScenarioChatViewInner({
     [npcs],
   );
 
+  /**
+   * NPC 名 → バブル配色スロットのリゾルバ（シナリオ編集画面での明示指定）。
+   * 未指定の NPC・PC キャラは null を返し、外側（App）のキャラクター指定へ委譲される。
+   */
+  const resolveNpcBubbleColor = useCallback(
+    (name: string): number | null => npcByName[name]?.bubble_color ?? null,
+    [npcByName],
+  );
+
   /** PC枠名 → PcSlot のマップ（PC アバター取得用）。 */
   const pcSlotByName = useMemo(
     () => Object.fromEntries((scenario?.pc_slots ?? []).map((s) => [s.name, s])),
@@ -417,6 +432,8 @@ function ScenarioChatViewInner({
     ) : null;
 
   return (
+    /* BubbleColorProvider: NPC の明示配色を最優先で解決する（未指定なら外側へ委譲）。 */
+    <BubbleColorProvider resolve={resolveNpcBubbleColor}>
     <div className="flex flex-col flex-1 h-full overflow-hidden">
       {/* チャットスクロール（1on1 と同じく最大幅 760px 中央寄せ・浮遊ヘッダー分の上余白） */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
@@ -688,6 +705,7 @@ function ScenarioChatViewInner({
         onClose={() => setNpcDialogTarget(null)}
       />
     </div>
+    </BubbleColorProvider>
   );
 }
 

@@ -6,7 +6,13 @@ import uuid
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from backend.api.ui.common import _read_image_data, _save_response, get_templates
+from backend.api.ui.common import (
+    _bubble_color_owners,
+    _parse_bubble_color,
+    _read_image_data,
+    _save_response,
+    get_templates,
+)
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -112,6 +118,7 @@ async def new_scenario_form(request: Request):
             "scenario": None,
             "npcs": [],
             "action": "/ui/scenarios/new",
+            "bubble_color_owners": {},
         },
     )
 
@@ -159,6 +166,8 @@ async def edit_scenario_form(request: Request, scenario_id: str):
             "scenario": scenario,
             "npcs": npcs,
             "action": f"/ui/scenarios/{scenario_id}/edit",
+            # スウォッチUIの「使用中」表示用（色 → その色を選んでいる NPC 名）。
+            "bubble_color_owners": _bubble_color_owners(npcs),
         },
     )
 
@@ -215,6 +224,7 @@ async def add_npc_form(request: Request, scenario_id: str):
         name=name,
         description=(form.get("description") or "") or None,
         image_data=image_data,
+        bubble_color=_parse_bubble_color(form),
     )
     return RedirectResponse(url=f"/ui/scenarios/{scenario_id}/edit", status_code=303)
 
@@ -225,6 +235,8 @@ async def edit_npc_form(request: Request, scenario_id: str, npc_id: str):
     form = await request.form()
     update_kwargs: dict = {
         "description": (form.get("description") or "") or None,
+        # バブル配色スロット。未選択（"自動"）なら None に戻す。
+        "bubble_color": _parse_bubble_color(form),
     }
     # 名前は必須項目。空欄なら名前以外だけ保存する（自動保存の空入力対策）。
     name = (form.get("name") or "").strip()

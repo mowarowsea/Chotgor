@@ -7,7 +7,7 @@
 {% endblock %}
 
 {# 長い注意書きはラベル脇の ⓘ に畳む（インラインの ch-hint は一言だけに留める） #}
-{% from "macros.html" import ch_help %}
+{% from "macros.html" import ch_help, ch_swatches %}
 
 {% block content %}
 <div class="ch-shell">
@@ -255,6 +255,18 @@
                         <textarea name="description" class="ch-textarea" style="min-height:140px"
                                   placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
                     </div>
+                    <div class="ch-field" style="margin-bottom:0">
+                        <label class="ch-label">バブルの色
+                            <span class="ch-hint">A = 自動</span>{{ ch_help(
+                                'チャット画面での吹き出しの色です。'
+                                '<code>A</code>（自動）は名前から色を決めるため、'
+                                '同席する相手とたまたま同じ色になることがあります。'
+                                'その場合だけ手で振り分けてください。'
+                                '右上に点が付いた色は、このシナリオの他の NPC が既に選んでいます。'
+                            ) }}
+                        </label>
+                        {{ ch_swatches(n.bubble_color, bubble_color_owners, n.name) }}
+                    </div>
                 </form>
             </div>
             <div class="ch-modal__actions">
@@ -299,6 +311,12 @@
                         </label>
                         <textarea name="description" class="ch-textarea" style="min-height:140px"
                                   placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。"></textarea>
+                    </div>
+                    <div class="ch-field" style="margin-bottom:0">
+                        <label class="ch-label">バブルの色
+                            <span class="ch-hint">A = 自動（名前から決定）</span>
+                        </label>
+                        {{ ch_swatches(None, bubble_color_owners) }}
                     </div>
                 </div>
                 <div class="ch-modal__actions">

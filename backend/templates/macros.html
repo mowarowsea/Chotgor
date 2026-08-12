@@ -15,3 +15,39 @@
 {% macro ch_help(text, label="補足を表示") -%}
 <span class="ch-help"><button type="button" class="ch-help__btn" aria-label="{{ label }}">i</button><span class="ch-help__body" role="tooltip">{{ text|safe }}</span></span>
 {%- endmacro %}
+
+{#
+  ch_swatches(current, owners, exclude, field="bubble_color")
+  — チャットバブルの配色を選ぶラジオ群（「自動」＋10色）。
+
+  色の実体は chotgor.css の `.ch-swatch--0〜9`、フロント側の対になる定義は
+  frontend/src/index.css の `.cb0〜.cb9`。番号がそのまま対応しているので、
+  片方を変えたらもう片方も合わせること。
+
+  引数:
+    current — 現在の選択値（int または None。None は「自動」）。
+    owners  — {色番号: [その色を選んでいる名前, ...]}。使用中マークの表示に使う。
+    exclude — 編集中の本人の名前。owners から自分を除いて「他者が使用中」だけ出す。
+    field   — input の name 属性（既定 bubble_color）。
+#}
+{% set _bubble_palette = [
+  (0, '藍'), (1, '翠'), (2, '橙'), (3, '菫'), (4, '紅'),
+  (5, '青'), (6, '青緑'), (7, '若草'), (8, '桃'), (9, '山吹')
+] %}
+{% macro ch_swatches(current=None, owners={}, exclude="", field="bubble_color") -%}
+<div class="ch-swatches">
+    <label class="ch-swatch ch-swatch--auto" title="自動（名前から決定）">
+        <input type="radio" name="{{ field }}" value="" {% if current is none %}checked{% endif %}>
+        <span class="ch-swatch__chip">A</span>
+    </label>
+    {% for idx, label in _bubble_palette %}
+    {% set others = owners.get(idx, []) | reject('equalto', exclude) | list %}
+    <label class="ch-swatch ch-swatch--{{ idx }}{% if others %} is-used{% endif %}"
+           title="{{ label }}{% if others %} — 使用中: {{ others | join('、') }}{% endif %}">
+        <input type="radio" name="{{ field }}" value="{{ idx }}"
+               {% if current is not none and current == idx %}checked{% endif %}>
+        <span class="ch-swatch__chip"></span>
+    </label>
+    {% endfor %}
+</div>
+{%- endmacro %}
