@@ -330,6 +330,13 @@ class ToolExecutor:
             return self._threader.read_working_memory_thread(
                 thread_id=str(tool_input.get("thread_id", "")),
             )
+        if tool_name == "read_working_memory_list":
+            return self._threader.read_working_memory_list(
+                status=str(tool_input.get("status", "closed") or "closed"),
+                type=str(tool_input.get("type", "") or ""),
+                limit=tool_input.get("limit", 50),
+                offset=tool_input.get("offset", 0),
+            )
         if tool_name == "close_working_memory_thread":
             return self._threader.close_working_memory_thread(
                 thread_id=str(tool_input.get("thread_id", "")),

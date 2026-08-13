@@ -647,7 +647,7 @@ async def test_prepare_context_passes_memory_degraded_on_wm_embedding_failure():
     memory_manager.recall_with_identity.return_value = ([], [])
 
     working_memory_manager = MagicMock()
-    working_memory_manager.list_all_threads.return_value = []
+    working_memory_manager.list_all_threads.return_value = ([], 0)
     working_memory_manager.get_fixed_threads.return_value = []
     working_memory_manager.recall_threads.side_effect = EmbeddingError("connection refused")
 
@@ -725,7 +725,7 @@ def _build_prepare_context_mocks(long_content: str):
     memory_manager.recall_with_identity.return_value = ([], [])
 
     working_memory_manager = MagicMock()
-    working_memory_manager.list_all_threads.return_value = []
+    working_memory_manager.list_all_threads.return_value = ([], 0)
     working_memory_manager.get_fixed_threads.return_value = []
     working_memory_manager.recall_threads.return_value = []
 

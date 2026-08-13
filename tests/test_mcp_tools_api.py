@@ -69,6 +69,7 @@ class TestListTools:
             "inscribe_memory",
             "post_working_memory_thread",
             "read_working_memory_thread",
+            "read_working_memory_list",
             "close_working_memory_thread",
             "reopen_working_memory_thread",
             "merge_working_memory_threads",

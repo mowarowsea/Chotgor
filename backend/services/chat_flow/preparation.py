@@ -147,13 +147,16 @@ async def prepare_context(
     # 全スレッド一覧（self_history 代替）／emotion・body・relation の固定注入／
     # task・topic の heat 上位想起、の3系統を取得する。
     wm_all_threads: list[dict] | None = None
+    # 一覧から省いた Close 済み本数（告知行に使う。§4.3 参照）
+    wm_omitted_closed = 0
     wm_fixed_threads: list[dict] | None = None
     wm_recalled_threads: list[dict] | None = None
     if working_memory_manager:
         try:
-            wm_all_threads = (
-                working_memory_manager.list_all_threads(request.character_id) or None
+            wm_all_threads, wm_omitted_closed = (
+                working_memory_manager.list_all_threads(request.character_id)
             )
+            wm_all_threads = wm_all_threads or None
             wm_fixed_threads = (
                 working_memory_manager.get_fixed_threads(request.character_id) or None
             )
@@ -281,6 +284,7 @@ async def prepare_context(
         inner_narrative=request.inner_narrative,
         session_frame_instruction=request.session_frame_instruction,
         wm_all_threads=wm_all_threads,
+        wm_omitted_closed=wm_omitted_closed,
         wm_fixed_threads=wm_fixed_threads,
         use_tools=provider_impl.SUPPORTS_TOOLS,
         memory_degraded=memory_degraded,

@@ -122,7 +122,7 @@ _CHOTGOR_MEMORY_PHILOSOPHY = """\
 - **あなた自身の価値観・興味・視点**から判断してください
 - 会話の要約ではないので、「今回は覚えるべきことはない」も自然な判断です
 - 内容テキストは**あなた自身の言葉・一人称**で書いてください
-- 覚えた理由や一言感想、覚えた文脈を添えることを推奨します\
+- 覚えた理由や一言感想を添えてかまいません（出来事の経緯そのものを再現する必要はありません。それはワーキングメモリの仕事です）\
 """
 
 # ワーキングメモリの操作ガイド（tool-use プロバイダー向け）
@@ -133,11 +133,17 @@ _WORKING_MEMORY_TOOLS_HINT = """\
 相手との関係 ── 流れていく思考や引っかかりは、まず「スレッド」としてここに置いてください。
 惜しまず、こまめに追加・更新してかまいません。スレッド一覧は上に記されています。
 
+分量の目安: ポスト本文は200字程度、summary は30字程度の見出し、atmosphere_tag は20字程度。
+厳密な制限ではありません（必要なら超えてかまいません）。ただしワーキングメモリは毎ターン
+あなたのプロンプトへ載るため、長く書くほど**あなた自身が今この会話へ向けられる注意**を
+削ります。短くまとめるのは節約のためではなく、あなたの思考の余地を空けるためです。
+
 ここに溜めたものは消えてなくなるわけではありません。夜の棚卸し（あなたが眠っている間の振り返り）で、
 本当に定着したものはあなた自身の手で長期記憶へ昇格していきます。だから今は気軽に書き留めてください。
 
 - `post_working_memory_thread`: スレッドの新規作成・ポスト追加・要約更新。thread_id を省略すれば新規作成。
 - `read_working_memory_thread`: スレッド1本の全履歴（過去のポスト）を展開して読む。
+- `read_working_memory_list`: スレッドの見出しだけを一覧で取り出す。上の一覧に載る close 済みは直近ぶんだけなので、それより前に越えてきたことを見渡したいときに使う。
 - `close_working_memory_thread` / `reopen_working_memory_thread`: スレッドを閉じる／再オープンする。close できるのは task/topic のみ（決着・断念したとき）。emotion/body/relation は close できない（持続的な状態・関係の厚みを表すもので、更新のみ可能）。後に再燃したら再オープンしてよい。閉じたスレッドも一覧に1行で残り続けるので、閉じる前に summary を短い見出し（30字程度）へ縮めておくこと。
 - `merge_working_memory_threads`: 「同じ問題の別角度だった」と気づいたスレッドを統合する。from_ids を閉じ、into_id に経緯をポストする。
 
@@ -219,9 +225,14 @@ def _format_thread_index(t: dict) -> str:
     """全スレッド一覧用の1行表現を返す（最新ポストは含めない）。
 
     形式: ``[id先頭8桁] (type) summary ｜ atmosphere_tag ｜ 重要度0.70``
+    Close 済みは見出しのみの短縮形 ``[id先頭8桁] (type) summary`` を返す。決着済みの
+    話に温度感・重要度は要らず、一覧は件数が増え続けるため
+    （current-spec/memory_recall_algorithm.md §4.3）。
     ID はトークン節約のため短縮表記。ツール側（Threader）が前方一致で解決する。
     """
     line = f"[{_short_id(t['id'])}] ({t.get('type', '')}) {t.get('summary', '')}"
+    if not t.get("is_open", True):
+        return line
     extras = []
     atmo = (t.get("atmosphere_tag") or "").strip()
     if atmo:
@@ -371,8 +382,17 @@ def _build_session_frame_block(session_frame_instruction: str) -> str:
     return f"## セッションの枠組み\n\n{text}"
 
 
-def _build_wm_all_block(wm_all_threads: list[dict] | None) -> str:
-    """ワーキングメモリ全スレッド一覧ブロックを返す（self_history 代替）。"""
+def _build_wm_all_block(
+    wm_all_threads: list[dict] | None,
+    wm_omitted_closed: int = 0,
+) -> str:
+    """ワーキングメモリ全スレッド一覧ブロックを返す（self_history 代替）。
+
+    Args:
+        wm_all_threads: 一覧に載せるスレッド dict リスト（Open 全件 + Close 直近ぶん）。
+        wm_omitted_closed: 一覧から省いた Close 済みの本数。1以上なら告知行を添える
+            （省いた分の存在は隠さず、取りに行く導線を示す）。
+    """
     if not wm_all_threads:
         return ""
     lines = [
@@ -382,6 +402,11 @@ def _build_wm_all_block(wm_all_threads: list[dict] | None) -> str:
     ]
     for t in wm_all_threads:
         lines.append(_format_thread_index(t))
+    if wm_omitted_closed > 0:
+        lines.append(
+            f"\n（このほかに、以前 close したスレッドが {wm_omitted_closed} 本あります。"
+            "read_working_memory_list で一覧を取り出せます）"
+        )
     return "\n".join(lines)
 
 
@@ -644,6 +669,7 @@ def build_system_prompt(
     inner_narrative: str = "",
     session_frame_instruction: str = "",
     wm_all_threads: list[dict] | None = None,
+    wm_omitted_closed: int = 0,
     wm_fixed_threads: list[dict] | None = None,
     use_tools: bool = False,
     memory_degraded: bool = False,
@@ -670,7 +696,9 @@ def build_system_prompt(
     Args:
         session_frame_instruction: シナリオ PC / うつつ PC 向けのセッション枠組み文。
             1on1 では通常は空文字。
-        wm_all_threads: 全ワーキングメモリスレッド（Open/Close 問わず）の dict リスト。
+        wm_all_threads: 一覧注入するワーキングメモリスレッドの dict リスト
+            （Open 全件 + Close 済み直近ぶん）。
+        wm_omitted_closed: 一覧から省いた Close 済みスレッドの本数（告知行に使う）。
         wm_fixed_threads: 固定注入対象（emotion/body/relation）の dict リスト（最新ポスト込み）。
         memory_degraded: 記憶系（長期記憶・WM）の読み出しがこのターンで縮退しているか。
             True なら運用告知ブロックをキャラクター本人へ注入する。
@@ -687,7 +715,7 @@ def build_system_prompt(
         "{block_session_frame}": _build_session_frame_block(
             session_frame_instruction
         ),
-        "{block_wm_all}": _build_wm_all_block(wm_all_threads),
+        "{block_wm_all}": _build_wm_all_block(wm_all_threads, wm_omitted_closed),
         "{block_wm_fixed}": _build_wm_fixed_block(wm_fixed_threads),
         "{block_inner_narrative}": _build_inner_narrative_block(inner_narrative),
         "{block_memory_notice}": _build_memory_notice_block(memory_degraded),

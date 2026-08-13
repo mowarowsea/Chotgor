@@ -374,3 +374,74 @@ def test_append_annotation_last_not_user_appends_new_turn():
     result = append_turn_annotation(messages, "【注釈】")
     assert len(result) == 2
     assert result[-1] == {"role": "user", "content": "【注釈】"}
+
+
+# ────────────────────────────────────────────────────────────────────────
+# WM スレッド一覧ブロック — 行の短縮と省略の告知
+# （current-spec/memory_recall_algorithm.md §4.3）
+# ────────────────────────────────────────────────────────────────────────
+
+_WM_OPEN_THREAD = {
+    "id": "wm-open-0001",
+    "type": "task",
+    "summary": "進行中の課題",
+    "atmosphere_tag": "手応えあり",
+    "importance": 0.7,
+    "is_open": True,
+}
+_WM_CLOSED_THREAD = {
+    "id": "wm-closed-001",
+    "type": "topic",
+    "summary": "決着した話題",
+    "atmosphere_tag": "きれいに終わった",
+    "importance": 0.4,
+    "is_open": False,
+}
+
+
+def test_wm_all_block_closed_thread_is_headline_only():
+    """Close 済みスレッドは見出しだけの短縮行になること。
+
+    一覧は毎ターン全件が載る構造で、Close 済みは増え続ける。決着済みの話に
+    温度感（atmosphere_tag）と重要度は要らないため、Open 行では出るこれらが
+    Close 行では落ちることを固定する。summary と短縮 ID は Close でも残る
+    （read_working_memory_thread / reopen で参照するため）。
+    """
+    prompt = build_system_prompt(
+        "You are a cat.",
+        wm_all_threads=[_WM_OPEN_THREAD, _WM_CLOSED_THREAD],
+    )
+    # Open 行は従来どおり温度感と重要度つき
+    assert "手応えあり" in prompt
+    assert "重要度0.70" in prompt
+    # Close 行は見出しのみ
+    assert "決着した話題" in prompt
+    assert "wm-close" in prompt
+    assert "きれいに終わった" not in prompt
+    assert "重要度0.40" not in prompt
+
+
+def test_wm_all_block_announces_omitted_closed_threads():
+    """一覧から省いた Close 済みの本数と、取り出す手段が告知されること。
+
+    Close 済みを直近ぶんに絞ると「過去に越えてきたこと」がプロンプトから
+    見えなくなる。視界から黙って消すのではなく、残数とツール名を必ず添える
+    （存在は見えていて、中身は必要なときに開く、という形にするため）。
+    """
+    prompt = build_system_prompt(
+        "You are a cat.",
+        wm_all_threads=[_WM_OPEN_THREAD],
+        wm_omitted_closed=14,
+    )
+    assert "14 本" in prompt
+    assert "read_working_memory_list" in prompt
+
+
+def test_wm_all_block_no_notice_when_nothing_omitted():
+    """省略が無いターンでは告知行を出さないこと（常時出ると雑音になる）。"""
+    prompt = build_system_prompt(
+        "You are a cat.",
+        wm_all_threads=[_WM_OPEN_THREAD],
+        wm_omitted_closed=0,
+    )
+    assert "read_working_memory_list で一覧を取り出せます" not in prompt

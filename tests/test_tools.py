@@ -314,6 +314,64 @@ class TestToolExecutorExecute:
         assert "thread-9" in result
         wm.get_thread_detail.assert_called_once_with("thread-9")
 
+    def test_read_working_memory_list_calls_list_threads_by_type(self):
+        """read_working_memory_list ツールが最新ポート抜き（見出しのみ）で一覧を引く。
+
+        システムプロンプトの一覧は close 済みを直近ぶんに絞るため、それ以前を
+        キャラクター本人が取りに行く導線がこのツール。一覧用途ではポスト本文は
+        不要（長大になる）なので include_latest_post=False で引くことを固定する。
+        """
+        wm = self._make_wm()
+        wm.list_threads_by_type.return_value = [
+            {
+                "id": "thread-old-1",
+                "type": "topic",
+                "summary": "決着した話題",
+                "atmosphere_tag": "完",
+                "updated_at": "2026-07-01T10:00:00",
+            },
+        ]
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute("read_working_memory_list", {})
+
+        wm.list_threads_by_type.assert_called_once()
+        kwargs = wm.list_threads_by_type.call_args.kwargs
+        assert kwargs["is_open"] is False        # 既定は closed
+        assert kwargs["include_latest_post"] is False
+        assert kwargs["type"] is None
+        assert "thread-o" in result              # 短縮 ID（先頭8桁）で並ぶ
+        assert "決着した話題" in result
+        assert "2026-07-01" in result            # 更新日が見出しに付く
+
+    def test_read_working_memory_list_rejects_unknown_status(self):
+        """status に closed/open/all 以外を渡すとエラー文字列を返す（呼び出しは行わない）。"""
+        wm = self._make_wm()
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute("read_working_memory_list", {"status": "archived"})
+        assert "error" in result
+        wm.list_threads_by_type.assert_not_called()
+
+    def test_read_working_memory_list_paginates_with_offset(self):
+        """limit / offset で区切り、続きがあるときは次の offset を添えて返す。"""
+        wm = self._make_wm()
+        wm.list_threads_by_type.return_value = [
+            {
+                "id": f"thread-{i:04d}",
+                "type": "topic",
+                "summary": f"話題{i}",
+                "atmosphere_tag": "",
+                "updated_at": "2026-07-01T10:00:00",
+            }
+            for i in range(5)
+        ]
+        executor = self._make_executor(working_memory_manager=wm)
+        result = executor.execute(
+            "read_working_memory_list", {"status": "all", "limit": 2, "offset": 1}
+        )
+        assert "話題1" in result and "話題2" in result
+        assert "話題0" not in result and "話題3" not in result
+        assert "offset=3" in result   # 続きの読み方が示される
+
     def test_close_working_memory_thread_calls_set_open_false(self):
         """close_working_memory_thread ツールが WorkingMemoryManager.set_open(id, False) を呼び出す。"""
         wm = self._make_wm()

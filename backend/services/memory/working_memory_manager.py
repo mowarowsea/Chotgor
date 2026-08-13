@@ -33,6 +33,16 @@ from backend.services.memory.decay import (
 
 logger = logging.getLogger(__name__)
 
+# 一覧注入（システムプロンプト）に載せる Close 済みスレッドの既定上限。
+# Close は決着済みだが件数が増え続けるためプロンプトを単調に圧迫する。直近ぶんだけを
+# 一覧へ残し、それ以前は read_working_memory_list ツールで本人が取りに行く形にする
+# （current-spec/memory_recall_algorithm.md §4.3）。
+DEFAULT_CLOSED_INDEX_LIMIT = 30
+
+# heat 想起で切り捨てる下限。関連の薄いスレッドまで前景へ上がるのを防ぐ。
+# 該当なし（0件）のターンがあってよい。
+DEFAULT_WM_RECALL_MIN_HEAT = 0.05
+
 
 class WorkingMemoryManager:
     """SQLite と LanceStore を協調させてワーキングメモリのスレッド・ポストを管理するクラス。
@@ -357,13 +367,41 @@ class WorkingMemoryManager:
             )
         return matches[0] if matches else None
 
-    def list_all_threads(self, character_id: str) -> list[dict]:
-        """全スレッド（Open/Close 問わず）を dict リストで返す。
+    def list_all_threads(
+        self,
+        character_id: str,
+        closed_limit: int | None = DEFAULT_CLOSED_INDEX_LIMIT,
+    ) -> tuple[list[dict], int]:
+        """一覧注入用のスレッドと、一覧から省いた Close 済み本数を返す。
 
         self_history 代替の「全スレッド一覧」注入に使う。最新ポストは含めない。
+        Open は常に全件、Close 済みは updated_at 降順で closed_limit 本までに絞る。
+        省いた本数は告知行に使い、本体は read_working_memory_list で取りに行ける
+        （視界から消すのではなく「存在は見えていて中身は開いて読む」形にする）。
+
+        Args:
+            character_id: キャラクター ID。
+            closed_limit: 一覧に載せる Close 済みの上限本数。None なら全件（省略数は 0）。
+
+        Returns:
+            (スレッド dict リスト（updated_at 降順）, 一覧から省いた Close 本数)。
         """
         threads = self.sqlite.list_working_memory_threads(character_id)
-        return [self._thread_to_dict(t) for t in threads]
+        if closed_limit is None:
+            return [self._thread_to_dict(t) for t in threads], 0
+        kept = []
+        closed_seen = 0
+        omitted = 0
+        for t in threads:
+            if t.is_open:
+                kept.append(t)
+                continue
+            closed_seen += 1
+            if closed_seen <= closed_limit:
+                kept.append(t)
+            else:
+                omitted += 1
+        return [self._thread_to_dict(t) for t in kept], omitted
 
     def get_fixed_threads(
         self,
@@ -409,16 +447,26 @@ class WorkingMemoryManager:
         character_id: str,
         type: str | None = None,
         is_open: bool | None = None,
+        include_latest_post: bool = True,
     ) -> list[dict]:
-        """type / is_open で絞り込んだスレッド一覧を返す（Chronicle・UI 用）。"""
+        """type / is_open で絞り込んだスレッド一覧を返す（Chronicle・UI・一覧ツール用）。
+
+        Args:
+            include_latest_post: False なら最新ポスト本文を含めない。見出しだけを並べる
+                read_working_memory_list 用（ポスト本文はそのまま出すと長大なため）。
+        """
         threads = self.sqlite.list_working_memory_threads(character_id, type=type, is_open=is_open)
-        return [self._thread_to_dict(t, include_latest_post=True) for t in threads]
+        return [
+            self._thread_to_dict(t, include_latest_post=include_latest_post)
+            for t in threads
+        ]
 
     def recall_threads(
         self,
         character_id: str,
         query: str,
-        top_k: int = 5,
+        top_k: int = 3,
+        min_heat: float = DEFAULT_WM_RECALL_MIN_HEAT,
     ) -> list[dict]:
         """task/topic の Open スレッドを heat 上位 TopK で想起する。
 
@@ -433,6 +481,7 @@ class WorkingMemoryManager:
             character_id: キャラクター ID。
             query: 検索クエリ（直近のユーザー発言など）。
             top_k: 返す最大件数。
+            min_heat: この heat 未満のスレッドは前景に上げない（0件のターンがあってよい）。
 
         Returns:
             heat 降順のスレッド dict リスト（``heat`` キー付き、最新ポスト込み）。
@@ -459,6 +508,8 @@ class WorkingMemoryManager:
             decay = exp_decay(1.0, elapsed, half_life)
             relevance = distance_to_similarity(r.get("distance", 1.0))
             heat = thread.importance * decay * relevance
+            if heat < min_heat:
+                continue
             d = self._thread_to_dict(thread, include_latest_post=True)
             d["heat"] = heat
             scored.append(d)

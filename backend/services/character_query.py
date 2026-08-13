@@ -85,13 +85,16 @@ def _collect_wm_blocks(
         recall_query: heat 想起のクエリ。None なら WM heat 想起をスキップ。
 
     Returns:
-        (wm_all_threads, wm_fixed_threads, wm_recalled_threads) のタプル。
+        (wm_all_threads, wm_fixed_threads, wm_recalled_threads, wm_omitted_closed) の
+        タプル。末尾は一覧から省いた Close 済みスレッド本数（告知行に使う）。
     """
     if working_memory_manager is None:
-        return None, None, None
+        return None, None, None, 0
     wm_all = wm_fixed = wm_recalled = None
+    wm_omitted_closed = 0
     try:
-        wm_all = working_memory_manager.list_all_threads(character_id) or None
+        wm_all, wm_omitted_closed = working_memory_manager.list_all_threads(character_id)
+        wm_all = wm_all or None
         wm_fixed = working_memory_manager.get_fixed_threads(character_id) or None
         if recall_query:
             wm_recalled = (
@@ -99,7 +102,7 @@ def _collect_wm_blocks(
             )
     except Exception as e:
         _log.warning("ワーキングメモリ取得失敗 character_id=%s error=%s", character_id, e)
-    return wm_all, wm_fixed, wm_recalled
+    return wm_all, wm_fixed, wm_recalled, wm_omitted_closed
 
 _log = logging.getLogger(__name__)
 
@@ -184,8 +187,8 @@ async def ask_character(
                 character_id, e,
             )
 
-    wm_all_threads, wm_fixed_threads, wm_recalled_threads = _collect_wm_blocks(
-        working_memory_manager, character_id, recall_query
+    wm_all_threads, wm_fixed_threads, wm_recalled_threads, wm_omitted_closed = (
+        _collect_wm_blocks(working_memory_manager, character_id, recall_query)
     )
     user_label, user_position = _resolve_user_info(char, settings)
 
@@ -193,6 +196,7 @@ async def ask_character(
         character_system_prompt=char.system_prompt_block1 or "",
         inner_narrative=char.inner_narrative or "",
         wm_all_threads=wm_all_threads,
+        wm_omitted_closed=wm_omitted_closed,
         wm_fixed_threads=wm_fixed_threads,
         user_label=user_label,
         user_position=user_position,
@@ -322,8 +326,8 @@ async def ask_character_with_tools(
     wm = working_memory_manager or WorkingMemoryManager(
         sqlite=sqlite, vector_store=memory_manager.vector_store
     )
-    wm_all_threads, wm_fixed_threads, wm_recalled_threads = _collect_wm_blocks(
-        wm, character_id, recall_query
+    wm_all_threads, wm_fixed_threads, wm_recalled_threads, wm_omitted_closed = (
+        _collect_wm_blocks(wm, character_id, recall_query)
     )
     user_label, user_position = _resolve_user_info(char, settings)
 
@@ -331,6 +335,7 @@ async def ask_character_with_tools(
         character_system_prompt=char.system_prompt_block1 or "",
         inner_narrative=char.inner_narrative or "",
         wm_all_threads=wm_all_threads,
+        wm_omitted_closed=wm_omitted_closed,
         wm_fixed_threads=wm_fixed_threads,
         use_tools=True,
         user_label=user_label,

@@ -123,7 +123,7 @@
 | `inscriber.py` | `inscribe_memory` — 長期記憶への刻み込み |
 | `recaller.py` | `power_recall` — 能動的記憶検索 |
 | `carver.py` | `carve_narrative` — inner_narrative の自己書き換え |
-| `threader.py` | `post` / `read` / `close` / `reopen` / `merge`_working_memory_thread(s) — WMスレッド操作（最高頻度。post は thread_id 省略で新規作成） |
+| `threader.py` | `post` / `read` / `close` / `reopen` / `merge`_working_memory_thread(s) ＋ `read_working_memory_list` — WMスレッド操作（最高頻度。post は thread_id 省略で新規作成。list は一覧に載らない close 済みを取りに行く導線） |
 | `web_searcher.py` | `web_search` — Tavily 経由の外部検索 |
 | `leaver.py` | `take_leave` — 本人宣言の離席（away 設定＋chat.farewell 封筒） |
 | `messenger.py` | `reach_out`（うつつ専用・現実へのプッシュ送信＋visit=対面ON＋うつつポーズ要求）／ `visit_user`（1on1専用・対面モードON）。push 実体は `services/actions/runner.execute_push` を共有。日次予算は `spontaneous_initiative_daily_cap`（キャラ自発のリクエストのみ消費。預かり配達はユーザ起点なので消費しない）を発話予約と共有 |
@@ -164,8 +164,10 @@ frontend useChat
       1.  長期記憶を想起（RAG）→ 想起記憶ブロック（ターン注釈側 {block_memories}）
           クエリは「最新userメッセージのタグ除去後・末尾 N 文字」。末尾なのは最新発話が
           末尾にあり、embedding が超過分を先頭優先で切るため（current-spec/memory_recall_algorithm.md §0）
-      1b. ワーキングメモリ取得 → 全スレッド一覧/固定注入（システム {block_wm_all} / {block_wm_fixed}）
+      1b. ワーキングメモリ取得 → スレッド一覧/固定注入（システム {block_wm_all} / {block_wm_fixed}）
           + heat 想起（ターン注釈側 {block_wm_recalled}）
+          一覧は Open 全件 + close 済み直近ぶん（省略分は本数を告知し read_working_memory_list へ誘導）、
+          heat 想起は下限つき TopK。分量規定は current-spec/memory_recall_algorithm.md §4
       2.  メッセージ内URLの自動fetch → fetched ブロック（ターン注釈側 {block_fetched}）
       3.  request_builder が二層で組み立て（プロンプトキャッシュ対応。二層化の根拠は
           request_builder.py モジュール docstring）:

@@ -3,6 +3,7 @@
 Threader クラスと関連定数を一元管理する。
 - post_working_memory_thread     : スレッドの新規作成・既存スレッドへのポスト追加・要約更新
 - read_working_memory_thread     : スレッド1本の詳細（全ポストの履歴）を読む
+- read_working_memory_list       : スレッドの見出し一覧を取り出す（システムプロンプトに載らない過去ぶんの導線）
 - close_working_memory_thread    : 決着・終息したスレッドを閉じる
 - reopen_working_memory_thread   : 再燃したスレッドを再オープンする
 - merge_working_memory_threads   : 同一問題の別角度だったスレッドを統合する（from_ids を閉じ、into_id に経緯を残す）
@@ -14,6 +15,8 @@ inscriber.py / carver.py と対称的な構成。
 
 import json
 import logging
+
+from backend.services.memory.format import short_thread_id
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +46,15 @@ POST_WORKING_MEMORY_THREAD_SCHEMA: dict = {
         },
         "summary": {
             "type": "string",
-            "description": "スレッドのタイトル・要約。新規作成時は必須。更新時は指定すると上書きする。",
+            "description": (
+                "スレッドのタイトル・要約。新規作成時は必須。更新時は指定すると上書きする。"
+                "30字程度の見出しに収める（一覧に毎回並ぶため、長いほど他のスレッドが埋もれる）。"
+            ),
         },
         "atmosphere_tag": {
             "type": "string",
             "description": (
-                "スレッドの質感を表す短いタグ。アクティブなら今の温度感、"
+                "スレッドの質感を表す短いタグ（20字程度）。アクティブなら今の温度感、"
                 "閉じる段階ならどんな終わり方をしたかを簡潔に。"
                 "例: "
                 "✅ 結論は出ていない"
@@ -70,7 +76,11 @@ POST_WORKING_MEMORY_THREAD_SCHEMA: dict = {
         },
         "content": {
             "type": "string",
-            "description": "スレッドに追加する新しいポストの本文。時系列の書き込みとして連なる。",
+            "description": (
+                "スレッドに追加する新しいポストの本文。時系列の書き込みとして連なる。"
+                "200字程度が目安（短期記憶なので経緯や詳細を含めてよい。必要なら超えて"
+                "かまわないが、書けるだけ書くのではなく、その一件が分かる密度に絞る）。"
+            ),
         },
         "relation_target": {
             "type": "string",
@@ -90,6 +100,35 @@ READ_WORKING_MEMORY_THREAD_SCHEMA: dict = {
         },
     },
     "required": ["thread_id"],
+}
+
+# --- ツール呼び出し方式: read_working_memory_list パラメータスキーマ ---
+READ_WORKING_MEMORY_LIST_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "status": {
+            "type": "string",
+            "enum": ["closed", "open", "all"],
+            "description": (
+                "取り出す範囲。既定は closed"
+                "（システムプロンプトの一覧に載っていない、以前 close したスレッド）。"
+            ),
+        },
+        "type": {
+            "type": "string",
+            "enum": ["emotion", "body", "task", "topic", "relation"],
+            "description": "種別で絞り込む。省略時は全種別。",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "1回に返す最大本数（既定50・上限200）。",
+        },
+        "offset": {
+            "type": "integer",
+            "description": "読み飛ばす本数。続きを読むときに使う。",
+        },
+    },
+    "required": [],
 }
 
 # --- ツール呼び出し方式: close_working_memory_thread パラメータスキーマ ---
@@ -148,6 +187,14 @@ POST_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
 READ_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
     "ワーキングメモリのスレッド1本の詳細（全ポストの履歴）を展開して読む。"
     "経緯を詳しく思い出したいときに使う。"
+)
+
+READ_WORKING_MEMORY_LIST_TOOL_DESCRIPTION: str = (
+    "ワーキングメモリのスレッド見出し一覧を取り出す（ポスト本文は含まない）。"
+    "システムプロンプトのスレッド一覧には、以前 close したスレッドは直近ぶんしか載っていない。"
+    "それより前に自分が越えてきたことを見渡したいときに使う。"
+    "status で closed（既定）/ open / all、type で種別を絞れる。"
+    "気になるスレッドが見つかったら read_working_memory_thread で中身を開く。"
 )
 
 CLOSE_WORKING_MEMORY_THREAD_TOOL_DESCRIPTION: str = (
@@ -312,6 +359,73 @@ class Threader:
         if detail is None:
             return f"[read_working_memory_thread: スレッド '{thread_id}' が見つかりません]"
         return json.dumps(detail, ensure_ascii=False, indent=2)
+
+    def read_working_memory_list(
+        self,
+        status: str = "closed",
+        type: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> str:
+        """スレッドの見出し一覧を返す（ポスト本文は含まない）。
+
+        システムプロンプトの一覧は Close 済みを直近ぶんに絞っているため、それ以前の
+        スレッドをキャラクター本人が取りに行くための導線
+        （current-spec/memory_recall_algorithm.md §4.3）。
+
+        Returns:
+            1行1スレッドの見出しテキスト。該当なしならその旨のメッセージ。
+        """
+        wm = self.working_memory_manager
+        if wm is None:
+            return "ワーキングメモリは利用できない。"
+        status_key = (status or "closed").strip().lower()
+        if status_key not in ("closed", "open", "all"):
+            return "[read_working_memory_list error: status は closed / open / all のいずれかです]"
+        is_open = {"closed": False, "open": True, "all": None}[status_key]
+        try:
+            limit = max(1, min(int(limit or 50), 200))
+            offset = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            return "[read_working_memory_list error: limit / offset は整数で指定してください]"
+        try:
+            threads = wm.list_threads_by_type(
+                self.character_id,
+                type=type or None,
+                is_open=is_open,
+                include_latest_post=False,
+            )
+        except Exception as e:
+            logger.exception("read_working_memory_list 失敗 char=%s", self.character_id)
+            return f"[read_working_memory_list error: {e}]"
+
+        total = len(threads)
+        page = threads[offset:offset + limit]
+        label = {"closed": "close 済みの", "open": "open 中の", "all": "全"}[status_key]
+        if not page:
+            return f"該当する{label}スレッドはない（全{total}本）。"
+        lines = [
+            f"{label}スレッド {total} 本のうち "
+            f"{offset + 1}〜{offset + len(page)} 本目（更新の新しい順）:"
+        ]
+        for t in page:
+            head = (
+                f"[{short_thread_id(t['id'])}] ({t.get('type', '')}) "
+                f"{t.get('summary', '')}"
+            )
+            atmo = (t.get("atmosphere_tag") or "").strip()
+            if atmo:
+                head += f"　｜　{atmo}"
+            updated = (t.get("updated_at") or "")[:10]
+            if updated:
+                head += f"　｜　更新{updated}"
+            lines.append(head)
+        remaining = total - (offset + len(page))
+        if remaining > 0:
+            lines.append(
+                f"（ほかに {remaining} 本ある。offset={offset + len(page)} で続きを読める）"
+            )
+        return "\n".join(lines)
 
     def close_working_memory_thread(self, thread_id: str) -> str:
         """スレッドを閉じる（is_open=False に設定する）。
