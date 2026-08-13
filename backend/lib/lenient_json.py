@@ -42,8 +42,14 @@ def parse_lenient_json(
 
     Returns:
         - dict: 素直にパースできた、または修復パース成功
-        - None: 応答が空 / `null` / JSON が dict ではない
-        - {}:  修復パースも失敗（呼び出し側で「パース失敗」として扱う契約）
+        - None: 応答が空、または **JSON として読めた上で** dict ではない
+          （`null` / リスト / 文字列。LLM が明示的に「変更なし」を返したケース）
+        - {}:  JSON として読めず、修復しても dict にならなかった
+          （呼び出し側で「パース失敗」として扱う契約）
+
+    None と {} の境目は重要である。chronicle は None を「変更なし＝正常終了」と
+    見なして当日会話を処理済みにマークするため、パース失敗を None で返すと
+    **その日の会話が二度と棚卸しされないまま失われる**。
     """
     if not response_text:
         return None
@@ -63,20 +69,30 @@ def parse_lenient_json(
         result = json.loads(text)
     except Exception:
         try:
-            result = repair_json(text, return_objects=True)
+            repaired = repair_json(text, return_objects=True)
         except Exception as e:
             _log.warning(
                 "parse_lenient_json: 修復パースも失敗 feature=%s error=%s",
                 feature_label or "(none)", e,
             )
             return {}
+        if not isinstance(repaired, dict):
+            # json-repair は救えない入力に対して例外ではなく空文字列などを返す
+            # （例: "これはJSONではありません" → ""）。ここを None（＝変更なし）で
+            # 返すと、呼び出し側がパース失敗を正常終了と取り違える。
+            _log.warning(
+                "parse_lenient_json: 修復しても dict にならず feature=%s type=%s",
+                feature_label or "(none)", type(repaired).__name__,
+            )
+            return {}
         _log.info(
             "parse_lenient_json: json-repair で修復成功 feature=%s len=%d",
             feature_label or "(none)", len(text),
         )
+        return repaired
 
     if isinstance(result, dict):
         return result
-    # LLM が `null` / リスト / 文字列を返した場合は「変更なし」扱いで None を返す
-    # （chronicle 経路の既存挙動と互換）
+    # JSON としては読めたが dict ではない（`null` / リスト / 文字列）。
+    # LLM が明示的に「変更なし」を返したケースとして None を返す。
     return None
