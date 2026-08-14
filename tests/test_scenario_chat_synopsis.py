@@ -152,7 +152,7 @@ class TestBuildSynopsisSystemPrompt:
         その再発防止として、以下 3 点がプロンプトに含まれることを固定する:
             - 与えられる履歴は「続き」であって物語全体ではない
             - 出力は物語の冒頭から書き始める
-            - 既存あらすじの区間は圧縮してよいが削除は禁止
+            - 既存あらすじの区間は圧縮・マージで残す（丸ごと削除ではない）
         """
         out = build_synopsis_system_prompt(
             FakeScenario(), existing_auto="勇者はレイカと出会った。"
@@ -160,7 +160,8 @@ class TestBuildSynopsisSystemPrompt:
         assert "継承規則" in out
         assert "続き" in out
         assert "冒頭" in out
-        assert "削除しない" in out or "削除することでは行わない" in out
+        # 削除禁止型から「圧縮して残す／マージしてよい」型の文言へ移行済み
+        assert "圧縮して残す" in out or "マージ" in out
 
     def test_no_existing_auto_omits_inheritance_rules(self):
         """既存 auto が空なら、継承規則も「これまでのあらすじ」への言及も出ないこと。
