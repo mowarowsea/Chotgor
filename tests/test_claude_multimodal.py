@@ -208,3 +208,52 @@ class TestGenerateRawSendsImages:
         # 「画像が見えない」旨の但し書きが system prompt へ混ざっていないこと
         assert "cannot" not in captured["system_prompt"].lower()
         assert captured["system_prompt"] == "あなたは はる。"
+
+
+class TestAudioPartIsIgnored:
+    """音声パートが混ざっても Claude CLI 経路が壊れないことを検証する。
+
+    Anthropic は音声入力を持たない（document ブロックへ audio/mpeg を載せると
+    「PDF ではない形式または破損したファイル」として API が拒否する。2026-08-19 実測）。
+    入口ガード（プロバイダー能力宣言）で止めるのが本筋だが、万一ここまで届いても
+    例外を出さず・不正なブロックを組み立てず、テキストだけで発話が成立すること。
+    """
+
+    def test_extract_latest_images_ignores_audio(self):
+        """input_audio パートは image ブロックへ変換されないこと。"""
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "これ聴いて"},
+                {"type": "input_audio", "input_audio": {"data": PNG_B64, "format": "mp3"}},
+            ],
+        }]
+        assert _extract_latest_images(messages) == []
+
+    def test_conversation_text_survives_audio_part(self):
+        """会話テキストの組み立てが音声パートで壊れないこと。"""
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "これ聴いて"},
+                {"type": "input_audio", "input_audio": {"data": PNG_B64, "format": "mp3"}},
+            ],
+        }]
+        assert _format_conversation(messages, "はる") == "これ聴いて"
+
+    def test_stdin_payload_has_text_only(self):
+        """stdin ペイロードにはテキストブロックだけが載ること（音声は捨てられる）。"""
+        import json
+
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "これ聴いて"},
+                {"type": "input_audio", "input_audio": {"data": PNG_B64, "format": "mp3"}},
+            ],
+        }]
+        payload = _build_stdin_payload(
+            _format_conversation(messages, "はる"), _extract_latest_images(messages)
+        )
+        content = json.loads(payload.decode("utf-8"))["message"]["content"]
+        assert content == [{"type": "text", "text": "これ聴いて"}]

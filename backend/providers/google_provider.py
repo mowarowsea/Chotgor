@@ -36,6 +36,16 @@ _THINKING_BUDGET = {
     "high": 16000,
 }
 
+#: OpenAI 準拠 `input_audio` の format 値 → Gemini inline_data の mime_type。
+#: content.py の audio_format() が出す値と対になっている。
+_AUDIO_FORMAT_TO_MIME = {
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "ogg": "audio/ogg",
+    "flac": "audio/flac",
+    "aac": "audio/aac",
+}
+
 
 def _to_loggable(value):
     """google-genai SDK objectsをデバッグログに残しやすい形へ寄せる。"""
@@ -257,6 +267,19 @@ class GoogleProvider(BaseLLMProvider):
                                             mime_type=mime_type
                                         )
                                     )
+                        elif itype == "input_audio":
+                            # OpenAI 準拠の input_audio（format は "mp3" 等）を
+                            # Gemini の inline_data へ載せ替える。
+                            audio = item.get("input_audio") or {}
+                            mime_type = _AUDIO_FORMAT_TO_MIME.get(audio.get("format"))
+                            b64_data = audio.get("data")
+                            if mime_type and b64_data:
+                                parts.append(
+                                    types.Part.from_bytes(
+                                        data=base64.b64decode(b64_data),
+                                        mime_type=mime_type,
+                                    )
+                                )
             if parts:
                 contents.append(
                     types.Content(role="model" if role == "assistant" else "user", parts=parts)

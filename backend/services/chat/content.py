@@ -8,7 +8,7 @@ import base64
 import os
 from typing import Any
 
-from backend.lib.attachments import attachment_kind
+from backend.lib.attachments import attachment_kind, audio_format
 from backend.services.chat.models import Message
 
 
@@ -23,6 +23,12 @@ def build_message_content(
     添付がある場合は OpenAI 準拠のコンテンツリストを返す。
     添付がない場合、またはsqlite/uploads_dirが未指定の場合はテキスト文字列をそのまま返す。
     1件も読み込めなかった場合もテキスト文字列を返す。
+
+    パートの形式は mime から導出した種別で出し分ける:
+        image → `{"type": "image_url", "image_url": {"url": "data:...;base64,..."}}`
+        audio → `{"type": "input_audio", "input_audio": {"data": ..., "format": "mp3"}}`
+    どちらも OpenAI 準拠。独自形式を作らずに済み、将来 openai_provider が音声へ
+    対応したときそのまま乗る（Anthropic は音声非対応なので寄せる理由がない）。
 
     Args:
         text: メッセージ本文テキスト。
@@ -44,14 +50,30 @@ def build_message_content(
         att_path = os.path.join(uploads_dir, att_id)
         if not os.path.exists(att_path):
             continue
-        with open(att_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        parts.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:{att_meta.mime_type};base64,{b64}"},
-        })
+        mime = getattr(att_meta, "mime_type", None)
+        part = _build_attachment_part(att_path, mime)
+        if part:
+            parts.append(part)
 
     return parts if len(parts) > 1 else text
+
+
+def _build_attachment_part(att_path: str, mime_type) -> dict | None:
+    """添付ファイル1件をコンテンツパートへ変換する。種別を導出できなければ None。"""
+    kind = attachment_kind(mime_type)
+    if kind is None:
+        return None
+    with open(att_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    if kind == "audio":
+        fmt = audio_format(mime_type)
+        if not fmt:
+            return None
+        return {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}}
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{b64}"},
+    }
 
 
 #: 過去ターンの添付を置き換える痕跡テキスト。種別ごとに1行（同種は1行にまとめる）。

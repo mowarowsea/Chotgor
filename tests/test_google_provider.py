@@ -206,6 +206,54 @@ class TestBuildContents:
         assert captured_part_texts == ["本文"], \
             f"システムプロンプトがメッセージに埋め込まれている: {captured_part_texts}"
 
+    def test_input_audio_becomes_inline_bytes_part(self):
+        """OpenAI 準拠の input_audio パートが Gemini の inline data Part へ載ること。
+
+        format（"mp3"）から mime_type（"audio/mpeg"）を復元し、base64 をデコードして
+        from_bytes へ渡す。曲そのものを聴かせるための唯一の経路。
+        """
+        provider = GoogleProvider(api_key="dummy")
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "これ聴いて"},
+                {"type": "input_audio", "input_audio": {"data": "QUJD", "format": "mp3"}},
+            ],
+        }]
+
+        captured: list[dict] = []
+        with _patch_provider() as stack:
+            stack._mock_types.Part.from_bytes = MagicMock(
+                side_effect=lambda **kw: captured.append(kw)
+            )
+            provider._build_contents(messages)
+
+        assert len(captured) == 1, "音声パートが1件 from_bytes へ渡ること"
+        assert captured[0]["mime_type"] == "audio/mpeg"
+        assert captured[0]["data"] == b"ABC"
+
+    def test_unknown_audio_format_is_dropped(self):
+        """未知の format はパート化せず捨てること（不正な mime で API を落とさない）。"""
+        provider = GoogleProvider(api_key="dummy")
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "これ聴いて"},
+                {"type": "input_audio", "input_audio": {"data": "QUJD", "format": "midi"}},
+            ],
+        }]
+
+        captured: list[dict] = []
+        with _patch_provider() as stack:
+            stack._mock_types.Part.from_bytes = MagicMock(
+                side_effect=lambda **kw: captured.append(kw)
+            )
+            contents = provider._build_contents(messages)
+
+        assert captured == []
+        # テキストパートは残るのでメッセージ自体は成立する
+        assert len(contents) == 1
+
     def test_empty_content_skipped(self):
         """content が空（None や空文字）のメッセージは contents に追加されないこと。"""
         provider = GoogleProvider(api_key="dummy")

@@ -4,6 +4,7 @@
     apply_context_window() — chronicle済みメッセージ数を制限してコンテキストを圧縮する
     attachment_trace()     — 過去ターンの添付を痕跡テキストへ落とす
     build_1on1_history()   — 履歴を Message リストへ変換する（添付の実体は載せない）
+    build_message_content() — 最新ターンの添付をコンテンツパートへ載せる
 
 テスト方針:
     - ChatMessage の代わりに SimpleNamespace で chronicled_at を持つ軽量オブジェクトを使う
@@ -20,6 +21,7 @@ from backend.services.chat.content import (
     apply_context_window,
     attachment_trace,
     build_1on1_history,
+    build_message_content,
 )
 
 
@@ -271,3 +273,73 @@ class TestBuild1on1HistoryAttachments:
         ]
         messages = build_1on1_history(history, sqlite, "/tmp/uploads")
         assert all(isinstance(m.content, str) for m in messages)
+
+
+# ─── 添付パートの出し分け（build_message_content） ────────────────────────────
+
+
+class TestBuildMessageContent:
+    """build_message_content() — 最新ターンの添付をコンテンツパートへ載せる変換のテスト。
+
+    mime から導出した種別で形式を出し分ける。画像は OpenAI vision の image_url
+    （data URL）、音声は OpenAI 準拠の input_audio。どちらもプロバイダー非依存の
+    内部表現であり、各プロバイダーがここから自分の形式へ載せ替える。
+    """
+
+    def _uploads(self, tmp_path, files: dict[str, bytes]) -> str:
+        """uploads_dir を模した一時ディレクトリへ添付実体を置く。"""
+        for att_id, data in files.items():
+            (tmp_path / att_id).write_bytes(data)
+        return str(tmp_path)
+
+    def test_no_attachments_returns_plain_text(self):
+        """添付がなければ文字列をそのまま返すこと。"""
+        assert build_message_content("やあ", [], _FakeSqlite({}), "/tmp") == "やあ"
+
+    def test_missing_sqlite_returns_plain_text(self):
+        """sqlite 未指定ならメタデータを引けないため文字列を返すこと。"""
+        assert build_message_content("やあ", ["a1"], None, "/tmp") == "やあ"
+
+    def test_image_becomes_image_url_part(self, tmp_path):
+        """画像は data URL 形式の image_url パートになること。"""
+        uploads = self._uploads(tmp_path, {"a1": b"ABC"})
+        sqlite = _FakeSqlite({"a1": "image/png"})
+        result = build_message_content("これ見て", ["a1"], sqlite, uploads)
+        assert result[0] == {"type": "text", "text": "これ見て"}
+        assert result[1] == {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,QUJD"},
+        }
+
+    def test_audio_becomes_input_audio_part(self, tmp_path):
+        """音声は OpenAI 準拠の input_audio パートになり、format が mime から導出されること。"""
+        uploads = self._uploads(tmp_path, {"a1": b"ABC"})
+        sqlite = _FakeSqlite({"a1": "audio/mpeg"})
+        result = build_message_content("これ聴いて", ["a1"], sqlite, uploads)
+        assert result[1] == {
+            "type": "input_audio",
+            "input_audio": {"data": "QUJD", "format": "mp3"},
+        }
+
+    def test_mixed_attachments_keep_order(self, tmp_path):
+        """画像と音声が混在しても、指定された順にパートが並ぶこと。"""
+        uploads = self._uploads(tmp_path, {"a1": b"ABC", "a2": b"ABC"})
+        sqlite = _FakeSqlite({"a1": "audio/wav", "a2": "image/jpeg"})
+        result = build_message_content("両方", ["a1", "a2"], sqlite, uploads)
+        assert [p["type"] for p in result] == ["text", "input_audio", "image_url"]
+        assert result[1]["input_audio"]["format"] == "wav"
+
+    def test_unknown_mime_is_dropped_and_falls_back_to_text(self, tmp_path):
+        """扱えない MIME はパート化せず、結果が本文だけならテキストへ戻ること。
+
+        アップロードAPIで弾いているので通常は届かないが、旧レコード等が
+        混ざっても不正なパートを LLM へ流さない。
+        """
+        uploads = self._uploads(tmp_path, {"a1": b"ABC"})
+        sqlite = _FakeSqlite({"a1": "application/pdf"})
+        assert build_message_content("なにか", ["a1"], sqlite, uploads) == "なにか"
+
+    def test_missing_file_is_skipped(self, tmp_path):
+        """実体ファイルが消えている添付は飛ばすこと（例外を投げない）。"""
+        sqlite = _FakeSqlite({"a1": "image/png"})
+        assert build_message_content("消えた", ["a1"], sqlite, str(tmp_path)) == "消えた"
