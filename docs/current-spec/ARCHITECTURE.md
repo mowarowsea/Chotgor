@@ -93,7 +93,7 @@
 | `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / switch / WMスレッド操作…）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
 | `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00）と `forget_job.py`（長期記憶の忘却、04:00固定） |
-| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用） |
+| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用） |
 | `mcp_server.py` | Claude CLI 用 MCP stdio サーバー（backendへのHTTPプロキシ） |
 | `templates/` + `static/` | 管理UIのJinja2テンプレートと `chotgor.css`（デザインシステム。規約は CLAUDE.md） |
 
@@ -158,15 +158,8 @@
 | パス | 内容 |
 |---|---|
 | `debug/{request_id}/` | `CHOTGOR_DEBUG=1`（`run.bat -debug on`）時のリクエスト単位の生ログ。Logs UI が `debug_log_entries.raw_dir` 経由で参照する。フォルダが無くても `api/logs_ui/entries.py` の `raw_path.exists()` ガードで素通りするため UI は壊れない（一覧・発話・応答・reasoning は DB 側に残る） |
-| `debug/_archive/` | 月単位で tar.gz 化した過去ログと `archive.log`。`scripts/archive_debug_logs.sh` が退避する |
+| `debug/_archive/` | 月単位で tar.gz 化した過去ログ。`lib/debug_log_archiver.py` が日次スケジューラ（05:30）から畳む。復元は `tar -xzf debug/_archive/debug_YYYYMM.tar.gz` |
 | `logs/chotgor.log*` | アプリケーションログ（10世代ローテーション） |
-
-### scripts/
-
-| パス | 内容 |
-|---|---|
-| `archive_debug_logs.sh` | `debug/` の生ログを月単位で `debug/_archive/debug_YYYYMM.tar.gz` へ退避する。当月・前月は残す。tar 内エントリ数と実体が一致した月だけ元データを削除するため、検証 NG なら生ログは消えない。対象月が無ければ即終了する冪等な作りで、何度実行してもよい |
-| `register_archive_task.ps1` | 上記を Windows タスクスケジューラへ登録する（毎日 04:00 起動・実行を逃した場合は次回起動時に補償）。実行漏れの補償があるため月次トリガーではなく日次にしてある |
 
 ## 3. 主要処理フロー
 
@@ -444,7 +437,8 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 `_run_every_minute`(60秒周期)。どちらも heartbeat（`scheduler_heartbeat_{name}`）を毎周上書きする。
 各機構は tick 関数（実行内容と冪等キーだけ）を渡して起動する:
 - 日次: chronicle（`chronicle_time` 既定 03:00）・forget（04:00 固定）・
-  instruments（`instruments_patrol_time` 既定 05:00 巡回）
+  instruments（`instruments_patrol_time` 既定 05:00 巡回）・debug_archive（05:30 固定＝
+  デバッグログの月次退避。当月・前月より古い月が無ければ空振りする）
 - 毎分: action（2時間格子＋ジッター評価）・usual_days（うつつシーン＋push再開）・
   escrow_delivery（能動配達）・weekly_schedule（日曜夜 `weekly_schedule_time` 既定 20:00 に
   翌週分、コールドスタートは当週分即時）・sudden_event（③伏せ枠の発火＝GM 具体化→

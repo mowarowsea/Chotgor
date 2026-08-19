@@ -21,6 +21,7 @@ from backend.api import translation as translation_module
 from backend.api import mcp_tools as mcp_tools_module
 from backend.services.chat.service import ChatService
 from backend.lib.log_context import new_message_id, setup_logging
+from backend.lib.debug_log_archiver import archive_debug_logs
 from backend.repositories.lance.store import LanceStore
 from backend.batch.chronicle_job import run_pending_chronicles
 from backend.batch.forget_job import run_pending_forget
@@ -133,6 +134,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_run_daily(
         app, name="instruments", label="計器巡回", fn=_instruments_patrol,
         default_time="05:00", time_setting_key="instruments_patrol_time",
+    ))
+    asyncio.create_task(_run_daily(
+        app, name="debug_archive", label="デバッグログ退避", fn=_debug_archive_batch,
+        default_time="05:30",
     ))
     # 毎分スケジューラ（冪等キーの管理は各 tick の責務）
     asyncio.create_task(_run_every_minute(app, name="usual_days", label="うつつ", fn=_usual_days_tick))
@@ -253,6 +258,17 @@ async def _chronicle_batch(app: FastAPI) -> None:
 async def _forget_batch(app: FastAPI) -> None:
     """forget 日次バッチの実行内容（_run_daily から呼ばれる。04:00 固定＝chronicle 後）。"""
     await run_pending_forget(app.state.sqlite, app.state.memory_manager)
+
+
+async def _debug_archive_batch(app: FastAPI) -> None:
+    """デバッグログ退避の実行内容（_run_daily から呼ばれる。05:30 固定＝計器巡回の後）。
+
+    数百MB規模だと圧縮に数分かかるため、必ず別スレッドへ逃がす
+    （イベントループ上で回すとその間チャットの応答が止まる）。
+    """
+    archived = await asyncio.to_thread(archive_debug_logs)
+    if archived:
+        logging.getLogger(__name__).info("デバッグログ退避 対象月=%s", ", ".join(archived))
 
 
 async def _instruments_patrol(app: FastAPI) -> None:
