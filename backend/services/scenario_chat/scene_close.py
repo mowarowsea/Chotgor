@@ -7,9 +7,12 @@
 import re
 
 # GM がシーンの幕引きを宣言するマーカー。うつつ無人ループの主たる停止条件。
-# 検出は raw_response に対して行い、表示用 content からは extract_scene_close で除去する
+# 検出は raw_response に対して行い、表示用 content には残さない
 # （anticipator と同じく「タグは機能、本文には残さない」方針）。
-_SCENE_CLOSE_MARKER = "[SCENE_CLOSE]"
+# 本文からの除去は 2 段構え:
+#   1. engine の StreamingTagStripper が話者分割の前に剥がす（正規表記はここで消える）
+#   2. 保存直前の extract_scene_close が全話者ブロックへ掛かる（表記揺れの保険）
+SCENE_CLOSE_MARKER = "[SCENE_CLOSE]"
 
 # [SCENE_CLOSE] を大小・全角半角の揺れも込みで拾う正規表現（検出と本文除去の共通源）。
 _SCENE_CLOSE_RE = re.compile(r"\[\s*scene[_\s]?close\s*\]", re.IGNORECASE)

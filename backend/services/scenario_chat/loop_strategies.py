@@ -267,15 +267,14 @@ class ScenarioTurnExecutor:
     ) -> AsyncIterator[tuple[str, Any]]:
         """GM レスポンス 1 回分を実行する（旧 run_scenario_turn の "next_kind == gm" ブロック相当）。
 
-        SCENE_CLOSE 検出時の表示用 content マーカー除去、早すぎる SCENE_CLOSE 抑止、
-        feature ログの "usual_days" 復帰、ターン副産物のカウントもここで完結させる。
+        早すぎる SCENE_CLOSE 抑止、feature ログの "usual_days" 復帰、
+        ターン副産物のカウントもここで完結させる。
         """
         from backend.services.scenario_chat.engine import generate_dice_pool
         from backend.services.scenario_chat.service import (
             _build_usual_gm_appendix,
             _has_scene_close,
             _run_gm_turn,
-            extract_scene_close,
         )
 
         # GM ターン中にプロバイダエラーを検知したら保持する（末尾でシーンを閉じる判定に使う）。
@@ -375,12 +374,10 @@ class ScenarioTurnExecutor:
         latest = sc.sqlite.list_scenario_turns(sc.session_id)
         gm_last_raw = ""
         gm_last_name = None
-        gm_last_turn = None
         for t in reversed(latest):
             if getattr(t, "speaker_type", "") in {"narrator", "npc"}:
                 gm_last_raw = getattr(t, "raw_response", "") or ""
                 gm_last_name = getattr(t, "speaker_name", "") or sc.last_speaker_name
-                gm_last_turn = t
                 break
 
         # このレスポンスの生出力を、対応する MAIN 行の response カラムへ書き戻す。
@@ -389,11 +386,12 @@ class ScenarioTurnExecutor:
         if gm_last_raw:
             debug_logger.log_front_output(gm_last_raw)
 
-        # SCENE_CLOSE 検出時の表示用 content マーカー除去 & 早すぎる SCENE_CLOSE 抑止判定。
+        # 早すぎる SCENE_CLOSE 抑止判定。
+        # 表示用 content からのマーカー除去はここではやらない — engine の
+        # StreamingTagStripper（話者分割の前）と保存直前の extract_scene_close が担う。
+        # 最終 GM ターン 1 件だけを後追い UPDATE する旧方式は、マーカーが別の話者ブロックに
+        # 落ちると取りこぼしていた。
         if sc.is_headless and _has_scene_close(gm_last_raw):
-            if gm_last_turn is not None:
-                cleaned, _ = extract_scene_close(getattr(gm_last_turn, "content", "") or "")
-                sc.sqlite.update_scenario_turn(gm_last_turn.id, content=cleaned)
             if sc.pc_responses == 0 and sc.routing_pcs:
                 # 早すぎる: Router 側で @ALL フォールバックさせるためフラグを立てる。
                 # stop_condition 側は pc_responses==0 のとき停止しないので、自然に継続する。

@@ -357,10 +357,9 @@ class TestHeadlessLoop:
         # GM1(@はる) → PC1 → GM2([SCENE_CLOSE]) で停止 = 3 ターン（上限20には遠い）
         assert len(turns) == 3
         assert result["scene_closed"] is True
-        # マーカーは表示用 content から除去されている（raw_response には残る）
-        last_gm = [t for t in turns if t.speaker_type == "narrator"][-1]
-        assert "[SCENE_CLOSE]" not in (last_gm.content or "")
-        assert "[SCENE_CLOSE]" in (last_gm.raw_response or "")
+        # 表示用 content からのマーカー除去はここでは検証しない。このテストの fake_gm は
+        # _save_turn を直接叩くため、engine の stripper も保存直前のクリーンも通らない
+        # （除去の検証は test_scenario_chat_engine.py / test_scenario_tag_stripping.py）。
 
     def test_headless_suppresses_early_scene_close(self, sqlite_store, monkeypatch):
         """GM が初手で [SCENE_CLOSE] を出しても、主人公が未発話なら幕引きを抑止すること。
@@ -371,7 +370,7 @@ class TestHeadlessLoop:
 
         台本: GM1=即幕引き → (抑止) → PC1(主人公) → GM2=幕引き → (受理・停止)。
         期待: GM, PC, GM の 3 ターン。PC は最低 1 回呼ばれる。最初の GM の幕引きでは
-        終わらない。表示用 content からはマーカーが除去される。
+        終わらない。
         """
         sid, _ = _build_usual_session(sqlite_store, max_responses=20)
         pc_calls: list[dict] = []
@@ -397,8 +396,6 @@ class TestHeadlessLoop:
         assert len(pc_calls) == 1
         # 最終的には 2 度目の GM 幕引きでシーンは閉じる。
         assert result["scene_closed"] is True
-        # 抑止された 1 ターン目の GM 発話も、表示用 content からマーカーが除去されている。
-        assert "[SCENE_CLOSE]" not in (turns[0].content or "")
 
     def test_headless_passes_origin_usual(self, sqlite_store, monkeypatch):
         """PC ターンに default_origin="usual" が渡されること（記憶の由来タグ）。"""

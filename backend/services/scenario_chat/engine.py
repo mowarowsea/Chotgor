@@ -19,6 +19,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
+from backend.lib.tag_parser import StreamingTagStripper
 from backend.providers.registry import create_provider
 from backend.services.scenario_chat.context import (
     format_history_for_gm,
@@ -30,6 +31,7 @@ from backend.services.scenario_chat.parser import (
     UtteranceDelta,
 )
 from backend.services.scenario_chat.prompt_builder import build_gm_system_prompt
+from backend.services.scenario_chat.scene_close import SCENE_CLOSE_MARKER
 
 
 # ensemble_pc 用ダイスプール仕様の既定値。シナリオ側 dice_pool_spec が NULL または
@@ -383,6 +385,13 @@ class EnsembleEngine:
             suppress_names=suppress_names,
         )
 
+        # 表示へ流す前にツールタグを剥がすバッファ。**話者分割より前**に置くのが肝で、
+        # GM がタグ本体に `@名前:` を書いた場合でもタグごと消えるため、タグが話者ブロック
+        # 境界で切断されて本文に残る（＝意味は raw から拾えているのに画面から消えない）
+        # 事故が起きない。raw_chunks には剥がす前の生テキストを積むので、
+        # extract_anticipation / _has_scene_close 側の判定は従来どおり無傷。
+        stripper = StreamingTagStripper(extra_prefixes=[SCENE_CLOSE_MARKER])
+
         raw_chunks: list[str] = []
         # 各話者ごとに本文を蓄積し、話者切替時 / 終端で TurnRecord を発行する。
         cur_speaker_key: tuple | None = None
@@ -445,7 +454,10 @@ class EnsembleEngine:
             if chunk_type != "text" or not content:
                 continue
             raw_chunks.append(content)
-            deltas = parser.feed(content)
+            visible = stripper.feed(content)
+            if not visible:
+                continue
+            deltas = parser.feed(visible)
             async for item in _flush_deltas(deltas):
                 yield item
 
@@ -459,7 +471,14 @@ class EnsembleEngine:
             )
             return
 
-        # ストリーム終端: parser flush
+        # ストリーム終端: stripper の残バッファ（未確定タグ候補）を先に parser へ流す
+        tail = stripper.flush()
+        if tail:
+            deltas = parser.feed(tail)
+            async for item in _flush_deltas(deltas):
+                yield item
+
+        # parser flush
         deltas = parser.flush()
         async for item in _flush_deltas(deltas):
             yield item

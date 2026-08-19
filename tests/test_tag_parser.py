@@ -756,3 +756,59 @@ def test_parse_tags_extracts_anticipate_response():
     assert len(matches["ANTICIPATE_RESPONSE"]) == 1
     assert matches["ANTICIPATE_RESPONSE"][0].body == "予想テキスト"
     assert "[ANTICIPATE_RESPONSE:" not in clean
+
+
+# ─── extra_prefixes（呼び出し側固有マーカー） ──────────────────────────────────
+#
+# 全プロバイダー共通ではないマーカー（シナリオ専用の [SCENE_CLOSE] など）を
+# KNOWN_PREFIXES に混ぜずに足すための口。engine が話者分割の前にこれを使う。
+
+
+def _feed_all_with_extra(chunks: list[str], extra: list[str]) -> str:
+    """extra_prefixes つき stripper にチャンクを流し、最終出力を返す補助関数。"""
+    stripper = StreamingTagStripper(extra_prefixes=extra)
+    parts = [stripper.feed(c) for c in chunks]
+    parts.append(stripper.flush())
+    return "".join(parts)
+
+
+def test_stripper_extra_prefix_marker_is_removed():
+    """extra_prefixes で渡した固定マーカーが除去されること。"""
+    result = _feed_all_with_extra(["夜が更けた。[SCENE_CLOSE]"], ["[SCENE_CLOSE]"])
+
+    assert "夜が更けた。" in result
+    assert "SCENE_CLOSE" not in result
+
+
+def test_stripper_extra_prefix_split_across_chunks():
+    """extra_prefixes のマーカーがチャンク境界で分断されても除去されること。"""
+    result = _feed_all_with_extra(
+        ["夜が更けた。[SCENE", "_CLO", "SE]続き"], ["[SCENE_CLOSE]"]
+    )
+
+    assert "夜が更けた。" in result
+    assert "続き" in result
+    assert "SCENE_CLOSE" not in result
+
+
+def test_stripper_without_extra_prefix_keeps_marker():
+    """extra_prefixes を渡さなければ、そのマーカーは本文に残ること。
+
+    共通マーカー集合が勝手に増えていないことの裏取り（1on1 の挙動を変えない）。
+    """
+    result = _feed_all(["夜が更けた。[SCENE_CLOSE]"])
+
+    assert "[SCENE_CLOSE]" in result
+
+
+def test_stripper_extra_prefix_does_not_mutate_class_defaults():
+    """extra_prefixes がクラス変数 KNOWN_PREFIXES を汚染しないこと。
+
+    インスタンスごとにリストをコピーしているつもりが参照を共有していると、
+    シナリオ用の stripper を 1 つ作っただけで 1on1 側の除去対象まで増える。
+    """
+    before = list(StreamingTagStripper.KNOWN_PREFIXES)
+    StreamingTagStripper(extra_prefixes=["[SCENE_CLOSE]"])
+
+    assert StreamingTagStripper.KNOWN_PREFIXES == before
+    assert "[SCENE_CLOSE]" not in StreamingTagStripper.KNOWN_PREFIXES

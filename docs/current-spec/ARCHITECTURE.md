@@ -249,6 +249,17 @@ frontend useScenarioChat → /api/scenario_chat/... (api/scenario_chat/)
 （末尾ターンに載る `anticipation` と対）。既存ターンは NULL のまま（生成時のテキストが
 残っていないためバックフィルしない）。
 
+**タグ除去は話者分割より前** — GM 出力の `[ANTICIPATE_RESPONSE:...]` /
+`[SCENE_CLOSE]` は `StreamingTagStripper`（`lib/tag_parser.py`、`extra_prefixes` で
+シナリオ専用マーカーを追加）でストリーム段階に剥がしてから `ScenarioChatParser` へ渡す
+（1on1 の `chat_flow/flow.py` と同じ形）。`raw_response` には生のまま積むので、意味を
+拾う側（`extract_anticipation` / `_has_scene_close`）は無傷。順序を逆にすると、GM が
+タグ本体に `@名前:` を書いたときタグが話者ブロック境界で切断され、**意味は拾えているのに
+表示からタグが消えない**（かつバブルが割れる）。スケッチをパーサに通さないのと同じ理由で、
+`@名前:` を含みうるテキストは話者判定を壊す。取りこぼし（マーカーの表記揺れ等）の保険として
+保存直前にも `extract_anticipation` / `extract_scene_close` を**全話者ブロック**へ掛ける
+（`service.py`。最終ターンだけに掛けると、マーカーがどのブロックへ落ちるか読めない）。
+
 **ログの枝分かれ（レスポンスガチャ）** — `scenario_turns` は
 `is_active` / `generation_id` / `branch_point_index` の3列で「本線」と
 「選ばれなかった枝」を表す。1 ストリームリクエストで保存されたターン群が

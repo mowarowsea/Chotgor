@@ -15,6 +15,7 @@ LLM プロバイダはモック化する: provider_factory を差し替えて
     - EngineResult.raw_response にチャンクの連結が入ること
     - preset_loader が None を返したら ValueError
     - 履歴切り出しが GM プロンプトに反映されること（履歴が長すぎる場合は切られる）
+    - ツールタグが話者分割より前に剥がされること（本文にもデルタにも残らない）
 """
 
 import asyncio
@@ -802,3 +803,156 @@ class TestProviderErrorPropagation:
         assert len(results) == 1
         assert results[0].provider_error is not None
         assert "PROHIBITED_CONTENT" in results[0].provider_error
+
+
+# ─── タグ除去（話者分割より前） ──────────────────────────────────────────────
+
+
+class TestTagStrippingBeforeSpeakerSplit:
+    """GM 出力のツールタグが、話者分割より前に本文から剥がされることを検証する。
+
+    背景（2026-08-19 の観測事故）:
+        うつつの GM が予想タグの本体にも話者行を書いた:
+
+            @Narrator: 十三時三十七分。……
+            [SCENE_CLOSE]
+
+            [ANTICIPATE_RESPONSE:
+            @Narrator:
+            （次は……だろう。）]
+
+        旧実装は生チャンクをそのまま ScenarioChatParser へ流していたため、タグ本体の
+        `@Narrator:` で話者ブロックが割れ、タグが 2 ブロックに切断された。切断された
+        断片は「開きだけ」「閉じだけ」なので保存直前の extract_anticipation では除去できず、
+        **意味は raw_response から正しく拾えているのに画面からタグが消えない**（おまけに
+        バブルまで 2 つに割れる）という非対称が生まれた。
+
+        対策として StreamingTagStripper を parser の手前に置いた。ここでは「剥がした
+        テキストだけが parser へ渡り、raw_response は生のまま」という両立が崩れていない
+        ことを見る。raw が汚れると停止判定（_has_scene_close）と予想の採用
+        （extract_anticipation）が同時に死ぬため、両方向を毎ケース確認する。
+    """
+
+    @pytest.mark.asyncio
+    async def test_tag_body_with_speaker_line_does_not_split_turns(self):
+        """タグ本体に `@名前:` が入っていても話者ブロックが割れないこと（事故の再現）。"""
+        full = (
+            "@Narrator: 十三時三十七分。はるは次の作業へ向かう。\n"
+            "[SCENE_CLOSE]\n"
+            "\n"
+            "[ANTICIPATE_RESPONSE:\n"
+            "@Narrator:\n"
+            "（原因を特定したので、次は佐藤のデスクまで行くだろう。）]\n"
+        )
+        engine, _ = _make_engine([("text", full)])
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        results = [i for i in items if isinstance(i, EngineResult)]
+
+        # タグごと消えるので、タグ本体の `@Narrator:` では話者が切り替わらない
+        assert len(records) == 1
+        content = records[0].content
+        assert "ANTICIPATE_RESPONSE" not in content
+        assert "SCENE_CLOSE" not in content
+        assert "@Narrator" not in content
+        assert "十三時三十七分" in content
+        # raw_response は生のまま = 停止判定と予想の採用は従来どおり効く
+        raw = results[0].raw_response
+        assert "[SCENE_CLOSE]" in raw
+        assert "[ANTICIPATE_RESPONSE:" in raw
+
+    @pytest.mark.asyncio
+    async def test_tag_split_across_chunks_is_stripped(self):
+        """タグがチャンク境界で分断されていても除去されること。"""
+        chunks = [
+            ("text", "@Narrator: 朝が来た。\n[ANTICI"),
+            ("text", "PATE_RESPONSE:\n@Narrator:\n（次は出勤するだろう。）]"),
+            ("text", "\n[SCENE_"),
+            ("text", "CLOSE]"),
+        ]
+        engine, _ = _make_engine(chunks)
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        results = [i for i in items if isinstance(i, EngineResult)]
+
+        assert len(records) == 1
+        assert records[0].content == "朝が来た。"
+        assert "[SCENE_CLOSE]" in results[0].raw_response
+        assert "[ANTICIPATE_RESPONSE:" in results[0].raw_response
+
+    @pytest.mark.asyncio
+    async def test_deltas_do_not_carry_tag_text(self):
+        """生成中のデルタ（画面へ流れるテキスト）にもタグが混ざらないこと。"""
+        chunks = [
+            ("text", "@Narrator: 夕方になった。\n"),
+            ("text", "[ANTICIPATE_RESPONSE:帰り支度を始めるだろう。]\n"),
+            ("text", "[SCENE_CLOSE]"),
+        ]
+        engine, _ = _make_engine(chunks)
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=[],
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+
+        streamed = "".join(
+            i.content_delta for i in items if isinstance(i, UtteranceDelta)
+        )
+        assert "ANTICIPATE_RESPONSE" not in streamed
+        assert "SCENE_CLOSE" not in streamed
+        assert "夕方になった" in streamed
+
+    @pytest.mark.asyncio
+    async def test_marker_between_speaker_blocks_keeps_both_blocks(self):
+        """話者ブロックの合間にマーカーがあっても、前後のブロックは保持されること。
+
+        消えるのはマーカーだけで、ブロックが消えたり結合したりはしない。
+        """
+        full = (
+            "@Narrator: 電話が鳴った。\n"
+            "[SCENE_CLOSE]\n"
+            "@レイカ: もしもし？\n"
+        )
+        engine, _ = _make_engine([("text", full)])
+        npcs = [FakeNpc(id="npc-r", name="レイカ")]
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(),
+                npcs=npcs,
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        assert [r.speaker_name for r in records] == ["Narrator", "レイカ"]
+        assert all("SCENE_CLOSE" not in r.content for r in records)
+        assert "電話が鳴った" in records[0].content
+        assert "もしもし" in records[1].content

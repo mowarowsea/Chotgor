@@ -535,7 +535,13 @@ async def _run_gm_turn(
         )
     last_index = len(turn_records_pending) - 1
     for i, rec in enumerate(turn_records_pending):
+        # 表示用本文からのタグ除去。engine の StreamingTagStripper が話者分割の前に
+        # 剥がしているので通常は素通りだが、表記揺れ（[ scene close ] 等）や
+        # 閉じ括弧の取りこぼしに備えた保険としてここでも掛ける。
+        # **全ブロックへ**掛けるのは、マーカーがどの話者ブロックへ落ちるかは GM の
+        # 書き方次第で、最終ターンだけ見ても取りこぼすため。
         rec_content, _ = extract_anticipation(rec.content)
+        rec_content, _ = extract_scene_close(rec_content)
         saved = _save_turn(
             sqlite=sqlite,
             session_id=session_id,

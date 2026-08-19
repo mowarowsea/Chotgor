@@ -17,7 +17,7 @@ from backend.lib.log_context import current_log_feature
 from backend.services.scenario_chat.auto_synopsis import maybe_update_auto_synopsis
 from backend.services.scenario_chat.engine import SceneEngine
 from backend.services.scenario_chat.scene_close import (
-    _SCENE_CLOSE_MARKER,
+    SCENE_CLOSE_MARKER,
     _has_scene_close,
 )
 
@@ -51,16 +51,16 @@ _USUAL_GM_STANDING = (
     "数十分・数時間・翌日へ勝手に進めない（時間飛ばし・回想・先回りは禁止）。"
     "次の時間帯はあとで別のレスポンスとして自然に巡ってきます。\n"
     f"そして、一つの出来事・会話・時間帯が自然に区切れたら、**そのレスポンスの一番最後（末尾の地の文の終わり）に**"
-    f" {_SCENE_CLOSE_MARKER} とだけ書いて、その場面を閉じてください。"
-    f" {_SCENE_CLOSE_MARKER} はレスポンスの“終止符”であって、途中の場面転換用ではありません"
-    f"（レスポンス中盤に書いても無視されます。シーンを切り替えたいときは、そこで {_SCENE_CLOSE_MARKER} を打って一旦応答を終えてください）。"
+    f" {SCENE_CLOSE_MARKER} とだけ書いて、その場面を閉じてください。"
+    f" {SCENE_CLOSE_MARKER} はレスポンスの“終止符”であって、途中の場面転換用ではありません"
+    f"（レスポンス中盤に書いても無視されます。シーンを切り替えたいときは、そこで {SCENE_CLOSE_MARKER} を打って一旦応答を終えてください）。"
     "日常の一コマとして淡々と畳んで構いません（無理に引き延ばさないこと）。"
 )
 
 # ソフト収束ヒント本文。終盤で GM に「そろそろ畳んで [SCENE_CLOSE] してよい」と念押しする。
 _USUAL_SOFT_CLOSE_HINT = (
     f"[OOC] そろそろこの場面を畳む頃合いです。区切りがついたら、**このレスポンスの一番最後に**"
-    f" {_SCENE_CLOSE_MARKER} と書いて締めてください（途中ではなく末尾に、これだけで応答を終える）。"
+    f" {SCENE_CLOSE_MARKER} と書いて締めてください（途中ではなく末尾に、これだけで応答を終える）。"
 )
 
 # 口火の種（plan §11）— シーン頭で形容詞×名詞を 1 組だけ合成して GM に渡す。
@@ -191,7 +191,7 @@ def _format_scene_seed(adjective: str, noun: str) -> str:
         "テーマとして説明せず、情景として出すこと。"
         "この人物がそれにどう反応するか（乗るか、聞き流すか、そもそも気づかないか）は"
         "本人が決めます。\n"
-        f"この口火のレスポンスでは {_SCENE_CLOSE_MARKER} を付けないでください"
+        f"この口火のレスポンスでは {SCENE_CLOSE_MARKER} を付けないでください"
         "（場面はまだ始まったばかりで、ここから本人が動き出します）。"
     )
 

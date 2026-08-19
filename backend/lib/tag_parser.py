@@ -182,6 +182,8 @@ class StreamingTagStripper:
         remaining = stripper.flush()
         if remaining:
             yield remaining
+
+    除去対象は KNOWN_PREFIXES（全プロバイダー共通）＋ extra_prefixes（呼び出し側固有）。
     """
 
     # 除去対象マーカーのプレフィックス。
@@ -199,9 +201,16 @@ class StreamingTagStripper:
     # バッファがこの長さを超えたら強制フラッシュ（無限バッファを防ぐ）
     MAX_BUFFER: int = 1000
 
-    def __init__(self) -> None:
-        """StreamingTagStripper を初期化する。"""
+    def __init__(self, extra_prefixes: list[str] | None = None) -> None:
+        """StreamingTagStripper を初期化する。
+
+        Args:
+            extra_prefixes: この呼び出し側でだけ除去したいマーカーのプレフィックス
+                （例: シナリオ専用の "[SCENE_CLOSE]"）。全プロバイダー共通ではない
+                マーカーを KNOWN_PREFIXES に混ぜずに足すための口。
+        """
         self._buffer: str = ""
+        self._prefixes: list[str] = list(self.KNOWN_PREFIXES) + list(extra_prefixes or [])
 
     def feed(self, chunk: str) -> str:
         """チャンクを投入し、マーカーを除去した安全なテキストを返す。
@@ -224,7 +233,7 @@ class StreamingTagStripper:
             残バッファのクリーンテキスト。
         """
         tag_names = []
-        for p in self.KNOWN_PREFIXES:
+        for p in self._prefixes:
             name = p.lstrip("[").rstrip(":]")
             if name not in tag_names:
                 tag_names.append(name)
@@ -244,7 +253,7 @@ class StreamingTagStripper:
         Returns:
             既知マーカーになり得る場合 True。
         """
-        for prefix in self.KNOWN_PREFIXES:
+        for prefix in self._prefixes:
             if prefix.startswith(buf):
                 return True
         return False
@@ -258,7 +267,7 @@ class StreamingTagStripper:
         Returns:
             マッチしたプレフィックス文字列、またはNone。
         """
-        for prefix in self.KNOWN_PREFIXES:
+        for prefix in self._prefixes:
             if buf.startswith(prefix):
                 return prefix
         return None
