@@ -21,6 +21,10 @@ export default defineConfig(({ mode, command }) => {
         "/api": "http://localhost:8000",
         "/v1": "http://localhost:8000",
         "/ui": "http://localhost:8000",
+        // ファビコン等の共有静的資産は backend の /static にしか無い。
+        // proxy に載せないと dev server の SPA フォールバックが index.html を返し、
+        // ファビコンが「取得できたのに表示されない」状態になる。
+        "/static": "http://localhost:8000",
       },
     },
   };

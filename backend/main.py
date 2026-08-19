@@ -867,9 +867,17 @@ class ImmutableStaticFiles(StaticFiles):
     これにより初回以降のページ表示で CSS 読込待ちのカクつきが解消される。
     """
 
+    # クエリでバスティングできない参照元を持つファイル。SPA の index.html は Vite が
+    # 絶対パスを書き換えないためクエリを付けられず、immutable にすると差し替えても
+    # 1年間ブラウザに焼き付く。ファビコンは 1KB 程度なので毎回検証させて構わない。
+    REVALIDATE_PATHS = {"favicon.svg"}
+
     async def get_response(self, path, scope):
         """ファイル応答に Cache-Control: immutable ヘッダを付与して返す。"""
         response = await super().get_response(path, scope)
+        if path in self.REVALIDATE_PATHS:
+            response.headers["Cache-Control"] = "no-cache"
+            return response
         # 200/304 いずれの応答でも長期キャッシュを宣言する（URL のクエリでバスティング済み）
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
