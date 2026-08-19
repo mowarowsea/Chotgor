@@ -13,6 +13,8 @@
 <div class="ch-shell">
     <form method="post" action="{{ action }}" enctype="multipart/form-data"
           {% if character %}data-autosave{% endif %}>
+        {# 楽観ロックの指紋。別端末の変更を古いフォームで巻き戻さないための照合値 #}
+        {% if character %}<input type="hidden" name="_fp" value="{{ fingerprint }}">{% endif %}
 
         {# ── ページヘッド（編集時はアバター・メタ、新規時は見出し） ── #}
         {% if character %}
@@ -1033,8 +1035,14 @@
             body: fd,
             headers: { 'X-Requested-With': 'fetch' },
         });
-        if (res.ok) location.reload();
-        else alert('背景画像の保存に失敗しました');
+        if (res.ok) { location.reload(); return; }
+        // 楽観ロックの衝突は共通バナーへ回す（他端末の変更を黙って潰さない）。
+        if (res.status === 409 && window.chotgorConflict) {
+            const data = await res.json().catch(() => ({}));
+            window.chotgorConflict(form, data.message, function () { location.reload(); });
+            return;
+        }
+        alert('背景画像の保存に失敗しました');
     }
 
     /** 既存の対面背景エントリを削除する（keep フラグを落として保存）。 */

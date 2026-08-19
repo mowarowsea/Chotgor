@@ -85,7 +85,7 @@
 |---|---|
 | `main.py` | エントリポイント。lifespan でストア・マネージャー・ChatService を初期化し `app.state` に集約。Chronicle/Forget/うつつ（Usual Days）スケジューラーもここで起動 |
 | `api/` | HTTPエンドポイント層（ルーター）。下の「APIルーティング一覧」参照 |
-| `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。characters / memories / presets / scenarios / settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル） |
+| `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。characters / memories / presets / scenarios / settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル）。編集フォームは自動保存＋楽観ロック（下の「設定フォームの楽観ロック」参照） |
 | `api/logs_ui/` | デバッグログ閲覧UI（`/ui/logs`）と JSON API（`/api/logs`） |
 | `services/` | ビジネスロジック層。チャット・シナリオ・記憶・キャラクター問い合わせ |
 | `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / xai の7実装。`registry.py` が生成・ディスパッチ |
@@ -93,7 +93,7 @@
 | `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / switch / WMスレッド操作…）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
 | `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00）と `forget_job.py`（長期記憶の忘却、04:00固定） |
-| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用） |
+| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用）、`optimistic_lock`（設定フォームの楽観ロック＝端末間の先祖返り防止） |
 | `mcp_server.py` | Claude CLI 用 MCP stdio サーバー（backendへのHTTPプロキシ） |
 | `templates/` + `static/` | 管理UIのJinja2テンプレートと `chotgor.css`（デザインシステム。規約は CLAUDE.md） |
 
@@ -465,6 +465,42 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 - **Forget**（04:00固定）: 時間減衰で閾値を下回った長期記憶をキャラクター自身に問うて忘却。
   昇華は carve（inner_narrative へ）。
 - 三段階蒸留: **WM →（Chronicle: 昇格）→ InscribedMemory →（Forget: 昇華）→ InnerNarrative**
+
+### 設定フォームの楽観ロック（端末間の先祖返り防止）
+
+管理UI の編集フォームは自動保存（`static/autosave.js`）で、1 フィールドの変更ごとに
+**フォーム全体を POST** する。このためスマホと PC で同じ画面を開いていると、
+古い値を抱えたタブが 1 文字の入力をきっかけに他端末の変更を丸ごと巻き戻す。
+
+`lib/optimistic_lock.py` が、そのフォームが**無条件に書き込む項目の現在 DB 値**から
+指紋（短縮 sha256）を作る。GET でフォームに hidden `_fp` として埋め、POST 時に
+再計算して照合する。ずれていれば保存せず衝突として返す。
+
+| フォーム | エンドポイント | 指紋の対象 |
+|---|---|---|
+| キャラクター編集 | `POST /ui/characters/{id}` | `CHARACTER_FIELDS` ＋ 同フォームが書く うつつシナリオの `USUAL_SCENARIO_FIELDS` |
+| シナリオ編集 | `POST /ui/scenarios/{id}/edit` | `SCENARIO_FIELDS` |
+| NPC 編集 | `POST /ui/scenarios/{id}/npcs/{npc_id}/edit` | `NPC_FIELDS`（NPC 1 体ごとに独立した指紋） |
+| 設定・一般 | `POST /ui/settings/general` | `GENERAL_SETTING_KEYS` |
+| 設定・embedding | `POST /ui/settings/embedding` | `EMBEDDING_SETTING_KEYS` |
+
+衝突時の振る舞い:
+- **自動保存（AJAX）**: 409 + JSON。`autosave.js` が以降の自動保存を止め、
+  画面下部にバナー（`ch-notice--float`）で「このまま上書きする」／「破棄して読み直す」を出す。
+  上書きは `_fp_force=1` を付けた再送。
+- **通常のフォーム送信**: `templates/conflict.html` を 409 で返す。送信内容を hidden で
+  保持したまま強制上書き再送できる（JS 無しの経路でも入力を失わない）。
+- 保存成功時は新しい指紋をレスポンス（`{"ok": true, "fp": ...}`）で返し、開いたままの
+  フォームの hidden を更新する。これが無いと自動保存の 2 回目以降が自分自身と衝突する。
+
+**行バージョン列（`version_id_col`）を採らなかった理由**: `characters` は chronicle
+（`self_history`）や availability ゲート（`away_until`）が、`global_settings` は
+`scheduler_heartbeat_*` などのランタイム値が常時更新する。行／テーブル単位の
+バージョンでは、ユーザが何も触っていないのに衝突が出る。
+
+**指紋の対象外**（＝送らなければ他端末の値を壊さないもの）: 画像（`image_data` /
+`banner_data`）、API キー（マスク値なら保存をスキップする）、バッチ・実行時処理が
+書く列。指紋にこれらを含めると純粋な誤検知になる。
 
 ## 4. APIルーティング一覧
 

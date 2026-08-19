@@ -25,7 +25,7 @@
    9.  LIST                  — ch-list / ch-row（区切り線ベース行）
    10. MEMORY LIST           — ch-memlist / ch-memitem / ch-imp（記憶一覧）
    11. TABLE                 — ch-table / ch-formgrid（model presets）
-   11b NOTICE                — ch-notice（settings の保存/警告フラッシュ）
+   11b NOTICE                — ch-notice（settings の保存/警告フラッシュ／--float は画面固定バナー）
    12. CARD / PANEL          — ch-panel / ch-divider / ch-code
    13. HERO                  — ch-hero
    14. EMPTY / FOOTNOTE      — ch-empty / ch-footnote
@@ -1023,6 +1023,20 @@ html::-webkit-scrollbar-track,
 .ch-notice--ok     { color: var(--ch-a);      background: var(--ch-a-faint);     border-color: var(--ch-a-soft); }
 .ch-notice--danger { color: var(--ch-danger); background: var(--ch-danger-bg);   border-color: var(--ch-danger); }
 .ch-notice--warn   { color: var(--ch-warn);   background: oklch(72% 0.14 65 / 0.08); border-color: oklch(72% 0.14 65 / 0.20); }
+
+/* 画面下部に貼り付く操作つきバナー（自動保存の衝突通知など。JS が body 直下に生成）。
+   トースト（.autosave-status）と違い、ユーザが選ぶまで消えない前提でボタンを内包する。 */
+.ch-notice--float {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 1001;
+  width: min(560px, calc(100vw - 32px));
+  margin-bottom: 0;
+  background: var(--ch-bg-s);
+  box-shadow: var(--ch-shadow);
+}
 
 /* ============================================================
    CARD / PANEL — 汎用の囲い

@@ -13,12 +13,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from backend.api.ui.common import (
     _bubble_color_owners,
+    _conflict_response,
     _parse_bubble_color,
     _read_image_data,
     _save_response,
     get_templates,
 )
 from backend.lib.log_context import current_log_target, new_message_id
+from backend.lib.optimistic_lock import character_fingerprint, verify
 from backend.providers.registry import PROVIDER_LABELS
 from backend.services.character_query import ask_character
 
@@ -146,6 +148,8 @@ async def edit_character_form(request: Request, character_id: str):
             "provider_labels": PROVIDER_LABELS,
             "usual_scenario": usual_scenario,
             "usual_config": usual_config,
+            # 楽観ロックの指紋（hidden で往復させ、他端末の変更の巻き戻しを検出する）
+            "fingerprint": character_fingerprint(request.app.state.sqlite, character_id),
             # スウォッチUIの「使用中」表示用（色 → その色を選んでいるキャラ名）。
             "bubble_color_owners": _bubble_color_owners(
                 request.app.state.sqlite.list_characters()
@@ -157,6 +161,12 @@ async def edit_character_form(request: Request, character_id: str):
 @router.post("/characters/{character_id}")
 async def update_character(request: Request, character_id: str):
     form = await request.form()
+    sqlite = request.app.state.sqlite
+
+    # 楽観ロック: 別端末が同じ項目を変えていたら、古いフォーム内容で巻き戻さない。
+    # 自動保存はフォーム全体を送るため、放置したタブが他端末の変更を丸ごと潰しうる。
+    if not verify(form, character_fingerprint(sqlite, character_id)):
+        return _conflict_response(request, form, f"/ui/characters/{character_id}")
 
     enabled_providers = _build_enabled_providers(form)
 
@@ -200,18 +210,19 @@ async def update_character(request: Request, character_id: str):
     # face_bg_form_present マーカーが無い POST（背景セクションを含まない別経路の
     # フォーム）では配列に触らない — keep フィールド欠落を全削除と誤認しないため。
     if form.get("face_bg_form_present"):
-        existing_char = request.app.state.sqlite.get_character(character_id)
+        existing_char = sqlite.get_character(character_id)
         update_kwargs["face_to_face_bg_images"] = await _build_face_bg_images(
             form, getattr(existing_char, "face_to_face_bg_images", None) or []
         )
 
-    request.app.state.sqlite.update_character(character_id, **update_kwargs)
+    sqlite.update_character(character_id, **update_kwargs)
     # 同一フォームに同梱された うつつ（生活世界）設定も併せて保存する。
     # PC 枠の名前には更新後の最新キャラ名を使う。
-    char = request.app.state.sqlite.get_character(character_id)
+    char = sqlite.get_character(character_id)
     if char:
-        _persist_usual_world(request.app.state.sqlite, character_id, char.name, form)
-    return _save_response(request, "/ui/characters")
+        _persist_usual_world(sqlite, character_id, char.name, form)
+    # 保存後の指紋を返し、開いたままのフォームを最新状態に追従させる。
+    return _save_response(request, "/ui/characters", character_fingerprint(sqlite, character_id))
 
 
 async def _build_face_bg_images(form, existing: list) -> list | None:

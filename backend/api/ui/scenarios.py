@@ -8,10 +8,17 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.api.ui.common import (
     _bubble_color_owners,
+    _conflict_response,
     _parse_bubble_color,
     _read_image_data,
     _save_response,
     get_templates,
+)
+from backend.lib.optimistic_lock import (
+    npc_fingerprint,
+    npc_fingerprints,
+    scenario_fingerprint,
+    verify,
 )
 
 router = APIRouter(prefix="/ui", tags=["ui"])
@@ -119,6 +126,9 @@ async def new_scenario_form(request: Request):
             "npcs": [],
             "action": "/ui/scenarios/new",
             "bubble_color_owners": {},
+            # 新規作成に楽観ロックは要らない（巻き戻す相手がいない）。テンプレートの
+            # 参照形だけ編集時と揃えておく。
+            "npc_fingerprints": {},
         },
     )
 
@@ -168,6 +178,9 @@ async def edit_scenario_form(request: Request, scenario_id: str):
             "action": f"/ui/scenarios/{scenario_id}/edit",
             # スウォッチUIの「使用中」表示用（色 → その色を選んでいる NPC 名）。
             "bubble_color_owners": _bubble_color_owners(npcs),
+            # 楽観ロックの指紋。NPC は 1 体ごとに独立したフォームなので個別に持たせる。
+            "fingerprint": scenario_fingerprint(sqlite, scenario_id),
+            "npc_fingerprints": npc_fingerprints(sqlite, npcs),
         },
     )
 
@@ -176,6 +189,12 @@ async def edit_scenario_form(request: Request, scenario_id: str):
 async def update_scenario(request: Request, scenario_id: str):
     """シナリオテンプレートを更新する（プレイ中のセッションには影響しない）。"""
     form = await request.form()
+    sqlite = request.app.state.sqlite
+
+    # 楽観ロック: 別端末が同じ項目を変えていたら、古いフォーム内容で巻き戻さない。
+    if not verify(form, scenario_fingerprint(sqlite, scenario_id)):
+        return _conflict_response(request, form, f"/ui/scenarios/{scenario_id}/edit")
+
     update_kwargs = {
         "scenario": (form.get("scenario") or "") or None,
         "intro": (form.get("intro") or "") or None,
@@ -195,8 +214,12 @@ async def update_scenario(request: Request, scenario_id: str):
         update_kwargs["banner_data"] = new_banner
     elif form.get("remove_banner"):
         update_kwargs["banner_data"] = None
-    request.app.state.sqlite.update_scenario(scenario_id, **update_kwargs)
-    return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
+    sqlite.update_scenario(scenario_id, **update_kwargs)
+    return _save_response(
+        request,
+        f"/ui/scenarios/{scenario_id}/edit",
+        scenario_fingerprint(sqlite, scenario_id),
+    )
 
 
 @router.post("/scenarios/{scenario_id}/delete")
@@ -233,6 +256,12 @@ async def add_npc_form(request: Request, scenario_id: str):
 async def edit_npc_form(request: Request, scenario_id: str, npc_id: str):
     """NPC を更新する。画像未指定なら既存画像を維持、remove_image チェック時はクリア。"""
     form = await request.form()
+    sqlite = request.app.state.sqlite
+
+    # 楽観ロック: 別端末が同じ NPC を編集していたら巻き戻さない。
+    if not verify(form, npc_fingerprint(sqlite, npc_id)):
+        return _conflict_response(request, form, f"/ui/scenarios/{scenario_id}/edit")
+
     update_kwargs: dict = {
         "description": (form.get("description") or "") or None,
         # バブル配色スロット。未選択（"自動"）なら None に戻す。
@@ -249,8 +278,12 @@ async def edit_npc_form(request: Request, scenario_id: str, npc_id: str):
     elif form.get("remove_image"):
         update_kwargs["image_data"] = None
 
-    request.app.state.sqlite.update_scenario_npc(npc_id, **update_kwargs)
-    return _save_response(request, f"/ui/scenarios/{scenario_id}/edit")
+    sqlite.update_scenario_npc(npc_id, **update_kwargs)
+    return _save_response(
+        request,
+        f"/ui/scenarios/{scenario_id}/edit",
+        npc_fingerprint(sqlite, npc_id),
+    )
 
 
 @router.post("/scenarios/{scenario_id}/npcs/{npc_id}/delete")

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}conflict &mdash; Chotgor{% endblock %}
+{% block breadcrumb %}/ <span class="ch-crumb">conflict</span>{% endblock %}
+
+{% block content %}
+{# 楽観ロックの衝突ページ（通常のフォーム送信用）。自動保存フォームは
+   autosave.js が画面内バナーで同じ選択肢を出すため、ここへは来ない。 #}
+<div class="ch-shell">
+    <header class="ch-hero">
+        <span class="ch-eyebrow ch-hero__eyebrow">conflict</span>
+        <div class="ch-hero__title">
+            <h1 class="ch-display">保存がぶつかった</h1>
+        </div>
+    </header>
+
+    <section class="ch-section">
+        <div class="ch-notice ch-notice--warn">{{ message }}</div>
+        <p class="ch-prose">
+            いま送った内容でそのまま上書きするか、破棄して最新の設定を読み直すかを選ぶ。
+            アップロード中のファイルがあった場合は引き継がれないので、上書き後に選び直すこと。
+        </p>
+        <div class="ch-actionbar">
+            <form method="post" action="{{ action }}">
+                {% for name, value in fields %}
+                <input type="hidden" name="{{ name }}" value="{{ value }}">
+                {% endfor %}
+                <input type="hidden" name="{{ force_field }}" value="1">
+                <button type="submit" class="ch-btn ch-btn--danger">このまま上書きする</button>
+            </form>
+            <a href="{{ back_url }}" class="ch-btn ch-btn--ghost">破棄して読み直す</a>
+        </div>
+    </section>
+</div>
+{% endblock %}

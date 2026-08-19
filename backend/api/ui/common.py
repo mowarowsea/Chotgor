@@ -10,6 +10,12 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from backend.lib.optimistic_lock import (
+    CONFLICT_MESSAGE,
+    FINGERPRINT_FIELD,
+    FORCE_FIELD,
+)
+
 MAX_IMAGE_BYTES = 2 * 1024 * 1024  # 2MB
 
 # UIテンプレートインスタンス（main.py から set_templates() で注入される）
@@ -95,7 +101,7 @@ def _is_ajax(request: Request) -> bool:
     )
 
 
-def _save_response(request: Request, redirect_url: str):
+def _save_response(request: Request, redirect_url: str, fingerprint: str | None = None):
     """保存完了レスポンスを返す。
 
     自動保存（AJAX）の場合は JSON を、通常のフォーム送信の場合は
@@ -105,10 +111,56 @@ def _save_response(request: Request, redirect_url: str):
     Args:
         request: リクエスト。AJAX 判定に使う。
         redirect_url: 通常送信時のリダイレクト先。
+        fingerprint: 保存後の楽観ロック指紋。AJAX 応答に載せてフォームの
+            hidden を更新させる（次の自動保存が自分自身と衝突しないため）。
 
     Returns:
         JSONResponse または RedirectResponse。
     """
     if _is_ajax(request):
-        return JSONResponse({"ok": True})
+        body: dict = {"ok": True}
+        if fingerprint is not None:
+            body["fp"] = fingerprint
+        return JSONResponse(body)
     return RedirectResponse(url=redirect_url, status_code=303)
+
+
+def _conflict_response(request: Request, form, back_url: str):
+    """楽観ロックの衝突（先祖返り）を検出したときのレスポンスを返す。
+
+    自動保存（AJAX）には 409 + JSON を返し、クライアント側（autosave.js）が
+    保存を止めてバナーを出す。通常のフォーム送信には確認ページを返し、
+    入力内容を hidden で保持したまま「上書き」か「破棄して再読込」を選ばせる。
+
+    Args:
+        request: リクエスト。AJAX 判定に使う。
+        form: await request.form() の結果。確認ページでの再送用に復元する。
+        back_url: 「破棄して読み直す」の遷移先。
+
+    Returns:
+        409 の JSONResponse または HTML TemplateResponse。
+    """
+    if _is_ajax(request):
+        return JSONResponse(
+            {"ok": False, "conflict": True, "message": CONFLICT_MESSAGE},
+            status_code=409,
+        )
+    # ファイル（UploadFile）は hidden で持ち回れないため落とす。指紋・強制フラグは
+    # 確認ページ側で改めて付け直す。
+    fields = [
+        (key, value)
+        for key, value in form.multi_items()
+        if isinstance(value, str) and key not in (FINGERPRINT_FIELD, FORCE_FIELD)
+    ]
+    return get_templates().TemplateResponse(
+        request,
+        "conflict.html",
+        {
+            "action": str(request.url.path),
+            "fields": fields,
+            "force_field": FORCE_FIELD,
+            "message": CONFLICT_MESSAGE,
+            "back_url": back_url,
+        },
+        status_code=409,
+    )

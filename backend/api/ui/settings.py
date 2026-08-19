@@ -5,8 +5,14 @@ import logging
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from backend.api.ui.common import _save_response, get_templates
+from backend.api.ui.common import _conflict_response, _save_response, get_templates
 from backend.lib.initiative_budget import CAP_SETTING_KEY, DEFAULT_DAILY_CAP
+from backend.lib.optimistic_lock import (
+    EMBEDDING_SETTING_KEYS,
+    GENERAL_SETTING_KEYS,
+    settings_fingerprint,
+    verify,
+)
 from backend.services.memory.reindex_service import reindex_with_new_embeddings
 
 logger = logging.getLogger(__name__)
@@ -26,6 +32,11 @@ async def settings_form(request: Request):
             "settings": settings,
             "has_google_key": bool(settings.get("google_api_key")),
             "model_presets": model_presets,
+            # 楽観ロックの指紋。一般設定と embedding 設定は別フォーム＝別の指紋。
+            "fingerprint": settings_fingerprint(request.app.state.sqlite, GENERAL_SETTING_KEYS),
+            "embedding_fingerprint": settings_fingerprint(
+                request.app.state.sqlite, EMBEDDING_SETTING_KEYS
+            ),
         },
     )
 
@@ -39,6 +50,11 @@ async def save_general_settings(request: Request):
     """
     form = await request.form()
     store = request.app.state.sqlite
+
+    # 楽観ロック: 別端末が同じ設定を変えていたら、古いフォーム内容で巻き戻さない。
+    # API キーはマスク値なら保存をスキップする＝巻き戻らないため指紋の対象外。
+    if not verify(form, settings_fingerprint(store, GENERAL_SETTING_KEYS)):
+        return _conflict_response(request, form, "/ui/settings")
 
     # ユーザ名は常に保存（マスク不要）
     store.set_setting("user_name", (form.get("user_name") or "").strip() or "ユーザ")
@@ -88,7 +104,11 @@ async def save_general_settings(request: Request):
     store.set_setting("ollama_base_url", (form.get("ollama_base_url") or "http://localhost:11434").strip())
     store.set_setting("ollama_no_think", "true" if form.get("ollama_no_think") else "false")
 
-    return _save_response(request, "/ui/settings?saved=1")
+    return _save_response(
+        request,
+        "/ui/settings?saved=1",
+        settings_fingerprint(store, GENERAL_SETTING_KEYS),
+    )
 
 
 @router.post("/settings/embedding")
@@ -106,6 +126,12 @@ async def save_embedding_settings(
     ボタンが押された時点で常に再インデックスを実行する（UI 文言との一貫性）。
     """
     store = request.app.state.sqlite
+
+    # 楽観ロック: 別端末での embedding 変更を、古いフォームで巻き戻さない
+    # （巻き戻ると次の再インデックスで全記憶が別モデルへ焼き直される）。
+    form = await request.form()
+    if not verify(form, settings_fingerprint(store, EMBEDDING_SETTING_KEYS)):
+        return _conflict_response(request, form, "/ui/settings")
 
     store.set_setting("embedding_provider", embedding_provider)
     store.set_setting("embedding_model", embedding_model)

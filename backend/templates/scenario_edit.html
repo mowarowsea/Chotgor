@@ -34,6 +34,8 @@
         <form method="post" action="{{ action }}" enctype="multipart/form-data"
               {% if scenario %}data-autosave id="scenarioMainForm"{% endif %}>
             {% if scenario %}
+            {# 楽観ロックの指紋。別端末の変更を古いフォームで巻き戻さないための照合値 #}
+            <input type="hidden" name="_fp" value="{{ fingerprint }}">
             <p class="ch-autosave-note">変更は自動的に保存されます（Save ボタンは不要です）。</p>
             {% endif %}
 
@@ -233,6 +235,8 @@
             <div class="ch-modal__body">
                 <form method="post" action="/ui/scenarios/{{ scenario.id }}/npcs/{{ n.id }}/edit"
                       enctype="multipart/form-data" data-autosave>
+                    {# 楽観ロックの指紋（この NPC の現在値に対する照合値） #}
+                    <input type="hidden" name="_fp" value="{{ npc_fingerprints.get(n.id, '') }}">
                     <div class="image-upload-row" style="margin-bottom:14px">
                         <div class="npc-icon-preview">
                             {% if n.image_data %}
