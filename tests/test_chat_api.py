@@ -58,7 +58,7 @@ def _fake_message(mid=None, session_id="sid", role="user", content="hello"):
     m.role = role
     m.content = content
     m.reasoning = None
-    m.images = None
+    m.attachments = None
     m.character_name = None
     m.preset_name = None
     m.is_system_message = None

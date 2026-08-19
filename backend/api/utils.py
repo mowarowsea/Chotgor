@@ -82,7 +82,7 @@ def session_to_dict(s) -> dict:
 def message_to_dict(m) -> dict:
     """ChatMessage ORMオブジェクトを辞書に変換する。
 
-    reasoning / images / character_name / is_system_message は None の場合は省略してレスポンスサイズを削減する。
+    reasoning / attachments / character_name / is_system_message は None の場合は省略してレスポンスサイズを削減する。
     """
     result = {
         "id": m.id,
@@ -93,8 +93,8 @@ def message_to_dict(m) -> dict:
     }
     if getattr(m, "reasoning", None):
         result["reasoning"] = m.reasoning
-    if getattr(m, "images", None):
-        result["images"] = m.images
+    if getattr(m, "attachments", None):
+        result["attachments"] = m.attachments
     if getattr(m, "character_name", None):
         result["character_name"] = m.character_name
     if getattr(m, "preset_name", None):

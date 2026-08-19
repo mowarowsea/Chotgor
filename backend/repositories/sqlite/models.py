@@ -67,7 +67,7 @@ class ChatMessage(Base):
     role = Column(String, nullable=False)           # "user" | "character"
     content = Column(Text, nullable=False)
     reasoning = Column(Text, nullable=True)         # 思考ブロック・想起記憶テキスト
-    images = Column(JSON, nullable=True)            # [image_id, ...] 添付画像IDリスト
+    attachments = Column(JSON, nullable=True)       # [attachment_id, ...] 添付ファイルIDリスト（画像・音声）
     character_name = Column(String, nullable=True)  # シナリオPC・うつつ発話時のキャラクター名
     preset_name = Column(String, nullable=True)     # メッセージ送信時に使用したプリセット名
     # システムメッセージフラグ: 1=退席通知などのシステムメッセージ。NULLまたは0=通常メッセージ。
@@ -91,10 +91,13 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
-class ChatImage(Base):
-    """チャット添付画像 — セッションに紐づく画像ファイルのメタデータ。"""
+class ChatAttachment(Base):
+    """チャット添付ファイル — セッションに紐づく添付（画像・音声）のメタデータ。
 
-    __tablename__ = "chat_images"
+    種別（image / audio）は専用列を持たず mime_type から導出する。
+    """
+
+    __tablename__ = "chat_attachments"
 
     id = Column(String, primary_key=True)       # UUID（ファイル名としても使用）
     session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)

@@ -3,7 +3,7 @@
 フロントエンドからの直接アクセスに対応する。
 セッション管理 + LLM呼び出しを担当する。
 
-画像管理: chat_images.py
+添付管理: chat_attachments.py
 """
 
 import asyncio
@@ -94,7 +94,7 @@ class MessageCreate(BaseModel):
     """メッセージ送信リクエスト。"""
 
     content: str
-    image_ids: list[str] | None = None
+    attachment_ids: list[str] | None = None
     model_id: str | None = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
 
 
@@ -206,13 +206,13 @@ async def update_session(request: Request, session_id: str, body: SessionUpdate)
 
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(request: Request, session_id: str):
-    """セッションとそのメッセージ・添付画像ファイルを削除する。"""
+    """セッションとそのメッセージ・添付ファイルを削除する。"""
     import os
-    images = request.app.state.sqlite.list_chat_images_by_session(session_id)
-    for img in images:
-        img_path = os.path.join(request.app.state.uploads_dir, img.id)
+    attachments = request.app.state.sqlite.list_chat_attachments_by_session(session_id)
+    for att in attachments:
+        att_path = os.path.join(request.app.state.uploads_dir, att.id)
         try:
-            os.remove(img_path)
+            os.remove(att_path)
         except FileNotFoundError:
             pass
     ok = request.app.state.sqlite.delete_chat_session(session_id)
@@ -270,7 +270,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             session_id=session_id,
             role="user",
             content=body.content,
-            images=body.image_ids or None,
+            attachments=body.attachment_ids or None,
             face_to_face=current_face_to_face,
         )
         sys_msg_id_e = str(uuid.uuid4())
@@ -331,7 +331,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         session_id=session_id,
         role="user",
         content=body.content,
-        images=body.image_ids or None,
+        attachments=body.attachment_ids or None,
         face_to_face=current_face_to_face,
         delivered=_sync_response,
     )
@@ -432,7 +432,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         effective_title = session.title
 
     user_content: str | list = build_message_content(
-        body.content, body.image_ids or [], state.sqlite, state.uploads_dir
+        body.content, body.attachment_ids or [], state.sqlite, state.uploads_dir
     )
 
     try:

@@ -61,9 +61,9 @@ class ChatStoreMixin:
             return obj
 
     def delete_chat_session(self, session_id: str) -> bool:
-        """チャットセッションとそのメッセージ・画像レコードを削除する。"""
+        """チャットセッションとそのメッセージ・添付レコードを削除する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatSession, ChatMessage, ChatImage
+            from backend.repositories.sqlite.store import ChatSession, ChatMessage, ChatAttachment
             # 封筒は削除せず retracted マーク（セッションごと消してもタイムラインの
             # 存在記録は残す。retracted は全観測者から hidden）
             message_ids = [
@@ -76,7 +76,7 @@ class ChatStoreMixin:
                 session, "chat_messages", message_ids
             )
             session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
-            session.query(ChatImage).filter(ChatImage.session_id == session_id).delete()
+            session.query(ChatAttachment).filter(ChatAttachment.session_id == session_id).delete()
             obj = session.get(ChatSession, session_id)
             if not obj:
                 session.commit()
@@ -94,7 +94,7 @@ class ChatStoreMixin:
         role: str,
         content: str,
         reasoning: str | None = None,
-        images: list | None = None,
+        attachments: list | None = None,
         character_name: str | None = None,
         preset_name: str | None = None,
         is_system_message: bool = False,
@@ -123,7 +123,7 @@ class ChatStoreMixin:
                 role=role,
                 content=content,
                 reasoning=reasoning,
-                images=images or None,
+                attachments=attachments or None,
                 character_name=character_name,
                 preset_name=preset_name,
                 is_system_message=1 if is_system_message else None,
@@ -360,41 +360,41 @@ class ChatStoreMixin:
             session.commit()
             return True
 
-    # --- Chat Images ---
+    # --- Chat Attachments ---
 
-    def create_chat_image(
+    def create_chat_attachment(
         self,
-        image_id: str,
+        attachment_id: str,
         session_id: str,
         mime_type: str,
         message_id: str | None = None,
     ):
-        """添付画像レコードを作成する。"""
+        """添付レコード（画像・音声）を作成する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatImage
-            img = ChatImage(
-                id=image_id,
+            from backend.repositories.sqlite.store import ChatAttachment
+            att = ChatAttachment(
+                id=attachment_id,
                 session_id=session_id,
                 message_id=message_id,
                 mime_type=mime_type,
             )
-            session.add(img)
+            session.add(att)
             session.commit()
-            session.refresh(img)
-            return img
+            session.refresh(att)
+            return att
 
-    def get_chat_image(self, image_id: str):
-        """画像IDでレコードを取得する。"""
+    def get_chat_attachment(self, attachment_id: str):
+        """添付IDでレコードを取得する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatImage
-            return session.get(ChatImage, image_id)
+            from backend.repositories.sqlite.store import ChatAttachment
+            return session.get(ChatAttachment, attachment_id)
 
-    def list_chat_images_by_session(self, session_id: str) -> list:
-        """セッションに紐づく全画像レコードを返す。"""
+    def list_chat_attachments_by_session(self, session_id: str) -> list:
+        """セッションに紐づく全添付レコードを返す。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatImage
+            from backend.repositories.sqlite.store import ChatAttachment
             return (
-                session.query(ChatImage)
-                .filter(ChatImage.session_id == session_id)
+                session.query(ChatAttachment)
+                .filter(ChatAttachment.session_id == session_id)
                 .all()
             )

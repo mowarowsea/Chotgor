@@ -8,7 +8,7 @@ import {
   fetchSessions,
   fetchSession,
   deleteSession,
-  uploadImages,
+  uploadAttachments,
   fetchUserName,
   fetchCharacters,
   fetchScenarioSessions,
@@ -473,15 +473,15 @@ export default function App() {
     }
   }, [activeSessionId, scenarioSessions, deleteScenario, resetScenarioState]);
 
-  /** メッセージ送信。画像がある場合は先にアップロードしてから送信する。 */
+  /** メッセージ送信。添付がある場合は先にアップロードしてから送信する。 */
   const handleSend = useCallback(async (content: string, files: File[]) => {
     if (!activeSessionId) return;
 
-    let imageIds: string[] = [];
+    let attachmentIds: string[] = [];
     if (files.length > 0) {
       try {
-        const uploaded = await uploadImages(activeSessionId, files);
-        imageIds = uploaded.map((u) => u.id);
+        const uploaded = await uploadAttachments(activeSessionId, files);
+        attachmentIds = uploaded.map((u) => u.id);
       } catch (e) {
         setError(String(e));
         return;
@@ -490,7 +490,7 @@ export default function App() {
 
     setSending(true);
     try {
-      await doStream(activeSessionId, content, imageIds, selectedModel || undefined);
+      await doStream(activeSessionId, content, attachmentIds, selectedModel || undefined);
     } catch (e) {
       setError(String(e));
     } finally {

@@ -516,7 +516,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 
 | prefix | ファイル | 用途 |
 |---|---|---|
-| `/api/chat` | `api/chat.py`, `api/chat_images.py` | 1on1セッション・ストリーミング・画像 |
+| `/api/chat` | `api/chat.py`, `api/chat_attachments.py` | 1on1セッション・ストリーミング・添付（画像・音声） |
 | `/api/scenario_chat` | `api/scenario_chat/` | シナリオ（scenarios / sessions / stream） |
 | `/api/characters` | `api/characters.py` | キャラクターCRUD |
 | `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行 |

@@ -1533,3 +1533,49 @@ class SQLiteMigrationsMixin:
                     conn.exec_driver_sql(
                         f"ALTER TABLE {table} ADD COLUMN bubble_color INTEGER"
                     )
+
+
+    def _migrate_rename_chat_images_to_attachments(self) -> None:
+        """chat_images → chat_attachments、chat_messages.images → attachments へリネームする。
+
+        添付が画像だけではなくなったため（音声）。テーブル名・列名が「画像」を
+        名乗ったままだと嘘になるので、実体のリネームで揃える。
+
+        注意: `Base.metadata.create_all` が先に走るので、旧 DB では ORM 定義由来の
+        空の `chat_attachments` が既に作られている。旧テーブルが正なので、空であることを
+        確認したうえで新テーブルを捨ててからリネームする。
+        既に新名なら何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "chat_images" in tables:
+                can_rename = True
+                if "chat_attachments" in tables:
+                    count = conn.exec_driver_sql(
+                        "SELECT COUNT(*) FROM chat_attachments"
+                    ).fetchone()[0]
+                    if count == 0:
+                        conn.exec_driver_sql("DROP TABLE chat_attachments")
+                    else:
+                        # 両方に行がある異常状態。データを壊さず旧テーブルを残す。
+                        can_rename = False
+                if can_rename:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE chat_images RENAME TO chat_attachments"
+                    )
+            if "chat_messages" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.exec_driver_sql(
+                        "PRAGMA table_info(chat_messages)"
+                    ).fetchall()
+                }
+                if "images" in cols and "attachments" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE chat_messages RENAME COLUMN images TO attachments"
+                    )

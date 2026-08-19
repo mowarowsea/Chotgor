@@ -17,7 +17,7 @@ def _make_debug_dir(base: Path, msg_id: str) -> Path:
 
 def _write_front_input(folder: Path, model_id: str, content: str) -> None:
     """01_FrontInput.log をフォルダに書き込む。"""
-    data = {"content": content, "image_ids": None, "model_id": model_id}
+    data = {"content": content, "attachment_ids": None, "model_id": model_id}
     (folder / "01_FrontInput.log").write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -29,7 +29,7 @@ def _write_front_input_with_newlines(folder: Path, model_id: str, content: str) 
     debug_logger は JSON の文字列内 \\n を実際の改行に変換するため、
     厳密な JSON としては無効なファイルが生成される。
     """
-    data = {"content": content, "image_ids": None, "model_id": model_id}
+    data = {"content": content, "attachment_ids": None, "model_id": model_id}
     raw = json.dumps(data, ensure_ascii=False, indent=2)
     # debug_logger._unescape_text() の再現: エスケープ済み \\n → 実際の改行
     raw = raw.replace("\\n", "\n").replace("\\t", "\t")

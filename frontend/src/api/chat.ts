@@ -56,8 +56,8 @@ export interface ChatMessage {
   content: string;
   /** 思考ブロック・想起記憶テキスト。キャラクターメッセージのみ存在する場合がある。 */
   reasoning?: string;
-  /** 添付画像IDのリスト。ユーザメッセージのみ存在する場合がある。 */
-  images?: string[];
+  /** 添付IDのリスト（画像・音声）。ユーザメッセージのみ存在する場合がある。 */
+  attachments?: string[];
   /** シナリオPC・うつつ発話時のキャラクター名。 */
   character_name?: string;
   /** メッセージ送信時に使用したプリセット名（バブル表示用）。 */
@@ -171,7 +171,7 @@ export type StreamEvent =
 export async function* streamMessage(
   sessionId: string,
   content: string,
-  imageIds?: string[],
+  attachmentIds?: string[],
   modelId?: string
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
@@ -179,7 +179,7 @@ export async function* streamMessage(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       content,
-      ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
+      ...(attachmentIds && attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
       ...(modelId ? { model_id: modelId } : {}),
     }),
   });
@@ -188,20 +188,20 @@ export async function* streamMessage(
   yield* parseSSEStream<StreamEvent>(res);
 }
 
-/** 複数の画像ファイルをアップロードしてセッションに紐づける。 */
-export async function uploadImages(
+/** 添付ファイル（画像・音声）をアップロードしてセッションに紐づける。 */
+export async function uploadAttachments(
   sessionId: string,
   files: File[]
-): Promise<{ id: string; url: string }[]> {
+): Promise<{ id: string; url: string; mime_type: string; kind: string }[]> {
   const form = new FormData();
   for (const file of files) {
     form.append("files", file);
   }
-  const res = await fetch(`/api/chat/sessions/${sessionId}/images`, {
+  const res = await fetch(`/api/chat/sessions/${sessionId}/attachments`, {
     method: "POST",
     body: form,
   });
-  if (!res.ok) throw new Error("画像のアップロードに失敗しました");
+  if (!res.ok) throw new Error("添付のアップロードに失敗しました");
   return res.json();
 }
 

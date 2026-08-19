@@ -148,7 +148,7 @@ class CharacterStoreMixin:
         - inscribed_memories（character_id）
         - working_memory_threads ＋ 配下の working_memory_posts（character_id / thread_id）
         - 1on1 chat_sessions（model_id が "キャラ名@..."）＋ 配下の
-          chat_messages / chat_images（session_id）
+          chat_messages / chat_attachments（session_id）
         - characters 本体
 
         保持するもの:
@@ -171,7 +171,7 @@ class CharacterStoreMixin:
                 WorkingMemoryPost,
                 ChatSession,
                 ChatMessage,
-                ChatImage,
+                ChatAttachment,
             )
 
             char = session.get(Character, character_id)
@@ -212,8 +212,8 @@ class CharacterStoreMixin:
                 session.query(ChatMessage).filter(
                     ChatMessage.session_id.in_(session_ids)
                 ).delete(synchronize_session=False)
-                session.query(ChatImage).filter(
-                    ChatImage.session_id.in_(session_ids)
+                session.query(ChatAttachment).filter(
+                    ChatAttachment.session_id.in_(session_ids)
                 ).delete(synchronize_session=False)
                 session.query(ChatSession).filter(
                     ChatSession.id.in_(session_ids)

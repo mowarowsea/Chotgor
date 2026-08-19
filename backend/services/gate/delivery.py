@@ -313,7 +313,7 @@ async def _deliver_session(
             # 発話予約との合流: 未配達分の配達と合成注釈を1ターンに併合する
             last_text = f"{last_text}\n\n{extra_annotation}"
         user_content = build_message_content(
-            last_text, last.images or [],
+            last_text, last.attachments or [],
             sqlite, state.uploads_dir,
         )
 

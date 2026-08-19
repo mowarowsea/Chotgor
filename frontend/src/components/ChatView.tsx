@@ -38,9 +38,9 @@ interface Props {
   /**
    * ユーザメッセージ編集・キャラクター応答再生成コールバック。
    * fromMessageId 以降を削除して content で再送する。
-   * imageIds には再送する画像IDリストを渡す（再生成時は元メッセージの画像を引き継ぐ）。
+   * attachmentIds には再送する添付IDリストを渡す（再生成時は元メッセージの添付を引き継ぐ）。
    */
-  onRetry: (fromMessageId: string, content: string, imageIds: string[]) => void;
+  onRetry: (fromMessageId: string, content: string, attachmentIds: string[]) => void;
   /**
    * 末尾ユーザメッセージの削除コールバック（再送なし）。
    * 未指定ならユーザバブルにゴミ箱を出さない。

@@ -7,7 +7,7 @@ SQLiteStore はドメイン別 Mixin を多重継承したファサードクラ�
   CharacterStoreMixin               — キャラクター管理
   InscribedMemoryStoreMixin         — 保存記憶レコード
   PresetStoreMixin                  — LLMモデルプリセット
-  ChatStoreMixin                    — セッション・メッセージ・画像
+  ChatStoreMixin                    — セッション・メッセージ・添付
   WorkingMemoryStoreMixin           — ワーキングメモリ（短期記憶スレッド・ポスト）
   ScenarioChatStoreMixin            — シナリオチャット（テンプレ・セッション・NPC・ターン）
   DebugLogStoreMixin                — デバッグログエントリ
@@ -35,7 +35,7 @@ from backend.repositories.sqlite.models import (  # noqa: F401
     Alarm,
     Base,
     Character,
-    ChatImage,
+    ChatAttachment,
     ChatMessage,
     ChatSession,
     DebugLogEntry,
@@ -150,6 +150,7 @@ class SQLiteStore(
         self._migrate_rename_initiative_cap()
         self._migrate_add_scenario_turn_variants()
         self._migrate_add_bubble_color()
+        self._migrate_rename_chat_images_to_attachments()
 
     def get_session(self) -> Session:
         """新しい DB セッションを返す。Mixin クラスが共通して使用する。"""

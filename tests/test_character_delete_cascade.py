@@ -3,7 +3,7 @@
 `delete_character_cascade` が、対象キャラクターに紐づく
 - inscribed_memories
 - working_memory_threads ＋ working_memory_posts
-- 1on1 chat_sessions ＋ chat_messages ＋ chat_images
+- 1on1 chat_sessions ＋ chat_messages ＋ chat_attachments
 を全て削除し、かつ
 - 別キャラクターのデータは一切巻き込まない
 - debug_log_entries は保持する（このテストでは対象外として明示）
@@ -20,7 +20,7 @@ from backend.repositories.sqlite.store import (
     WorkingMemoryPost,
     ChatSession,
     ChatMessage,
-    ChatImage,
+    ChatAttachment,
 )
 
 
@@ -51,8 +51,8 @@ def _seed_character(store, name: str) -> str:
     store.create_chat_session(session_id=session_id, model_id=f"{name}@default")
     msg_id = str(uuid.uuid4())
     store.create_chat_message(message_id=msg_id, session_id=session_id, role="user", content="hi")
-    store.create_chat_image(
-        image_id=str(uuid.uuid4()), session_id=session_id, mime_type="image/png", message_id=msg_id
+    store.create_chat_attachment(
+        attachment_id=str(uuid.uuid4()), session_id=session_id, mime_type="image/png", message_id=msg_id
     )
 
     return char_id
@@ -99,8 +99,8 @@ def _counts(store, char_id: str, char_name: str) -> dict:
                 else 0
             ),
             "images": (
-                s.query(ChatImage).filter(
-                    ChatImage.session_id.in_(session_ids)
+                s.query(ChatAttachment).filter(
+                    ChatAttachment.session_id.in_(session_ids)
                 ).count()
                 if session_ids
                 else 0

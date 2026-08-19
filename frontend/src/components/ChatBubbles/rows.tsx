@@ -9,7 +9,7 @@ import { CharacterAvatar } from "./avatar";
 import { Bubble } from "./Bubble";
 import { UserMessageActions } from "./buttons";
 import type { ActionHandler } from "./buttons";
-import { ImageGrid } from "./images";
+import { AttachmentGrid } from "./attachments";
 import { InlineEditor } from "./InlineEditor";
 import { MarkdownContent } from "./markdown";
 import { MessageActionBar } from "./MessageActionBar";
@@ -192,7 +192,7 @@ function CharacterBubbleImpl({
 function UserBubbleImpl({
   content,
   userName,
-  images,
+  attachments,
   sending = false,
   onEdit,
   onDelete,
@@ -200,7 +200,7 @@ function UserBubbleImpl({
 }: {
   content: string;
   userName: string;
-  images?: string[];
+  attachments?: string[];
   sending?: boolean;
   onEdit?: (newContent: string) => void;
   /**
@@ -235,8 +235,8 @@ function UserBubbleImpl({
       {/* ユーザー名ラベル */}
       <span className="text-[11px] text-ch-t4 pr-1">{userName}</span>
 
-      {/* 添付画像 */}
-      {images && images.length > 0 && <ImageGrid imageIds={images} />}
+      {/* 添付 */}
+      {attachments && attachments.length > 0 && <AttachmentGrid attachmentIds={attachments} />}
 
       {editing ? (
         <InlineEditor
@@ -306,7 +306,7 @@ export const UserBubble = React.memo(UserBubbleImpl, (prev, next) => {
     // onDelete は末尾バブルでのみ渡るので、新しい発話が積まれた時点でゴミ箱を引っ込める。
     (prev.onEdit === undefined) === (next.onEdit === undefined) &&
     (prev.onDelete === undefined) === (next.onDelete === undefined) &&
-    // 画像は ID の並びで比較する（親が毎回新しい配列を渡しても参照差で落ちないように）。
-    (prev.images ?? []).join(",") === (next.images ?? []).join(",")
+    // 添付は ID の並びで比較する（親が毎回新しい配列を渡しても参照差で落ちないように）。
+    (prev.attachments ?? []).join(",") === (next.attachments ?? []).join(",")
   );
 });

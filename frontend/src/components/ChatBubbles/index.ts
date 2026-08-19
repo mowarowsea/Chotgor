@@ -30,5 +30,5 @@ export { InlineEditor } from "./InlineEditor";
 export { MessageActionBar } from "./MessageActionBar";
 export { useRevealControls } from "./tapReveal";
 export { CharacterBubble, CharacterMessageRow, UserBubble } from "./rows";
-export { ImageGrid, ImageModal } from "./images";
+export { AttachmentGrid, ImageModal } from "./attachments";
 export { MarkdownContent } from "./markdown";

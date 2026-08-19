@@ -1,27 +1,27 @@
 /**
- * 添付画像表示 — サムネイルグリッドとフルサイズモーダル。
+ * 添付表示 — サムネイルグリッドとフルサイズモーダル。
  */
 import { useState } from "react";
 
 /**
- * 添付画像IDリストをサムネイルグリッドで表示するコンポーネント。
+ * 添付IDリストをサムネイルグリッドで表示するコンポーネント。
  */
-export function ImageGrid({ imageIds }: { imageIds: string[] }) {
+export function AttachmentGrid({ attachmentIds }: { attachmentIds: string[] }) {
   const [modalSrc, setModalSrc] = useState<string | null>(null);
 
   return (
     <>
       <div className="flex flex-wrap gap-1.5 justify-end mb-1">
-        {imageIds.map((id) => (
+        {attachmentIds.map((id) => (
           <button
             key={id}
             type="button"
-            onClick={() => setModalSrc(`/api/chat/images/${id}`)}
+            onClick={() => setModalSrc(`/api/chat/attachments/${id}`)}
             className="block rounded-lg overflow-hidden transition-opacity hover:opacity-80"
             style={{ border: "1px solid var(--ch-sep)" }}
           >
             <img
-              src={`/api/chat/images/${id}`}
+              src={`/api/chat/attachments/${id}`}
               alt="添付画像"
               className="w-20 h-20 object-cover"
             />
