@@ -9,6 +9,10 @@ import uuid
 
 from backend.lib.log_context import current_message_id
 from backend.services.scenario_chat.serializers import resolve_user_speaker_name
+from backend.services.scenario_chat.template_tags import (
+    build_tag_context,
+    expand_value_tags,
+)
 
 
 def _save_turn(
@@ -161,6 +165,17 @@ def seed_intro_turns(sqlite, session_id: str, scenario) -> int:
     # ユーザPC名は user 割当スロットから解決する（旧 user_alias 廃止）。
     session = sqlite.get_scenario_session(session_id)
     user_speaker_name = resolve_user_speaker_name(scenario, session, sqlite)
+    # intro でも値タグ（{user_alias} / {pc_name[1]} 等）を使えるようにする。
+    # 展開はここ 1 回きり ── 展開後の本文がターンとして保存されるので、
+    # あとから枠名を変えても既存セッションの導入部は動かない。
+    intro_text = expand_value_tags(
+        intro_text,
+        build_tag_context(
+            user_alias=user_speaker_name,
+            pc_entries=getattr(scenario, "pc_slots", None),
+            npcs=npcs,
+        ),
+    )
     blocks = parse_intro_to_turns(
         intro_text=intro_text,
         user_alias=user_speaker_name,

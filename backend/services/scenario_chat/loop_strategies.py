@@ -478,6 +478,8 @@ class ScenarioTurnExecutor:
                     chat_service=sc.chat_service,
                     scenario_session_id=sc.session_id,
                     default_origin="usual" if sc.is_headless else "interlude",
+                    scenario=sc.scenario,
+                    npcs=sc.npcs,
                 ):
                     if ev_type == "pc_done":
                         full_text = payload["full_text"]

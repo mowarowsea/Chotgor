@@ -41,6 +41,10 @@ from backend.services.chat.service import ChatService
 from backend.services.memory.format import format_recalled_memories, format_recalled_threads
 from backend.services.scenario_chat.format_speech import format_xml_speech_line
 from backend.services.scenario_chat.mention import PcAssignment
+from backend.services.scenario_chat.template_tags import (
+    build_tag_context,
+    expand_value_tags,
+)
 from backend.services.scenario_chat.service import _has_scene_close
 
 logger = logging.getLogger(__name__)
@@ -196,6 +200,8 @@ async def stream_pc_response(
     chat_service: ChatService,
     scenario_session_id: str = "",
     default_origin: str = "interlude",
+    scenario: Any = None,
+    npcs: list[Any] | None = None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """指定 PC（Chotgor キャラ）の応答 1 ターン分をストリーミングする非同期ジェネレータ。
 
@@ -216,6 +222,9 @@ async def stream_pc_response(
         chat_service: PC 1 ターンの LLM ディスパッチを担う ChatService インスタンス。
         default_origin: 記憶/スレッド保存時の origin。シナリオ PC モードは "interlude"（既定）、
             うつつ（Usual Days）無人ループでは "usual"。
+        scenario: Scenario ORM。配役メモ（pc.description）の値タグ展開に使う
+            （pc_slots を参照）。None なら展開せずタグは書かれたまま残る。
+        npcs: 既知 NPC のリスト。`{npc_name[n]}` の解決に使う。
 
     Yields:
         ("turn_start",  {"character": role_name, "character_id": cid})  — PC レスポンス開始通知
@@ -350,7 +359,15 @@ async def stream_pc_response(
     #   - うつつ: それらを一切使わず、「これは本人の日常」として伝えるテンプレ。
     # 同じテンプレに usual_mode フラグ分岐を入れる手もあるが、文体の温度が
     # 大きく違うので物理的に分けた方が誤魔化しなく書ける。
-    raw_slot_desc = (getattr(pc, "description", "") or "").strip()
+    # 配役メモでも値タグを使えるようにする（GM 側の {pc_summary} と同じ解決規則）。
+    raw_slot_desc = expand_value_tags(
+        (getattr(pc, "description", "") or "").strip(),
+        build_tag_context(
+            user_alias=user_alias,
+            pc_entries=getattr(scenario, "pc_slots", None),
+            npcs=npcs,
+        ),
+    )
     if default_origin == "usual":
         slot_block = (
             f"\n\n### この場面について\n{raw_slot_desc}" if raw_slot_desc else ""

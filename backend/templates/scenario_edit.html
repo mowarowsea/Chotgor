@@ -10,6 +10,16 @@
 {% from "macros.html" import ch_help, ch_swatches %}
 
 {% block content %}
+{# シナリオ設定テキスト（Scenario / Intro / PC・NPC の Description）で共通に使える
+   「値タグ」の説明。同じ文言を各フィールドの ⓘ へ配るため、ここで 1 度だけ定義する。 #}
+{% set value_tag_help = (
+    '<p><strong>使用可能なテンプレートタグ</strong></p>'
+    '<p><code>{user_alias}</code> ユーザが演じる PC 枠の名前<br>'
+    '<code>{narrator_name}</code> ナレーター名<br>'
+    '<code>{pc_name[1]}</code> PC 枠の名前（1 始まり。<code>{pc_name[pc1]}</code> と Slot ID でも指定可）<br>'
+    '<code>{npc_name[1]}</code> NPC の名前（1 始まり・作成順）</p>'
+    '<p>解決できないタグ（範囲外の番号など）は書いたまま残ります。</p>'
+) %}
 <div class="ch-shell">
     {# ── ヒーロー ─────────────────────────────────────── #}
     <header class="ch-hero">
@@ -65,7 +75,7 @@
             <div class="ch-field">
                 <label class="ch-label" for="scenario">Scenario / World{{ ch_help(
                     '世界観・場所・空気感・Narrator の語り口・テンポなど、必要な前提を自由記述します。'
-                    'ここに書いた内容は GM の system prompt に注入されます。'
+                    'ここに書いた内容は GM の system prompt に注入されます。' ~ value_tag_help
                 ) }}
                 </label>
                 <textarea id="scenario" name="scenario" class="ch-textarea" style="min-height:200px"
@@ -78,6 +88,8 @@
                     '<p>セッション開始時に固定で挿入される導入部です。</p>'
                     '<p><code>@キャラ: 本文</code> 記法で各話者の発話を書きます'
                     '（<code>@Narrator:</code> / <code>@&lt;PC枠名&gt;:</code> も使えます）。</p>'
+                    '<p>タグはセッション開始時に 1 度だけ展開され、その本文がターンとして'
+                    '保存されます（既存セッションの導入部は後から変わりません）。</p>' ~ value_tag_help
                 ) }}
                 </label>
                 <textarea id="intro" name="intro" class="ch-textarea" style="min-height:200px"
@@ -133,10 +145,9 @@
                     '<p>設定すると GM への自動生成プロンプト（役割定義・出力規則等）を完全に置き換えます。'
                     '直近の履歴とプレイヤー発話は末尾に自動追加されます。'
                     '空欄に戻すと通常の自動生成ロジックが復活します。</p>'
-                    '<p><strong>使用可能なテンプレートタグ</strong></p>'
-                    '<p><code>{user_alias}</code> ユーザPC名<br>'
-                    '<code>{narrator_name}</code> ナレーター名<br>'
-                    '<code>{scenario}</code> シナリオテキスト<br>'
+                    ~ value_tag_help ~
+                    '<p><strong>ここでだけ使えるブロックタグ</strong></p>'
+                    '<p><code>{scenario}</code> シナリオテキスト<br>'
                     '<code>{npcs_summary}</code> NPC一覧<br>'
                     '<code>{auto_synopsis}</code> 自動あらすじ<br>'
                     '<code>{synopsis_manual}</code> プレイヤー補足<br>'
@@ -250,7 +261,7 @@
                     </div>
                     <div class="ch-field">
                         <label class="ch-label">Description
-                            <span class="ch-hint">人物像・口調・話し方を自由記述</span>
+                            <span class="ch-hint">人物像・口調・話し方を自由記述</span>{{ ch_help(value_tag_help) }}
                         </label>
                         <textarea name="description" class="ch-textarea" style="min-height:140px"
                                   placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。">{{ n.description or '' }}</textarea>
@@ -307,7 +318,7 @@
                     </div>
                     <div class="ch-field">
                         <label class="ch-label">Description
-                            <span class="ch-hint">人物像・口調・話し方を自由記述</span>
+                            <span class="ch-hint">人物像・口調・話し方を自由記述</span>{{ ch_help(value_tag_help) }}
                         </label>
                         <textarea name="description" class="ch-textarea" style="min-height:140px"
                                   placeholder="例: 赤髪の魔法使い。ぶっきらぼうで素っ気ない口調だが、本当は仲間思い。「……」を多用する。"></textarea>
@@ -362,7 +373,7 @@
                 </div>
                 <div class="ch-field">
                     <label class="ch-label" for="pcModalDescription">Description
-                        <span class="ch-hint">人物像・出自・知っていることを自由記述</span>
+                        <span class="ch-hint">人物像・出自・知っていることを自由記述</span>{{ ch_help(value_tag_help) }}
                     </label>
                     <textarea id="pcModalDescription" class="ch-textarea" style="min-height:160px"
                               placeholder="例: 剣士、商家出身、北の村について詳しい"></textarea>

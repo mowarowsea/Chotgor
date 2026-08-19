@@ -248,6 +248,17 @@ frontend useScenarioChat → /api/scenario_chat/... (api/scenario_chat/)
   → PC は pc_slots に一本化（GMプロンプトは中の人が人間かAIかを区別しない）
 ```
 
+**テンプレートタグは二層** — GM プロンプト専用の**ブロックタグ**（`{scenario}` /
+`{history_block}` / `{npc_details}` 等。`prompt_builder._replace_template_tags`）と、
+シナリオ本文・intro・PC枠/NPC の description でも使える**値タグ**（`{user_alias}` /
+`{narrator_name}` / `{pc_name[1]}` / `{pc_name[pc1]}`（slot_id 指定）/ `{npc_name[1]}`。
+`scenario_chat/template_tags.py`）に分かれる。値タグは 1 段展開で、展開結果に含まれる
+タグは再展開しない（本文に `{scenario}` と書かれたときの自己再帰・履歴の多重展開を遮断）。
+展開対象は**設定テキストだけ**で、履歴・あらすじ（ユーザ発話や LLM 生成物）には掛けない
+（過去の発話が後から書き換わるのを避ける）。解決できないタグは書かれたまま残す。
+intro だけは `turns.seed_intro_turns` でセッション開始時に 1 度展開し、展開後の本文が
+ターンとして保存される（既存セッションへは遡及しない）。
+
 **スケッチ（想起記憶・WM・思考）** — GM・PC とも 1on1 と同じ `reasoning` SSE イベントで
 流し、`scenario_turns.reasoning` に保存する（1on1 の `chat_messages.reasoning` と対）。
 フロントは確定ターンではこの列を、生成中は `scenarioStreamingReasoning` を

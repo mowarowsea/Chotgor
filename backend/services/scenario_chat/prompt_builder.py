@@ -26,7 +26,18 @@ CLAUDE.md 準拠の注意:
     auto と矛盾する場合は manual を優先するよう文言で誘導する。
 """
 
+import re
 from typing import Any, Iterable
+
+from backend.services.scenario_chat.template_tags import (
+    build_tag_context,
+    expand_value_tags,
+)
+
+# ブロックタグのうち「ユーザが書いた設定テキスト」由来のもの。
+# これらの中身だけは値タグ（{user_alias} / {pc_name[1]} など）を展開する。
+# 履歴・あらすじ（LLM 生成物やユーザ発話）は誤展開を避けるため対象外。
+_CONFIG_TEXT_BLOCKS = ("{scenario}", "{npcs_summary}", "{npc_details}", "{pc_summary}")
 
 
 def _format_npc_line(npc: Any) -> str:
@@ -266,10 +277,8 @@ def _replace_template_tags(
 ) -> str:
     """プロンプトテンプレート内のタグを実際の値に置き換える。
 
-    サポートされるタグ:
+    サポートされるタグ（ブロックタグ = GM システムプロンプト専用）:
         {time_context}     - 現在の日付・曜日・時間帯・季節（うつつ専用、通常は空）
-        {user_alias}       - プレイヤーの @タグ用呼称
-        {narrator_name}    - ナレーターの名前
         {scenario}         - 世界・シナリオテキスト
         {npcs_summary}     - 既知NPC のリスト（簡潔版）
         {auto_synopsis}    - 自動要約あらすじ
@@ -279,8 +288,12 @@ def _replace_template_tags(
         {history_block}    - 直近の履歴テキスト
         {pc_summary}       - PC配役一覧（ensemble_pc 専用、ensemble では空）
         {dice_pool}        - このレスポンスで使えるダイス（ensemble_pc 専用、ensemble では空）
+
+    値タグ（{user_alias} / {narrator_name} / {pc_name[n]} / {npc_name[n]}）は
+    `template_tags.expand_value_tags` が担当する。テンプレート本体に加えて、
+    _CONFIG_TEXT_BLOCKS のブロック（シナリオ本文・NPC/PC の description）の中でも
+    使える。展開は 1 段だけで、展開結果の中のタグは再展開しない。
     """
-    result = template
     # 旧 scenario.user_alias は廃止。呼び出し側が解決した user_speaker_name を使う。
     user_alias = user_speaker_name
     scenario_text = (getattr(scenario, "scenario", "") or "").strip()
@@ -299,9 +312,14 @@ def _replace_template_tags(
     else:
         previous_anticipation_formatted = ""
 
-    replacements = {
-        "{user_alias}": user_alias,
-        "{narrator_name}": narrator_name,
+    ctx = build_tag_context(
+        user_alias=user_alias,
+        narrator_name=narrator_name,
+        pc_entries=getattr(scenario, "pc_slots", None),
+        npcs=npcs,
+    )
+
+    blocks = {
         "{scenario}": scenario_text,
         "{npcs_summary}": _format_npcs_summary(npcs),
         "{auto_synopsis}": (synopsis_auto or "").strip(),
@@ -314,10 +332,18 @@ def _replace_template_tags(
         "{time_context}": (time_context or "").strip(),
     }
 
-    for tag, value in replacements.items():
-        result = result.replace(tag, value)
+    # 設定テキスト由来のブロックは、その中に書かれた値タグをここで解決する
+    # （シナリオ本文・NPC/PC枠の description でもタグを使えるようにする経路）。
+    for key in _CONFIG_TEXT_BLOCKS:
+        blocks[key] = expand_value_tags(blocks[key], ctx)
 
-    return result
+    # 1) テンプレート本体に直書きされた値タグ。ブロック注入より先に処理することで、
+    #    履歴（{history_block}）に紛れ込んだ中括弧を誤って展開しない。
+    result = expand_value_tags(template, ctx)
+    # 2) ブロックタグを 1 パスで注入する。注入した本文に含まれるタグは再展開しない
+    #    （シナリオ本文に {scenario} と書かれても自己再帰しない）。
+    block_re = re.compile("|".join(re.escape(t) for t in blocks))
+    return block_re.sub(lambda m: blocks[m.group(0)], result)
 
 
 # デフォルトのGMシステムプロンプト（タグテンプレート版）

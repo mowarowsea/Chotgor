@@ -21,6 +21,10 @@ from typing import Any, Callable
 
 from backend.providers.registry import create_provider
 from backend.services.scenario_chat.context import format_history_for_gm
+from backend.services.scenario_chat.template_tags import (
+    build_tag_context,
+    expand_value_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,7 @@ def build_synopsis_system_prompt(
     existing_auto: str,
     narrator_name: str = "Narrator",
     user_speaker_name: str = "プレイヤー",
+    npcs: Any = None,
 ) -> str:
     """あらすじ蒸留用の system prompt を組み立てる。
 
@@ -52,9 +57,18 @@ def build_synopsis_system_prompt(
     Returns:
         system prompt 文字列。
     """
-    # 旧 scenario.user_alias は廃止。呼び出し側が解決した user_speaker_name を使う。
-    _ = user_speaker_name  # 現状あらすじ本文では特定PCを主役扱いしないため未使用
-    scenario_text = (getattr(scenario, "scenario", "") or "").strip()
+    # あらすじ本文では特定PCを主役扱いしないので、user_speaker_name はシナリオ本文の
+    # 値タグ（{user_alias} 等）を GM プロンプトと同じ結果に解決するためだけに使う。
+    # ここで展開しないと、あらすじ側にだけ生のタグ文字列が漏れる。
+    scenario_text = expand_value_tags(
+        (getattr(scenario, "scenario", "") or "").strip(),
+        build_tag_context(
+            user_alias=user_speaker_name,
+            narrator_name=narrator_name,
+            pc_entries=getattr(scenario, "pc_slots", None),
+            npcs=npcs,
+        ),
+    )
     has_existing = bool(existing_auto and existing_auto.strip())
 
     parts = [
@@ -135,6 +149,7 @@ async def update_auto_synopsis(
     provider_factory: Callable[..., Any] = create_provider,
     narrator_name: str = "Narrator",
     user_speaker_name: str = "プレイヤー",
+    npcs: Any = None,
 ) -> str | None:
     """既存 `existing_auto` と `new_turns` を統合し、全体を再蒸留した結果を返す。
 
@@ -157,6 +172,7 @@ async def update_auto_synopsis(
                             軽量モデルを割り当てられる。
         provider_factory: プロバイダ生成関数（デフォルト registry.create_provider）。
         narrator_name: Narrator のタグ名。
+        npcs: 既知 NPC のリスト。シナリオ本文の `{npc_name[n]}` 解決にだけ使う。
 
     Returns:
         再蒸留後の synopsis_auto 文字列（全体置き換え版）。new_turns が空、
@@ -195,6 +211,7 @@ async def update_auto_synopsis(
         existing_auto=existing_auto or "",
         narrator_name=narrator_name,
         user_speaker_name=user_speaker_name,
+        npcs=npcs,
     )
 
     history_text = format_history_for_gm(

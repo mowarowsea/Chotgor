@@ -134,6 +134,8 @@ async def maybe_update_auto_synopsis(
             preset_loader=loader,
             synopsis_preset_id=synopsis_preset_id,
             user_speaker_name=user_speaker_name,
+            # シナリオ本文の {npc_name[n]} を GM プロンプトと同じに解決するため。
+            npcs=sqlite.list_scenario_npcs(scenario.id),
         )
         if new_auto is None:
             # update_auto_synopsis 側の WARN で詳細理由は出ているので、ここは要約のみ
