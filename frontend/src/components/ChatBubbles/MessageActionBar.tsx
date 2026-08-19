@@ -6,6 +6,7 @@ import { useState } from "react";
 import { fetchLogEntry } from "../../api";
 import type { LogEntry } from "../../api";
 import { CopyButton, DiscardButton, RegenerateButton, VariantNav } from "./buttons";
+import type { ActionHandler } from "./buttons";
 import { RawLogModal, TAG_COLORS, ToolCallRow, ToolTagRow } from "./logViewer";
 
 /**
@@ -50,20 +51,20 @@ export function MessageActionBar({
 }: {
   /** コピーボタンがコピーするテキスト。 */
   copyText: string;
-  /** 再生成コールバック（無指定で再生成ボタン非表示）。 */
-  onRegenerate?: () => void;
+  /** 再生成コールバック（無指定で再生成ボタン非表示）。Promise を返すと解決まで再生成ボタンが無効化される。 */
+  onRegenerate?: ActionHandler;
   /** 再生成ボタンのツールチップ。 */
   regenerateTitle?: string;
   /** 応答破棄コールバック（無指定で破棄ボタン非表示）。再ストリームは行わない。 */
-  onDiscard?: () => void;
+  onDiscard?: ActionHandler;
   /** 破棄ボタンのツールチップ。 */
   discardTitle?: string;
   /** 枝ナビの現在位置と総数。総数が 2 以上のときだけ ◀ n/m ▶ を表示する。 */
   variantIndex?: number;
   variantCount?: number;
-  /** 前後の枝へ切り替えるコールバック。 */
-  onPrevVariant?: () => void;
-  onNextVariant?: () => void;
+  /** 前後の枝へ切り替えるコールバック。Promise を返すと解決まで枝ナビが無効化される。 */
+  onPrevVariant?: ActionHandler;
+  onNextVariant?: ActionHandler;
   /** デバッグログフォルダ名（8桁hex）。指定時のみログ折りたたみを表示する。 */
   logMessageId?: string;
   /** モデルリクエスト〜応答完了までの経過時間（ミリ秒）。指定時のみ表示する。 */

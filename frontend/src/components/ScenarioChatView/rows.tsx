@@ -16,6 +16,7 @@ import {
   ThinkingBlock,
   useRevealControls,
 } from "../ChatBubbles";
+import type { ActionHandler } from "../ChatBubbles";
 import { trimEnd } from "./helpers";
 import { Avatar } from "./npc";
 
@@ -64,17 +65,18 @@ interface GMBubbleRowProps {
    */
   copyText?: string;
   /** 1 レスポンスまるごと再生成（最終 user 以降を巻き戻して再ストリーム）。 */
-  onRegenerate?: () => void;
+  onRegenerate?: ActionHandler;
   /** 末尾 GM レスポンスを破棄してユーザ入力待ちに戻す（再ストリームしない）。 */
-  onDiscard?: () => void;
+  onDiscard?: ActionHandler;
   /** 発話の手動書き換え確定。新しい本文を受け取る。 */
   onEditCommit?: (newContent: string) => void;
   /** 枝ナビの現在位置と総数（このバブルが属するレスポンスの兄弟枝）。 */
   variantIndex?: number;
   variantCount?: number;
-  /** 前後の枝へ切り替える。過去レスポンスでは呼び出し側が確認を挟む。 */
-  onPrevVariant?: () => void;
-  onNextVariant?: () => void;
+  /** 前後の枝へ切り替える。過去レスポンスでは呼び出し側が確認を挟む。
+   *  切替が終わるまで枝ナビを無効化できるよう、Promise を返す実装を渡すこと。 */
+  onPrevVariant?: ActionHandler;
+  onNextVariant?: ActionHandler;
   /** アバタークリック時のコールバック。既知 NPC のみ渡される（押下可能になる）。 */
   onAvatarClick?: () => void;
   /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。最新グループ末尾でのみ意味がある。 */

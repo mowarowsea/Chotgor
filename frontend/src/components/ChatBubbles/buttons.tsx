@@ -4,6 +4,49 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * 操作ボタンのクリックハンドラ。
+ *
+ * 非同期処理を返してよい — 返した Promise が解決するまでボタンは無効化される。
+ */
+export type ActionHandler = () => void | Promise<void>;
+
+/**
+ * 「処理が終わるまで押させない」ためのランナー。
+ *
+ * `run` は前の処理が解決するまで次の呼び出しを捨てる。`disabled` の反映は再レンダを
+ * 待つぶん一拍遅れるので、state だけでなく ref でも弾く（連打の 2 発目が同じフレームに
+ * 入っても取りこぼさないため）。同期ハンドラを渡した場合は実質何も起きない。
+ */
+function useBusyRunner() {
+  const [busy, setBusy] = useState(false);
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  // 処理中にホバーが外れるとボタンごとアンマウントされる（useRevealControls）。
+  // 解決後の setState を空振りさせるための番人。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const run = useCallback(async (handler?: ActionHandler) => {
+    if (!handler || inFlightRef.current) return;
+    inFlightRef.current = true;
+    setBusy(true);
+    try {
+      await handler();
+    } finally {
+      inFlightRef.current = false;
+      if (mountedRef.current) setBusy(false);
+    }
+  }, []);
+
+  return { busy, run };
+}
+
 /** テキストをクリップボードにコピーし、完了時に一時的にチェックマークを表示するボタン。 */
 export function CopyButton({ text, className = "" }: { text: string; className?: string }) {
   const [done, setDone] = useState(false);
@@ -49,26 +92,32 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
  * 誤クリック防止のため、呼び出し側で `ml-auto` 等によりバブルの右端へ
  * 寄せて使うことを想定している。1on1 / グループ / シナリオの全モードで
  * 同じ見た目を共有するための共通部品。
+ *
+ * `onClick` が返した Promise が解決するまでは押せない。二度押しすると巻き戻しと
+ * 再ストリームが二重に走り、枝が余計に生えたり片方の結果だけが残ったりするため。
  */
 export function RegenerateButton({
   onClick,
   title = "再生成",
   className = "",
 }: {
-  /** クリック時のコールバック。 */
-  onClick: () => void;
+  /** クリック時のコールバック。Promise を返すと解決まで無効化される。 */
+  onClick: ActionHandler;
   /** ホバー時のツールチップ。 */
   title?: string;
   /** 追加クラス（右端寄せの `ml-auto` 等）。 */
   className?: string;
 }) {
+  const { busy, run } = useBusyRunner();
   return (
     <button
-      onClick={onClick}
-      title={title}
-      className={`text-ch-t3 hover:text-ch-t2 text-xs transition-all p-1 rounded ${className}`}
+      onClick={() => void run(onClick)}
+      disabled={busy}
+      title={busy ? "処理中…" : title}
+      className={`text-ch-t3 hover:text-ch-t2 text-xs transition-all p-1 rounded disabled:opacity-40 disabled:hover:text-ch-t3 ${className}`}
     >
-      ↺
+      {/* 処理中は回してクリックを受けたことを返す。字面は変えない（隣のボタンを動かさないため）。 */}
+      <span className={busy ? "inline-block animate-spin" : undefined}>↺</span>
     </button>
   );
 }
@@ -87,6 +136,9 @@ const DISCARD_ARM_TIMEOUT_MS = 3000;
  * 確認ダイアログを出さないのは、レスポンスガチャ中に何度も押す操作だから。
  * 武装中に変えるのは色だけ — 文言やアイコンを足すとボタン幅が動き、隣の再生成
  * ボタンの位置がずれて、かえって誤クリックを誘発するため。
+ *
+ * 実行後は `onClick` が返した Promise の解決まで押せない（削除が二重に走ると
+ * 1 つ前のレスポンスまで巻き添えで消えるため）。
  */
 export function DiscardButton({
   onClick,
@@ -94,7 +146,7 @@ export function DiscardButton({
   className = "",
 }: {
   /** クリック時のコールバック。武装後の 2 回目のクリックでのみ呼ばれる。 */
-  onClick: () => void;
+  onClick: ActionHandler;
   /** ホバー時のツールチップ（武装中は確認文言へ差し替わる）。 */
   title?: string;
   /** 追加クラス（右端寄せの `ml-auto` 等）。 */
@@ -102,6 +154,7 @@ export function DiscardButton({
 }) {
   const [armed, setArmed] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const { busy, run } = useBusyRunner();
 
   const disarm = useCallback(() => {
     if (timerRef.current !== null) {
@@ -121,9 +174,10 @@ export function DiscardButton({
   );
 
   const handleClick = useCallback(() => {
+    if (busy) return;
     if (armed) {
       disarm();
-      onClick();
+      void run(onClick);
       return;
     }
     setArmed(true);
@@ -131,9 +185,9 @@ export function DiscardButton({
       timerRef.current = null;
       setArmed(false);
     }, DISCARD_ARM_TIMEOUT_MS);
-  }, [armed, disarm, onClick]);
+  }, [armed, busy, disarm, onClick, run]);
 
-  const label = armed ? "もう一度クリックで破棄" : title;
+  const label = busy ? "処理中…" : armed ? "もう一度クリックで破棄" : title;
 
   return (
     <button
@@ -144,7 +198,8 @@ export function DiscardButton({
         if (e.pointerType === "mouse") disarm();
       }}
       title={label}
-      className={`transition-all p-1 rounded ${
+      disabled={busy}
+      className={`transition-all p-1 rounded disabled:opacity-40 disabled:hover:text-ch-t3 ${
         armed ? "text-red-500 bg-red-500/15" : "text-ch-t3 hover:text-red-500"
       } ${className}`}
       aria-label={label}
@@ -208,6 +263,8 @@ export function EditButton({
  *
  * 兄弟が 1 つしかないレスポンスでは呼び出し側が描画しない想定。
  * 端の枝では対応する矢印を disabled にする（循環させない）。
+ * 切替中も両方の矢印を止める（◀▶ を連打されると、どの枝を本線にする要求だったのかが
+ * サーバ側で入れ替わり、表示と実状態がずれるため）。
  * ホバーで出現する他の操作ボタンと違い、枝を持つレスポンスでは常時表示する
  * （「他の候補がある」こと自体を見せたいため）。
  */
@@ -222,22 +279,24 @@ export function VariantNav({
   /** 兄弟枝の総数。 */
   count: number;
   /** 前の枝へ。先頭では呼ばれない。 */
-  onPrev: () => void;
+  onPrev: ActionHandler;
   /** 次の枝へ。末尾では呼ばれない。 */
-  onNext: () => void;
+  onNext: ActionHandler;
 }) {
+  // 切替が終わるまでは ◀ ▶ の両方を止めたいので、ランナーは 1 つを共有する。
+  const { busy, run } = useBusyRunner();
   // 矢印は隣接する破棄・再生成との誤タップを避けるため、タップ領域を広めに取る。
   const btn =
     "text-ch-t3 hover:text-ch-t2 disabled:opacity-25 disabled:hover:text-ch-t3 transition-colors px-1 py-0.5 leading-none";
   return (
     <div className="flex items-center gap-1 text-[11px] select-none">
-      <button onClick={onPrev} disabled={index <= 1} title="前のレスポンス" className={btn}>
+      <button onClick={() => void run(onPrev)} disabled={busy || index <= 1} title="前のレスポンス" className={btn}>
         ◀
       </button>
       <span className="text-ch-t4 font-mono text-[10px]">
         {index}/{count}
       </span>
-      <button onClick={onNext} disabled={index >= count} title="次のレスポンス" className={btn}>
+      <button onClick={() => void run(onNext)} disabled={busy || index >= count} title="次のレスポンス" className={btn}>
         ▶
       </button>
     </div>

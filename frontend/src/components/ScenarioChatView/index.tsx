@@ -38,6 +38,7 @@ import {
   ThinkingBlock,
   UserBubble,
 } from "../ChatBubbles";
+import type { ActionHandler } from "../ChatBubbles";
 import MessageInput from "../MessageInput";
 import { trimEnd } from "./helpers";
 import { NpcDetailDialog } from "./npc";
@@ -87,16 +88,17 @@ interface Props {
   /** ユーザ発言の編集（fromTurn 以降を削除し、新しい content で再ストリーム）。 */
   onEditUserTurn: (turnId: string, newContent: string) => void;
   /** 最後のユーザターン以降を削除して同内容で再ストリーム。 */
-  onRegenerate: () => void;
+  onRegenerate: ActionHandler;
   /**
    * 末尾 GM レスポンス（同一 response_key のバブル列 = 1 LLM 呼出ぶん）を削除する。
    * 再ストリームは行わず、ユーザリクエスト待ち状態へ戻す。
    * 主な用途: auto_advance で GM が応答した後、ユーザがその応答を捨てて
    * 自分の発話を入力したくなった場合。
    */
-  onDiscard: () => void;
-  /** 枝（レスポンスガチャ）の切替。分岐点より後の本線は巻き戻される。 */
-  onSwitchVariant: (generationId: string) => void;
+  onDiscard: ActionHandler;
+  /** 枝（レスポンスガチャ）の切替。分岐点より後の本線は巻き戻される。
+   *  戻り値の Promise が解決するまで枝ナビは無効化される（連打で切替要求が競合しないように）。 */
+  onSwitchVariant: (generationId: string) => void | Promise<void>;
   /** GM / PC 発話の手動書き換え（枝は生やさず本文だけ差し替える）。 */
   onEditResponse: (turnId: string, newContent: string) => void;
   /**
@@ -496,6 +498,7 @@ function ScenarioChatViewInner({
             const siblings = t.variant_siblings ?? [];
             // 枝ナビは「本線の末尾レスポンス以外」だと下流の巻き戻しを伴うため確認を挟む。
             // 巻き戻した続きは復元しない（docs/planned/scenario_turn_variants_plan.md）。
+            // 切替の Promise はそのまま返す — 解決するまで枝ナビ側が矢印を無効化する。
             const switchTo = (offset: number) => {
               const target = siblings[variantIndex - 1 + offset];
               if (!target) return;
@@ -505,7 +508,7 @@ function ScenarioChatViewInner({
                 );
                 if (!ok) return;
               }
-              onSwitchVariant(target);
+              return onSwitchVariant(target);
             };
             bubble = (
               <GMBubbleRow

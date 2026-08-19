@@ -8,6 +8,7 @@ import { useEditingLock } from "../../hooks/useEditingLock";
 import { CharacterAvatar } from "./avatar";
 import { Bubble } from "./Bubble";
 import { UserMessageActions } from "./buttons";
+import type { ActionHandler } from "./buttons";
 import { ImageGrid } from "./images";
 import { InlineEditor } from "./InlineEditor";
 import { MarkdownContent } from "./markdown";
@@ -126,7 +127,8 @@ function CharacterBubbleImpl({
   /** アバターの色相。省略時はキャラクター名から導出する。 */
   hue?: number;
   sending?: boolean;
-  onRegenerate?: () => void;
+  /** 再生成コールバック。Promise を返すと解決まで再生成ボタンが無効化される（二度押し防止）。 */
+  onRegenerate?: ActionHandler;
   /** デバッグログフォルダ名（8桁hex）。存在する場合はログ折りたたみを表示する。 */
   logMessageId?: string;
   /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。 */

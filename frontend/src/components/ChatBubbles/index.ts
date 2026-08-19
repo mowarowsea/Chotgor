@@ -25,6 +25,7 @@ export {
   UserMessageActions,
   VariantNav,
 } from "./buttons";
+export type { ActionHandler } from "./buttons";
 export { InlineEditor } from "./InlineEditor";
 export { MessageActionBar } from "./MessageActionBar";
 export { useRevealControls } from "./tapReveal";

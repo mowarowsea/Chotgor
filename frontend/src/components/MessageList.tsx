@@ -37,8 +37,9 @@ interface Props {
     characterName?: string;
     /** 空の状態の時のメッセージ */
     emptyMessage?: string;
-    /** メッセージ編集・再生成時のコールバック */
-    onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void;
+    /** メッセージ編集・再生成時のコールバック。
+     *  返した Promise が解決するまで再生成ボタンは無効化される（二度押し防止）。 */
+    onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void | Promise<void>;
     /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
     msgLogIds?: Record<string, string>;
     /** char_msg_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
@@ -169,13 +170,14 @@ export default function MessageList({
                         sending={sending}
                         logMessageId={msgLogIds[msg.id]}
                         elapsedMs={elapsedMap[msg.id]}
+                        // 再ストリームの Promise はそのまま返す（解決まで再生成ボタンを無効化するため）。
                         onRegenerate={onRetry ? () => {
                             const precedingUser = [...messages]
                                 .slice(0, idx)
                                 .reverse()
                                 .find((m) => m.role === "user");
                             if (precedingUser) {
-                                onRetry(precedingUser.id, precedingUser.content, precedingUser.images ?? []);
+                                return onRetry(precedingUser.id, precedingUser.content, precedingUser.images ?? []);
                             }
                         } : undefined}
                     />
