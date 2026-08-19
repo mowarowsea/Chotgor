@@ -83,7 +83,7 @@ def _build_tools_flag(allowed_tools: dict) -> str:
 
 
 def _build_cli_args(
-    system_prompt: str,
+    system_prompt_path: str,
     model: str = "",
     effort: str = "default",
     allowed_tools: dict | None = None,
@@ -94,6 +94,13 @@ def _build_cli_args(
     model が空文字列の場合は --model フラグを付けない（CLIデフォルトを使用）。
     effort が "default" の場合は --effort フラグを付けない。
     allowed_tools が None または空の場合は --tools "" で全組み込みツールを無効化する。
+
+    system_prompt はテキストではなく一時ファイルの絶対パスで受け取り、
+    --system-prompt-file 経由で渡す。Windows の CreateProcess はコマンドライン長に
+    約32,767文字の上限があり、GM の system prompt（シナリオ・履歴等を含み肥大化しやすい）
+    を直接 --system-prompt <text> の引数に載せると上限超過時に WinError 206 が発生する。
+    このエラーは Python 上で FileNotFoundError として送出されるため、
+    「claude CLI が見つからない」という誤った原因に見えてしまう罠がある。
 
     Args:
         mcp_enabled: False なら --strict-mcp-config を付け、Chotgor MCP サーバーを
@@ -113,7 +120,7 @@ def _build_cli_args(
         "--print",
         "--tools", tools_str,
         "--no-session-persistence",
-        "--system-prompt", system_prompt,
+        "--system-prompt-file", system_prompt_path,
         "--thinking", "adaptive", # thinking blockが出ない問題対応。効かないかも。（ClaudeCodeCLI Issueに記載あり）
         "--thinking-display", "summarized", # thinking blockが出ない問題対応。効かないかも。（ClaudeCodeCLI Issueに記載あり）
         "--include-partial-messages", # 出力のストリーム化。効いてないっぽい。
@@ -599,6 +606,15 @@ class ClaudeCliProvider(BaseLLMProvider):
         conversation = _format_conversation(messages, self.character_name)
         env = self._make_env()
 
+        # system_prompt はコマンドライン引数ではなく一時ファイル経由で渡す
+        # （_build_cli_args docstring 参照。長大な GM プロンプトが Windows の
+        # コマンドライン長上限に達すると FileNotFoundError に化ける罠がある）。
+        sys_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        )
+        sys_file.write(system_prompt)
+        sys_file.close()
+
         import threading
 
         queue: asyncio.Queue = asyncio.Queue()
@@ -614,7 +630,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
             try:
                 proc, pre_lines = _spawn_cli_mcp_guarded(
-                    _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
+                    _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools),
                     conversation.encode("utf-8"),
                     env,
                 )
@@ -652,6 +668,10 @@ class ClaudeCliProvider(BaseLLMProvider):
                 # contextvars は ctx.run でコピー済みのため、このスレッドからの記録でも
                 # feature / target / request_id が正しく付く。
                 self._record_usage_from_raw(raw_joined)
+                try:
+                    os.unlink(sys_file.name)
+                except Exception:
+                    pass
                 safe_loop_call(loop, queue.put_nowait, None)
 
         ctx = contextvars.copy_context()
@@ -695,6 +715,15 @@ class ClaudeCliProvider(BaseLLMProvider):
         conversation = _format_conversation(messages, self.character_name)
         env = self._make_env()
 
+        # system_prompt はコマンドライン引数ではなく一時ファイル経由で渡す
+        # （_build_cli_args docstring 参照。長大な GM プロンプトが Windows の
+        # コマンドライン長上限に達すると FileNotFoundError に化ける罠がある）。
+        sys_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        )
+        sys_file.write(system_prompt)
+        sys_file.close()
+
         import threading
 
         queue: asyncio.Queue = asyncio.Queue()
@@ -715,7 +744,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
             try:
                 proc, pre_lines = _spawn_cli_mcp_guarded(
-                    _build_cli_args(system_prompt, self.model, self.thinking_level, self.allowed_tools),
+                    _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools),
                     conversation.encode("utf-8"),
                     env,
                 )
@@ -760,6 +789,10 @@ class ClaudeCliProvider(BaseLLMProvider):
                 # contextvars は ctx.run でコピー済みのため、このスレッドからの記録でも
                 # feature / target / request_id が正しく付く。
                 self._record_usage_from_raw(raw_joined)
+                try:
+                    os.unlink(sys_file.name)
+                except Exception:
+                    pass
                 safe_loop_call(loop, queue.put_nowait, None)
 
         ctx = contextvars.copy_context()
@@ -790,12 +823,12 @@ async def _run_claude(
 
     env が None の場合は _clean_env() をフォールバックとして使用する。
     mcp_enabled=False なら Chotgor MCP を接続せずに起動する（_build_cli_args 参照）。
+    sys_path は既に system prompt を書き込み済みの一時ファイルなので、内容を
+    読み込み直さずそのまま --system-prompt-file へ渡す（_build_cli_args 参照）。
     """
     if env is None:
         env = _clean_env()
 
-    with open(sys_path, encoding="utf-8") as f:
-        system_content = f.read()
     with open(msg_path, encoding="utf-8") as f:
         msg_content = f.read()
 
@@ -803,7 +836,7 @@ async def _run_claude(
         import threading
 
         proc, pre_lines = _spawn_cli_mcp_guarded(
-            _build_cli_args(system_content, model, effort, allowed_tools, mcp_enabled),
+            _build_cli_args(sys_path, model, effort, allowed_tools, mcp_enabled),
             msg_content.encode("utf-8"),
             env,
         )
