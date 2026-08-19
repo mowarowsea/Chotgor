@@ -2,7 +2,7 @@
  * バブル操作ボタン群 — コピー / 再生成 / 破棄 / ユーザー発話操作バー。
  * 1on1・グループ・シナリオの全モードで同じ見た目を共有する共通部品。
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /** テキストをクリップボードにコピーし、完了時に一時的にチェックマークを表示するボタン。 */
 export function CopyButton({ text, className = "" }: { text: string; className?: string }) {
@@ -73,31 +73,81 @@ export function RegenerateButton({
   );
 }
 
+/** 破棄ボタンの「武装」が自動解除されるまでの時間（ms）。 */
+const DISCARD_ARM_TIMEOUT_MS = 3000;
+
 /**
  * バブル下部の応答破棄（🗑）ボタン。
  *
  * シナリオモードで「直前の GM 応答を捨てて、ユーザリクエスト待ち状態へ戻したい」
  * 用途で使う。`RegenerateButton` と異なり、削除後に再ストリームは行わない。
- * 誤クリック防止のため、呼び出し側で `ml-auto` 等によりバブル右端へ寄せて使う。
+ *
+ * 誤クリック対策として二段階クリックを挟む。1回目のクリックで「武装」（赤く点灯）し、
+ * 2回目で実行する。武装は 3 秒経過またはポインタ離脱で自動解除される。
+ * 確認ダイアログを出さないのは、レスポンスガチャ中に何度も押す操作だから。
+ * 武装中に変えるのは色だけ — 文言やアイコンを足すとボタン幅が動き、隣の再生成
+ * ボタンの位置がずれて、かえって誤クリックを誘発するため。
  */
 export function DiscardButton({
   onClick,
   title = "この応答を破棄",
   className = "",
 }: {
-  /** クリック時のコールバック。 */
+  /** クリック時のコールバック。武装後の 2 回目のクリックでのみ呼ばれる。 */
   onClick: () => void;
-  /** ホバー時のツールチップ。 */
+  /** ホバー時のツールチップ（武装中は確認文言へ差し替わる）。 */
   title?: string;
   /** 追加クラス（右端寄せの `ml-auto` 等）。 */
   className?: string;
 }) {
+  const [armed, setArmed] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const disarm = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setArmed(false);
+  }, []);
+
+  // 行のホバーが外れるとボタンごとアンマウントされる（useRevealControls）。
+  // 武装中のタイマーを取り残さないよう明示的に止める。
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  const handleClick = useCallback(() => {
+    if (armed) {
+      disarm();
+      onClick();
+      return;
+    }
+    setArmed(true);
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      setArmed(false);
+    }, DISCARD_ARM_TIMEOUT_MS);
+  }, [armed, disarm, onClick]);
+
+  const label = armed ? "もう一度クリックで破棄" : title;
+
   return (
     <button
-      onClick={onClick}
-      title={title}
-      className={`text-ch-t3 hover:text-red-500 transition-all p-1 rounded ${className}`}
-      aria-label="この応答を破棄"
+      onClick={handleClick}
+      // 解除はマウスのみ。タッチでは合成イベントでタップ直後に pointerleave が飛び、
+      // 2 回目をタップする前に武装が解けてしまう（tapReveal と同じ振り分け）。
+      onPointerLeave={(e) => {
+        if (e.pointerType === "mouse") disarm();
+      }}
+      title={label}
+      className={`transition-all p-1 rounded ${
+        armed ? "text-red-500 bg-red-500/15" : "text-ch-t3 hover:text-red-500"
+      } ${className}`}
+      aria-label={label}
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
