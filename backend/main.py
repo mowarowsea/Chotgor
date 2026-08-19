@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.adapters.openai import router as openai_router
@@ -913,6 +914,16 @@ app.include_router(mcp_tools_module.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """/favicon.ico の直リクエストを SVG のファビコンへ逃がす。
+
+    <link rel="icon"> を書いていてもブラウザはルート直下の favicon.ico を
+    投機的に取りに行くことがあり、放置すると 404 がアクセスログを埋める。
+    """
+    return RedirectResponse("/static/favicon.svg")
 
 
 # ビルド済み SPA を /app/ で配信する（`cd frontend && npm run build` で生成）。

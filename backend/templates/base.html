@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Chotgor{% endblock %}</title>
+    <!-- ファビコン: 白い亡霊がヒスイの石板を抱える紋章。SVG 1枚でモダンブラウザは全て賄える。
+         ?v= は css と同じ起動時刻。ブラウザのファビコンキャッシュは特に頑固なため必須。 -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v={{ css_version }}">
     <!-- テーマは OS 設定（prefers-color-scheme）に追従。既定 dark、OS が light なら light。 -->
     <!-- フォント: DM Sans（本文） / DM Mono（ラベル・見出し・メタ）。
          セルフホスト（@font-face は chotgor.css）。本文/ラベルの主要ウェイトを preload し、

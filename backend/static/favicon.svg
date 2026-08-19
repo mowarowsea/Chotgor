@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Chotgor">
+  <title>Chotgor</title>
+  <!-- 白い亡霊がヒスイの石板を抱えるブランドイメージの紋章化。
+       色は chotgor.css の dark トークン（ch-bg / ch-a）に合わせた固定値。
+       ファビコンは描画時にテーマが焼き付くため CSS 変数もメディアクエリも使えない。
+       地を濃紺で塗り切ることで light / dark どちらのタブバーでも破綻させない。
+       ※ XML コメント内にハイフン2連は書けないので CSS 変数名は接頭辞を省いている。 -->
+  <rect width="64" height="64" rx="14" fill="#131b26"/>
+  <!-- 亡霊: 左に開いた弧。石板を主役にするため細め -->
+  <path d="M19 19.5a18.5 18.5 0 1 1 0 25" fill="none" stroke="#e8eff6" stroke-width="5.5" stroke-linecap="round"/>
+  <!-- ヒスイの石板 -->
+  <rect x="27.5" y="22.5" width="9" height="19" rx="2.2" fill="#3fae7e"/>
+</svg>
