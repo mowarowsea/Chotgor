@@ -153,6 +153,21 @@
 | `data/lancedb/` | LanceDB。`inscribed_memories` / `chat_turns` / `definitions` / `working_memory_threads` の4テーブル（単一テーブル＋`character_id` フィルタ方式） |
 | `data/uploads/` | チャット添付画像 |
 
+### debug/ ・ logs/（gitignore対象）
+
+| パス | 内容 |
+|---|---|
+| `debug/{request_id}/` | `CHOTGOR_DEBUG=1`（`run.bat -debug on`）時のリクエスト単位の生ログ。Logs UI が `debug_log_entries.raw_dir` 経由で参照する。フォルダが無くても `api/logs_ui/entries.py` の `raw_path.exists()` ガードで素通りするため UI は壊れない（一覧・発話・応答・reasoning は DB 側に残る） |
+| `debug/_archive/` | 月単位で tar.gz 化した過去ログと `archive.log`。`scripts/archive_debug_logs.sh` が退避する |
+| `logs/chotgor.log*` | アプリケーションログ（10世代ローテーション） |
+
+### scripts/
+
+| パス | 内容 |
+|---|---|
+| `archive_debug_logs.sh` | `debug/` の生ログを月単位で `debug/_archive/debug_YYYYMM.tar.gz` へ退避する。当月・前月は残す。tar 内エントリ数と実体が一致した月だけ元データを削除するため、検証 NG なら生ログは消えない。対象月が無ければ即終了する冪等な作りで、何度実行してもよい |
+| `register_archive_task.ps1` | 上記を Windows タスクスケジューラへ登録する（毎日 04:00 起動・実行を逃した場合は次回起動時に補償）。実行漏れの補償があるため月次トリガーではなく日次にしてある |
+
 ## 3. 主要処理フロー
 
 ### 1on1チャット（本流）
