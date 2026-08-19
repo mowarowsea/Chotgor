@@ -8,6 +8,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -95,6 +96,10 @@ def _build_cli_args(
     effort が "default" の場合は --effort フラグを付けない。
     allowed_tools が None または空の場合は --tools "" で全組み込みツールを無効化する。
 
+    入力は常に ``--input-format stream-json``（stdin へ NDJSON 1行）で渡す。
+    テキスト入力では添付画像を送る手段がないため、画像の有無で経路を分けず
+    stream-json に一本化している（_build_stdin_payload 参照）。
+
     system_prompt はテキストではなく一時ファイルの絶対パスで受け取り、
     --system-prompt-file 経由で渡す。Windows の CreateProcess はコマンドライン長に
     約32,767文字の上限があり、GM の system prompt（シナリオ・履歴等を含み肥大化しやすい）
@@ -118,6 +123,7 @@ def _build_cli_args(
         "--output-format", "stream-json",
         "--verbose",
         "--print",
+        "--input-format", "stream-json",
         "--tools", tools_str,
         "--no-session-persistence",
         "--system-prompt-file", system_prompt_path,
@@ -501,20 +507,9 @@ class ClaudeCliProvider(BaseLLMProvider):
                 "real" 以外なら CHOTGOR_DEFAULT_ORIGIN として MCP サーバーへ伝搬される。
             mcp_enabled: False なら Chotgor MCP を接続せずに起動する（_build_cli_args 参照）。
         """
-        has_images = any(
-            isinstance(item, dict) and item.get("type") == "image_url"
-            for m in messages
-            for item in (m.get("content") if isinstance(m.get("content"), list) else [])
-        )
-
-        if has_images:
-            system_prompt += (
-                "\n\n[SYSTEM NOTE: The user has provided one or more images, "
-                "but you currently cannot 'see' them because of the current connection mode (Claude CLI). "
-                "Please inform the user naturally that you cannot see the images right now.]"
-            )
-
         conversation = _format_conversation(messages, self.character_name)
+        image_blocks = _extract_latest_images(messages)
+        stdin_bytes = _build_stdin_payload(conversation, image_blocks)
 
         sys_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
@@ -522,19 +517,14 @@ class ClaudeCliProvider(BaseLLMProvider):
         sys_file.write(system_prompt)
         sys_file.close()
 
-        msg_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8"
-        )
-        msg_file.write(conversation)
-        msg_file.close()
-
         self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
+            "images": len(image_blocks),
         })
 
         try:
-            result = await _run_claude(sys_file.name, msg_file.name, model=self.model, effort=self.thinking_level, env=self._make_env(batch_context=batch_context, default_origin=default_origin), allowed_tools=self.allowed_tools, mcp_enabled=mcp_enabled)
+            result = await _run_claude(sys_file.name, stdin_bytes, model=self.model, effort=self.thinking_level, env=self._make_env(batch_context=batch_context, default_origin=default_origin), allowed_tools=self.allowed_tools, mcp_enabled=mcp_enabled)
 
             if result.returncode != 0:
                 err_msg = result.stderr.decode("utf-8", errors="replace")
@@ -566,11 +556,10 @@ class ClaudeCliProvider(BaseLLMProvider):
             self._log_error(err)
             return err
         finally:
-            for path in (sys_file.name, msg_file.name):
-                try:
-                    os.unlink(path)
-                except Exception:
-                    pass
+            try:
+                os.unlink(sys_file.name)
+            except Exception:
+                pass
 
     async def generate(self, system_prompt: str, messages: list[dict]) -> str:
         """Claude CLI を呼び出してテキスト応答を返す（ツール無しの単発問い合わせ）。
@@ -590,20 +579,9 @@ class ClaudeCliProvider(BaseLLMProvider):
 
         subprocess.Popen で stdout を行単位で読み取り、逐次yieldする。
         """
-        # 画像が含まれる場合はCLIでは見えない旨をシステムプロンプトに追記
-        has_images = any(
-            isinstance(item, dict) and item.get("type") == "image_url"
-            for m in messages
-            for item in (m.get("content") if isinstance(m.get("content"), list) else [])
-        )
-        if has_images:
-            system_prompt += (
-                "\n\n[SYSTEM NOTE: The user has provided one or more images, "
-                "but you currently cannot 'see' them because of the current connection mode (Claude CLI). "
-                "Please inform the user naturally that you cannot see the images right now.]"
-            )
-
         conversation = _format_conversation(messages, self.character_name)
+        image_blocks = _extract_latest_images(messages)
+        stdin_bytes = _build_stdin_payload(conversation, image_blocks)
         env = self._make_env()
 
         # system_prompt はコマンドライン引数ではなく一時ファイル経由で渡す
@@ -623,6 +601,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
+            "images": len(image_blocks),
         })
 
         def run():
@@ -631,7 +610,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             try:
                 proc, pre_lines = _spawn_cli_mcp_guarded(
                     _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools),
-                    conversation.encode("utf-8"),
+                    stdin_bytes,
                     env,
                 )
 
@@ -699,20 +678,9 @@ class ClaudeCliProvider(BaseLLMProvider):
         Yields:
             tuple[str, str]: (type, content) 形式。
         """
-        # 画像が含まれる場合はCLIでは見えない旨をシステムプロンプトに追記
-        has_images = any(
-            isinstance(item, dict) and item.get("type") == "image_url"
-            for m in messages
-            for item in (m.get("content") if isinstance(m.get("content"), list) else [])
-        )
-        if has_images:
-            system_prompt += (
-                "\n\n[SYSTEM NOTE: The user has provided one or more images, "
-                "but you currently cannot 'see' them because of the current connection mode (Claude CLI). "
-                "Please inform the user naturally that you cannot see the images right now.]"
-            )
-
         conversation = _format_conversation(messages, self.character_name)
+        image_blocks = _extract_latest_images(messages)
+        stdin_bytes = _build_stdin_payload(conversation, image_blocks)
         env = self._make_env()
 
         # system_prompt はコマンドライン引数ではなく一時ファイル経由で渡す
@@ -732,6 +700,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         self._log_request({
             "system_prompt": system_prompt,
             "conversation": conversation,
+            "images": len(image_blocks),
         })
 
         def run():
@@ -745,7 +714,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             try:
                 proc, pre_lines = _spawn_cli_mcp_guarded(
                     _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools),
-                    conversation.encode("utf-8"),
+                    stdin_bytes,
                     env,
                 )
 
@@ -812,7 +781,7 @@ class ClaudeCliProvider(BaseLLMProvider):
 
 async def _run_claude(
     sys_path: str,
-    msg_path: str,
+    stdin_bytes: bytes,
     model: str = "",
     effort: str = "default",
     env: dict | None = None,
@@ -825,19 +794,17 @@ async def _run_claude(
     mcp_enabled=False なら Chotgor MCP を接続せずに起動する（_build_cli_args 参照）。
     sys_path は既に system prompt を書き込み済みの一時ファイルなので、内容を
     読み込み直さずそのまま --system-prompt-file へ渡す（_build_cli_args 参照）。
+    stdin_bytes は _build_stdin_payload が組み立てた stream-json（NDJSON 1行）。
     """
     if env is None:
         env = _clean_env()
-
-    with open(msg_path, encoding="utf-8") as f:
-        msg_content = f.read()
 
     def run():
         import threading
 
         proc, pre_lines = _spawn_cli_mcp_guarded(
             _build_cli_args(sys_path, model, effort, allowed_tools, mcp_enabled),
-            msg_content.encode("utf-8"),
+            stdin_bytes,
             env,
         )
         # stderr は別スレッドで並行に読み切る（stdout 全読み中のパイプ詰まり防止）
@@ -925,3 +892,58 @@ def _format_conversation(messages: list[dict], character_name: str = "") -> str:
         history = "\n".join(history_parts)
         return f"<history>\n{history}\n</history>\n\n{last_text}"
     return last_text
+
+
+# Anthropic API が受け付ける画像 media_type。これ以外（image/bmp 等）は
+# ブロック化せず捨てる（送っても API 側で弾かれ、ターンごと失敗するため）。
+_SUPPORTED_IMAGE_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+# services/chat/content.py が組み立てる OpenAI vision 形式の data URL。
+_DATA_URL_RE = re.compile(r"^data:(image/[\w.+-]+);base64,(.+)$", re.S)
+
+
+def _extract_latest_images(messages: list[dict]) -> list[dict]:
+    """最新ターンの添付画像を Anthropic の image ブロック列へ変換する。
+
+    走査対象は末尾メッセージのみ。過去ターンの画像まで毎回載せるとターンごとの
+    再送になり、画像トークン（おおよそ 幅×高さ÷750）でサブスクのレート枠を
+    急速に食う。「今見せられたもの」だけを渡す方針。
+
+    data URL 以外・Anthropic 非対応の media_type は黙って捨てる。
+    """
+    if not messages:
+        return []
+    content = messages[-1].get("content")
+    if not isinstance(content, list):
+        return []
+
+    blocks: list[dict] = []
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "image_url":
+            continue
+        matched = _DATA_URL_RE.match((item.get("image_url") or {}).get("url", ""))
+        if not matched or matched.group(1) not in _SUPPORTED_IMAGE_MEDIA_TYPES:
+            continue
+        blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": matched.group(1),
+                "data": matched.group(2),
+            },
+        })
+    return blocks
+
+
+def _build_stdin_payload(conversation: str, image_blocks: list[dict]) -> bytes:
+    """CLI の stdin へ流す stream-json（NDJSON 1行）を組み立てる。
+
+    ``--input-format stream-json`` が受け付けるのは user メッセージのみで、
+    キャラクター側のターンをイベントとして流し込むことはできない。よって会話履歴は
+    従来どおり _format_conversation で1本のテキストにまとめて text ブロックへ入れ、
+    その後ろに最新ターンの画像ブロックを並べる。
+    """
+    content: list[dict] = [{"type": "text", "text": conversation}]
+    content.extend(image_blocks)
+    event = {"type": "user", "message": {"role": "user", "content": content}}
+    return (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")

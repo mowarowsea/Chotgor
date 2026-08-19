@@ -216,6 +216,16 @@ frontend useChat
     `--strict-mcp-config`（`--mcp-config` 未指定と併せて MCP サーバー0本）で起動し、
     使えない手を最初から見せない。`generate_with_tools()` は MCP ループ本体なので
     従来どおり接続する。
+  - **入力は常に stream-json（＝添付画像の受け渡し経路）**: CLI へは
+    `--input-format stream-json` で stdin へ NDJSON 1行を流す。テキスト入力には
+    添付画像を渡す手段がないため、画像の有無で経路を分けず一本化している。
+    会話履歴は従来どおり `_format_conversation` の XML テキスト1本を text ブロックへ入れ、
+    その後ろに **最新ターンの画像だけ** を Anthropic の image ブロックとして並べる。
+    過去ターン分まで載せると毎ターン再送になり、画像トークン（≒ 幅×高さ÷750）で
+    サブスクのレート枠を食い潰すため。なお stream-json 入力が受け付けるのは user
+    メッセージのみで、キャラクター側のターンをイベントとして流し込むことはできない
+    （だから履歴のテキスト化は残る）。data URL でないもの・Anthropic 非対応の
+    media_type（image/bmp 等）は黙って捨てる（画像1枚で発話まるごと失敗させない）。
 - ツール実行は両経路とも `lib/tool_event_recorder.py` が `tool_call_events` テーブルへ
   実行時記録する（tool-use 経路は `ToolExecutor.execute()` の関門で、タグ経路は各
   `*_from_text` で記録）。Logs 画面のツール使用表示はこのイベントを読むだけで、
