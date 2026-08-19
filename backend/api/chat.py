@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
 from backend.services.chat.models import Message
+from backend.lib.attachments import attachment_kind
 from backend.lib.debug_logger import logger
 from backend.lib.sse_runner import stream_sse
 from backend.lib.log_context import (
@@ -23,7 +24,7 @@ from backend.lib.log_context import (
     current_log_session_id,
     current_log_target,
 )
-from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config
+from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config, resolve_preset
 from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 from backend.services.chat.request_factory import build_character_request, latest_anticipation
 from backend.services.chat.content import apply_context_window
@@ -231,6 +232,41 @@ async def delete_messages_from(request: Request, session_id: str, message_id: st
         raise HTTPException(status_code=404, detail="Message not found")
 
 
+#: 添付種別ごとの拒否文言（ユーザにそのまま見せる）。
+_ATTACHMENT_REJECTION = {
+    "audio": "音声を渡せるのは Gemini（google プロバイダー）だけです",
+}
+
+
+def _reject_unsupported_attachments(state, model_id: str, attachment_ids: list[str] | None) -> None:
+    """選択中プリセットが受け取れない添付が含まれていたら 400 で弾く。
+
+    フロントは FileDialog の accept と選択後の MIME 検査で止めているが、
+    スマホの FileDialog は accept を尊重しないことがある。すり抜けた分をここで
+    止める二重ガード。プロバイダーが解決できない場合（未知のプリセット等）は
+    ここでは判定せず、後段の通常フローのエラーに任せる。
+    """
+    if not attachment_ids:
+        return
+    from backend.providers.registry import supported_attachment_kinds
+
+    _, preset_name = parse_model_id(model_id)
+    preset = resolve_preset(state.sqlite, preset_name)
+    if preset is None:
+        return
+    allowed = set(supported_attachment_kinds(preset.provider))
+    for attachment_id in attachment_ids:
+        meta = state.sqlite.get_chat_attachment(attachment_id)
+        kind = attachment_kind(getattr(meta, "mime_type", None)) if meta else None
+        if kind is None or kind in allowed:
+            continue
+        reason = _ATTACHMENT_REJECTION.get(kind, f"{kind} は渡せません")
+        raise HTTPException(
+            status_code=400,
+            detail=f"このプリセット（{preset_name}）には添付を渡せません。{reason}。",
+        )
+
+
 @router.post("/sessions/{session_id}/messages/stream")
 async def stream_message(request: Request, session_id: str, body: MessageCreate):
     """ユーザーメッセージを送信し、キャラクターの応答をSSEでストリーミング返却する。
@@ -256,6 +292,10 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     current_log_target.set(char_name_for_check)
 
     logger.log_front_input(body.model_dump())
+
+    # 添付の適合チェック: 非対応の種別（Gemini 以外への音声など）はここで止める。
+    # 黙って捨てると「渡ったように見えて渡っていない」状態になるため、400 で返す。
+    _reject_unsupported_attachments(state, effective_model_id, body.attachment_ids)
 
     # estranged チェック: relationship_status="estranged" のキャラクターへのリクエストをSSEで拒否する
     char_for_estranged = state.sqlite.get_character_by_name(char_name_for_check)

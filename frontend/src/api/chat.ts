@@ -31,6 +31,12 @@ export interface Model {
   object: string;
   /** プリセットのプロバイダーID（"anthropic" 等）。表示・並び順の根拠として backend が返す。 */
   provider?: string;
+  /**
+   * このプリセットへ渡せる添付種別（"image" / "audio"）。
+   * プロバイダーの SUPPORTED_ATTACHMENT_KINDS が正で、FileDialog の accept と
+   * 選択後の MIME 検査がこれを見る。省略時は画像のみとして扱う。
+   */
+  attachment_kinds?: string[];
 }
 
 export interface Session {

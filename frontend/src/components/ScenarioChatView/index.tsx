@@ -706,7 +706,7 @@ function ScenarioChatViewInner({
           sessionId={session.id}
           sending={sending}
           onSend={handleScenarioInput}
-          allowImages={false}
+          allowAttachments={false}
           allowEmptySend
           placeholder={inputPlaceholder}
           extraTools={mentionToggleButton}

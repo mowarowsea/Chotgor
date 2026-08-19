@@ -129,6 +129,10 @@ class BaseLLMProvider:
     # True のプロバイダーは _tool_turn() と _extend_messages_with_results() を実装し、
     # タグ方式ではなくtool-use（function calling）で記憶を操作する。
     SUPPORTS_TOOLS: bool = False
+    # このプロバイダーが受け取れる添付種別（lib/attachments.attachment_kind の戻り値）。
+    # UI の入口ガード（FileDialog の accept）と送信時検証の唯一の根拠。
+    # 既定は画像のみ。音声を渡せるのは実測で Gemini だけ。
+    SUPPORTED_ATTACHMENT_KINDS: set[str] = {"image"}
     # コンテキスト別追加ツール（Anthropic 形式・character_actions/context_tools.py の判定結果）。
     # create_provider() がインスタンスへ代入で注入する（クラス属性は既定の空。
     # in-place で mutate しないこと — 全インスタンス共有のため）。

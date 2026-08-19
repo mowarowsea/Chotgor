@@ -1,11 +1,18 @@
 /**
  * メッセージ入力フォーム共通コンポーネント。
- * テキスト入力（auto-grow）、Ctrl+Enter での送信、画像添付、添付プレビュー機能を提供する。
+ * テキスト入力（auto-grow）、Ctrl+Enter での送信、添付（画像・音声）、添付プレビュー機能を提供する。
  * セッション別に入力下書きを localStorage にキャッシュし、セッション切り替え後も復元する。
  */
 import { useEffect, useRef, useState } from "react";
 import { useDraft } from "../hooks/useDraft";
 import { useEditingLocked } from "../hooks/useEditingLock";
+import {
+    acceptAttribute,
+    attachmentButtonTitle,
+    attachmentKind,
+    rejectionReason,
+    type AttachmentKind,
+} from "../lib/attachments";
 
 interface Props {
     /** セッションID（下書きキャッシュのキー）。省略時はキャッシュしない。 */
@@ -16,8 +23,13 @@ interface Props {
     onSend: (content: string, files: File[]) => void;
     /** プレースホルダー文字列 */
     placeholder?: string;
-    /** 画像添付を許可するかどうか（デフォルト: true） */
-    allowImages?: boolean;
+    /** 添付を許可するかどうか（デフォルト: true） */
+    allowAttachments?: boolean;
+    /**
+     * 選択中プリセットが受け取れる添付種別（/v1/models の attachment_kinds）。
+     * FileDialog の accept と選択後の検査の根拠。省略時は画像のみ。
+     */
+    attachmentKinds?: AttachmentKind[];
     /** ユーザターンスキップコールバック。指定時はスキップボタンを表示する。 */
     onSkip?: () => void;
     /**
@@ -38,7 +50,8 @@ export default function MessageInput({
     sending,
     onSend,
     placeholder = "メッセージを入力… (Ctrl+Enter で送信)",
-    allowImages = true,
+    allowAttachments = true,
+    attachmentKinds = ["image"],
     onSkip,
     allowEmptySend = false,
     extraTools,
@@ -56,6 +69,8 @@ export default function MessageInput({
     const disabled = sending || editingLocked;
     /** 送信前の添付ファイルリスト */
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    /** 添付が弾かれた理由（非対応形式・非対応プロバイダー）。次の選択で消える。 */
+    const [attachmentError, setAttachmentError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -112,14 +127,34 @@ export default function MessageInput({
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selected = Array.from(e.target.files ?? []);
-        if (selected.length === 0) return;
-        setPendingFiles((prev) => [...prev, ...selected]);
         e.target.value = "";
+        if (selected.length === 0) return;
+        // accept をすり抜けた分をここで弾く（スマホの FileDialog は accept を
+        // 尊重しないことがある）。黙って捨てず、弾いた理由を出す。
+        const rejected = selected
+            .map((f) => rejectionReason(f, attachmentKinds))
+            .filter((r): r is string => r !== null);
+        const accepted = selected.filter((f) => rejectionReason(f, attachmentKinds) === null);
+        setAttachmentError(rejected.length > 0 ? rejected.join(" / ") : null);
+        if (accepted.length > 0) {
+            setPendingFiles((prev) => [...prev, ...accepted]);
+        }
     };
 
     const removePendingFile = (idx: number) => {
         setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
     };
+
+    // プリセットを切り替えて渡せなくなった添付は持ち越さない
+    // （選び直しは効くが、渡らないものを抱えたまま送れてしまうのを防ぐ）。
+    useEffect(() => {
+        setPendingFiles((prev) => {
+            const kept = prev.filter((f) => rejectionReason(f, attachmentKinds) === null);
+            return kept.length === prev.length ? prev : kept;
+        });
+        // attachmentKinds は親が毎回新しい配列を渡しうるので中身で比較する
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [attachmentKinds.join(",")]);
 
     /** 送信可能かどうか。送信ボタンの配色に使う（空送信許可時は常に点灯）。 */
     const canSend = !disabled && (!!input.trim() || allowEmptySend);
@@ -136,8 +171,13 @@ export default function MessageInput({
         >
             {/* 中央寄せ・最大幅 760px のコンテナ */}
             <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-0.5 pb-3.5 flex flex-col gap-2">
-                {/* 添付画像サムネイルプレビュー */}
-                {allowImages && pendingFiles.length > 0 && (
+                {/* 添付が弾かれた理由 */}
+                {allowAttachments && attachmentError && (
+                    <div className="text-[11px] text-red-500">{attachmentError}</div>
+                )}
+
+                {/* 添付サムネイルプレビュー */}
+                {allowAttachments && pendingFiles.length > 0 && (
                     <div className="flex gap-2 flex-wrap">
                         {pendingFiles.map((file, idx) => (
                             <div key={idx} className="relative group/thumb">
@@ -207,12 +247,12 @@ export default function MessageInput({
 
                     {/* ツールボタン群（テキストエリア右下に重ねる） */}
                     <div className="absolute right-0 bottom-1.5 flex items-center gap-1.5 pointer-events-auto">
-                        {allowImages && (
+                        {allowAttachments && (
                             <>
                                 <input
                                     ref={fileInputRef}
                                     type="file"
-                                    accept="image/*"
+                                    accept={acceptAttribute(attachmentKinds)}
                                     multiple
                                     className="hidden"
                                     onChange={handleFileChange}
@@ -221,7 +261,7 @@ export default function MessageInput({
                                     type="button"
                                     onClick={() => fileInputRef.current?.click()}
                                     disabled={disabled}
-                                    title="画像を添付"
+                                    title={attachmentButtonTitle(attachmentKinds)}
                                     className="text-ch-t3 hover:text-ch-t2 disabled:opacity-30 transition-colors p-0.5 rounded"
                                 >
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={17} height={17}>

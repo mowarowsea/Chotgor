@@ -146,6 +146,11 @@ class TestModelsApiOrder:
         assert [m["provider"] for m in data] == [
             "claude_cli", "anthropic", "anthropic", "anthropic", "google", "ollama",
         ]
+        # 添付の入口ガードの根拠（受け取れる種別）も渡していること。
+        # 音声を渡せるのは Gemini だけなので、google だけ audio を含む。
+        assert [m["attachment_kinds"] for m in data] == [
+            ["image"], ["image"], ["image"], ["image"], ["audio", "image"], ["image"],
+        ]
 
 
 class TestModelPresetsPage:

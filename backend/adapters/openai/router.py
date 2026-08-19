@@ -16,7 +16,7 @@ from backend.services.chat.models import ChatRequest, Message
 from backend.services.chat.service import extract_text_content
 from backend.lib.debug_logger import logger
 from backend.lib.log_context import new_message_id
-from backend.providers.registry import PROVIDER_LABELS
+from backend.providers.registry import PROVIDER_LABELS, supported_attachment_kinds
 from backend.lib.time_awareness import compute_time_awareness
 from backend.adapters.openai.schemas import OAIChatRequest
 from backend.services.memory.format import format_recalled_memories
@@ -131,6 +131,9 @@ async def list_models(request: Request):
                 "owned_by": "chotgor",
                 "name": f"{char.name} ({preset.name})",
                 "provider": preset.provider,
+                # このプリセットへ渡せる添付種別。フロントの FileDialog の accept と
+                # 選択後の MIME 検査がこれを見る（音声は Gemini のみ）。
+                "attachment_kinds": supported_attachment_kinds(preset.provider),
             })
     return {"object": "list", "data": data}
 

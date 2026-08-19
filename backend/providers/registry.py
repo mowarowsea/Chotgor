@@ -103,3 +103,14 @@ def create_provider(provider_id: str, model: str, settings: dict, **kwargs) -> B
         instance.preset_name = preset_name
     instance.extra_tools = list(extra_tools)
     return instance
+
+
+def supported_attachment_kinds(provider_id: str) -> list[str]:
+    """プロバイダーが受け取れる添付種別を返す（安定順・UI 表示と検証の根拠）。
+
+    未知の provider_id には既定（画像のみ）を返す。プロバイダーによって
+    「聴ける／聴けない」が割れるため、UI の入口ガードと送信時検証の双方が
+    ここを唯一の根拠にする。
+    """
+    cls = PROVIDER_REGISTRY.get(provider_id, ClaudeCliProvider)
+    return sorted(cls.SUPPORTED_ATTACHMENT_KINDS)

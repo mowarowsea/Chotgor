@@ -9,6 +9,7 @@
  *   - モード切替トグルは App.tsx のヘッダー右側ボタン群に統合された。
  */
 import type { ChatMessage } from "../api";
+import type { AttachmentKind } from "../lib/attachments";
 import { EditingLockProvider } from "../hooks/useEditingLock";
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
@@ -56,6 +57,11 @@ interface Props {
   faceToFaceMode?: boolean;
   /** 対面背景画像の URL（null/空なら背景なしで対面モードに入る）。 */
   faceToFaceBgUrl?: string | null;
+  /**
+   * 選択中プリセットが受け取れる添付種別（/v1/models の attachment_kinds）。
+   * MessageInput の入口ガードへ中継する。
+   */
+  attachmentKinds?: AttachmentKind[];
 }
 
 /** 1on1チャットのレイアウトコンポーネント。 */
@@ -76,6 +82,7 @@ export default function ChatView({
   elapsedMap,
   faceToFaceMode = false,
   faceToFaceBgUrl = null,
+  attachmentKinds,
 }: Props) {
   // 対面モード + 背景画像があるときだけ background-image を当てる。
   // 画像未登録でも対面モード自体は有効（モードの意味は system prompt 注入が本体）。
@@ -115,7 +122,8 @@ export default function ChatView({
           sessionId={sessionId}
           sending={sending}
           onSend={onSend}
-          allowImages={true}
+          allowAttachments={true}
+          attachmentKinds={attachmentKinds}
         />
       </div>
     </EditingLockProvider>

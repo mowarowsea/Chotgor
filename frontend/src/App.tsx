@@ -30,6 +30,7 @@ import { charNameOf } from "./api";
 import Sidebar from "./components/Sidebar";
 import type { AnySession } from "./components/Sidebar";
 import ChatView from "./components/ChatView";
+import type { AttachmentKind } from "./lib/attachments";
 import ScenarioChatView from "./components/ScenarioChatView";
 import ExportDialog from "./components/ExportDialog";
 import { BubbleColorProvider, CharacterAvatar, CharacterImageProvider } from "./components/ChatBubbles";
@@ -146,6 +147,17 @@ export default function App() {
    * - 切替時は characters state を楽観更新し、API を叩いて確定する。
    */
   const activeCharNameOnly = charNameOf(selectedModel || activeSession?.model_id || characterName);
+  /**
+   * 選択中プリセットが受け取れる添付種別。プロバイダーによって「聴ける／聴けない」が
+   * 割れるため、入力欄の FileDialog と選択後検査へ流す。未取得時は画像のみ。
+   */
+  const attachmentKinds = useMemo<AttachmentKind[]>(() => {
+    const modelId = selectedModel || activeSession?.model_id || "";
+    const kinds = models.find((m) => m.id === modelId)?.attachment_kinds;
+    return (kinds ?? ["image"]).filter(
+      (k): k is AttachmentKind => k === "image" || k === "audio",
+    );
+  }, [models, selectedModel, activeSession?.model_id]);
   const activeCharacter = characters.find((c) => c.name === activeCharNameOnly);
   const faceToFaceMode = !!activeCharacter?.face_to_face_mode;
   /**
@@ -742,6 +754,7 @@ export default function App() {
             elapsedMap={elapsedMap}
             faceToFaceMode={faceToFaceMode}
             faceToFaceBgUrl={faceToFaceBgUrl}
+            attachmentKinds={attachmentKinds}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-ch-t3 text-sm px-4 text-center">
