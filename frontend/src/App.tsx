@@ -256,6 +256,7 @@ export default function App() {
     handleScenarioRegenerate,
     handleScenarioDiscard,
     handleScenarioEditUserTurn,
+    handleScenarioDeleteUserTurn,
     handleScenarioSwitchVariant,
     handleScenarioEditResponse,
     handleSynopsisChange,
@@ -285,6 +286,7 @@ export default function App() {
     resetStreamingState: resetChatStreamingState,
     doStream,
     handleRetry,
+    handleDeleteMessage,
   } = useChat({
     activeSessionId,
     sending,
@@ -709,6 +711,7 @@ export default function App() {
             onSend={handleScenarioSend}
             onYieldTo={handleScenarioYieldTo}
             onEditUserTurn={handleScenarioEditUserTurn}
+            onDeleteUserTurn={handleScenarioDeleteUserTurn}
             onRegenerate={handleScenarioRegenerate}
             onDiscard={handleScenarioDiscard}
             onSwitchVariant={handleScenarioSwitchVariant}
@@ -733,6 +736,7 @@ export default function App() {
             reasoningMap={reasoningMap}
             onSend={handleSend}
             onRetry={handleRetry}
+            onDeleteMessage={handleDeleteMessage}
             onHeaderVisibilityChange={setHeaderVisible}
             msgLogIds={msgLogIds}
             elapsedMap={elapsedMap}

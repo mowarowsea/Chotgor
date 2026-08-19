@@ -74,6 +74,8 @@ interface UseChatResult {
     content: string,
     imageIds?: string[],
   ) => Promise<void>;
+  /** 末尾ユーザメッセージの削除（再送はしない）。 */
+  handleDeleteMessage: (messageId: string) => Promise<void>;
 }
 
 /**
@@ -232,6 +234,28 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     }
   }, [activeSessionId, sending, selectedModel, doStream, setError, setSending, setMessages]);
 
+  /**
+   * ユーザメッセージの削除。
+   *
+   * 削除 API は「指定メッセージ以降」しか持たないため、呼び出し側は末尾の
+   * ユーザメッセージにだけこのハンドラを渡すこと（それ以外へ渡すと後続の
+   * やり取りごと消える）。UI 上はセッション末尾のバブルにしかゴミ箱を出さない。
+   * 再ストリームは行わない — 送ってしまった発話をなかったことにするための操作。
+   */
+  const handleDeleteMessage = useCallback(async (messageId: string) => {
+    if (!activeSessionId || sending) return;
+    setError(null);
+    try {
+      await deleteMessagesFrom(activeSessionId, messageId);
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === messageId);
+        return idx >= 0 ? prev.slice(0, idx) : prev;
+      });
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [activeSessionId, sending, setError, setMessages]);
+
   return {
     streamingContent,
     streamingReasoning,
@@ -240,5 +264,6 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     resetStreamingState,
     doStream,
     handleRetry,
+    handleDeleteMessage,
   };
 }

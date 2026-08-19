@@ -40,6 +40,8 @@ interface Props {
     /** メッセージ編集・再生成時のコールバック。
      *  返した Promise が解決するまで再生成ボタンは無効化される（二度押し防止）。 */
     onRetry?: (fromMessageId: string, content: string, imageIds: string[]) => void | Promise<void>;
+    /** 末尾ユーザメッセージの削除コールバック。渡された時だけ末尾バブルにゴミ箱を出す。 */
+    onDeleteMessage?: (messageId: string) => void | Promise<void>;
     /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
     msgLogIds?: Record<string, string>;
     /** char_msg_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
@@ -65,6 +67,7 @@ export default function MessageList({
     emptyMessage = "メッセージを送ってみてください",
     onHeaderVisibilityChange,
     onRetry,
+    onDeleteMessage,
     msgLogIds = {},
     elapsedMap = {},
     translucentBubbles = false,
@@ -145,6 +148,9 @@ export default function MessageList({
 
             {messages.map((msg, idx) => {
                 if (msg.role === "user") {
+                    // ゴミ箱はセッション末尾のユーザ発話にだけ出す。削除 API は「以降まとめて」しか
+                    // 持たないので、後続のある発話に出すと巻き添えで消えてしまうため。
+                    const isTail = idx === messages.length - 1;
                     return (
                         <UserBubble
                             key={msg.id}
@@ -153,6 +159,11 @@ export default function MessageList({
                             images={msg.images}
                             sending={sending}
                             onEdit={onRetry ? (newContent) => onRetry(msg.id, newContent, msg.images ?? []) : undefined}
+                            onDelete={
+                                onDeleteMessage && isTail && !sending
+                                    ? () => onDeleteMessage(msg.id)
+                                    : undefined
+                            }
                         />
                     );
                 }

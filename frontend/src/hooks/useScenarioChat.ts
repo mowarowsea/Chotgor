@@ -157,6 +157,8 @@ interface UseScenarioChatResult {
   handleScenarioDiscard: () => Promise<void>;
   /** ユーザバブルの編集確定（以降を枝ごと削除して再ストリーム）。 */
   handleScenarioEditUserTurn: (turnId: string, newContent: string) => Promise<void>;
+  /** 末尾ユーザ発話の削除（再ストリームなし）。 */
+  handleScenarioDeleteUserTurn: (turnId: string) => Promise<void>;
   /** 枝（レスポンスガチャ）の切替。分岐点より後の本線は巻き戻される。 */
   handleScenarioSwitchVariant: (generationId: string) => Promise<void>;
   /** GM / PC 発話の手動上書き（枝は生やさず本文だけ差し替える）。 */
@@ -778,6 +780,34 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   );
 
   /**
+   * 末尾ユーザ発話の削除。
+   *
+   * `handleScenarioEditUserTurn` と違い、削除するだけで再ストリームしない
+   * （送ってしまった発話をなかったことにして、入力からやり直すための操作）。
+   * 削除 API は「指定ターン以降」しか持たないため、呼び出し側は末尾のユーザ発話に
+   * だけ使うこと。UI 上もセッション末尾のバブルにしかゴミ箱を出さない。
+   *
+   * 編集と同じく枝は残さない（`keepVariants=false`）。発話そのものが消える以上、
+   * その発話に対して引いた過去のガチャは行き場が無いため。
+   */
+  const handleScenarioDeleteUserTurn = useCallback(
+    async (turnId: string) => {
+      if (!activeScenarioSession) return;
+      const target = scenarioTurns.find((t) => t.id === turnId);
+      if (!target) return;
+      try {
+        await deleteScenarioTurnsFrom(activeScenarioSession.id, turnId, false);
+        setScenarioTurns((prev) =>
+          prev.filter((t) => t.turn_index < target.turn_index),
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activeScenarioSession, scenarioTurns, setError],
+  );
+
+  /**
    * 枝（レスポンスガチャ）を切り替える。
    *
    * 対象が過去のレスポンスなら、その分岐点より後の本線はサーバ側で巻き戻される
@@ -988,6 +1018,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     handleScenarioRegenerate,
     handleScenarioDiscard,
     handleScenarioEditUserTurn,
+    handleScenarioDeleteUserTurn,
     handleScenarioSwitchVariant,
     handleScenarioEditResponse,
     handleSynopsisChange,

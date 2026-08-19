@@ -195,6 +195,7 @@ function UserBubbleImpl({
   images,
   sending = false,
   onEdit,
+  onDelete,
   editNote,
 }: {
   content: string;
@@ -202,6 +203,13 @@ function UserBubbleImpl({
   images?: string[];
   sending?: boolean;
   onEdit?: (newContent: string) => void;
+  /**
+   * 発言削除コールバック（無指定でゴミ箱非表示）。
+   *
+   * 後続の発話を巻き込まないよう、呼び出し側は「セッション末尾のユーザ発話」に
+   * だけ渡すこと（キャラクター側の破棄ボタンと同じ制約）。
+   */
+  onDelete?: ActionHandler;
   /** 編集フォームのボタン行に添える注記（シナリオの「この発言以降は削除されます」等）。 */
   editNote?: string;
 }) {
@@ -246,6 +254,7 @@ function UserBubbleImpl({
             <UserMessageActions
               copyText={content}
               onEdit={onEdit ? () => setEditing(true) : undefined}
+              onDelete={onDelete}
               revealed={revealed}
             />
           )}
@@ -288,8 +297,10 @@ export const UserBubble = React.memo(UserBubbleImpl, (prev, next) => {
     prev.userName === next.userName &&
     prev.sending === next.sending &&
     prev.editNote === next.editNote &&
-    // 関数の同一性は見ないが「渡されているか」は見る（編集の可否が切り替わるため）。
+    // 関数の同一性は見ないが「渡されているか」は見る（編集・削除の可否が切り替わるため）。
+    // onDelete は末尾バブルでのみ渡るので、新しい発話が積まれた時点でゴミ箱を引っ込める。
     (prev.onEdit === undefined) === (next.onEdit === undefined) &&
+    (prev.onDelete === undefined) === (next.onDelete === undefined) &&
     // 画像は ID の並びで比較する（親が毎回新しい配列を渡しても参照差で落ちないように）。
     (prev.images ?? []).join(",") === (next.images ?? []).join(",")
   );

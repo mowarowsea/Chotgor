@@ -87,6 +87,11 @@ interface Props {
   onSend: (content: string, autoAdvance?: boolean) => void;
   /** ユーザ発言の編集（fromTurn 以降を削除し、新しい content で再ストリーム）。 */
   onEditUserTurn: (turnId: string, newContent: string) => void;
+  /**
+   * 末尾ユーザ発言の削除（再ストリームなし）。
+   * 未指定ならユーザバブルにゴミ箱を出さない。
+   */
+  onDeleteUserTurn?: (turnId: string) => void | Promise<void>;
   /** 最後のユーザターン以降を削除して同内容で再ストリーム。 */
   onRegenerate: ActionHandler;
   /**
@@ -145,6 +150,7 @@ function ScenarioChatViewInner({
   pendingBubbles,
   onSend,
   onEditUserTurn,
+  onDeleteUserTurn,
   onRegenerate,
   onDiscard,
   onSwitchVariant,
@@ -465,6 +471,15 @@ function ScenarioChatViewInner({
             t.id === synopsisDividerTurnId ? <SynopsisDivider /> : null;
           let bubble: React.ReactNode;
           if (t.speaker_type === "user") {
+            // ゴミ箱は「本線の末尾に残ったユーザ発話」にだけ出す（GM 応答の破棄と同じ制約）。
+            // 削除 API は「指定ターン以降」しか持たないので、後続のあるターンに出すと
+            // その先まで巻き添えで消えてしまうため。生成中（pendingBubbles あり）も出さない。
+            const canDeleteUserTurn =
+              onDeleteUserTurn !== undefined &&
+              t.id === turns[turns.length - 1]?.id &&
+              pendingBubbles.length === 0 &&
+              session.status === "active" &&
+              !sending;
             bubble = (
               // ユーザ発話バブルは 1on1 と共通（右寄せ・編集フォーム・操作バー）。
               // 編集確定で以降のターンが消えるため、注記でそれを伝える。
@@ -476,6 +491,9 @@ function ScenarioChatViewInner({
                   session.status === "active" && !sending
                     ? (newContent) => onEditUserTurn(t.id, newContent)
                     : undefined
+                }
+                onDelete={
+                  canDeleteUserTurn ? () => onDeleteUserTurn(t.id) : undefined
                 }
               />
             );

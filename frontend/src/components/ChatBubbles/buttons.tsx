@@ -129,7 +129,8 @@ const DISCARD_ARM_TIMEOUT_MS = 3000;
  * バブル下部の応答破棄（🗑）ボタン。
  *
  * シナリオモードで「直前の GM 応答を捨てて、ユーザリクエスト待ち状態へ戻したい」
- * 用途で使う。`RegenerateButton` と異なり、削除後に再ストリームは行わない。
+ * 用途、および末尾に残ったユーザ発話そのものを取り消す用途で使う。
+ * `RegenerateButton` と異なり、削除後に再ストリームは行わない。
  *
  * 誤クリック対策として二段階クリックを挟む。1回目のクリックで「武装」（赤く点灯）し、
  * 2回目で実行する。武装は 3 秒経過またはポインタ離脱で自動解除される。
@@ -304,7 +305,7 @@ export function VariantNav({
 }
 
 /**
- * ユーザー発話バブル下部の操作バー（コピー / 編集）。
+ * ユーザー発話バブル下部の操作バー（コピー / 編集 / 削除）。
  *
  * バブルの直下に置き、親の `items-end` により右寄せされる前提。
  * 1on1 / シナリオのユーザーバブルで見た目・並びを共有する（DRY）。
@@ -312,16 +313,25 @@ export function VariantNav({
  * ボタンは露出中だけ描画する（発話数ぶんの button/svg を DOM に残さないため）。
  * 枠は常に描き、高さも固定する — 中身の出入りでバブルの下端が動くと、
  * 読んでいる最中にレイアウトがずれるため。
+ *
+ * 削除（ゴミ箱）はキャラクター側の操作バーと同じく、破壊的な操作として
+ * 他のボタンから間隔を空けて末尾へ置く（誤クリック防止）。
  */
 export function UserMessageActions({
   copyText,
   onEdit,
+  onDelete,
+  deleteTitle = "この発言を削除",
   revealed = true,
 }: {
   /** コピー対象テキスト。 */
   copyText: string;
   /** 編集開始コールバック（無指定で編集ボタン非表示）。 */
   onEdit?: () => void;
+  /** 削除コールバック（無指定でゴミ箱非表示）。Promise を返すと解決まで無効化される。 */
+  onDelete?: ActionHandler;
+  /** ゴミ箱のツールチップ。 */
+  deleteTitle?: string;
   /** false のときボタンを描画しない（枠と高さは保つ）。 */
   revealed?: boolean;
 }) {
@@ -331,6 +341,9 @@ export function UserMessageActions({
         <>
           <CopyButton text={copyText} />
           {onEdit && <EditButton onClick={onEdit} />}
+          {onDelete && (
+            <DiscardButton onClick={onDelete} title={deleteTitle} className="ml-2" />
+          )}
         </>
       )}
     </div>

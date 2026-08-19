@@ -41,6 +41,11 @@ interface Props {
    * imageIds には再送する画像IDリストを渡す（再生成時は元メッセージの画像を引き継ぐ）。
    */
   onRetry: (fromMessageId: string, content: string, imageIds: string[]) => void;
+  /**
+   * 末尾ユーザメッセージの削除コールバック（再送なし）。
+   * 未指定ならユーザバブルにゴミ箱を出さない。
+   */
+  onDeleteMessage?: (messageId: string) => void | Promise<void>;
   /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
@@ -65,6 +70,7 @@ export default function ChatView({
   reasoningMap,
   onSend,
   onRetry,
+  onDeleteMessage,
   onHeaderVisibilityChange,
   msgLogIds,
   elapsedMap,
@@ -99,6 +105,7 @@ export default function ChatView({
           streamingReasoning={streamingReasoning}
           characterName={characterName}
           onRetry={onRetry}
+          onDeleteMessage={onDeleteMessage}
           onHeaderVisibilityChange={onHeaderVisibilityChange}
           msgLogIds={msgLogIds}
           elapsedMap={elapsedMap}
