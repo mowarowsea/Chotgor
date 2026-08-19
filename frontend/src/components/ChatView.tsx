@@ -8,7 +8,7 @@
  *   - 背景画像は contain で全画面に縮めて表示する（縦横比保持・繰り返しなし）。
  *   - モード切替トグルは App.tsx のヘッダー右側ボタン群に統合された。
  */
-import type { ChatMessage } from "../api";
+import type { Attachment, ChatMessage } from "../api";
 import type { AttachmentKind } from "../lib/attachments";
 import { EditingLockProvider } from "../hooks/useEditingLock";
 import MessageList from "./MessageList";
@@ -39,9 +39,9 @@ interface Props {
   /**
    * ユーザメッセージ編集・キャラクター応答再生成コールバック。
    * fromMessageId 以降を削除して content で再送する。
-   * attachmentIds には再送する添付IDリストを渡す（再生成時は元メッセージの添付を引き継ぐ）。
+   * attachments には再送する添付リストを渡す（再生成時は元メッセージの添付を引き継ぐ）。
    */
-  onRetry: (fromMessageId: string, content: string, attachmentIds: string[]) => void;
+  onRetry: (fromMessageId: string, content: string, attachments: Attachment[]) => void;
   /**
    * 末尾ユーザメッセージの削除コールバック（再送なし）。
    * 未指定ならユーザバブルにゴミ箱を出さない。

@@ -1,7 +1,9 @@
 # 音声添付 仕様書 — 曲を聴かせる
 
-> 状態: 未着手（設計合意済み 2026-08-20）
+> 状態: **Phase 1〜5 実装完了（2026-08-20）**。設計合意 2026-08-20
 > 前提コミット: `b43889d`（claude_cli の画像対応。stream-json 入力へ一本化済み）
+>
+> 実装時の設計差分は §実装メモ を参照。
 
 ## 概要
 
@@ -267,3 +269,55 @@ Phase 3 以降が音声本体。
 - **サイズ・コスト**（実装時に要確認）: Gemini の inline data はリクエスト 20MB 前後が上限で、
   超過分は File API 経由になる。Chotgor は base64 を毎回埋め込むため、
   大きいファイルはメモリとレイテンシに効く
+
+
+## 実装メモ（2026-08-20・Phase 1〜5 完了）
+
+設計書との差分と、実装して分かったこと。
+
+### 設計との差分
+
+1. **MIME 判定の置き場所を `backend/lib/attachments.py` にした**
+   （設計では `api/chat_attachments.py` に定数を置く想定）。
+   種別の導出は API 層（受け入れ検証）・services 層（パート構築・痕跡テキスト）・
+   providers 層（能力宣言との突き合わせ）の3層から必要になり、services → api の
+   逆流 import を作るのは避けたかったため。「1箇所」という趣旨は守っている。
+2. **`build_1on1_history` は履歴の添付を無条件に痕跡テキストへ落とす**。
+   設計の「最新ターン以外」は、呼び出し側（`api/chat.py` と
+   `services/gate/delivery.py`）が両方とも最新ターンを `user_content` として
+   別に組む契約になっているため、ここに来る添付はすべて過去のものになる。
+   条件分岐は入れず、docstring に契約を書いた。
+3. **`message_to_dict` のレスポンス形式を変えた**（設計は言及なし）。
+   フロントが画像サムネと音声プレイヤーを描き分けるには種別が要るので、
+   `attachments` を `["id", ...]` から `[{"id", "mime_type"}]` へ変更し、
+   `message_to_dict(m, sqlite)` が mime を解決するようにした。
+   種別の導出はフロント側の `lib/attachments.ts` が行う（backend と対の実装）。
+4. **`google_provider` に `_AUDIO_FORMAT_TO_MIME` を置いた**。`input_audio` の
+   `format`（"mp3"）から Gemini の `mime_type`（"audio/mpeg"）を復元する逆写像。
+   未知の format はパート化せず捨てる（不正な mime で API を落とさないため）。
+5. **`MessageInput` に「プリセット切替で渡せなくなった添付を落とす」処理を足した**。
+   Gemini で mp3 を選んだあと Claude へ切り替えると、渡せない添付を抱えたまま
+   送信できてしまうため。設計には無いが、入口ガードの趣旨（黙って捨てない）の一部。
+
+### 実装済みの範囲
+
+| Phase | 内容 | コミット |
+|---|---|---|
+| 1 | 汎用化リネーム（DB・API・内部・フロント） | `addf9b0` |
+| 2 | 添付寿命を `content.py` へ引き上げ | `749255b` |
+| 3 | 音声の受け入れ（`input_audio`・Gemini の Part 化） | `0b2148d` |
+| 4 | 入口ガード（`attachment_kinds`・accept 動的化・送信時 400） | `ded72de` |
+| 5 | 表示（`<audio>` プレイヤー・プレビュー） | — |
+
+マイグレーション（`_migrate_rename_chat_images_to_attachments`）は実 DB のコピーで
+検証済み: `chat_images` 13 行・`chat_messages.images` の値がそのまま新名へ移り、
+2回目の実行でも壊れない。`Base.metadata.create_all` が先に走って空の
+`chat_attachments` を作ってしまうため、空であることを確認して drop してから
+リネームしている（この順序依存は既存の他マイグレーションには無い罠）。
+
+### 未検証（実機で確認が必要）
+
+- **実際に Gemini へ曲を渡した動作**。テストは SDK 境界までのモックで、
+  実 API へ音声を送って応答を得るところは通していない。
+- **サイズ・レイテンシ**。Gemini の inline data は 20MB 前後が上限で、Chotgor は
+  base64 を毎回埋め込む。長い曲での実挙動は未計測（§将来枠のとおり）。

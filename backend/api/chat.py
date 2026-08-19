@@ -192,7 +192,7 @@ async def get_session(request: Request, session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     messages = request.app.state.sqlite.list_chat_messages(session_id)
     result = session_to_dict(session)
-    result["messages"] = [message_to_dict(m) for m in messages]
+    result["messages"] = [message_to_dict(m, request.app.state.sqlite) for m in messages]
     return result
 
 
@@ -328,8 +328,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             """estranged キャラクター向けSSEジェネレーター。"""
             done_data = json.dumps({
                 "type": "done",
-                "user_message": message_to_dict(user_msg_e),
-                "character_message": message_to_dict(sys_msg_e),
+                "user_message": message_to_dict(user_msg_e, state.sqlite),
+                "character_message": message_to_dict(sys_msg_e, state.sqlite),
             }, ensure_ascii=False)
             yield f"data: {done_data}\n\n"
 
@@ -408,8 +408,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             """預かり（escrow）向け SSE ジェネレーター。LLM は呼ばない。"""
             done_data = json.dumps({
                 "type": "done",
-                "user_message": message_to_dict(user_msg),
-                "character_message": message_to_dict(escrow_sys_msg),
+                "user_message": message_to_dict(user_msg, state.sqlite),
+                "character_message": message_to_dict(escrow_sys_msg, state.sqlite),
             }, ensure_ascii=False)
             yield f"data: {done_data}\n\n"
 
@@ -437,8 +437,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
             """退席済みセッション向けSSEジェネレーター。"""
             done_data = json.dumps({
                 "type": "done",
-                "user_message": message_to_dict(user_msg),
-                "character_message": message_to_dict(sys_msg),
+                "user_message": message_to_dict(user_msg, state.sqlite),
+                "character_message": message_to_dict(sys_msg, state.sqlite),
             }, ensure_ascii=False)
             yield f"data: {done_data}\n\n"
 
@@ -575,8 +575,8 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
         yield ("done", {
             "log_message_id": log_msg_id,
-            "user_message": message_to_dict(user_msg),
-            "character_message": message_to_dict(char_msg),
+            "user_message": message_to_dict(user_msg, state.sqlite),
+            "character_message": message_to_dict(char_msg, state.sqlite),
         })
 
     return StreamingResponse(

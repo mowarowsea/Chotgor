@@ -166,3 +166,72 @@ class TestRejectUnsupportedAttachmentsHelper:
             chat_module._reject_unsupported_attachments(state, "はる@p1", ["a1"])
         assert excinfo.value.status_code == 400
         assert "Gemini" in excinfo.value.detail
+
+
+# ---------------------------------------------------------------------------
+# レスポンス形式（表示のための mime 解決）
+# ---------------------------------------------------------------------------
+
+class TestMessageToDictAttachments:
+    """message_to_dict が添付へ mime_type を添えることを検証するテストクラス。
+
+    フロントは mime から種別を導出して画像サムネと音声プレイヤーを出し分ける。
+    ID だけを返していた頃は音声を <img> に食わせて壊れるため、形式を変えている。
+    """
+
+    def _msg(self, attachments):
+        from datetime import datetime
+
+        m = MagicMock()
+        m.id = "m1"
+        m.session_id = "sid"
+        m.role = "user"
+        m.content = "これ聴いて"
+        m.reasoning = None
+        m.attachments = attachments
+        m.character_name = None
+        m.preset_name = None
+        m.is_system_message = None
+        m.log_message_id = None
+        m.anticipation = None
+        m.face_to_face = 0
+        m.created_at = datetime(2026, 8, 20, 12, 0, 0)
+        return m
+
+    def test_attachment_carries_mime_type(self):
+        """添付が {id, mime_type} の形で返ること。"""
+        from backend.api.utils import message_to_dict
+
+        sqlite = MagicMock()
+        sqlite.get_chat_attachment.return_value = MagicMock(mime_type="audio/mpeg")
+
+        result = message_to_dict(self._msg(["a1"]), sqlite)
+
+        assert result["attachments"] == [{"id": "a1", "mime_type": "audio/mpeg"}]
+
+    def test_missing_metadata_yields_id_only(self):
+        """メタデータを引けない添付は id だけを返すこと（表示は画像扱いになる）。"""
+        from backend.api.utils import message_to_dict
+
+        sqlite = MagicMock()
+        sqlite.get_chat_attachment.return_value = None
+
+        result = message_to_dict(self._msg(["a1"]), sqlite)
+
+        assert result["attachments"] == [{"id": "a1"}]
+
+    def test_no_sqlite_yields_id_only(self):
+        """sqlite 未指定でも例外にせず id だけ返すこと。"""
+        from backend.api.utils import message_to_dict
+
+        result = message_to_dict(self._msg(["a1"]))
+
+        assert result["attachments"] == [{"id": "a1"}]
+
+    def test_no_attachments_key_when_empty(self):
+        """添付がなければキー自体を省くこと（レスポンスサイズ削減の既存方針）。"""
+        from backend.api.utils import message_to_dict
+
+        result = message_to_dict(self._msg(None), MagicMock())
+
+        assert "attachments" not in result

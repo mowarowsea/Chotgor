@@ -19,7 +19,7 @@ import {
   fetchSessions,
   streamMessage,
 } from "../api";
-import type { ChatMessage, Session, StreamEvent } from "../api";
+import type { Attachment, ChatMessage, Session, StreamEvent } from "../api";
 import { consumeStream } from "./streamingUtils";
 
 /** useChat が App から受け取る依存（共有 state の setter 群とセッション情報）。 */
@@ -65,14 +65,14 @@ interface UseChatResult {
   doStream: (
     sessionId: string,
     content: string,
-    attachmentIds?: string[],
+    attachments?: Attachment[],
     modelId?: string,
   ) => Promise<void>;
   /** 編集・再生成: fromMessageId 以降を削除して再送する。 */
   handleRetry: (
     fromMessageId: string,
     content: string,
-    attachmentIds?: string[],
+    attachments?: Attachment[],
   ) => Promise<void>;
   /** 末尾ユーザメッセージの削除（再送はしない）。 */
   handleDeleteMessage: (messageId: string) => Promise<void>;
@@ -117,7 +117,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
   const doStream = useCallback(async (
     sessionId: string,
     content: string,
-    attachmentIds: string[] = [],
+    attachments: Attachment[] = [],
     modelId?: string,
   ) => {
     setError(null);
@@ -131,7 +131,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       session_id: sessionId,
       role: "user",
       content,
-      attachments: attachmentIds.length > 0 ? attachmentIds : undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUserMsg]);
@@ -142,7 +142,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     type DoneEvent = Extract<StreamEvent, { type: "done" }>;
     let pendingDone: DoneEvent | null = null;
     await consumeStream<StreamEvent>({
-      stream: streamMessage(sessionId, content, attachmentIds, modelId),
+      stream: streamMessage(sessionId, content, attachments.map((a) => a.id), modelId),
       onEvent: (event) => {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
@@ -209,12 +209,12 @@ export function useChat(deps: UseChatDeps): UseChatResult {
    * ユーザメッセージ編集 / キャラクター応答再生成の共通ハンドラ。
    * fromMessageId 以降をDBから削除し、content でストリームを再送する。
    * 再生成の場合は fromMessageId = 直前ユーザメッセージのID、content = そのメッセージ本文。
-   * attachmentIds = 再送する添付IDリスト（再生成時は元メッセージの添付を引き継ぐ）。
+   * attachments = 再送する添付リスト（再生成時は元メッセージの添付を引き継ぐ）。
    */
   const handleRetry = useCallback(async (
     fromMessageId: string,
     content: string,
-    attachmentIds: string[] = [],
+    attachments: Attachment[] = [],
   ) => {
     if (!activeSessionId || sending) return;
     setSending(true);
@@ -226,7 +226,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     });
     try {
       await deleteMessagesFrom(activeSessionId, fromMessageId);
-      await doStream(activeSessionId, content, attachmentIds, selectedModel || undefined);
+      await doStream(activeSessionId, content, attachments, selectedModel || undefined);
     } catch (e) {
       setError(String(e));
     } finally {

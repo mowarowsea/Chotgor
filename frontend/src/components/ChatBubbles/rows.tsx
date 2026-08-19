@@ -10,6 +10,7 @@ import { Bubble } from "./Bubble";
 import { UserMessageActions } from "./buttons";
 import type { ActionHandler } from "./buttons";
 import { AttachmentGrid } from "./attachments";
+import type { Attachment } from "../../api";
 import { InlineEditor } from "./InlineEditor";
 import { MarkdownContent } from "./markdown";
 import { MessageActionBar } from "./MessageActionBar";
@@ -200,7 +201,7 @@ function UserBubbleImpl({
 }: {
   content: string;
   userName: string;
-  attachments?: string[];
+  attachments?: Attachment[];
   sending?: boolean;
   onEdit?: (newContent: string) => void;
   /**
@@ -236,7 +237,7 @@ function UserBubbleImpl({
       <span className="text-[11px] text-ch-t4 pr-1">{userName}</span>
 
       {/* 添付 */}
-      {attachments && attachments.length > 0 && <AttachmentGrid attachmentIds={attachments} />}
+      {attachments && attachments.length > 0 && <AttachmentGrid attachments={attachments} />}
 
       {editing ? (
         <InlineEditor
@@ -307,6 +308,7 @@ export const UserBubble = React.memo(UserBubbleImpl, (prev, next) => {
     (prev.onEdit === undefined) === (next.onEdit === undefined) &&
     (prev.onDelete === undefined) === (next.onDelete === undefined) &&
     // 添付は ID の並びで比較する（親が毎回新しい配列を渡しても参照差で落ちないように）。
-    (prev.attachments ?? []).join(",") === (next.attachments ?? []).join(",")
+    (prev.attachments ?? []).map((a) => a.id).join(",") ===
+      (next.attachments ?? []).map((a) => a.id).join(",")
   );
 });

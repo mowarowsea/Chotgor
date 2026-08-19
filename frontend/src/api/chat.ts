@@ -55,6 +55,13 @@ export interface Session {
   updated_at: string;
 }
 
+/** メッセージに紐づく添付1件。mime_type から画像／音声の表示を出し分ける。 */
+export interface Attachment {
+  id: string;
+  /** メタデータを引けなかった場合のみ欠ける（表示は画像扱いになる）。 */
+  mime_type?: string;
+}
+
 export interface ChatMessage {
   id: string;
   session_id: string;
@@ -62,8 +69,8 @@ export interface ChatMessage {
   content: string;
   /** 思考ブロック・想起記憶テキスト。キャラクターメッセージのみ存在する場合がある。 */
   reasoning?: string;
-  /** 添付IDのリスト（画像・音声）。ユーザメッセージのみ存在する場合がある。 */
-  attachments?: string[];
+  /** 添付のリスト（画像・音声）。ユーザメッセージのみ存在する場合がある。 */
+  attachments?: Attachment[];
   /** シナリオPC・うつつ発話時のキャラクター名。 */
   character_name?: string;
   /** メッセージ送信時に使用したプリセット名（バブル表示用）。 */

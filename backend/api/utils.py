@@ -79,10 +79,21 @@ def session_to_dict(s) -> dict:
     return result
 
 
-def message_to_dict(m) -> dict:
+def _attachment_to_dict(attachment_id: str, sqlite) -> dict:
+    """添付IDに mime_type を添えて返す。メタデータを引けなければ id だけ。"""
+    meta = sqlite.get_chat_attachment(attachment_id) if sqlite else None
+    mime = getattr(meta, "mime_type", None) if meta else None
+    return {"id": attachment_id, "mime_type": mime} if mime else {"id": attachment_id}
+
+
+def message_to_dict(m, sqlite=None) -> dict:
     """ChatMessage ORMオブジェクトを辞書に変換する。
 
     reasoning / attachments / character_name / is_system_message は None の場合は省略してレスポンスサイズを削減する。
+
+    attachments は `[{"id": ..., "mime_type": ...}]` の形で返す。フロントは
+    mime から種別を導出して画像サムネと音声プレイヤーを出し分ける。
+    sqlite 未指定時は mime を引けないため id だけを返す（表示は画像扱いになる）。
     """
     result = {
         "id": m.id,
@@ -94,7 +105,9 @@ def message_to_dict(m) -> dict:
     if getattr(m, "reasoning", None):
         result["reasoning"] = m.reasoning
     if getattr(m, "attachments", None):
-        result["attachments"] = m.attachments
+        result["attachments"] = [
+            _attachment_to_dict(att_id, sqlite) for att_id in m.attachments
+        ]
     if getattr(m, "character_name", None):
         result["character_name"] = m.character_name
     if getattr(m, "preset_name", None):

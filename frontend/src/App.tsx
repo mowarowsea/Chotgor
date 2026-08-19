@@ -17,6 +17,7 @@ import {
   updateFaceToFaceMode,
 } from "./api";
 import type {
+  Attachment,
   Model,
   Session,
   SessionDetail,
@@ -489,11 +490,11 @@ export default function App() {
   const handleSend = useCallback(async (content: string, files: File[]) => {
     if (!activeSessionId) return;
 
-    let attachmentIds: string[] = [];
+    let attachments: Attachment[] = [];
     if (files.length > 0) {
       try {
         const uploaded = await uploadAttachments(activeSessionId, files);
-        attachmentIds = uploaded.map((u) => u.id);
+        attachments = uploaded.map((u) => ({ id: u.id, mime_type: u.mime_type }));
       } catch (e) {
         setError(String(e));
         return;
@@ -502,7 +503,7 @@ export default function App() {
 
     setSending(true);
     try {
-      await doStream(activeSessionId, content, attachmentIds, selectedModel || undefined);
+      await doStream(activeSessionId, content, attachments, selectedModel || undefined);
     } catch (e) {
       setError(String(e));
     } finally {

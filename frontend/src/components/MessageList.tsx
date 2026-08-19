@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useRef } from "react";
 import type { UIEvent } from "react";
-import type { ChatMessage } from "../api";
+import type { Attachment, ChatMessage } from "../api";
 import { CharacterBubble, CharacterAvatar, CharacterMessageRow, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
 import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
 import { loadScrollPos, saveScrollPos } from "../lib/sessionSnapshot";
@@ -39,7 +39,7 @@ interface Props {
     emptyMessage?: string;
     /** メッセージ編集・再生成時のコールバック。
      *  返した Promise が解決するまで再生成ボタンは無効化される（二度押し防止）。 */
-    onRetry?: (fromMessageId: string, content: string, attachmentIds: string[]) => void | Promise<void>;
+    onRetry?: (fromMessageId: string, content: string, attachments: Attachment[]) => void | Promise<void>;
     /** 末尾ユーザメッセージの削除コールバック。渡された時だけ末尾バブルにゴミ箱を出す。 */
     onDeleteMessage?: (messageId: string) => void | Promise<void>;
     /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
