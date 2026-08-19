@@ -2,6 +2,8 @@
 
 対象関数:
     apply_context_window() — chronicle済みメッセージ数を制限してコンテキストを圧縮する
+    attachment_trace()     — 過去ターンの添付を痕跡テキストへ落とす
+    build_1on1_history()   — 履歴を Message リストへ変換する（添付の実体は載せない）
 
 テスト方針:
     - ChatMessage の代わりに SimpleNamespace で chronicled_at を持つ軽量オブジェクトを使う
@@ -14,7 +16,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.chat.content import apply_context_window
+from backend.services.chat.content import (
+    apply_context_window,
+    attachment_trace,
+    build_1on1_history,
+)
 
 
 # ─── ヘルパー ──────────────────────────────────────────────────────────────────
@@ -127,3 +133,141 @@ class TestApplyContextWindow:
         msgs = [_msg(True, f"c{i}") for i in range(5)]
         result = apply_context_window(msgs, max_chronicled=5)
         assert result == msgs
+
+
+# ─── 添付の寿命（build_1on1_history / attachment_trace） ──────────────────────
+
+
+class _FakeAttachment:
+    """ChatAttachment ORM の代わりに mime_type だけを持つスタブ。"""
+
+    def __init__(self, mime_type: str):
+        self.mime_type = mime_type
+
+
+class _FakeSqlite:
+    """get_chat_attachment だけを提供する最小のストアスタブ。
+
+    id → mime_type の辞書を受け取り、未登録IDには None を返す
+    （実装が「メタデータを引けない添付」をどう扱うかも検証できるようにする）。
+    """
+
+    def __init__(self, mapping: dict[str, str]):
+        self._mapping = mapping
+
+    def get_chat_attachment(self, attachment_id: str):
+        mime = self._mapping.get(attachment_id)
+        return _FakeAttachment(mime) if mime else None
+
+
+def _hist_msg(role: str, content: str, attachments=None, is_system=None) -> SimpleNamespace:
+    """build_1on1_history 用の履歴メッセージスタブを作る。"""
+    return SimpleNamespace(
+        role=role,
+        content=content,
+        attachments=attachments,
+        is_system_message=is_system,
+    )
+
+
+class TestAttachmentTrace:
+    """attachment_trace() — 過去ターンの添付を痕跡テキストへ落とす変換のテスト。
+
+    実体（base64）を履歴から外しつつ「何かを渡した」事実は残す、という
+    添付の寿命ルールの中核。種別ごとの文言と重複のまとめ方を検証する。
+    """
+
+    def test_no_attachments_returns_text_unchanged(self):
+        """添付がなければ本文をそのまま返すこと。"""
+        assert attachment_trace("こんにちは", [], _FakeSqlite({})) == "こんにちは"
+
+    def test_sqlite_missing_returns_text_unchanged(self):
+        """sqlite が無ければ種別を引けないため本文をそのまま返すこと。"""
+        assert attachment_trace("こんにちは", ["a1"], None) == "こんにちは"
+
+    def test_image_appends_image_trace(self):
+        """画像添付は [画像を見せた] を本文の次行へ足すこと。"""
+        sqlite = _FakeSqlite({"a1": "image/png"})
+        assert attachment_trace("これ見て", ["a1"], sqlite) == "これ見て\n[画像を見せた]"
+
+    def test_audio_appends_audio_trace(self):
+        """音声添付は [音声を聴かせた] を本文の次行へ足すこと。"""
+        sqlite = _FakeSqlite({"a1": "audio/mpeg"})
+        assert attachment_trace("これ聴いて", ["a1"], sqlite) == "これ聴いて\n[音声を聴かせた]"
+
+    def test_same_kind_is_collapsed_into_one_line(self):
+        """同種の添付が複数あっても痕跡は1行にまとめること（枚数は残さない）。"""
+        sqlite = _FakeSqlite({"a1": "image/png", "a2": "image/jpeg"})
+        assert attachment_trace("2枚", ["a1", "a2"], sqlite) == "2枚\n[画像を見せた]"
+
+    def test_mixed_kinds_produce_one_line_each(self):
+        """種別が違えばそれぞれ1行ずつ、出現順に並ぶこと。"""
+        sqlite = _FakeSqlite({"a1": "audio/mpeg", "a2": "image/png"})
+        result = attachment_trace("両方", ["a1", "a2"], sqlite)
+        assert result == "両方\n[音声を聴かせた]\n[画像を見せた]"
+
+    def test_unknown_mime_falls_back_to_generic_trace(self):
+        """種別を導出できない MIME は汎用の痕跡になること（旧レコード対策）。"""
+        sqlite = _FakeSqlite({"a1": "application/pdf"})
+        assert attachment_trace("なにか", ["a1"], sqlite) == "なにか\n[ファイルを渡した]"
+
+    def test_missing_metadata_falls_back_to_generic_trace(self):
+        """DB にメタデータが無い添付IDも汎用の痕跡へ落ちること（黙って消さない）。"""
+        assert attachment_trace("なにか", ["missing"], _FakeSqlite({})) == "なにか\n[ファイルを渡した]"
+
+    def test_empty_text_yields_trace_only(self):
+        """本文が空なら痕跡だけを返すこと（先頭の空行を作らない）。"""
+        sqlite = _FakeSqlite({"a1": "audio/mpeg"})
+        assert attachment_trace("", ["a1"], sqlite) == "[音声を聴かせた]"
+
+
+class TestBuild1on1HistoryAttachments:
+    """build_1on1_history() が履歴から添付の実体を落とすことを検証するテストクラス。
+
+    ここを通る添付はすべて過去ターンのもの（最新ターンは呼び出し側が
+    build_message_content で別に組む）。したがって content は必ず文字列になり、
+    base64 を含むコンテンツパートのリストにはならない。
+    """
+
+    def test_history_attachment_becomes_text_trace(self):
+        """履歴のユーザ添付は痕跡テキストへ置換され、content が文字列になること。"""
+        sqlite = _FakeSqlite({"a1": "audio/mpeg"})
+        history = [_hist_msg("user", "これ聴いて", ["a1"])]
+        messages = build_1on1_history(history, sqlite, "/tmp/uploads")
+        assert len(messages) == 1
+        assert messages[0].role == "user"
+        assert messages[0].content == "これ聴いて\n[音声を聴かせた]"
+
+    def test_history_without_attachment_is_plain_text(self):
+        """添付のないユーザ発話は本文がそのまま渡ること。"""
+        history = [_hist_msg("user", "ふつうの発話", None)]
+        messages = build_1on1_history(history, _FakeSqlite({}), "/tmp/uploads")
+        assert messages[0].content == "ふつうの発話"
+
+    def test_character_role_maps_to_assistant(self):
+        """character ロールは API 仕様上の role="assistant" へ写ること。"""
+        history = [_hist_msg("character", "うん")]
+        messages = build_1on1_history(history, _FakeSqlite({}), "/tmp/uploads")
+        assert messages[0].role == "assistant"
+        assert messages[0].content == "うん"
+
+    def test_system_message_is_skipped(self):
+        """システムメッセージ（退席通知等）は履歴に載らないこと。"""
+        history = [
+            _hist_msg("character", "掲示", is_system=True),
+            _hist_msg("user", "やあ"),
+        ]
+        messages = build_1on1_history(history, _FakeSqlite({}), "/tmp/uploads")
+        assert len(messages) == 1
+        assert messages[0].content == "やあ"
+
+    def test_no_base64_leaks_into_history(self):
+        """複数ターン分の添付があっても、履歴のどこにも実体（リスト形式）が残らないこと。"""
+        sqlite = _FakeSqlite({"a1": "image/png", "a2": "audio/mpeg"})
+        history = [
+            _hist_msg("user", "1枚目", ["a1"]),
+            _hist_msg("character", "見たよ"),
+            _hist_msg("user", "次は曲", ["a2"]),
+        ]
+        messages = build_1on1_history(history, sqlite, "/tmp/uploads")
+        assert all(isinstance(m.content, str) for m in messages)

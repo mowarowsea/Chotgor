@@ -1,6 +1,7 @@
 """チャット添付ファイル API。
 
 添付（画像・音声）のアップロード・配信を担当する。
+受け入れ可否の判定は lib/attachments に一本化されている。
 セッション管理・メッセージ送信: chat.py
 """
 
@@ -9,34 +10,9 @@ import uuid
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
+from backend.lib.attachments import attachment_kind
+
 router = APIRouter(prefix="/api/chat", tags=["chat_attachments"])
-
-#: Gemini が inline_data で受け取れる音声形式に合わせたホワイトリスト。
-#: Chotgor が「扱える添付種別か」の唯一の根拠であり、プロバイダー適合（音声を渡せるか）
-#: はセッションのプリセット次第なので送信時（chat.py）に別途判定する。
-_ALLOWED_AUDIO = {
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/ogg",
-    "audio/flac",
-    "audio/aac",
-}
-
-
-def attachment_kind(mime_type: str) -> str | None:
-    """MIME タイプから添付種別（"image" / "audio"）を導出する。
-
-    種別カラムを持たない設計のため、mime からの導出がここに一本化されている。
-    未対応の MIME には None を返す。
-    """
-    mime = (mime_type or "").split(";", 1)[0].strip().lower()
-    if mime.startswith("image/"):
-        return "image"
-    if mime in _ALLOWED_AUDIO:
-        return "audio"
-    return None
 
 
 @router.post("/sessions/{session_id}/attachments", status_code=201)
@@ -47,8 +23,11 @@ async def upload_attachments(
 ):
     """複数の添付ファイルをアップロードしてセッションに紐づける。
 
-    受け付けるMIMEタイプ: image/* と _ALLOWED_AUDIO の音声形式。
+    受け付けるMIMEタイプ: attachment_kind が種別を導出できるもの（画像・音声）。
     ファイルは uploads_dir/{attachment_id} として保存される。
+
+    ここで見るのは「Chotgor が扱える添付か」だけ。プロバイダー適合（音声を渡せるか）
+    はセッションのプリセット次第で変わるため、送信時（chat.py）に別途判定する。
 
     Returns:
         [{"id": attachment_id, "url": "/api/chat/attachments/{attachment_id}",
