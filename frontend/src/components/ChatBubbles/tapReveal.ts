@@ -46,10 +46,17 @@ function useBubbleRevealed(id: string): boolean {
  * mouse 相当のイベントが合成されるため `pointerType` で振り分ける（振り分けないと、
  * タップで開いた直後に click 相当が来て即座に閉じてしまう）。
  *
+ * `pinned` を渡したバブルはホバーを待たずに常時露出する。破棄・削除の直後は
+ * 再レンダとレイアウト再計算でホバーの反映が一拍遅れ、「押したいのにボタンが出ない」
+ * 時間が生まれるため、いま操作できる末尾バブルだけはきっかけ無しで出しておく。
+ * 常時露出でもハンドラは配る — 自分の上へマウスが来たら露出先を自分へ移し、
+ * 別の場所で開きっぱなしのボタンを閉じるため（画面内で 1 つだけ、を保つ）。
+ *
  * @param enabled false のときハンドラを配らない（送信中・終了セッション等）。
+ * @param pinned true のときホバー非依存で常時露出する（操作可能な末尾バブル）。
  * @returns `revealed`（描画すべきか）、行へ広げる `rowProps`、バブルへ広げる `bubbleProps`。
  */
-export function useRevealControls(enabled: boolean): {
+export function useRevealControls(enabled: boolean, pinned = false): {
   revealed: boolean;
   rowProps: {
     onPointerEnter?: React.PointerEventHandler;
@@ -58,10 +65,11 @@ export function useRevealControls(enabled: boolean): {
   bubbleProps: { onPointerUp?: React.PointerEventHandler };
 } {
   const id = useId();
-  const revealed = useBubbleRevealed(id);
+  const hovered = useBubbleRevealed(id);
+  // enabled=false は送信中・編集中。この間は pinned でも出さない（押せない操作を見せない）。
   if (!enabled) return { revealed: false, rowProps: {}, bubbleProps: {} };
   return {
-    revealed,
+    revealed: hovered || pinned,
     rowProps: {
       onPointerEnter: (e) => {
         if (e.pointerType === "mouse") revealBubble(id);
@@ -72,7 +80,8 @@ export function useRevealControls(enabled: boolean): {
     },
     bubbleProps: {
       onPointerUp: (e) => {
-        if (e.pointerType !== "mouse") revealBubble(revealed ? null : id);
+        // タップのトグルはホバー相当の露出だけを見る（pinned は常時出しっぱなしなので対象外）。
+        if (e.pointerType !== "mouse") revealBubble(hovered ? null : id);
       },
     },
   };

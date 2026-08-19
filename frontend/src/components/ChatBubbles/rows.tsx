@@ -218,7 +218,12 @@ function UserBubbleImpl({
   // 誤送信で以降のターンが巻き戻ると、編集中の内容ごと失われるため。
   useEditingLock(editing);
   // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
-  const { revealed, rowProps, bubbleProps } = useRevealControls(!sending && !editing);
+  // ただし削除できるバブル（= 呼び出し側が末尾と判定して onDelete を渡したもの）は
+  // ホバーを待たずに出す。破棄・削除の直後はホバーの反映が一拍遅れるため。
+  const { revealed, rowProps, bubbleProps } = useRevealControls(
+    !sending && !editing,
+    onDelete !== undefined,
+  );
 
   return (
     <div

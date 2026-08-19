@@ -129,7 +129,8 @@ function GMBubbleRowImpl({
   // 書き換え自体は先の展開に触れないが、送信すると編集フォームごと流れて内容が失われるため。
   useEditingLock(editing);
   // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
-  const { revealed, rowProps, bubbleProps } = useRevealControls(!editing);
+  // 再生成・破棄が効く末尾レスポンスだけはホバーを待たずに出す（削除直後の一拍を消す）。
+  const { revealed, rowProps, bubbleProps } = useRevealControls(!editing, isLastGM);
 
   // 本文表示 or 編集フォーム。編集はバブル内で本文だけを差し替える
   // （ユーザ発話の編集と違い、この書き換えは先の展開に手を触れない）。
