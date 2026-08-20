@@ -102,6 +102,11 @@ class ScenarioLoopState:
     # SCENE_CLOSE を抑止したターンの直後は、次のルーティングを強制 @ALL にフォールバックする。
     # （Executor 側で True にセットされ、Router 側で消費する）
     scene_close_suppressed: bool = False
+    # GM が `@<PC名>:` を書いてターンを明け渡した先の話者名（PC枠名 or PCキャラ本名）。
+    # Executor 側でセットされ、Router 側が raw の末尾メンション解析より**優先して**消費する。
+    # raw 経由でも大抵は同じ PC に解決できるが、GM が指名の後ろに `@Narrator:` や NPC 名を
+    # 書いていると末尾解析がそちらを拾って @ALL ランダム抽選へ落ちるため、明示的に運ぶ。
+    yielded_to_name: str | None = None
     # 主人公 PC が reach_out（現実へのメッセージ送信）を執行した → 本人の発言終了後に
     # シーンを一時停止する（Executor 側で True にセットされ、stop_condition が停止する）。
     # 再開（15分後に GM へターンを渡す）はスケジューラ（main.py）の領分。
@@ -198,10 +203,29 @@ class ScenarioRouter:
         - GM の最終 raw からメンション解析。``pc``/``all`` 以外なら @ALL フォールバック
           （GM が NPC を呼び合うだけのループを防止）
         - SCENE_CLOSE 抑止フラグが立っていたら強制 @ALL（抑止フラグを消費する）
+        - GM が `@<PC名>:` でターンを明け渡していたら、それを最優先で採用する
         """
-        from backend.services.scenario_chat.mention import find_last_routing_mention
+        from backend.services.scenario_chat.mention import (
+            find_last_routing_mention,
+            resolve_pc,
+        )
 
         raw = last_result.raw if last_result else ""
+
+        # ターンの明け渡し。GM の「ここは PC が喋る番」という判断を、raw の末尾
+        # メンション解析より優先する（フラグは 1 度で消費する）。
+        if sc.yielded_to_name is not None:
+            name = sc.yielded_to_name
+            sc.yielded_to_name = None
+            pc = resolve_pc(name, sc.routing_pcs)
+            if pc is None:
+                # 譲渡先がルーティング候補に居ない（うつつの不在ユーザPC 等）。GM の出力は
+                # 既に打ち切っているので、@ALL へ倒して場を進める（不在の相手を待たない）。
+                return ("all", None) if sc.routing_pcs else ("none", None)
+            if pc.is_user:
+                # 通常モードのユーザPC 指名。ループを終了してユーザ入力待ちにする。
+                return "none", None
+            return "pc", pc.name
 
         if sc.scene_close_suppressed:
             sc.scene_close_suppressed = False
@@ -328,6 +352,9 @@ class ScenarioTurnExecutor:
             if sc.fired_responses == 0 and sc.extra_first_gm_ooc.strip():
                 gm_ooc = (sc.extra_first_gm_ooc.strip() + "\n" + gm_ooc).strip()
 
+        # GM がターンを明け渡したか（`@<PC名>:`）を受け取る out-param。
+        gm_meta: dict = {}
+
         async for ev, _meta in _run_gm_turn(
             engine=sc.engine,
             scenario=sc.scenario,
@@ -353,6 +380,7 @@ class ScenarioTurnExecutor:
             saved_turn_ids=sc.saved_turn_ids,
             time_context=sc.usual_time_context,
             gm_ooc_appendix=gm_ooc,
+            gm_meta=gm_meta,
         ):
             # プロバイダエラー（503 等）は _run_gm_turn が ("error", {...}) を 1 度だけ
             # 流して scenario_turn を保存せず return する。ここで捕捉しておかないと、
@@ -369,6 +397,17 @@ class ScenarioTurnExecutor:
         if gm_error is not None:
             yield ("turn_result", TurnResult(text="", error=gm_error))
             return
+
+        # GM が `@<PC名>:` を書いた = ターンの明け渡し。engine 側は既にストリームを
+        # 打ち切っているので、ここでは次のルーティング先として Router へ預けるだけ。
+        sc.yielded_to_name = gm_meta.get("yielded_to")
+        if sc.yielded_to_name:
+            logger.info(
+                "GM がターンを明け渡した session=%s 指名=%s fired=%d",
+                sc.session_id,
+                sc.yielded_to_name,
+                sc.fired_responses + 1,
+            )
 
         # GM の最終 raw_response を直近保存ターン（=最後の話者ブロック）から取り直す。
         latest = sc.sqlite.list_scenario_turns(sc.session_id)

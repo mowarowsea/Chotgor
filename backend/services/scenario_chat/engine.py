@@ -174,11 +174,15 @@ class EngineResult:
     parser_warnings はパーサが破棄した代弁ブロックの警告
     （「user_alias 代弁ブロックを破棄」等）。計器 Tier 1 `fabrication_backstop` の
     発火材料として上位（service）へ伝える。
+    yielded_to は GM が `@<PC名>:` で指名した話者名。非 None なら「GM がターンを
+    明け渡した」ことを意味し、その時点でストリームを打ち切っている（raw_response も
+    打ち切り時点までの部分応答）。上位はこの PC へルーティングする。
     """
 
     raw_response: str
     provider_error: str | None = None
     parser_warnings: list[str] = field(default_factory=list)
+    yielded_to: str | None = None
 
 
 class SceneEngine(Protocol):
@@ -441,25 +445,37 @@ class EnsembleEngine:
         # 上位（run_scenario_turn）へ伝える。途中まで届いた raw_chunks も EngineResult
         # 側で破棄される（部分応答を SQLite やあらすじへ混入させないため）。
         provider_error: str | None = None
-        async for chunk_type, content in provider.generate_stream_typed(
-            system_prompt, messages
-        ):
-            if chunk_type == "error":
-                provider_error = content or "[provider error]"
-                break
-            if chunk_type == "thinking":
-                if content:
-                    yield ThinkingDelta(content=content)
-                continue
-            if chunk_type != "text" or not content:
-                continue
-            raw_chunks.append(content)
-            visible = stripper.feed(content)
-            if not visible:
-                continue
-            deltas = parser.feed(visible)
-            async for item in _flush_deltas(deltas):
-                yield item
+        gm_stream = provider.generate_stream_typed(system_prompt, messages)
+        try:
+            async for chunk_type, content in gm_stream:
+                if chunk_type == "error":
+                    provider_error = content or "[provider error]"
+                    break
+                if chunk_type == "thinking":
+                    if content:
+                        yield ThinkingDelta(content=content)
+                    continue
+                if chunk_type != "text" or not content:
+                    continue
+                raw_chunks.append(content)
+                visible = stripper.feed(content)
+                if not visible:
+                    continue
+                deltas = parser.feed(visible)
+                async for item in _flush_deltas(deltas):
+                    yield item
+                # GM が `@<PC名>:` を書いた = 「ここは PC が喋る番」という判断。
+                # 以降の GM 出力は「まだ起きていない出来事」なので受け取らず、
+                # ここでストリームごと打ち切って PC へターンを明け渡す。
+                # 打ち切り粒度はチャンク単位（行の途中で切る精密制御はしない）。
+                if parser.yielded_to is not None:
+                    break
+        finally:
+            # 途中 break でプロバイダ側の generator を開いたまま放置しない
+            # （claude_cli は subprocess を持つため、GC 待ちにすると後始末が遅れる）。
+            aclose = getattr(gm_stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
         if provider_error is not None:
             # parser flush / TurnRecord 発行はスキップ。部分テキストを TurnRecord と
@@ -488,8 +504,10 @@ class EnsembleEngine:
         if final is not None:
             yield final
 
-        # ターン副産物（parser の破棄警告は fabrication_backstop 計器の材料）
+        # ターン副産物（parser の破棄警告は fabrication_backstop 計器の材料）。
+        # yielded_to が入っていれば raw_response は打ち切り時点までの部分応答になる。
         yield EngineResult(
             raw_response="".join(raw_chunks),
             parser_warnings=list(parser.warnings),
+            yielded_to=parser.yielded_to,
         )

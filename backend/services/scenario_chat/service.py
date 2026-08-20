@@ -440,6 +440,7 @@ async def _run_gm_turn(
     saved_turn_ids: list[str],
     time_context: str = "",
     gm_ooc_appendix: str = "",
+    gm_meta: dict | None = None,
 ) -> AsyncGenerator[tuple[Any, Any], None]:
     """GM 1 レスポンス分を engine 経由で実行し、SSE イベントを yield しつつ
     scenario_turns へ保存する内部ヘルパ。
@@ -449,6 +450,11 @@ async def _run_gm_turn(
 
     time_context / gm_ooc_appendix はうつつ（Usual Days）専用の GM プロンプト追記
     （時間文脈・偶発イベント指示・ソフト収束ヒント）。通常モードでは空文字列。
+
+    gm_meta は出力用の dict（``saved_turn_ids`` と同じ out-param の流儀）。GM が
+    `@<PC名>:` でターンを明け渡した場合に ``{"yielded_to": PC名}`` が書き込まれる。
+    イベント列に混ぜないのは、明け渡しが「本文ゼロで指名だけ」のときに turn_end が
+    1 度も出ず取りこぼすため。
     """
     raw_response = ""
     turn_records_pending: list[TurnRecord] = []
@@ -497,6 +503,10 @@ async def _run_gm_turn(
         elif isinstance(item, EngineResult):
             raw_response = item.raw_response
             provider_error = item.provider_error
+            # GM が `@<PC名>:` を書いた＝ターンの明け渡し。engine 側は既にストリームを
+            # 打ち切っており、ここでは「誰へ渡すか」を呼び出し元へ返すだけ。
+            if gm_meta is not None and item.yielded_to:
+                gm_meta["yielded_to"] = item.yielded_to
             # 計器 Tier 1（fabrication_backstop）: GM がユーザ（user_alias）を代弁した
             # ブロックを parser が破棄した = バックストップの発火。正常条件は発火 0 回
             # であり、発火した事実そのものが「幻想の穴」の証拠なので即時アラームにする。

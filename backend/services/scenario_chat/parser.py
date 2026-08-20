@@ -8,10 +8,17 @@ LLM (GM) からのストリーム出力を逐次的に消費しつつ、`@話者
     - 行頭 `@known_npc:` 本文        → known な NPC として確定
     - 行頭 `@unknown_name:` 本文     → 未知 NPC（ephemeral）として通す
     - 行頭 `@Narrator:` 本文         → Narrator として確定
-    - 行頭 `@{user_alias}:` 本文     → 「GM がユーザ代弁」のため捨てる（警告）
+    - 行頭 `@{suppress_names}:` 本文 → 「GM が PC／ユーザを代弁」のため捨てる（警告）。
+      同時に `yielded_to` へ話者名を記録する（上位がストリームを打ち切る合図）
     - 行頭 `@` で始まらない地の文    → 直前話者（初期値 Narrator）に吸収
     - JSON / markdown / その他不定形 → Narrator フォールバックで吸収
     - 任意の地の文中の `@user_alias` は無関係（Narrator の文中描写として通す）
+
+`yielded_to` について:
+    GM が `@<PC名>:` を書いたのは「ここは PC が喋る番」という判断であり、その後ろに
+    GM が続けた地の文は**まだ起きていない出来事**になる。パーサは捨てるだけで、
+    ストリームを止めるのは上位（EnsembleEngine）の責務 — このクラスは
+    「誰が指名されたか」を記録するところまでを担う。
 
 ストリーミング戦略:
     feed() に逐次チャンクを与え、確定した分だけ UtteranceDelta 列を返す。
@@ -108,6 +115,12 @@ class ScenarioChatParser:
         self._emitted_for_current_speaker: bool = False
         # 警告ログ（捨てたユーザ代弁ブロックの件数など）。テストやデバッグで参照する。
         self.warnings: list[str] = []
+        # GM が最初に指名した PC 名（suppress_names にヒットした話者名）。
+        # GM が `@<PC名>:` を書いた＝「ここは PC が喋る番」と判断した合図なので、
+        # 上位（engine）はこれを見てストリームを打ち切り、その PC へターンを明け渡す。
+        # 2 人目以降の指名は無視する（最初の 1 人で打ち切るため後続は届かないが、
+        # チャンク内に複数含まれていた場合に上書きしないよう先勝ちにする）。
+        self.yielded_to: str | None = None
         # 直前 emit が改行で終わったか（行頭 @ 検出のため必要）。
         # 初期状態は「直前が行頭」（バッファ先頭は行頭扱い）。
         self._at_line_start: bool = True
@@ -237,18 +250,17 @@ class ScenarioChatParser:
                     self._at_line_start = False
                 continue
 
-            # suppress 中（@user_alias 後）の地の文のみ Narrator に戻す。
+            # suppress（GM が PC／ユーザを代弁）へ入ったら、そのレスポンスはそこで終わり。
+            # 以降の地の文を Narrator として拾い直すことはしない ── GM は「ここは PC が
+            # 喋る番」と判断して `@<PC名>:` を書いたのだから、その後ろに続けた描写は
+            # 「まだ起きていない出来事」になる。ストリームを止めるのは上位（engine）の
+            # 責務だが、`@<PC名>:` と後続本文が同一チャンクに入っていると上位が break
+            # する前にここを通るため、パーサ側でも捨て続ける必要がある。
+            # （旧実装はここで Narrator へ復帰させており、GM が指名後も場面を進め続けた）
+            #
             # suppress 中でない場合は、行頭 @ が来るまで現在の話者を保持する。
             # これにより `@CharacterA:` から `@CharacterB:` まで改行を挟んでも
             # CharacterA の発話として扱い続ける。
-            # ただし「空白/改行のみの行」は話者切替を発生させない
-            # （LLM が `@A: ...\n\n@B: ...` のようにブロック間に空行を挟むケース対策）。
-            if self._at_line_start and self._suppress:
-                nl_pos = self._buffer.find("\n")
-                end_of_line = nl_pos + 1 if nl_pos != -1 else len(self._buffer)
-                if self._buffer[:end_of_line].strip():
-                    self._switch_speaker(self._narrator_name)
-                # 空行ならフォールバックしない（現在話者のままで通す or 後で @ が来るのを待つ）
 
             # 通常本文。改行までをまとめて吐く。
             nl_pos = self._buffer.find("\n")
@@ -284,6 +296,13 @@ class ScenarioChatParser:
 
     def _switch_speaker(self, raw_name: str) -> None:
         """話者切替を反映する。user_alias の場合は suppress フラグを立てる。"""
+        # 一度ターンを明け渡したら、以降はどんな話者宣言も受け付けない。
+        # GM が `@<PC名>:` の後ろに `@Narrator:` や `@<NPC名>:` を続けても、それは
+        # 「PC がまだ喋っていないのに進んだ場面」なので採用しない（suppress を
+        # 維持したまま残りを捨てる）。地の文での復帰は _drain 側で塞いでいるが、
+        # 明示的な話者宣言はこの経路を通るためここでも止める必要がある。
+        if self.yielded_to is not None:
+            return
         name = raw_name.strip()
         if not name:
             # `@:` のような不正系。Narrator フォールバック。
@@ -292,6 +311,8 @@ class ScenarioChatParser:
         if name in self._suppress_names:
             # GM がユーザ／PC を代弁しようとしている。捨てる。
             self._suppress = True
+            if self.yielded_to is None:
+                self.yielded_to = name
             if name == self._user_alias:
                 self.warnings.append(f"user_alias 代弁ブロックを破棄: '@{name}:'")
             else:

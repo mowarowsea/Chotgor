@@ -94,12 +94,17 @@ class FakeProvider:
         self.chunks = chunks
         self.received_system_prompt: str | None = None
         self.received_messages: list[dict] | None = None
+        # 実際に消費されたチャンク数。エンジンがストリームを途中で打ち切ったことを
+        # 検証するために数える（打ち切りは「トークンを無駄にしない」ことが目的なので、
+        # 出力の有無だけでなく消費量そのものを見る必要がある）。
+        self.consumed: int = 0
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """指定チャンクを 1 つずつ yield する。"""
         self.received_system_prompt = system_prompt
         self.received_messages = messages
         for typ, content in self.chunks:
+            self.consumed += 1
             yield typ, content
 
 
@@ -254,20 +259,55 @@ class TestBasicTurnGeneration:
         assert records[0].content.replace("\n", "") == "こんにちは"
 
 
-# ─── ユーザ代弁の破棄 ─────────────────────────────────────────────────────────
+# ─── ユーザ／PC 代弁の破棄とターンの明け渡し ─────────────────────────────────
 
 
 class TestUserAliasSuppression:
-    """GM がユーザを代弁した場合、UtteranceDelta も TurnRecord も発行されないこと。"""
+    """GM が PC／ユーザを代弁したら、その発話を捨てたうえでターンを明け渡すこと。
+
+    GM が行頭 `@<PC名>:` を書くのは「ここは PC が喋る番」という判断であり、その
+    後ろに GM が続けた描写は「まだ起きていない出来事」になる。よってエンジンは
+    代弁ブロックを TurnRecord から落とすだけでなく、プロバイダのストリームを
+    その場で打ち切り、`EngineResult.yielded_to` で譲渡先を上位へ返す。
+
+    旧挙動は「代弁ブロックの中身だけ捨てて Narrator へ復帰」で、GM が指名後も
+    場面を進め続けていた（このクラスの旧テストはその挙動を固定していた）。
+    打ち切り粒度はチャンク単位なので、`@<PC名>:` を含むチャンク自体は最後まで
+    消費される（行の途中で切る精密制御はしない）。
+    """
 
     @pytest.mark.asyncio
     async def test_user_alias_block_no_record(self):
         """@<user_alias>: のブロックは TurnRecord に出ないこと。"""
         chunks = [
+            ("text", "@Narrator: 場の描写\n"),
             ("text", "@プレイヤー: 勝手な発話\n"),
-            ("text", "@レイカ: 通る\n"),
         ]
         engine, _ = _make_engine(chunks)
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(user_alias="プレイヤー"),
+                npcs=[],
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+            )
+        )
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        names = [r.speaker_name for r in records]
+        assert "プレイヤー" not in names
+        # 代弁より前の正当な GM 出力は残る
+        assert "Narrator" in names
+
+    @pytest.mark.asyncio
+    async def test_suppressed_block_stops_the_stream(self):
+        """代弁を検出したらプロバイダのストリームを打ち切り、後続を消費しないこと。"""
+        chunks = [
+            ("text", "@プレイヤー: 勝手な発話\n"),
+            ("text", "@レイカ: これは届かない\n"),
+        ]
+        engine, provider = _make_engine(chunks)
         npcs = [FakeNpc(id="npc-r", name="レイカ")]
         items = await _collect(
             engine.generate_stream(
@@ -280,9 +320,63 @@ class TestUserAliasSuppression:
             )
         )
         records = [i for i in items if isinstance(i, TurnRecord)]
-        names = [r.speaker_name for r in records]
-        assert "プレイヤー" not in names
-        assert "レイカ" in names
+        assert [r.speaker_name for r in records] == []
+        # 2 チャンク目は消費されない（＝そのぶんのトークンを引き出さない）
+        assert provider.consumed == 1
+
+    @pytest.mark.asyncio
+    async def test_engine_result_carries_yielded_to(self):
+        """譲渡先の話者名が EngineResult.yielded_to に載ること。"""
+        chunks = [
+            ("text", "@Narrator: 扉が軋む。\n"),
+            ("text", "@アリス: どうする?\n"),
+            ("text", "@Narrator: 沈黙が落ちた。\n"),
+        ]
+        engine, provider = _make_engine(chunks)
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(user_alias="プレイヤー"),
+                npcs=[],
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+                suppress_names={"アリス"},
+            )
+        )
+        result = [i for i in items if isinstance(i, EngineResult)][-1]
+        assert result.yielded_to == "アリス"
+        # raw_response は打ち切り時点までの部分応答（3 チャンク目は入らない）
+        assert "扉が軋む" in result.raw_response
+        assert "沈黙が落ちた" not in result.raw_response
+        assert provider.consumed == 2
+
+    @pytest.mark.asyncio
+    async def test_no_narrator_fallback_within_same_chunk(self):
+        """`@<PC名>:` と後続の地の文が同一チャンクでも Narrator へ復帰しないこと。
+
+        上位がストリームを break する前にパーサは 1 チャンクを丸ごと処理するため、
+        パーサ側でも捨て続けないと「指名の直後の描写」だけが漏れて表示される。
+        """
+        chunks = [
+            ("text", "@アリス: どうする?\nそのとき床が抜けた。\n@Narrator: 追い打ち\n"),
+        ]
+        engine, _ = _make_engine(chunks)
+        items = await _collect(
+            engine.generate_stream(
+                scenario=FakeScenario(user_alias="プレイヤー"),
+                npcs=[],
+                history=[],
+                user_message="",
+                settings={},
+                gm_preset_id="preset-001",
+                suppress_names={"アリス"},
+            )
+        )
+        records = [i for i in items if isinstance(i, TurnRecord)]
+        assert records == []
+        deltas = [i for i in items if isinstance(i, UtteranceDelta)]
+        assert "床が抜けた" not in "".join(d.content_delta for d in deltas)
 
 
 # ─── 非 text チャンクの扱い ──────────────────────────────────────────────────

@@ -137,10 +137,14 @@ class TestSuppressNamesExtension:
     PC の本名・配役名も suppress 対象集合に含める。これにより GM 出力中の
     `@<PC本名>:` `@<PC配役名>:` ブロックが本文として通らず破棄される。
     user_alias は明示的に suppress_names に入れなくても従来通り破棄対象になる。
+
+    破棄はブロック単体では終わらない — GM が `@<PC名>:` を書いた時点でそのレスポンスは
+    「ここは PC が喋る番」という判断に達しており、以降の出力は採用しない
+    （`yielded_to` に記録し、上位がストリームごと打ち切る）。
     """
 
     def test_pc_配役名ブロックが破棄される(self):
-        """suppress_names に「アリス」（配役名）を含めると、@アリス: ブロックは出力されない。"""
+        """suppress_names に「アリス」（配役名）を含めると、@アリス: 以降は出力されない。"""
         parser = ScenarioChatParser(
             known_npc_names={"レイカ": "id-r"},
             user_alias="マスター",
@@ -148,27 +152,30 @@ class TestSuppressNamesExtension:
         )
         text = (
             "@レイカ: そこにいるのは……?\n"
-            "@アリス: ……どうも\n"  # PC ブロック — 破棄されるべき
-            "@レイカ: 名前は?\n"
+            "@アリス: ……どうも\n"  # PC ブロック — ここで明け渡し
+            "@レイカ: 名前は?\n"  # 明け渡し後なので採用しない
         )
         deltas = parser.feed(text)
         deltas += parser.flush()
         # アリスの delta は出ない
         assert not any(d.speaker_name == "アリス" for d in deltas)
-        # レイカは 2 回現れる（is_speaker_change=True が 2 つ）
+        # 指名より前のレイカだけが残る（後続のレイカは「まだ起きていない出来事」）
         reika_changes = [d for d in deltas if d.speaker_name == "レイカ" and d.is_speaker_change]
-        assert len(reika_changes) == 2
+        assert len(reika_changes) == 1
+        assert "名前は?" not in "".join(d.content_delta for d in deltas)
         # 警告ログに PC 代弁破棄の記録が残る
         assert any("アリス" in w for w in parser.warnings)
+        assert parser.yielded_to == "アリス"
 
     def test_user_alias_は_suppress_names未指定でも破棄される(self):
         """suppress_names を渡さなくても user_alias は従来どおり破棄される（後方互換）。"""
         parser = ScenarioChatParser(user_alias="マスター")
-        text = "@マスター: 代弁されない\n@Narrator: 雨が降っている\n"
+        text = "@Narrator: 雨が降っている\n@マスター: 代弁されない\n"
         deltas = parser.feed(text)
         deltas += parser.flush()
         assert not any(d.speaker_name == "マスター" for d in deltas)
         assert any(d.speaker_type == "narrator" for d in deltas)
+        assert parser.yielded_to == "マスター"
 
     def test_suppress_names_に追加してもuser_aliasは破棄され続ける(self):
         """suppress_names に他の名前を入れても user_alias は明示せずに破棄対象に残ること。"""
@@ -176,15 +183,17 @@ class TestSuppressNamesExtension:
             user_alias="マスター",
             suppress_names={"アリス"},
         )
-        text = "@マスター: foo\n@アリス: bar\n@Narrator: baz\n"
+        text = "@Narrator: baz\n@マスター: foo\n@アリス: bar\n"
         deltas = parser.feed(text)
         deltas += parser.flush()
         names = {d.speaker_name for d in deltas if d.is_speaker_change}
         # マスター（user_alias）・アリス（suppress） どちらも消える
         assert "マスター" not in names
         assert "アリス" not in names
-        # Narrator は残る
+        # 指名より前の Narrator は残る
         assert "Narrator" in names
+        # 先に現れた user_alias で明け渡しが確定する（後続の指名では上書きしない）
+        assert parser.yielded_to == "マスター"
 
 
 # ─── ユーザ代弁の破棄 ─────────────────────────────────────────────────────────
@@ -193,17 +202,19 @@ class TestSuppressNamesExtension:
 class TestUserAliasSuppression:
     """GM がユーザを代弁したブロックが破棄され、警告が記録されることを検証する。
 
-    @user_alias: で始まる行は完全に捨てる。次の真の話者切替まで suppress 状態を維持する。
+    @user_alias: で始まる行は完全に捨てる。さらに、そこでレスポンスは終わりとみなし、
+    以降は話者宣言が来ても suppress を解除しない（ターンの明け渡し）。
+    地の文中の `@プレイヤー` 言及は話者宣言ではないので、この判定には関わらない。
     """
 
     def test_user_alias_block_dropped(self):
-        """`@<user_alias>:` ブロックは出力に含まれないこと。"""
+        """`@<user_alias>:` ブロックは出力に含まれず、以降も採用されないこと。"""
         parser = ScenarioChatParser(user_alias="プレイヤー")
-        deltas = parser.feed("@プレイヤー: 勝手な発話\n@Narrator: でも雨だ\n")
+        deltas = parser.feed("@Narrator: でも雨だ\n@プレイヤー: 勝手な発話\n")
         deltas += parser.flush()
         speakers = _ordered_speakers(deltas)
         assert "プレイヤー" not in speakers
-        # Narrator は通る
+        # 指名より前の Narrator は通る
         narrator_text = "".join(
             d.content_delta for d in deltas if d.speaker_type == "narrator"
         )
@@ -230,20 +241,27 @@ class TestUserAliasSuppression:
         speakers = _ordered_speakers(deltas)
         assert speakers == ["Narrator"]
 
-    def test_user_alias_followed_by_real_speaker_resumes(self):
-        """suppress 後の真の話者切替で出力が復活すること。"""
+    def test_user_alias_followed_by_real_speaker_does_not_resume(self):
+        """suppress 後は真の話者宣言が来ても出力が復活しないこと（明け渡し）。
+
+        旧実装はここで NPC へ復帰させており、GM がユーザ／PC を指名した後も
+        場面を進め続けていた。指名は「ここは相手が喋る番」という判断なので、
+        その後ろに GM が書いた NPC 台詞は採用しない。
+        """
         parser = ScenarioChatParser(
             user_alias="プレイヤー", known_npc_names={"レイカ": "id-r"}
         )
         deltas = parser.feed(
             "@プレイヤー: 捨てられる\n"
             "@プレイヤー: これも捨てられる\n"
-            "@レイカ: 通る\n"
+            "@レイカ: これも通らない\n"
         )
         deltas += parser.flush()
         speakers = _ordered_speakers(deltas)
         assert "プレイヤー" not in speakers
-        assert "レイカ" in speakers
+        assert "レイカ" not in speakers
+        assert deltas == []
+        assert parser.yielded_to == "プレイヤー"
 
 
 # ─── Narrator フォールバック ─────────────────────────────────────────────────
@@ -585,18 +603,23 @@ class TestStateAcrossFeed:
         parser.feed("@レイカ: 最初\n")
         deltas2 = parser.feed("そのまま2行目に続く\n")
         # 行頭で @ がない場合でも、次の @別話者: が来るまで
-        # 直前の話者(レイカ)を継続する。suppress 中の場合のみ Narrator に戻す。
+        # 直前の話者(レイカ)を継続する。
         assert all(d.speaker_name == "レイカ" for d in deltas2)
         assert all(d.speaker_type == "npc" for d in deltas2)
         assert deltas2[0].speaker_id == "id-r"
 
-    def test_suppress_persists_until_next_speaker(self):
-        """user_alias の suppress 状態が次の真の話者切替まで維持されること。"""
+    def test_suppress_persists_across_feeds(self):
+        """user_alias の suppress 状態が feed をまたいで維持され、解除されないこと。
+
+        明け渡しは 1 レスポンス分の状態なので、後続チャンクで `@Narrator:` が
+        来ても復帰しない（上位はストリームを打ち切るが、打ち切り前に届いた
+        チャンクがパーサへ流れるケースを想定した検証）。
+        """
         parser = ScenarioChatParser(user_alias="プレイヤー")
         deltas = parser.feed("@プレイヤー: 捨てる1\n")
         deltas += parser.feed("@プレイヤー: 捨てる2\n")
-        deltas += parser.feed("@Narrator: 通る\n")
+        deltas += parser.feed("@Narrator: これも通らない\n")
         deltas += parser.flush()
-        # プレイヤー由来の発話は一切ない
-        assert not any("捨てる" in d.content_delta for d in deltas)
-        assert any("通る" in d.content_delta for d in deltas)
+        # プレイヤー由来の発話も、その後の Narrator も一切出ない
+        assert deltas == []
+        assert parser.yielded_to == "プレイヤー"
