@@ -92,7 +92,7 @@
 | `repositories/` | 永続化層。`sqlite/`（ORM・migration・機能別 store mixin）と `lance/`（ベクトルストア、テーブル別 ops）、`embeddings.py`（embedding プロバイダー） |
 | `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / switch / WMスレッド操作…）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
-| `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00）と `forget_job.py`（長期記憶の忘却、04:00固定） |
+| `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00。棚卸し時に Open×Close の類似検出で「もう決着済みの話題を Open のまま抱えていないか」の気づき材料を提示する＝判定のみで close はしない）と `forget_job.py`（長期記憶の忘却、04:00固定） |
 | `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用）、`optimistic_lock`（設定フォームの楽観ロック＝端末間の先祖返り防止） |
 | `mcp_server.py` | Claude CLI 用 MCP stdio サーバー（backendへのHTTPプロキシ） |
 | `templates/` + `static/` | 管理UIのJinja2テンプレートと `chotgor.css`（デザインシステム。規約は CLAUDE.md） |

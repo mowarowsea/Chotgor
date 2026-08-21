@@ -43,6 +43,13 @@ DEFAULT_CLOSED_INDEX_LIMIT = 30
 # 該当なし（0件）のターンがあってよい。
 DEFAULT_WM_RECALL_MIN_HEAT = 0.05
 
+# Open × Close の重複疑い検出（find_similar_closed_threads）で使う relevance 下限。
+# はるの実データ実測（docs/planned/wm_repeat_awareness_plan.md）では
+# 無関係ペア 0.776 / 明確な重複 0.834〜0.845 / 同一トピック内 0.874 だった。
+# その間に置いた初期値であり、1キャラ・9ペアの実測にすぎない。誤検出が頻発するなら
+# 上げ、拾ってほしいものを見逃すなら下げる前提の運用値。
+DEFAULT_SIMILAR_CLOSED_MIN_RELEVANCE = 0.82
+
 
 class WorkingMemoryManager:
     """SQLite と LanceStore を協調させてワーキングメモリのスレッド・ポストを管理するクラス。
@@ -514,4 +521,64 @@ class WorkingMemoryManager:
             d["heat"] = heat
             scored.append(d)
         scored.sort(key=lambda x: x.get("heat", 0.0), reverse=True)
+        return scored[:top_k]
+
+    def find_similar_closed_threads(
+        self,
+        character_id: str,
+        open_thread: dict,
+        top_k: int = 1,
+        min_relevance: float = DEFAULT_SIMILAR_CLOSED_MIN_RELEVANCE,
+    ) -> list[dict]:
+        """Open スレッド1件に対し、意味的に近い Close 済みスレッドを検索する。
+
+        Chronicle 棚卸し時に「実はもう Close 済みの話題と同じ内容を Open のまま
+        抱え続けていないか」をキャラクター本人が気づくための参考情報を作る。
+        ここでは close を実行しない（判断は本人に委ねる。close するかどうかの
+        決定は thread_updates.is_open を通じて本人の応答に委ねる）。
+
+        recall_threads と骨格は同じだが、向きが逆になっている点に注意:
+        recall_threads は「クエリ文字列 → Open スレッド」、こちらは
+        「Open スレッド → Close スレッド」なので、クエリ自体を Open 側スレッドの
+        index テキスト（summary + 最新ポスト）から組み立てる。
+
+        Args:
+            character_id: キャラクター ID。
+            open_thread: 対象の Open スレッド dict（summary / latest_post を含む。
+                list_threads_by_type の戻り値をそのまま渡せる）。
+            top_k: 返す最大件数。
+            min_relevance: この relevance 未満は「重複の疑いなし」として除外する
+                （distance_to_similarity 後のスケール。既定値の根拠は
+                docs/planned/wm_repeat_awareness_plan.md 参照）。
+
+        Returns:
+            relevance 降順のスレッド dict リスト（``relevance`` キー付き）。
+        """
+        query_text = (open_thread.get("summary") or "").strip()
+        latest = open_thread.get("latest_post") or ""
+        if latest:
+            query_text = (query_text + "\n" + latest).strip()
+        if not query_text:
+            return []
+
+        fetch_k = max(top_k * 2, top_k)
+        results = self.vector_store.recall_working_memory_threads(
+            query_text,
+            character_id,
+            top_k=fetch_k,
+            where={"type": {"$in": ["task", "topic"]}, "is_open": 0},
+        )
+        scored: list[dict] = []
+        for r in results:
+            thread = self.sqlite.get_working_memory_thread(r.get("id", ""))
+            if not thread or thread.is_open:
+                continue
+            # distance 欠落時は 2.0（対極）に倒し、relevance 0 として弾く。
+            relevance = distance_to_similarity(r.get("distance", 2.0))
+            if relevance < min_relevance:
+                continue
+            d = self._thread_to_dict(thread, include_latest_post=True)
+            d["relevance"] = relevance
+            scored.append(d)
+        scored.sort(key=lambda x: x["relevance"], reverse=True)
         return scored[:top_k]

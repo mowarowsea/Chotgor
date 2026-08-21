@@ -72,6 +72,15 @@ _PROMPT_TEMPLATE = """\
 注意が削られます。短く整えるのは節約のためではなく、明日のあなたの思考の余地を
 空けるためです。
 
+Open なスレッドの中に、実はもう Close 済みスレッドで結論が出ている話題や、
+「まだ言えていない」という同じ感覚だけを繰り返し書き足しているだけの話題が
+紛れていないか、目を通してみてください（下の「類似の疑いがある組み合わせ」も参考に）。
+
+また、もし過去に自分自身の行動パターン（先延ばし・繰り返しなど）に気づいたスレッドが
+あれば、そのパターンが今の Open スレッド群の中にまた実際に現れていないか、
+一度振り返ってみてください。見つけても自分を責める必要はありません
+——ただ、閉じていいものは閉じてください。
+
 ワーキングメモリは「スレッド」の集まりです。各スレッドには種別があります:
 - task   : 取り組み中の課題（解決を目指す）
 - topic  : 引っかかっている話題・問い（解決を目指す）
@@ -84,6 +93,13 @@ _PROMPT_TEMPLATE = """\
 
 ## 最近 Close したスレッド（参照用。再燃していれば thread_updates で is_open を true に戻せる）
 {closed_threads}
+
+## 類似の疑いがある組み合わせ（機械判定・参考情報）
+これは summary の意味的な近さだけを見た機械判定です。当たっているとは限りません。
+中身を読んで、本当に同じ話をまだ Open のまま抱えているなら、素直に閉じてください。
+誤検出だと思ったら、そのままで構いません。
+
+{similarity_hints}
 
 ## 今日の会話
 {conversation}
@@ -467,6 +483,50 @@ def _format_threads(threads: list[dict], empty_label: str = "（スレッドは�
     return "\n".join(lines)
 
 
+def _short_date(iso_text: str | None) -> str:
+    """ISO 8601 文字列から ``MM-DD`` を切り出す（取れなければ空文字）。
+
+    棚卸しプロンプトの参考情報行に「いつ Close したか」を添えるためだけの表記なので、
+    年は落として日付だけを出す。
+    """
+    text = (iso_text or "").strip()
+    try:
+        return datetime.fromisoformat(text).strftime("%m-%d")
+    except (TypeError, ValueError):
+        return ""
+
+
+def _format_similarity_hints(hints: list[tuple[dict, dict]]) -> str:
+    """Open × Close の重複疑いペアを棚卸しプロンプト用テキストに整形する。
+
+    「もう Close 済みの話題と同じ内容を Open のまま抱え続けていないか」への
+    気づきを促す**参考情報**であり、close 自体はしない（判断は本人）。
+    誤検出があることを前提とした材料なので、relevance の数値は出さない
+    （機械判定のスコアを見せると本人の判断がスコアに引きずられるため）。
+
+    Args:
+        hints: ``(Open スレッド dict, 類似する Close 済みスレッド dict)`` のリスト。
+
+    Returns:
+        整形テキスト。ペアがない場合は該当なしの文言。
+    """
+    if not hints:
+        return "（類似の疑いがある組み合わせはありません）"
+    lines = []
+    for open_thread, closed_thread in hints:
+        lines.append(
+            f"[{short_thread_id(open_thread.get('id', ''))}](Open) "
+            f"{open_thread.get('summary', '')}"
+        )
+        closed_date = _short_date(closed_thread.get("updated_at"))
+        closed_label = f"Close済み・{closed_date}" if closed_date else "Close済み"
+        lines.append(
+            f"  ⇔ [{short_thread_id(closed_thread.get('id', ''))}]({closed_label}) "
+            f"{closed_thread.get('summary', '')}"
+        )
+    return "\n".join(lines)
+
+
 def _parse_chronicle_response(response_text: str) -> dict | None:
     """LLM の応答テキストから JSON を抽出してパースする。
 
@@ -822,6 +882,28 @@ async def run_chronicle(
         closed_threads[:_CLOSED_THREADS_LIMIT], "（Close したスレッドはまだありません）"
     )
 
+    # Open × Close の重複疑い検出（気づき誘導）。Open な task/topic ごとに
+    # 意味的に近い Close 済みスレッドを引き、見つかったぶんだけ参考情報として提示する。
+    # close は実行しない（記憶の取捨選択はキャラクター本人が行う）。
+    # embedding 検索（infinity への HTTP）が Open スレッド件数ぶん走るが、
+    # 夜間バッチなのでレイテンシは許容する。infinity 障害時に棚卸し全体を
+    # 落とさないよう、失敗は握り潰して「該当なし」に倒す。
+    similarity_hints: list[tuple[dict, dict]] = []
+    for t in open_threads:
+        if t.get("type") not in ("task", "topic"):
+            continue
+        try:
+            matches = working_memory_manager.find_similar_closed_threads(character_id, t)
+        except Exception as e:
+            logger.warning(
+                "類似 Close スレッド検索に失敗 char=%s thread=%s error=%s",
+                char_label, t.get("id"), e,
+            )
+            continue
+        for m in matches:
+            similarity_hints.append((t, m))
+    similarity_hints_text = _format_similarity_hints(similarity_hints)
+
     memories = (
         _format_memories(memory_manager.get_top_memorable(character_id, limit=30))
         if memory_manager is not None
@@ -839,6 +921,7 @@ async def run_chronicle(
         character_name=char.name,
         open_threads=open_threads_text,
         closed_threads=closed_threads_text,
+        similarity_hints=similarity_hints_text,
         conversation=conversation_text,
         memories=memories,
         farewell_emotion_rubric=EMOTION_RUBRIC.strip(),

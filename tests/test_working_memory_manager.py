@@ -9,6 +9,13 @@
   - recall_threads(min_heat): heat 上位から機械的に TopK を取ると、関連の薄い
     スレッドまで前景へ上がる。下限を設けて 0 件のターンを許容する。
 
+加えて、Chronicle 棚卸しの「気づき誘導」で使う逆向きの検索も検証する
+（docs/planned/wm_repeat_awareness_plan.md）:
+
+  - find_similar_closed_threads(min_relevance): Open スレッド → 意味的に近い
+    Close 済みスレッド。「もう決着済みの話題を Open のまま抱えていないか」の
+    材料を作るだけで、close はしない。
+
 SQLite / LanceStore は本テストの関心ではないためモックで置き換え、
 スレッド ORM は属性アクセスだけを満たす SimpleNamespace で代用する。
 """
@@ -19,6 +26,7 @@ from unittest.mock import MagicMock
 
 from backend.services.memory.working_memory_manager import (
     DEFAULT_CLOSED_INDEX_LIMIT,
+    DEFAULT_SIMILAR_CLOSED_MIN_RELEVANCE,
     DEFAULT_WM_RECALL_MIN_HEAT,
     WorkingMemoryManager,
 )
@@ -149,3 +157,116 @@ class TestRecallThreadsMinHeat:
 
         assert len(result) == 3
         assert [t["id"] for t in result] == ["t0", "t1", "t2"]
+
+
+def _distance_for(relevance: float) -> float:
+    """狙った relevance を返す cosine 距離を逆算する（distance_to_similarity の逆関数）。
+
+    relevance = 1 - distance/2 なので distance = 2 × (1 - relevance)。
+    閾値の境界をテストで直に書けるようにするためのヘルパー。
+    """
+    return 2.0 * (1.0 - relevance)
+
+
+class TestFindSimilarClosedThreads:
+    """Open スレッド → 類似 Close 済みスレッドの検索（重複疑いの検出）の検証。
+
+    Chronicle 棚卸しで「もう Close 済みの話題を Open のまま抱え続けていないか」を
+    本人に気づかせるための材料作り。判断は本人に委ねる設計なので、ここでの関心は
+    「拾うべきものを拾い、拾ってはいけないものを混ぜないこと」に限られる:
+
+      - min_relevance の境界（無関係ペアを材料に混ぜない）
+      - Close 済み以外（Open のまま index が古いスレッド）を混ぜない
+      - 検索が対象キャラのスコープ・Close 済み条件で発行されている
+      - 材料が無いとき（クエリ素材が空）に embedding 検索を撃たない
+    """
+
+    def _manager(self, threads_by_id, hits):
+        sqlite = MagicMock()
+        sqlite.get_working_memory_thread.side_effect = lambda tid: threads_by_id.get(tid)
+        sqlite.get_latest_working_memory_post.return_value = None
+        vector = MagicMock()
+        vector.recall_working_memory_threads.return_value = hits
+        return WorkingMemoryManager(sqlite=sqlite, vector_store=vector)
+
+    def test_relevance_above_threshold_is_returned(self):
+        """閾値をわずかに上回るペアは材料として返ること。"""
+        closed = _thread("closed-1", is_open=False)
+        wm = self._manager(
+            {"closed-1": closed},
+            [{"id": "closed-1", "distance": _distance_for(DEFAULT_SIMILAR_CLOSED_MIN_RELEVANCE + 0.01)}],
+        )
+
+        result = wm.find_similar_closed_threads("char-1", {"summary": "日食なつこの実験"})
+
+        assert [t["id"] for t in result] == ["closed-1"]
+        assert result[0]["relevance"] > DEFAULT_SIMILAR_CLOSED_MIN_RELEVANCE
+
+    def test_relevance_below_threshold_is_dropped(self):
+        """閾値をわずかに下回るペアは捨てること（無関係ペアを材料に混ぜない）。"""
+        closed = _thread("closed-1", is_open=False)
+        wm = self._manager(
+            {"closed-1": closed},
+            [{"id": "closed-1", "distance": _distance_for(DEFAULT_SIMILAR_CLOSED_MIN_RELEVANCE - 0.01)}],
+        )
+
+        assert wm.find_similar_closed_threads("char-1", {"summary": "日食なつこの実験"}) == []
+
+    def test_still_open_thread_is_excluded(self):
+        """index が古く Open スレッドが返っても、SQLite 側の is_open で弾くこと。
+
+        LanceStore の index 更新はバックグラウンド（fire-and-forget）なので、
+        close 直後などに is_open の食い違いが起こりうる。source of truth は SQLite。
+        """
+        stale_open = _thread("stale", is_open=True)
+        closed = _thread("closed-1", is_open=False)
+        wm = self._manager(
+            {"stale": stale_open, "closed-1": closed},
+            [
+                {"id": "stale", "distance": _distance_for(0.99)},
+                {"id": "closed-1", "distance": _distance_for(0.90)},
+            ],
+        )
+
+        result = wm.find_similar_closed_threads("char-1", {"summary": "何かの話題"}, top_k=5)
+
+        assert [t["id"] for t in result] == ["closed-1"]
+
+    def test_search_is_scoped_to_character_and_closed_threads(self):
+        """検索が「このキャラの」「Close 済み task/topic」に限定して発行されること。
+
+        他キャラのスレッドを材料に混ぜないためのスコープは LanceStore 側の
+        where 句で効く。ここではその条件が正しく渡ることを固定する。
+        """
+        wm = self._manager({}, [])
+
+        wm.find_similar_closed_threads("char-1", {"summary": "話題", "latest_post": "続き"})
+
+        args, kwargs = wm.vector_store.recall_working_memory_threads.call_args
+        assert args[0] == "話題\n続き"      # summary + 最新ポストがクエリ素材
+        assert args[1] == "char-1"
+        assert kwargs["where"] == {"type": {"$in": ["task", "topic"]}, "is_open": 0}
+
+    def test_empty_query_text_skips_search(self):
+        """クエリ素材が空なら embedding 検索を撃たずに空を返すこと。"""
+        wm = self._manager({}, [])
+
+        assert wm.find_similar_closed_threads("char-1", {"summary": "  ", "latest_post": ""}) == []
+        wm.vector_store.recall_working_memory_threads.assert_not_called()
+
+    def test_results_are_sorted_and_capped_by_top_k(self):
+        """relevance 降順で top_k 件に切ること（既定は 1 件）。"""
+        threads = {f"c{i}": _thread(f"c{i}", is_open=False) for i in range(3)}
+        hits = [
+            {"id": "c0", "distance": _distance_for(0.85)},
+            {"id": "c1", "distance": _distance_for(0.95)},
+            {"id": "c2", "distance": _distance_for(0.90)},
+        ]
+        wm = self._manager(threads, hits)
+
+        assert [t["id"] for t in wm.find_similar_closed_threads(
+            "char-1", {"summary": "話題"}, top_k=3,
+        )] == ["c1", "c2", "c0"]
+        assert [t["id"] for t in wm.find_similar_closed_threads(
+            "char-1", {"summary": "話題"},
+        )] == ["c1"]

@@ -1,6 +1,7 @@
 # WM 繰り返し話題への気づき誘導 仕様書
 
-> Status: **proposed**（2026-08-21 調査・設計合意 → 実装は別セッションで着手予定）
+> Status: **implemented**（2026-08-21 調査・設計合意 → 同日 施策A・B とも実装完了。
+> 実装時の差分は §実装メモ を参照）
 > 関連: [memory_recall_algorithm.md](../current-spec/memory_recall_algorithm.md)（heat 想起・時間減衰の共通数式）、
 > `backend/batch/chronicle_job.py`（Chronicle 棚卸し本体）
 
@@ -237,6 +238,12 @@ Open なスレッドの中に、実はもう Close 済みスレッドで結論�
 - `docs/current-spec/ARCHITECTURE.md`: 「夜間バッチ」節の Chronicle 説明に一言追記
   （「WM スレッドの棚卸し・蒸留」に「Open×Close の類似検出による気づき誘導」を追加）。
   実装完了時に反映すること（CLAUDE.md の「構造を変える変更を入れたら地図も更新」規約）。
+- `tests/test_working_memory_manager.py`: `TestFindSimilarClosedThreads` 追加。
+- `tests/test_chronicle_repeat_awareness.py`（新規）: `_short_date` /
+  `_format_similarity_hints` / `run_chronicle` 統合。
+- `tests/_ghost_model_helpers.py`: `working_memory_manager` フィクスチャの
+  `recall_working_memory_threads` 既定戻り値を `[]` にした（MagicMock の既定戻り値は
+  反復不能で、検索結果を回す呼び出し側が TypeError になるため）。
 
 ## 検討したが採らなかった案
 
@@ -246,6 +253,26 @@ Open なスレッドの中に、実はもう Close 済みスレッドで結論�
 | システムによる強制クローズ（閾値超過で自動 is_open=false） | CLAUDE.md の「記憶の取捨選択はキャラクター自身が行う」に反する。誤検出時にキャラの意思を無視して記憶操作するリスクもある |
 | embedding 類似度検索のみで対応（施策Aのみ） | `e77fa533 ⇔ 48e9a044` の実測で `relevance=0.792`（無関係ベースライン `0.776` とほぼ同水準）と判明し、メタ認識と個別事象のリンク不足は検出できないことが確認された。施策Bと併用する方針に変更 |
 | Open スレッド一覧の件数上限を設ける | 今回の問題は「件数過多」ではなく「矛盾した内容が同じ話題を指している」ことが原因であり、件数を削っても矛盾自体は解決しない。`memory_recall_algorithm.md` §4.4 で既に類似の案（Close済み全表示の廃止）が別文脈で検討・棄却済み |
+
+## 実装メモ（2026-08-21）
+
+設計から変えた点・設計に書ききれていなかった点:
+
+- **閾値は定数化した**。`working_memory_manager.DEFAULT_SIMILAR_CLOSED_MIN_RELEVANCE = 0.82`
+  （既存の `DEFAULT_WM_RECALL_MIN_HEAT` と同じ流儀）。運用しながら調整する値なので、
+  シグネチャ直書きより1箇所にまとめた方が触りやすい。
+- **施策Bの参照方向を「上の」→「下の」に直した**。施策Bの文言はプロンプト冒頭、
+  施策Aのセクションは `## 最近 Close したスレッド` の直後（＝冒頭より下）に入るため、
+  設計書の「上の『類似の疑いがある組み合わせ』も参考に」では位置が食い違う。
+- **検索失敗を握り潰す**。`run_chronicle` 内の `find_similar_closed_threads` 呼び出しは
+  try/except で包み、失敗したスレッドは黙って飛ばす（warning ログのみ）。
+  `recall_working_memory_threads` は内部で例外を握るが `_embed_query` の
+  `EmbeddingError` はその外側で送出されるため、infinity 停止時に棚卸し全体が
+  落ちてしまう。気づき誘導は補助であって棚卸しの前提条件ではない。
+- **relevance の数値はプロンプトに出さない**。機械判定のスコアを見せると本人の判断が
+  スコアに引きずられるため、`_format_similarity_hints` は ID と summary だけを出す。
+- **Close 日は `MM-DD`**（`_short_date` ヘルパー）。パースできない場合は日付ラベルごと
+  省いて `(Close済み)` にする。
 
 ## テスト観点
 

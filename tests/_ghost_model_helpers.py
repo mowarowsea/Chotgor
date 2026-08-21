@@ -32,10 +32,16 @@ def working_memory_manager(sqlite_store):
     スレッド CRUD は実 SQLite（インメモリ一時DB）で動かし、embedding 層の
     LanceStore のみ MagicMock に置き換える。chronicle が棚卸し結果を
     実際にスレッドへ反映する挙動をそのまま検証できる。
+
+    ベクトル検索は既定で「ヒット無し」にしておく（MagicMock の既定戻り値は
+    反復不能で、検索結果を回す呼び出し側が TypeError になるため）。ヒットを
+    使うテストは個別に return_value を差し替える。
     """
     from unittest.mock import MagicMock
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
-    return WorkingMemoryManager(sqlite_store, MagicMock())
+    vector_store = MagicMock()
+    vector_store.recall_working_memory_threads.return_value = []
+    return WorkingMemoryManager(sqlite_store, vector_store)
 
 
 
