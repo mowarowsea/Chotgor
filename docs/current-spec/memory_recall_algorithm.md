@@ -5,7 +5,7 @@
 ## 0. 想起クエリの作り方 (`chat_flow/preparation.py:prepare_context`)
 
 自動想起（pre-recall）のクエリは **「最新の user メッセージから XML タグを除去し、末尾
-`RECALL_QUERY_MAX_CHARS` 文字だけを残したもの」** である。1on1・シナリオPC・うつつPC の
+`RECALL_QUERY_MAX_CHARS`（= 2000）文字だけを残したもの」** である。1on1・シナリオPC・うつつPC の
 すべてがこの単一の合流点を通り、文脈ごとの分岐は持たない。
 
 **なぜ末尾を残すか（先頭ではなく）**:
@@ -37,34 +37,66 @@
 3.  **ハイブリッド・リランク (Hybrid Reranking)**:
     *   `類似度スコア (50%)` + `時間減衰後の重要度スコア (50%)` の合算値で並び替えます。
 4.  **アクセス情報の更新**:
-    *   最終的に選ばれた `top_k` 件の記憶について、SQLite上の `last_accessed_at` を現在時刻に更新します（これにより「思い出した記憶」は鮮度が戻り、忘れにくくなります）。
+    *   最終的に選ばれた `top_k` 件の記憶について、SQLite 上の `access_count` だけを加算します。
+    *   **`last_accessed_at` は更新しません。** 減衰の起点は `last_accessed_at or created_at`
+        なので、ここを更新すると自動想起に引っかかり続けるだけの記憶が永久に忘れられなくなる。
+        「残す」という能動的な判断（Forget で保持された等）でのみ更新される。
+
+### 1.1 自動想起は identity 枠と非 identity 枠の2本立て
+
+チャットの pre-recall が実際に呼ぶのは `recall_with_identity` で、上記フローを
+**カテゴリで分けて2回**回す（`chat_flow/preparation.py` / `character_query.py`）。
+
+| 枠 | 件数 | 目的 |
+| :--- | ---: | :--- |
+| `identity` のみ | 5 | 自己認識が話題との類似度勝負で毎回押し出されるのを防ぐ |
+| `identity` 以外 | 5 | 通常の文脈想起 |
+
+soft-delete 済みの記憶や、SQLite 側（正本）に存在しない記憶は結果から除外されます。
 
 ---
 
-## 2. 重要度と減衰のロジック ([calculate_decayed_score](file:///c:/Users/seamo/Chotgor/backend/core/memory/manager.py#16-52))
+## 2. 重要度と減衰のロジック (`InscribedMemoryManager.calculate_decayed_score` — `backend/services/memory/manager.py`)
 
 記憶の価値を以下の4つの観点で評価し、それぞれ異なる「半減期（半分に減衰する期間）」を設定しています。
 
 | 重要度タイプ | 重み | 半減期 | 特徴 |
-| :--- | :--- | :--- | :--- |
-| **contextual** | 1.0 | 7日間 | 文脈的価値。短期的に重要だが、すぐに古くなる。 |
-| **user** | 0.8 | 30日間 | ユーザーに関する情報。中長期的に保持される。 |
-| **semantic** | 0.6 | 90日間 | 知識や概念。長期的に保持される。 |
-| **identity** | 0.3 | 無限 | キャラクターのアイデンティティ。一切減衰しない。 |
+| :--- | ---: | ---: | :--- |
+| **contextual** | 1.0 | 4日 | 文脈的価値。短期的に重要だが、すぐに古くなる。 |
+| **user** | 0.8 | 10日 | ユーザーに関する情報。中期的に保持される。 |
+| **semantic** | 0.6 | 20日 | 知識や概念。長期的に保持される。 |
+| **identity** | 0.3 | 90日 | キャラクターのアイデンティティ。最も緩やかだが、**減衰はする**。 |
+
+現役カテゴリは `contextual` / `semantic` / `identity` / `user` の4つで、
+これ以外のカテゴリが混ざった場合は `contextual` と同じ速度で減衰させます。
 
 **計算式:**
-各重要度ごとに経過日数に応じた指数減衰 ($e^{-\lambda t}$) を計算し、重み付け合計したものが [decayed_score](file:///c:/Users/seamo/Chotgor/backend/core/memory/manager.py#16-52) となります。
+各重要度ごとに経過日数に応じた指数減衰 ($e^{-\lambda t}$、$\lambda = \ln 2 / 半減期$) を
+計算し、重み付け合計したものが `decayed_score` となります。減衰の共通数式は
+`services/memory/decay.py: exp_decay` に集約されています（WM スレッドの heat も同じ数式）。
+
+```text
+decayed_score =
+  contextual_importance * exp(-ln(2) / 4  * days) * 1.0
++ user_importance       * exp(-ln(2) / 10 * days) * 0.8
++ semantic_importance   * exp(-ln(2) / 20 * days) * 0.6
++ identity_importance   * exp(-ln(2) / 90 * days) * 0.3
+```
+
+`days` は `last_accessed_at`（無ければ `created_at`）からの経過日数です。
 
 ---
 
 ## 3. その他の補助機能
 
-### Chronicle（旧デイリー・ダイジェスト） ([chronicle_job.py](file:///c:/Users/seamo/Chotgor/backend/batch/chronicle_job.py))
+### Chronicle（旧デイリー・ダイジェスト） — `backend/batch/chronicle_job.py`
 *   一日の終わり（または必要に応じて）、その日のチャットをキャラクター本人（`ask_character`）が振り返り、ワーキングメモリスレッドの要約・更新や新規ポストとして統合します。
 *   処理済みメッセージは `chronicled_at` でマークされ、未処理分のみが対象になります（旧 digest 機能から移行済み）。
 
-### 忘却候補の抽出 ([get_forgotten_candidates](file:///c:/Users/seamo/Chotgor/backend/core/memory/manager.py#53-71))
-*   [decayed_score](file:///c:/Users/seamo/Chotgor/backend/core/memory/manager.py#16-52) が閾値（デフォルト 0.3）を下回った記憶を、忘却（削除）の候補としてリストアップできます。
+### 忘却候補の抽出 — `InscribedMemoryManager.get_forgotten_candidates`
+*   `decayed_score` が閾値を下回った記憶を、スコアの低い順に忘却（削除）の候補としてリストアップします。
+*   メソッドの既定閾値は 0.3 ですが、**夜間の Forget バッチは 0.2 を渡します**（`batch/forget_job.py`）。
+    1回の Forget で扱うのは最大 50 件。
 
 ---
 

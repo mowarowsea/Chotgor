@@ -5,7 +5,7 @@
 
 > **鮮度について**: この文書は実装変更で腐る。ディレクトリ構成・処理フローを変える
 > 変更を入れたら、この文書も同じコミットで更新すること。
-> 最終更新: 2026-07-12（グループチャット撤去の反映・用語対訳・データ設計書アーカイブ）
+> 最終更新: 2026-08-25（ディレクトリ表を実体へ同期・プロバイダー8実装・関連文書一覧の拡充）
 
 ---
 
@@ -85,15 +85,15 @@
 |---|---|
 | `main.py` | エントリポイント。lifespan でストア・マネージャー・ChatService を初期化し `app.state` に集約。Chronicle/Forget/うつつ（Usual Days）スケジューラーもここで起動 |
 | `api/` | HTTPエンドポイント層（ルーター）。下の「APIルーティング一覧」参照 |
-| `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。characters / memories / presets / scenarios / settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル）。編集フォームは自動保存＋楽観ロック（下の「設定フォームの楽観ロック」参照） |
+| `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。dashboard（`/ui/` 入口）/ characters / memories / presets / scenarios / settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル）。共通部品は `common.py`。編集フォームは自動保存＋楽観ロック（下の「設定フォームの楽観ロック」参照） |
 | `api/logs_ui/` | デバッグログ閲覧UI（`/ui/logs`）と JSON API（`/api/logs`） |
 | `services/` | ビジネスロジック層。チャット・シナリオ・記憶・キャラクター問い合わせ |
-| `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / xai の7実装。`registry.py` が生成・ディスパッチ |
+| `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / sakura / xai の8実装。`registry.py` が生成・ディスパッチ（露出順は `PROVIDER_ORDER`）。`sakura` は さくらの AI Engine（Kimi 等）で、推論トークンが枠を食い潰して本文が空になるため `DEFAULT_MAX_TOKENS=None`（上限指定なし） |
 | `repositories/` | 永続化層。`sqlite/`（ORM・migration・機能別 store mixin）と `lance/`（ベクトルストア、テーブル別 ops）、`embeddings.py`（embedding プロバイダー） |
-| `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / switch / WMスレッド操作…）の定義・タグ抽出・実行 |
+| `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / WMスレッド操作 / take_leave / web_search ＋文脈別ツール）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
 | `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00。棚卸し時に Open×Close の類似検出で「もう決着済みの話題を Open のまま抱えていないか」の気づき材料を提示する＝判定のみで close はしない）と `forget_job.py`（長期記憶の忘却、04:00固定） |
-| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用）、`optimistic_lock`（設定フォームの楽観ロック＝端末間の先祖返り防止） |
+| `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`instrument_recorder`（計器アラームの発火口。どこからでも呼べる）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用）、`optimistic_lock`（設定フォームの楽観ロック＝端末間の先祖返り防止）、`attachments`（添付の受け入れMIME判定＝`attachment_kind` の唯一の根拠）、`initiative_budget`（キャラ自発リクエストの日次予算。reach_out と speak_later が共有）、`notify`（ntfy プッシュ）、`stream_json`（Claude CLI の NDJSON 入出力）、`lenient_json`（LLM 応答の壊れた JSON 救済）、`utils` |
 | `mcp_server.py` | Claude CLI 用 MCP stdio サーバー（backendへのHTTPプロキシ） |
 | `templates/` + `static/` | 管理UIのJinja2テンプレートと `chotgor.css`（デザインシステム。規約は CLAUDE.md） |
 
@@ -102,9 +102,9 @@
 | パス | 責務 |
 |---|---|
 | `services/chat/` | 1on1チャット本流。`service.py`（ChatFlow の再エクスポート）、`request_builder.py`（安定ブロック＝システムプロンプト＋変動ブロック＝ターン注釈の二層組み立て）、`request_factory.py`、`content.py`、`indexer.py`（履歴を LanceDB `chat_turns` へ upsert）、`models.py` |
-| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`ambience_flow.py`（なりゆき: 別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象）。**プロバイダ由来エラーは発話（`text`）と分けて `provider_error` チャンクで流す**（消費側で扱いが違う: 1on1/OpenAI互換=text相当で表示・保存、シナリオ/うつつPC=`pc_runner` が LLMApiError へ変換し発言ナシ扱い） |
-| `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine 抽象）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py`、`scene_close.py`（[SCENE_CLOSE] 検出・除去）、`usual_days.py`（うつつのセッション管理・演出素材・シーン駆動） |
-| `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`reindex_service.py`（embedding変更時の全再構築） |
+| `services/chat_flow/` | 1キャラ1ターンの共通骨（1on1 / シナリオPC / うつつPC が共用）。`flow.py`（ChatFlow: tool-use経路／タグ経路のディスパッチ・power_recall 再帰）、`preparation.py`（ターン前処理: 想起・WM・URL fetch・プロンプト構築 → PreparedContext）、`ambience_flow.py`（なりゆき: 別れ検出・疲労離席の起動）、`scene_loop.py`（SceneLoop 抽象）、`strategies/one_on_one.py`（1on1 のターン戦略）。**プロバイダ由来エラーは発話（`text`）と分けて `provider_error` チャンクで流す**（消費側で扱いが違う: 1on1/OpenAI互換=text相当で表示・保存、シナリオ/うつつPC=`pc_runner` が LLMApiError へ変換し発言ナシ扱い） |
+| `services/scenario_chat/` | シナリオ（TRPG風）チャット。`engine.py`（SceneEngine / EnsembleEngine）、`service.py`（API から呼ばれる入口）、`loop_strategies.py`（GM↔PC の連鎖・ルーティング・無人ループ）、`pc_runner.py`（PCスロット駆動）、`prompt_builder.py`、`parser.py`（`ScenarioChatParser` — `@話者:` の分割・`yielded_to`）、`template_tags.py`（値タグ 1 段展開）、`context.py`、`format_speech.py`、`serializers.py`、`synopsis.py` / `auto_synopsis.py`（あらすじ）、`turns.py`、`mention.py`、`scene_close.py`（[SCENE_CLOSE] 検出・除去）、`external_scenes.py`（うつつPCへ「同じ世界軸の直近シーン全部」を単一 user メッセージで渡す整形）、`usual_days.py`（うつつのセッション管理・演出素材・シーン駆動） |
+| `services/memory/` | 記憶管理。`manager.py`（InscribedMemoryManager: SQLite=メタデータ source of truth、LanceDB=ベクトルの協調）、`working_memory_manager.py`（WMスレッド）、`decay.py`（時間減衰の共通数式）、`format.py`（記憶ブロックの整形）、`reindex_service.py`（embedding変更時の全再構築） |
 | `services/character_query.py` | **「キャラクターに聞く」共通入口**。バッチ処理など通常チャット以外からの問い合わせを、1on1同等のシステムプロンプト（WMブロック込み）で実行する。`ask_character` / `ask_character_with_tools`（`return_response=True` で応答テキストも取れる）。ANTICIPATE_RESPONSE ガイドは付与しない（予想は次ターンを受け取る相手がいるチャット前提の機能のため） |
 | `services/timeline/` | **めぐり（巡り / Aliveness）の投影層＋予報層**。封筒正本（timeline_events）を観測者クラス（self / world_frame / user_ui）別の可視性ポリシーでフィルタする `projector.py`。GM への「現実の接触の記録」ブロックもここ。`forecast.py` は予報パネルの集約純関数（診断・カレンダー・圧力の無風外挿・配達シミュレータ。LLM 不使用） |
 | `services/instruments/` | 計器（監査層）。Tier 1 巡回インバリアント・Tier 2 スメル検知器（正規表現）・Tier 3 判定巡回（LLM サンプリング）。アラームは `lib/instrument_recorder.py` 経由でどこからでも発火できる |
@@ -112,7 +112,7 @@
 | `services/intents/` | 意図（「〜したい」の経済層）。意図圧の読み取り時計算・失効/不満化の候補挙げ・拾い上げ（Chronicle 同乗＋うつつ完走後） |
 | `services/gate/` | 応答可能性ゲート。`check_availability` 純関数（従来経路: 対面 > away > うつつ進行中 > 生活時間割 ／ 生活カレンダー経路: 対面 > away > schedule_entries 占有圧最大 > OnTime）・メッセージ預かり（escrow）・能動配達（従来: 復帰＋ジッター ／ 生活カレンダー: チェック間隔格子＋決定論 reply_rate 判定 `resolve_delivery_due`）・発話予約の発火（`speech_reservation.py` — speak_later の毎分走査・24h expire・`spontaneous_initiative_daily_cap` を reach_out と共有・`_deliver_session` 共用）・疲労離席の発火式 |
 | `services/schedule/` | **生活カレンダー（Living Schedule）**。`plan_parser.py`（[PLAN]/[EVENT] 行パーサ・24時超え表記・テンプレ裸変換・配達値個別上書き）・`weekly_batch.py`（週次バッチ①GM生成→②本人問い合わせ→schedule_entries template 層入れ替え＋③伏せ枠配置。層フォールバック=前週→テンプレ裸。冪等キー=キャラ別対象 ISO 週）・`scene_selection.py`（②導出のうつつシーン選出＝占有圧上位50%＋ランダムの決定論純関数）・`events.py`（③世界突発の確率配置＝pending 伏せ枠・発火時 GM 具体化→轢き判定（占有圧最大が勝つ）→insert→シーン）・`dilemma.py`（玉突き裁定＝③に轢かれた予定を本人が cancel/reschedule/不満化） |
-| `services/actions/` | 会話外行動権。閾値評価（無料）→本人問い合わせ→実行（push / 調べもの / 臨時うつつ）→帰還のループ |
+| `services/actions/` | 会話外行動権（`runner.py`）。閾値評価（無料）→本人問い合わせ→実行（push / 調べもの / 臨時うつつ）→帰還のループ。push 実体 `execute_push` は `reach_out` とも共有 |
 
 ### character_actions/ の内訳
 
@@ -565,13 +565,50 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 
 ## 5. 関連ドキュメント
 
+索引は `docs/README.md`。ここは「この地図のどの節を深掘りするならどれを読むか」の対応表。
+
+### 規範・入門
+
 | ドキュメント | 内容 |
 |---|---|
 | `CLAUDE.md` | 開発規範（哲学・命名規則・LanceDB運用・CSS規約・提案スタンス） |
-| `docs/explain/README.md` | ユーザー向け紹介（※歴史的紹介文。現仕様は本 ARCHITECTURE.md が正） |
-| `docs/current-spec/memory_recall_algorithm.md` | 記憶想起のハイブリッド・スコアリング（類似度×時間減衰重要度） |
-| `docs/current-spec/character_resident_rules.md` | キャラクター向け仕様書（記憶・日次処理がどう扱われるか） |
-| `docs/planned/usual_days_plan.md` | うつつ（Usual Days — 無人生活モード）の設計・実装計画 |
-| `docs/planned/aliveness_plan.md` | めぐり（巡り / Aliveness）— タイムライン正本（封筒dual-write）・可視性・計器・動機経済の詳細仕様（Phase 0〜7 実装済み。命名ははる） |
-| `docs/planned/forecast_panel_plan.md` | 予報パネル — 決定ログ・heartbeat・無風外挿・配達シミュレータの設計（2026-07-10 実装済み） |
 | `docs/explain/DEAR_GHOST.md` | キャラクター向けシステムガイド（世界の歩き方） |
+| `docs/explain/README.md` | ユーザー向け紹介（※歴史的紹介文。現仕様は本 ARCHITECTURE.md が正） |
+| `docs/fable_view.md` | エンジン当事者視点の観測記録（設計判断の根拠・弱点の列挙） |
+
+### 記憶
+
+| ドキュメント | 対応する節 |
+|---|---|
+| `docs/current-spec/memory_recall_algorithm.md` | §3 1on1フロー 1./1b. — 想起クエリ・ハイブリッドスコア・注入量の規定 |
+| `docs/current-spec/character_resident_rules.md` | §3 夜間バッチ — キャラクター本人から見た記憶・Chronicle・Forget |
+| `docs/planned/wm_repeat_awareness_plan.md` | §3 夜間バッチ — Chronicle の Open×Close 類似検出と内省誘導 |
+
+### めぐり（巡り / Aliveness）とその周辺
+
+| ドキュメント | 対応する節 |
+|---|---|
+| `docs/planned/aliveness_plan.md` | §3 めぐり — 封筒dual-write・投影・計器・圧力・意図・ゲート・行動権・ダイヤル |
+| `docs/planned/schedule_plan.md` | §3 めぐり「生活カレンダー」— 週次バッチ①②③・占有圧・配達値・玉突き裁定 |
+| `docs/planned/forecast_panel_plan.md` | §3 めぐり「予報」— 決定ログ・heartbeat・無風外挿・配達シミュレータ |
+| `docs/planned/speak_later_plan.md` | §3 めぐり「発話予約」— speak_later の仕掛けと発火 |
+| `docs/planned/ambience_plan.md` | §2 `ambience_judge.py` / `ambience_flow.py` — なりゆき判定と派生処理 |
+
+### シナリオ・うつつ
+
+| ドキュメント | 対応する節 |
+|---|---|
+| `docs/planned/usual_days_plan.md` | §3 うつつ — 無人生活モードの設計・実装計画 |
+| `docs/planned/scenario_turn_variants_plan.md` | §3 シナリオ「ログの枝分かれ」— generation / branch_point_index |
+| `docs/planned/scenario_history_perf_plan.md` | §3 シナリオ「履歴の転送・描画」— ウィンドウ＋`response_key` |
+
+### 基盤・リファクタ記録
+
+| ドキュメント | 対応する節 |
+|---|---|
+| `docs/planned/prompt_cache_plan.md` | §3 1on1フロー 3. — 二層組み立て（安定ブロック／ターン注釈）の根拠と実測 |
+| `docs/planned/block_naming_cleanup_plan.md` | §2 `request_builder.py` — ブロック命名（`session_frame`・Block N 廃止） |
+| `docs/planned/sse_disconnect_resilience_plan.md` | §3 1on1フロー — SSE送出と生成の分離 |
+| `docs/planned/audio_attachment_plan.md` | §3 1on1フロー「添付」— 音声・画像の受け渡しと寿命 |
+| `docs/planned/switch_angle_removal_plan.md` | 撤去記録（現行コードに機能は無い） |
+| `docs/old/backend_data_design.md` | アーカイブ。現行のテーブル定義は `repositories/sqlite/models.py` が正 |

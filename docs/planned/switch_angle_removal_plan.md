@@ -1,6 +1,8 @@
 # switch_angle 機能撤去 計画
 
-策定: 2026-07-18
+> ステータス: **撤去完了（2026-07-19, `a348662`）**。策定 2026-07-18。
+> 残置物: `migrations.py` の `characters.switch_angle_enabled` 列削除マイグレーションと、
+> 過去ログ表示用の `tool_tags.py` メタのみ。
 
 ## 目的と背景
 

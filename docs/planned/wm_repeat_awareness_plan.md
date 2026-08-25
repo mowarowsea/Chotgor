@@ -280,7 +280,7 @@ Open なスレッドの中に、実はもう Close 済みスレッドで結論�
   以外のスレッドが混ざらないこと、`character_id` スコープが他キャラのスレッドを拾わないこと。
 - `_format_similarity_hints`（Chronicle 側）: 該当ペアがある場合／ない場合の出力を確認。
 - 実際の Chronicle 実行での確認は、次回夜間バッチ（`chronicle_time` 既定 03:00）を待つか、
-  手動実行 API（`POST /api/memories/{character_id}/digest` 相当）で確認する。
+  手動実行 API（`POST /api/inscribed_memories/{character_id}/chronicle`）で確認する。
 - 本設計は「気づきの材料を提示するだけ」であり、close するかどうかは毎回 LLM 応答に依存する
   ため、決定論的な「この入力なら必ず close される」というテストは組めない。テストは
   「材料が正しく提示されること」までを保証範囲とする。
