@@ -41,7 +41,19 @@ DEFAULT_CLOSED_INDEX_LIMIT = 30
 
 # heat 想起で切り捨てる下限。関連の薄いスレッドまで前景へ上がるのを防ぐ。
 # 該当なし（0件）のターンがあってよい。
-DEFAULT_WM_RECALL_MIN_HEAT = 0.05
+# heat の relevance 項は cosine 類似度そのもので、値域が embedding モデルに強く依存する
+# （現行 bge-m3 は無関係で約0.41・関連しても0.55前後にしか伸びない）。旧 0.05 は実質
+# 「importance × decay >= 0.1」を要求する閾値として働き、topic は数日で前景へ上がらなく
+# なっていた。**モデルを変えたらこの値も見直すこと**（current-spec/memory_recall_algorithm.md §2.1）。
+DEFAULT_WM_RECALL_MIN_HEAT = 0.03
+
+# heat 想起でベクトル検索から取り寄せる候補数（リランク前）。
+# ベクトル検索の順序は relevance 順であって heat 順ではないため、狭く取ると
+# 「importance × decay が高いのに相槌ターンで relevance が伸びないスレッド」が
+# 評価される前に落ちる。実測では heat 上位3件が relevance 順で12〜16位に沈んでいた。
+# Open スレッドは数十本規模なので、ほぼ全件を評価しても検索コストは無視できる。
+WM_RECALL_FETCH_MULTIPLIER = 10
+WM_RECALL_FETCH_MIN = 30
 
 # Open × Close の重複疑い検出（find_similar_closed_threads）で使う relevance 下限。
 # はるの実データ実測（docs/planned/wm_repeat_awareness_plan.md）では
@@ -493,8 +505,9 @@ class WorkingMemoryManager:
         Returns:
             heat 降順のスレッド dict リスト（``heat`` キー付き、最新ポスト込み）。
         """
-        # heat 計算でリランクするため多めに取得する
-        fetch_k = max(top_k * 2, top_k)
+        # heat 計算でリランクするため多めに取得する（狭く取ると heat 上位が
+        # relevance 順の下位に沈んで脱落する。定数の説明を参照）
+        fetch_k = max(top_k * WM_RECALL_FETCH_MULTIPLIER, WM_RECALL_FETCH_MIN)
         results = self.vector_store.recall_working_memory_threads(
             query,
             character_id,

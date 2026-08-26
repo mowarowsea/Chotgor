@@ -175,7 +175,9 @@ frontend useChat
       1b. ワーキングメモリ取得 → スレッド一覧/固定注入（システム {block_wm_all} / {block_wm_fixed}）
           + heat 想起（ターン注釈側 {block_wm_recalled}）
           一覧は Open 全件 + close 済み直近ぶん（省略分は本数を告知し read_working_memory_list へ誘導）、
-          heat 想起は下限つき TopK。分量規定は current-spec/memory_recall_algorithm.md §4
+          heat 想起は下限つき TopK。**クエリは長期記憶と別**（直近数件の会話を連結する。
+          相槌ターンで話題が沈むため。§0）。式と閾値は §2.1、分量規定は §4
+          （いずれも current-spec/memory_recall_algorithm.md）
       2.  メッセージ内URLの自動fetch → fetched ブロック（ターン注釈側 {block_fetched}）
       3.  request_builder が二層で組み立て（プロンプトキャッシュ対応。二層化の根拠は
           request_builder.py モジュール docstring）:

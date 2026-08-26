@@ -159,6 +159,70 @@ class TestRecallThreadsMinHeat:
         assert [t["id"] for t in result] == ["t0", "t1", "t2"]
 
 
+class TestRecallThreadsCandidateWidth:
+    """heat 想起がベクトル検索から取り寄せる候補数（fetch_k）の検証。
+
+    heat = importance × 時間減衰 × クエリ類似度 だが、ベクトル検索が返す順序は
+    **類似度（relevance）順であって heat 順ではない**。したがって候補を狭く取ると、
+    「importance × decay が高いのに、そのターンの発話とはあまり似ていない」スレッドが
+    heat を計算される前に脱落する。実運用では相槌ターン（「あいさー。」等）で
+    heat 上位3件が relevance 順の 12〜16 位に沈み、想起が 0 件になった
+    （current-spec/memory_recall_algorithm.md §2.1）。
+
+    そのため本クラスは「取りこぼしが起きない広さで検索が発行されること」を固定する。
+    ベクトル検索モックは実物と同じく **top_k で切り詰める** 挙動にしてあり、
+    fetch_k を狭めた実装に戻すと下のテストは落ちる。
+    """
+
+    def _manager(self, threads_by_id, ordered_hits):
+        """relevance 順に並んだ候補を top_k で切り詰めるベクトル検索モックを組む。
+
+        Args:
+            threads_by_id: id → スレッド ORM 代役の辞書。
+            ordered_hits: ベクトル検索が返す候補（relevance 順＝実物と同じ並び）。
+        """
+        sqlite = MagicMock()
+        sqlite.get_working_memory_thread.side_effect = lambda tid: threads_by_id.get(tid)
+        sqlite.get_latest_working_memory_post.return_value = None
+        vector = MagicMock()
+        vector.recall_working_memory_threads.side_effect = (
+            lambda query, character_id, top_k=10, where=None: ordered_hits[:top_k]
+        )
+        return WorkingMemoryManager(sqlite=sqlite, vector_store=vector)
+
+    def test_hot_thread_outside_relevance_top6_is_recalled(self):
+        """relevance 順で 13 位のスレッドでも、heat が高ければ前景へ上がること。
+
+        旧実装（fetch_k = top_k × 2 = 6）では候補にすら入らず 0 件になっていたケース。
+        """
+        # relevance 上位を占めるが、古くて重要度も低い（＝heat は下限未満）スレッド群。
+        threads = {
+            f"cold{i}": _thread(
+                f"cold{i}", importance=0.05, touched=datetime.now() - timedelta(days=30)
+            )
+            for i in range(12)
+        }
+        # 今まさに生きている話題。relevance は低いが importance × decay が高い。
+        threads["hot"] = _thread("hot", importance=0.9, touched=datetime.now())
+        ordered_hits = [
+            {"id": f"cold{i}", "distance": _distance_for(0.9)} for i in range(12)
+        ] + [{"id": "hot", "distance": _distance_for(0.4)}]
+        wm = self._manager(threads, ordered_hits)
+
+        result = wm.recall_threads("char-1", "あいさー。")
+
+        assert [t["id"] for t in result] == ["hot"]
+
+    def test_fetch_k_is_wider_than_top_k(self):
+        """検索は返却件数よりずっと広く発行されること（リランクの材料を確保する）。"""
+        wm = self._manager({}, [])
+
+        wm.recall_threads("char-1", "クエリ", top_k=3)
+
+        kwargs = wm.vector_store.recall_working_memory_threads.call_args.kwargs
+        assert kwargs["top_k"] >= 30
+
+
 def _distance_for(relevance: float) -> float:
     """狙った relevance を返す cosine 距離を逆算する（distance_to_similarity の逆関数）。
 

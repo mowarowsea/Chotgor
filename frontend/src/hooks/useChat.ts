@@ -16,10 +16,17 @@ import {
 } from "react";
 import {
   deleteMessagesFrom,
+  fetchCharacters,
   fetchSessions,
   streamMessage,
 } from "../api";
-import type { Attachment, ChatMessage, Session, StreamEvent } from "../api";
+import type {
+  Attachment,
+  Character,
+  ChatMessage,
+  Session,
+  StreamEvent,
+} from "../api";
 import { consumeStream } from "./streamingUtils";
 
 /** useChat が App から受け取る依存（共有 state の setter 群とセッション情報）。 */
@@ -36,6 +43,13 @@ interface UseChatDeps {
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   /** セッション一覧の setter。 */
   setSessions: Dispatch<SetStateAction<Session[]>>;
+  /**
+   * キャラクター一覧の setter。
+   * ターン中にキャラクター本人がツールで自分の状態を変えることがある
+   * （visit_user の対面モード ON など）。characters は初期マウント時にしか
+   * 取得していないため、done のたびに取り直さないと画面が古い値を持ち続ける。
+   */
+  setCharacters: Dispatch<SetStateAction<Character[]>>;
   /** エラー表示の setter。 */
   setError: (e: string | null) => void;
   /** 送信中フラグの setter。 */
@@ -91,6 +105,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     selectedModel,
     setMessages,
     setSessions,
+    setCharacters,
     setError,
     setSending,
     setElapsedMap,
@@ -193,13 +208,22 @@ export function useChat(deps: UseChatDeps): UseChatResult {
         userMessage,
         characterMessage,
       ]);
-      const updated = await fetchSessions();
+      // セッション（タイトル・current_bg_label 等）とキャラクター（対面モード等）を
+      // まとめて取り直す。キャラ側は本人のツール実行で変わりうるが SSE では流れてこない。
+      // 失敗しても会話表示は成立するため、キャラ側は best-effort（握って続行）。
+      const [updated] = await Promise.all([
+        fetchSessions(),
+        fetchCharacters()
+          .then(setCharacters)
+          .catch(() => undefined),
+      ]);
       setSessions(updated);
     }
   }, [
     activeSessionIdRef,
     setMessages,
     setSessions,
+    setCharacters,
     setError,
     setElapsedMap,
     setMsgLogIds,

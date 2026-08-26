@@ -775,10 +775,11 @@ async def test_recall_query_truncated_to_tail_for_long_user_message():
 
 @pytest.mark.asyncio
 async def test_recall_query_truncation_applies_to_wm_heat_recall_too():
-    """WM heat 想起にも同じ切り詰め済みクエリが渡ること。
+    """WM heat 想起のクエリにも同じ長さガードが効くこと。
 
     422 は recall_with_identity と recall_threads の両方を落としていたため、
-    片方だけ直しても縮退は解消しない。
+    片方だけ直しても縮退は解消しない。WM 側は会話文脈を足した別クエリになったが
+    （§0）、「上限以内」「末尾を残す」という規約は両者で共通である。
     """
     from backend.services.chat_flow.preparation import RECALL_QUERY_MAX_CHARS
 
@@ -796,7 +797,6 @@ async def test_recall_query_truncation_applies_to_wm_heat_recall_too():
     wm_query = wm.recall_threads.call_args.args[1]
     assert len(wm_query) <= RECALL_QUERY_MAX_CHARS
     assert "NEWEST_MARKER" in wm_query
-    assert wm_query == memory_manager.recall_with_identity.call_args.args[1]
 
 
 @pytest.mark.asyncio
@@ -813,6 +813,80 @@ async def test_recall_query_unchanged_for_short_user_message():
         await _collect_stream_events(service, request)
 
     assert memory_manager.recall_with_identity.call_args.args[1] == "今日の調子どう？"
+
+
+# --- prepare_context — WM heat 想起は会話文脈込みの別クエリ（§0 / §2.1） ---
+#
+# WM スレッドの index テキストは「summary + 最新ポスト」= 話題の単位である。一方で
+# ユーザの最新発話は「あいさー。」のような相槌だけのこともあり、それ単体では
+# *いま何の話をしているか* を表さない。実測（2026-08-26・はる）では、直前まで話していた
+# 話題の relevance が最新発話のみで 0.340（近傍19位）、直近4件を足すと 0.675（6位以内）
+# まで回復した。長期記憶（IM）側は具体的なエピソード単位のため最新発話のまま据え置く。
+
+
+@pytest.mark.asyncio
+async def test_wm_recall_query_includes_recent_conversation_context():
+    """WM 想起クエリには直近の会話が入り、長期記憶クエリには入らないこと。
+
+    併せて話者ラベルの正規化も固定する。API 仕様上の "assistant" ではなく
+    "character" を使う（CLAUDE.md の命名規則。プロンプトではないクエリ文字列でも
+    キャラクターを Assistant と呼ばない）。
+    """
+    memory_manager, wm, request, fake_provider = _build_prepare_context_mocks("あいさー。")
+    request.messages = [
+        Message(role="user", content="単価ズレの話だけどさ"),
+        Message(role="assistant", content="キャッシュ計上か、なるほどね"),
+        Message(role="user", content="あいさー。"),
+    ]
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager, working_memory_manager=wm)
+        await _collect_stream_events(service, request)
+
+    wm_query = wm.recall_threads.call_args.args[1]
+    assert "単価ズレの話だけどさ" in wm_query
+    assert "キャッシュ計上か、なるほどね" in wm_query
+    assert "character:" in wm_query
+    assert "assistant:" not in wm_query
+    # 長期記憶側は従来どおり「最新 user 発話のみ」
+    assert memory_manager.recall_with_identity.call_args.args[1] == "あいさー。"
+
+
+@pytest.mark.asyncio
+async def test_wm_recall_query_limits_context_to_recent_messages():
+    """文脈は直近 WM_RECALL_CONTEXT_MESSAGES 件までで、それより古い発話は混ぜないこと。
+
+    文脈を伸ばすほど良いわけではない（8件まで足すと話題が平均化されて4件より
+    relevance が落ちた）。古い話題を引きずらない上限を回帰防止する。
+    """
+    from backend.services.chat_flow.preparation import WM_RECALL_CONTEXT_MESSAGES
+
+    memory_manager, wm, request, fake_provider = _build_prepare_context_mocks("いまの話")
+    old_msgs = [
+        Message(role="user", content=f"OLD_MARKER_{i} 昔の話題")
+        for i in range(WM_RECALL_CONTEXT_MESSAGES + 2)
+    ]
+    recent = [
+        Message(role="assistant", content="RECENT_MARKER 直前の応答"),
+        Message(role="user", content="いまの話"),
+    ]
+    request.messages = old_msgs + recent
+
+    with (
+        patch("backend.services.chat_flow.preparation.create_provider", return_value=fake_provider),
+        patch("backend.services.chat_flow.preparation.build_system_prompt", return_value="sys"),
+        patch("backend.services.chat_flow.preparation.find_urls", return_value=[]),
+    ):
+        service = ChatService(memory_manager=memory_manager, working_memory_manager=wm)
+        await _collect_stream_events(service, request)
+
+    wm_query = wm.recall_threads.call_args.args[1]
+    assert "RECENT_MARKER" in wm_query
+    assert "OLD_MARKER_0" not in wm_query
 
 
 @pytest.mark.asyncio

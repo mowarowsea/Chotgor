@@ -146,6 +146,9 @@ export default function App() {
    * - 対面モードはキャラスコープ（characters.face_to_face_mode）。
    * - 別セッションでの切替はリアルタイム同期しない方針（次回オープン時に反映）。
    * - 切替時は characters state を楽観更新し、API を叩いて確定する。
+   * - ただしキャラクター本人が visit_user で対面へ切り替えることがあるため、
+   *   ターン完了時（useChat の done 後）に characters を取り直す。これが無いと
+   *   サーバは対面 ON なのに画面はテキストのまま、という乖離が残る。
    */
   const activeCharNameOnly = charNameOf(selectedModel || activeSession?.model_id || characterName);
   /**
@@ -307,6 +310,7 @@ export default function App() {
     selectedModel,
     setMessages,
     setSessions,
+    setCharacters,
     setError,
     setSending,
     setElapsedMap,

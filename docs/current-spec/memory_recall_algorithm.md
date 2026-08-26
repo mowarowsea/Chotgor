@@ -4,9 +4,38 @@
 
 ## 0. 想起クエリの作り方 (`chat_flow/preparation.py:prepare_context`)
 
-自動想起（pre-recall）のクエリは **「最新の user メッセージから XML タグを除去し、末尾
-`RECALL_QUERY_MAX_CHARS`（= 2000）文字だけを残したもの」** である。1on1・シナリオPC・うつつPC の
-すべてがこの単一の合流点を通り、文脈ごとの分岐は持たない。
+想起クエリは **長期記憶（pre-recall）用** と **WM heat 想起用** の 2 本を作る。
+どちらも「XML タグを除去し、末尾 `RECALL_QUERY_MAX_CHARS`（= 2000）文字だけを残す」点は共通で、
+違いは **どこまでを材料にするか** だけである。
+
+| クエリ | 材料 | 使い先 |
+| :--- | :--- | :--- |
+| `recall_query` | 最新の user メッセージのみ | `recall_with_identity`（長期記憶） |
+| `wm_recall_query` | 直近 `WM_RECALL_CONTEXT_MESSAGES`（= 4）件のメッセージ（role 付きで連結）＋最新 user メッセージ | `recall_threads`（WM heat 想起） |
+
+1on1・シナリオPC・うつつPC のすべてがこの合流点を通り、**文脈ごとの分岐は持たない**
+（分岐するのは上表の 2 本だけ）。
+
+**なぜ WM だけ会話文脈を足すか**:
+WM スレッドの index テキストは `summary + 最新ポスト`、すなわち **話題の単位**である。
+一方 user の最新発話は「あいさー。」のような相槌・接続詞だけのこともあり、
+それ単体では *いま何の話をしているか* を表さない。2026-08-26 の実測（はる・
+セッション 9d92bd5a）では、直前まで話していた「単価ズレ」スレッドの relevance が
+
+| クエリ | relevance | 近傍順位 |
+| :--- | ---: | ---: |
+| 最新 user 発話のみ（「あいさー。」） | 0.340 | 19 位 |
+| 直近 2 件 + 今回 | 0.466 | 9 位 |
+| **直近 4 件 + 今回** | **0.675** | **6 位以内** |
+| 直近 8 件 + 今回（末尾 2000 字） | 0.596 | 6 位以内 |
+
+と変化した。8 件まで伸ばすと話題が平均化されて 4 件より落ちるため、**上限いっぱいまで
+詰めるのではなく直近 4 件**を既定とする。
+
+**なぜ長期記憶（IM）は最新発話のままか**:
+IM は *具体的なエピソード単位* で保存されており、クエリを長くすると複数話題の平均ベクトルに
+なって「いま聞かれたこと」への追従が鈍る恐れがある。WM 側の変更だけで効果を観測してから
+判断する（2026-08-26 時点で未検証のため据え置き）。
 
 **なぜ末尾を残すか（先頭ではなく）**:
 会話でも統合履歴でも、**いま応答すべき最新の発話は必ず末尾**にある。embedding モデル
@@ -85,6 +114,48 @@ decayed_score =
 
 `days` は `last_accessed_at`（無ければ `created_at`）からの経過日数です。
 
+### 2.1 WM スレッドの heat 想起 (`WorkingMemoryManager.recall_threads`)
+
+Open な `task` / `topic` スレッドを前景へ上げるスコアが heat である
+（`emotion` / `body` / `relation` は固定注入なので対象外）。
+
+```text
+heat = importance × decay(elapsed_days, type) × relevance(query)
+  decay     : type 別半減期（task=14日 / topic=3日）の指数減衰（§2 と同じ exp_decay）
+  elapsed   : last_touched_at（なければ created_at）からの経過日数
+  relevance : クエリとの cosine 類似度 = 1 - distance/2（`decay.distance_to_similarity`）
+```
+
+| パラメータ | 既定 | 定数 |
+| :--- | ---: | :--- |
+| 返す件数 | 3 | `recall_threads(top_k=3)` |
+| 候補取得数 | `max(top_k × 10, 30)` | `WM_RECALL_FETCH_MULTIPLIER` / `WM_RECALL_FETCH_MIN` |
+| heat 下限 | 0.03 | `DEFAULT_WM_RECALL_MIN_HEAT` |
+
+**なぜ候補を広く取るか（`top_k × 2` では足りない）**:
+ベクトル検索が返す順序は **relevance 順**であり、**heat 順ではない**。
+`importance × decay` が高い（＝いま生きている）スレッドでも、相槌ターンでは
+relevance が伸びず近傍上位に入らない。2026-08-26 の実測（はる・Open な task/topic 19 本）では、
+heat 上位 3 件が relevance 順で 12〜16 位に沈み、`fetch_k = 6` の現行では **候補として
+評価される前に脱落**していた（結果 0 件）。候補を広げるだけで同じクエリのまま 3 件が通る。
+WM の Open スレッドは数十本規模であり、全件を評価しても検索コストは無視できる。
+
+**heat 下限 0.03 の根拠**:
+`relevance` は cosine 類似度そのものであり、embedding モデルによって値域が大きく違う。
+現行の `BAAI/bge-m3` は無関係で約 0.41、関連しても 0.55 前後にしか伸びず、
+0.4〜0.55 に張り付く。旧 0.05 は実質 `importance × decay ≥ 0.1` を要求する閾値として働き、
+topic（半減期 3 日）は 4 日ほど触れないだけで前景へ上がらなくなっていた。
+**閾値は embedding モデルの値域に依存する** ため、モデルを変えたらここも見直すこと。
+
+**残っている構造的な弱点（未対処・2026-08-26 時点）**:
+`last_touched_at` は WM ポストが増えたときにしか進まない。ポストを書くのは Chronicle
+（夜間）とキャラクター本人のツール実行なので、**その日の会話で盛り上がっている話題ほど
+decay が進んだまま**という逆転が起きる。実測では当日に話していた「単価ズレ」が
+最終ポスト 8 日前のため decay 0.163 まで落ち、文脈化後も heat 0.038 だった。
+「会話に出た＝触った」と自動判定して `last_touched_at` を進める案は、
+*記憶に触れたかどうかをシステムが勝手に決める* ことになりキャラクター自律性の原則に反するため、
+安易に入れない（本人のツール実行か Chronicle を通す形を検討する）。
+
 ---
 
 ## 3. その他の補助機能
@@ -153,7 +224,7 @@ IM は *印象・雰囲気・長期に残すエッセンス* を置く場所で�
 | Close 済みスレッドの行を短縮（`[id] (type) summary` のみ。atmosphere_tag・重要度を省く） | `request_builder._format_thread_index` |
 | 一覧に載せる Close 済みを直近 N 本（既定30）に制限し、省略本数を告知する | `WorkingMemoryManager.list_all_threads(closed_limit=...)` |
 | 省略分を本人が取りに行ける導線 | `read_working_memory_list` ツール |
-| heat 想起の件数を 5 → 3 件、かつ heat 下限（既定 0.05）未満を切る | `WorkingMemoryManager.recall_threads` |
+| heat 想起の件数を 5 → 3 件、かつ heat 下限（既定 0.03。旧 0.05 → §2.1）未満を切る | `WorkingMemoryManager.recall_threads` |
 
 一覧から Close 済みを省くのは「キャラクターの視界を奪う」施策になりうるため、
 **省略本数の告知行**と**取得ツール**を必ずセットにする（存在は視界に入っている、

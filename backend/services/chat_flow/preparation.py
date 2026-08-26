@@ -48,6 +48,14 @@ from backend.services.chat.request_builder import (
 # 1on1 の通常メッセージはこの値を下回るので挙動は変わらない。
 RECALL_QUERY_MAX_CHARS = 2000
 
+# WM heat 想起のクエリに含める直近メッセージ件数（最新 user 発話を含む末尾 N 件）。
+# WM スレッドの index は「summary + 最新ポスト」= 話題の単位なので、「あいさー。」のような
+# 相槌ターンでは最新発話だけでは何の話をしているか表せない。実測（2026-08-26）では
+# 直前まで話していた話題の relevance が 0.340（19位）→ 4件で 0.675（6位以内）まで回復した。
+# 8件まで伸ばすと話題が平均化されて 4件より落ちるため、上限いっぱいには詰めない
+# （current-spec/memory_recall_algorithm.md §0）。
+WM_RECALL_CONTEXT_MESSAGES = 4
+
 
 def extract_text_content(content: str | list | None) -> str:
     """メッセージの content (str or list) からプレーンテキストのみを抽出する。"""
@@ -113,6 +121,17 @@ async def prepare_context(
     # URL 自動fetch は全文を対象にしたいので、last_user_msg 自体は切らずに別変数へ分ける。
     recall_query = last_user_msg[-RECALL_QUERY_MAX_CHARS:]
 
+    # WM heat 想起だけは会話文脈を含む別クエリを使う（長期記憶は最新発話のまま。§0）。
+    # 話者ラベルは "user" / "character" に正規化する（API 仕様上の "assistant" は使わない）。
+    wm_context_parts: list[str] = []
+    for m in messages[-WM_RECALL_CONTEXT_MESSAGES:]:
+        text = re.sub(r"<[^>]+>", "", extract_text_content(m.get("content"))).strip()
+        if not text:
+            continue
+        speaker = "user" if m.get("role") == "user" else "character"
+        wm_context_parts.append(f"{speaker}: {text}")
+    wm_recall_query = "\n".join(wm_context_parts)[-RECALL_QUERY_MAX_CHARS:] or recall_query
+
     recalled_identity: list[dict] = []
     recalled: list[dict] = []
     recall_error: str | None = None
@@ -160,10 +179,10 @@ async def prepare_context(
             wm_fixed_threads = (
                 working_memory_manager.get_fixed_threads(request.character_id) or None
             )
-            if recall_query:
+            if wm_recall_query:
                 wm_recalled_threads = (
                     working_memory_manager.recall_threads(
-                        request.character_id, recall_query
+                        request.character_id, wm_recall_query
                     )
                     or None
                 )
