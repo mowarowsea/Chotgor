@@ -210,8 +210,18 @@ def project(
 | `embedding_degraded` | 記憶の縮退 | `EmbeddingError` 発生なし（既存の縮退通知二系統に接続） | 即時 |
 | `night_batch_heartbeat` | 夜の営みの停止 | night.chronicle / night.forget が当日発生済み | 巡回 |
 | `usual_slot_completion` | 生活の連続性 | 予定スロット消化 or 正当理由スキップ（対面中・日次上限） | 巡回 |
-| `chronicle_backlog` | 蒸留漏れ | `chronicled_at IS NULL` の3日超滞留なし | 巡回 |
+| `chronicle_backlog` | 蒸留漏れ | **蒸留対象キャラ**の `chronicled_at IS NULL` の3日超滞留なし | 巡回 |
 | `envelope_integrity` | 正本性の破れ | 源テーブルと封筒の**件数**突合一致（ID突合はしない） | 巡回 |
+
+`chronicle_backlog` の「蒸留対象キャラ」は **Chronicle 実処理と同じ定義**（`ghost_model` 設定済み・
+うつつは `is_active=1` のターンのみ）を共有する。計器と実処理の対象がズレると、
+「実処理が一生触らないのに滞留として数え続ける」永久誤検知になるため、
+判定は `list_chronicle_target_characters` / `unchronicled_*_filters` の1箇所に集約する。
+
+- 棄却案: 滞留レコードへ `chronicled_at` を手で埋めて黙らせる — `ghost_model` 無しキャラで
+  会話するたび再発する対症療法なので採らない。
+- 棄却案: 対象外キャラも Chronicle する — `ghost_model` 未設定は「夜の営みを持たない」という
+  設定そのものなので、計器都合で実処理を広げない。
 
 将来枠: `intent_no_exit` — 高圧のまま長期間遷移しない意図がない（「出口のない欲求を作らない」の計器化）。
 

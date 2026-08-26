@@ -16,6 +16,9 @@
 
 from datetime import datetime
 
+from sqlalchemy import false
+
+
 class ScenarioChatStoreMixin:
     """シナリオテンプレ・セッション・NPC・ターンの作成・取得・更新・削除を担う Mixin。"""
 
@@ -742,6 +745,41 @@ class ScenarioChatStoreMixin:
                     }
             return result
 
+    @staticmethod
+    def unchronicled_usual_turn_filters(character_ids: list[str] | None = None) -> list:
+        """「未蒸留のうつつターン」を選ぶ WHERE 条件を返す — 唯一の定義。
+
+        Chronicle 実処理（``get_unchronicled_usual_turns_for_character``）と計器
+        ``chronicle_backlog``（``count_chronicle_backlog``）が同じ条件を共有するための
+        共通部品。ChatMessage 側の ``unchronicled_message_filters`` のうつつ版。
+        ``is_active=0``（再生成で落ちた枝）は実処理が読まないので滞留にも数えない
+        — この非対称が誤検知の温床なので、条件を足すときは必ずここへ足すこと。
+
+        呼び出し側は ``ScenarioTurn`` に ``ScenarioSession`` と ``Scenario`` を
+        JOIN 済みであること。
+
+        Args:
+            character_ids: 対象キャラの UUID リスト（うつつシナリオの
+                ``owner_character_id``）。None なら全キャラ、空リストは常に偽。
+
+        Returns:
+            SQLAlchemy 式のリスト（``.filter(*ret)`` で使う）。
+        """
+        from backend.repositories.sqlite.store import (
+            Scenario, ScenarioSession, ScenarioTurn,
+        )
+        filters = [
+            ScenarioSession.engine_type == "usual_days",
+            ScenarioTurn.chronicled_at == None,  # noqa: E711
+            ScenarioTurn.is_active == 1,
+        ]
+        if character_ids is None:
+            return filters
+        if not character_ids:
+            return [false()]
+        filters.append(Scenario.owner_character_id.in_(character_ids))
+        return filters
+
     def get_unchronicled_usual_turns_for_character(self, character_id: str) -> list:
         """chronicle 用: 対象キャラのうつつ世界の未処理ターンを時系列で返す（スケジューラ用）。
 
@@ -764,12 +802,7 @@ class ScenarioChatStoreMixin:
                 session.query(ScenarioTurn)
                 .join(ScenarioSession, ScenarioTurn.session_id == ScenarioSession.id)
                 .join(Scenario, ScenarioSession.scenario_id == Scenario.id)
-                .filter(
-                    Scenario.owner_character_id == character_id,
-                    ScenarioSession.engine_type == "usual_days",
-                    ScenarioTurn.chronicled_at == None,  # noqa: E711
-                    ScenarioTurn.is_active == 1,
-                )
+                .filter(*self.unchronicled_usual_turn_filters([character_id]))
                 .order_by(ScenarioTurn.created_at.asc())
                 .all()
             )

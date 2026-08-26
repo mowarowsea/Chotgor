@@ -84,6 +84,16 @@ class CharacterStoreMixin:
             from backend.repositories.sqlite.store import Character
             return session.query(Character).all()
 
+    def list_chronicle_target_characters(self) -> list:
+        """夜の棚卸し（Chronicle）の対象キャラを返す — ``ghost_model`` 設定済みのみ。
+
+        Chronicle 実処理（``run_pending_chronicles``）と計器 ``chronicle_backlog``
+        （``count_chronicle_backlog``）が **同じ対象定義** を見るための唯一の入り口。
+        両者がズレると「実処理が一生触らないレコードを滞留として数え続ける」
+        永久誤検知になるため、対象条件を変えるときは必ずここだけを変えること。
+        """
+        return [c for c in self.list_characters() if c.ghost_model]
+
     def update_character(self, character_id: str, **kwargs):
         """キャラクターの指定フィールドを更新する。"""
         with self.get_session() as session:

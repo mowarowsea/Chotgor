@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from sqlalchemy import false, or_
+
 class ChatStoreMixin:
     """チャットセッション・メッセージ・添付画像の作成・取得・更新・削除を担う Mixin。"""
 
@@ -205,6 +207,39 @@ class ChatStoreMixin:
                 .all()
             )
 
+    @staticmethod
+    def unchronicled_message_filters(character_names: list[str] | None = None) -> list:
+        """「未蒸留の 1on1 メッセージ」を選ぶ WHERE 条件を返す — 唯一の定義。
+
+        Chronicle 実処理（``get_unchronicled_messages_for_character``）と計器
+        ``chronicle_backlog``（``count_chronicle_backlog``）が同じ条件を共有するための
+        共通部品。両者の条件がズレると「実処理が一生触らないレコードを滞留として
+        数え続ける」永久誤検知になるため、条件を足すときは必ずここへ足すこと。
+
+        呼び出し側は ``ChatMessage`` に ``ChatSession`` を JOIN 済みであること
+        （キャラの紐付けが ``ChatSession.model_id`` にしか無いため）。
+
+        Args:
+            character_names: 対象キャラ名のリスト。None なら全キャラ（呼び出し側で
+                対象を絞る前提）。空リストは「対象キャラなし」として常に偽を返す。
+
+        Returns:
+            SQLAlchemy 式のリスト（``.filter(*ret)`` で使う）。
+        """
+        from backend.repositories.sqlite.store import ChatMessage, ChatSession
+        filters = [
+            ChatMessage.chronicled_at == None,  # noqa: E711
+            (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0),  # noqa: E711
+        ]
+        if character_names is None:
+            return filters
+        if not character_names:
+            return [false()]
+        filters.append(
+            or_(*[ChatSession.model_id.like(f"{n}@%") for n in character_names])
+        )
+        return filters
+
     def get_unchronicled_messages_for_character(self, character_name: str) -> list:
         """chronicle 用: chronicled_at が NULL のメッセージを時系列で返す（スケジューラー用）。
 
@@ -219,11 +254,7 @@ class ChatStoreMixin:
             return (
                 session.query(ChatMessage)
                 .join(ChatSession, ChatMessage.session_id == ChatSession.id)
-                .filter(
-                    ChatSession.model_id.like(f"{character_name}@%"),
-                    ChatMessage.chronicled_at == None,  # noqa: E711
-                    (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0),  # noqa: E711
-                )
+                .filter(*self.unchronicled_message_filters([character_name]))
                 .order_by(ChatMessage.created_at.asc())
                 .all()
             )

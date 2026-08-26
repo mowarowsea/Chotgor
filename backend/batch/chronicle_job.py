@@ -1052,8 +1052,8 @@ async def run_pending_chronicles(
         memory_manager: InscribedMemoryManager インスタンス（記憶蒸留に使用。None でもよい）。
         working_memory_manager: WorkingMemoryManager インスタンス（棚卸しに必須）。
     """
-    characters = sqlite.list_characters()
-    targets = [c for c in characters if c.ghost_model]
+    # 対象キャラ判定は計器 chronicle_backlog と共有する（ズレると永久誤検知になる）
+    targets = sqlite.list_chronicle_target_characters()
     settings = sqlite.get_all_settings()
 
     # ensemble_pc セッションを1度だけスキャンしてキャラ別 prefetch を作る

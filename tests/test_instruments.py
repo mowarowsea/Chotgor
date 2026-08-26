@@ -38,6 +38,55 @@ def _make_character(sqlite_store, name="はるテスト", ghost_model=None):
     return char_id, name
 
 
+def _age_row(sqlite_store, model, row_id, days=4, **extra):
+    """指定行の created_at を過去へ巻き戻して滞留を再現するヘルパー。
+
+    extra で他カラム（is_active など）も同時に書き換えられる。
+    """
+    with sqlite_store.get_session() as s:
+        row = s.get(model, row_id)
+        row.created_at = datetime.now() - timedelta(days=days)
+        for k, v in extra.items():
+            setattr(row, k, v)
+        s.commit()
+
+
+def _make_old_message(sqlite_store, char_name):
+    """指定キャラ宛の 1on1 セッションに「4日前の未蒸留メッセージ」を1件作る。"""
+    from backend.repositories.sqlite.models import ChatMessage
+
+    sid = str(uuid.uuid4())
+    sqlite_store.create_chat_session(session_id=sid, model_id=f"{char_name}@d")
+    msg_id = str(uuid.uuid4())
+    sqlite_store.create_chat_message(
+        message_id=msg_id, session_id=sid, role="user", content="古い発言",
+    )
+    _age_row(sqlite_store, ChatMessage, msg_id)
+    return msg_id
+
+
+def _make_old_usual_turn(sqlite_store, char_id, is_active=1):
+    """指定キャラのうつつ世界に「4日前の未蒸留ターン」を1件作る。"""
+    from backend.repositories.sqlite.models import ScenarioTurn
+
+    scenario_id = str(uuid.uuid4())
+    sqlite_store.create_scenario(
+        scenario_id=scenario_id, title="うつつ", owner_character_id=char_id,
+    )
+    session_id = str(uuid.uuid4())
+    sqlite_store.create_scenario_session(
+        session_id=session_id, scenario_id=scenario_id, title="うつつ",
+        gm_preset_id="p1", synopsis_preset_id="p1", engine_type="usual_days",
+    )
+    turn_id = str(uuid.uuid4())
+    sqlite_store.create_scenario_turn(
+        turn_id=turn_id, session_id=session_id, turn_index=0,
+        speaker_type="narrator", speaker_name="ナレーター", content="古い出来事",
+    )
+    _age_row(sqlite_store, ScenarioTurn, turn_id, is_active=is_active)
+    return turn_id
+
+
 class TestInstrumentStore:
     """アラーム・メーターの永続化（InstrumentStoreMixin）を検証するテストクラス。
 
@@ -172,23 +221,43 @@ class TestTier1Patrol:
 
     def test_chronicle_backlog(self, sqlite_store):
         """3日を超えて chronicled_at IS NULL のメッセージがあると発火する。"""
-        char_id, char_name = _make_character(sqlite_store)
-        sid = str(uuid.uuid4())
-        sqlite_store.create_chat_session(session_id=sid, model_id=f"{char_name}@d")
-        msg_id = str(uuid.uuid4())
-        sqlite_store.create_chat_message(
-            message_id=msg_id, session_id=sid, role="user", content="古い発言",
-        )
-        # created_at を4日前へ巻き戻して滞留を再現する
-        from backend.repositories.sqlite.models import ChatMessage
-        with sqlite_store.get_session() as s:
-            msg = s.get(ChatMessage, msg_id)
-            msg.created_at = datetime.now() - timedelta(days=4)
-            s.commit()
+        _, char_name = _make_character(sqlite_store, ghost_model="p1")
+        _make_old_message(sqlite_store, char_name)
         summary = run_patrol_checks(sqlite_store)
         assert summary["chronicle_backlog"] == 1
         details = sqlite_store.list_alarms(invariant_id="chronicle_backlog")[0].details
         assert details["backlog"]["chat_messages"] == 1
+
+    def test_chronicle_backlog_ignores_no_ghost_model(self, sqlite_store):
+        """ghost_model 未設定キャラの滞留は数えない（Chronicle が一生触らないため）。
+
+        計器と実処理の対象がズレていた頃は、テスト用キャラの古い発話が
+        永久に滞留として数えられ、アラームが鳴りっぱなしになっていた。
+        """
+        _, char_name = _make_character(sqlite_store, name="テスター", ghost_model=None)
+        _make_old_message(sqlite_store, char_name)
+        summary = run_patrol_checks(sqlite_store)
+        assert summary["chronicle_backlog"] == 0
+
+    def test_chronicle_backlog_counts_usual_turns(self, sqlite_store):
+        """ghost_model 持ちキャラの古いうつつターンは滞留として数える。"""
+        char_id, _ = _make_character(sqlite_store, ghost_model="p1")
+        _make_old_usual_turn(sqlite_store, char_id)
+        summary = run_patrol_checks(sqlite_store)
+        assert summary["chronicle_backlog"] == 1
+        details = sqlite_store.list_alarms(invariant_id="chronicle_backlog")[0].details
+        assert details["backlog"]["usual_turns"] == 1
+
+    def test_chronicle_backlog_ignores_inactive_usual_turns(self, sqlite_store):
+        """is_active=0 のうつつターン（再生成で落ちた枝）は滞留に数えない。
+
+        実処理 get_unchronicled_usual_turns_for_character が is_active=1 しか
+        読まないため、落ちた枝は永久に chronicled_at が NULL のまま残る。
+        """
+        char_id, _ = _make_character(sqlite_store, ghost_model="p1")
+        _make_old_usual_turn(sqlite_store, char_id, is_active=0)
+        summary = run_patrol_checks(sqlite_store)
+        assert summary["chronicle_backlog"] == 0
 
     def test_envelope_integrity(self, sqlite_store):
         """封筒件数が源件数を下回ると発火する（dual-write 漏れの検出）。"""

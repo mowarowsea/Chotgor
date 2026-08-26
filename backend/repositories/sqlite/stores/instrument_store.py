@@ -216,6 +216,12 @@ class InstrumentStoreMixin:
         計器 Tier 1 `chronicle_backlog` の材料。指定日数より古いのに未処理の
         1on1 メッセージとうつつターンの件数を返す。
 
+        対象キャラと未処理条件は Chronicle 実処理と**同じ定義**を共有する
+        （``list_chronicle_target_characters`` / ``unchronicled_message_filters`` /
+        ``unchronicled_usual_turn_filters``）。ここで独自に数え直すと、実処理が
+        一生触らないレコード（ghost_model 未設定キャラの発話・is_active=0 の枝）を
+        滞留として数え続ける永久誤検知になる。
+
         Args:
             days: 滞留とみなす日数（既定3日）。
 
@@ -224,28 +230,35 @@ class InstrumentStoreMixin:
         """
         from backend.repositories.sqlite.models import (
             ChatMessage,
+            ChatSession,
+            Scenario,
             ScenarioSession,
             ScenarioTurn,
         )
+
+        targets = self.list_chronicle_target_characters()
+        if not targets:
+            return {"chat_messages": 0, "usual_turns": 0}
+        target_names = [c.name for c in targets]
+        target_ids = [c.id for c in targets]
 
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_session() as session:
             chat_count = (
                 session.query(ChatMessage)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
                 .filter(
-                    ChatMessage.chronicled_at.is_(None),
+                    *self.unchronicled_message_filters(target_names),
                     ChatMessage.created_at < cutoff,
-                    (ChatMessage.is_system_message.is_(None))
-                    | (ChatMessage.is_system_message == 0),
                 )
                 .count()
             )
             usual_count = (
                 session.query(ScenarioTurn)
                 .join(ScenarioSession, ScenarioTurn.session_id == ScenarioSession.id)
+                .join(Scenario, ScenarioSession.scenario_id == Scenario.id)
                 .filter(
-                    ScenarioSession.engine_type == "usual_days",
-                    ScenarioTurn.chronicled_at.is_(None),
+                    *self.unchronicled_usual_turn_filters(target_ids),
                     ScenarioTurn.created_at < cutoff,
                 )
                 .count()
