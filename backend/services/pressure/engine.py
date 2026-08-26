@@ -60,6 +60,18 @@ _BOREDOM_DIVERSITY_NORM = 8.0
 # 関係の重みが引けない相手の既定値（コールドスタート）
 _DEFAULT_RELATION_WEIGHT = 0.35
 
+# --- 発話閾値の分位点化（docs/planned/aliveness_plan.md §4.1「表現」）---
+# 絶対値の閾値は「その定式化のときたまたま噛み合っていた数字」でしかなく、物理量の
+# 定式化を触るたびに言いすぎ／言わなすぎへ倒れる。閾値はキャラ自身の分布から取る。
+_SPEECH_WINDOW_DAYS = 60          # 分位点を引くメーター履歴の窓
+_SPEECH_MIN_SAMPLES = 20          # これ未満は絶対値へフォールバック（日次1点なので約3週間）
+_SPEECH_MIN_IQR = 0.05            # 分布がこれより平坦な圧は沈黙させる（下記参照）
+_SPEECH_Q_HIGH = 0.90             # 強い表現（HIGH プール）
+_SPEECH_Q_MID = 0.75              # 穏やかな表現（MID プール）
+_SPEECH_Q_GOOD = 0.20             # 好調（GOOD プール）
+# ウォームアップ中・分位点が引けないときの絶対値（high, mid, good）
+_SPEECH_ABS_THRESHOLDS = (0.8, 0.6, 0.2)
+
 # 圧力計算に読む封筒の窓（日）。社会圧の relief は tau 数日で消えるため十分な幅
 _EVENT_WINDOW_DAYS = 30
 
@@ -87,12 +99,18 @@ def _days_between(now: datetime, then: datetime) -> float:
     return max(0.0, (now - then).total_seconds() / 86400.0)
 
 
-def _partner_of(event) -> str | None:
+def _partner_of(event, self_name: str | None = None) -> str | None:
     """封筒から「対人接触の相手」ラベルを取り出す。対人イベントでなければ None。
 
     - chat.message / chat.farewell / action.performed(対ユーザ) → "user"
     - scene.turn で actor が npc:<名前> → その名前（うつつのNPCとの交流も接触）
     - narrator / system / 自分の独白などは対人ではない
+
+    Args:
+        event: 封筒。
+        self_name: キャラクター本人の名前。うつつの GM は PC 本人の発話も
+            `@<本人名>:` で書くため、渡さないと**自分との会話で社会圧が下がる**
+            （はるの実測で30日に89件混入していた）。
     """
     if event.event_type in ("chat.message", "chat.farewell"):
         return "user"
@@ -101,10 +119,43 @@ def _partner_of(event) -> str | None:
     if event.event_type == "scene.turn":
         actor = event.actor or ""
         if actor.startswith("npc:"):
-            return actor[4:]
+            name = actor[4:]
+            if self_name and name == self_name:
+                return None  # 自分は対人接触の相手ではない
+            return name
         if actor == "user":
             return "user"
     return None
+
+
+def _canonical_label_map(labels: set[str]) -> dict[str, str]:
+    """表記揺れした相手ラベルを、より詳しい表記へ寄せる対応表を作る。
+
+    うつつの NPC 名は GM が `@名前:` に書いたものがそのまま封筒へ入り、正規名の
+    辞書は存在しない（未知 NPC をそのまま通す設計）。このため同一人物が
+    「ひろこ」「田中ひろこ」のように分裂し、relation スレッドと突合できずに
+    コールドスタート既定値へ落ちる（＝関係を育てても社会圧が下がらない）。
+    同一視は封筒に現れたラベル集合だけから導く:
+
+        短いラベルが長いラベルの部分文字列で、その長いラベルが**一意**なら寄せる。
+
+    候補が複数あるとき（「佐藤」に対し「佐藤彰」と「佐藤花子」がある）は誰なのか
+    決められないため寄せない — 取り違えるくらいは分裂したままにしておく。
+    "user" は表記揺れしないので対象外。
+
+    Args:
+        labels: 封筒から集めた相手ラベルの集合。
+
+    Returns:
+        {揺れたラベル: 正規ラベル}。寄せ先がないものは含まない。
+    """
+    names = sorted(l for l in labels if l != "user")
+    mapping: dict[str, str] = {}
+    for short in names:
+        longer = [l for l in names if l != short and short in l]
+        if len(longer) == 1:
+            mapping[short] = longer[0]
+    return mapping
 
 
 # 同日の接触が「濃い」ほど安らぎを底上げする頭打ち付きブースト。
@@ -121,6 +172,7 @@ def compute_social(
     now: datetime,
     profile: dict,
     relation_weight_fn,
+    self_name: str | None = None,
 ) -> float:
     """社会圧 — 「人と関わっていない」の物理量を計算する。
 
@@ -148,6 +200,7 @@ def compute_social(
         now: 基準時刻。
         profile: merge_profile 済みの体質。
         relation_weight_fn: 相手ラベル → 関係の重み(0..1) を返す関数。
+        self_name: キャラクター本人の名前（自分との会話を接触から除くために使う）。
 
     Returns:
         社会圧（0.0〜1.0）。
@@ -156,12 +209,18 @@ def compute_social(
     sharpness = float(profile["social"]["sharpness"])
     gamma = 1.0 + 3.0 * max(0.0, min(1.0, sharpness))
 
+    # 表記揺れを寄せるため、先に封筒へ現れる相手ラベルを集める
+    canon = _canonical_label_map({
+        p for p in (_partner_of(ev, self_name) for ev in events) if p is not None
+    })
+
     # (相手, 日付) ごとに集約: 最新時刻・件数・対面接触の有無
     contacts: dict[tuple, dict] = {}
     for ev in events:
-        partner = _partner_of(ev)
+        partner = _partner_of(ev, self_name)
         if partner is None:
             continue
+        partner = canon.get(partner, partner)
         key = (partner, ev.occurred_at.date())
         bucket = contacts.setdefault(key, {"at": ev.occurred_at, "count": 0, "face": False})
         bucket["count"] += 1
@@ -361,7 +420,10 @@ def compute_pressures(sqlite, character_id: str, now: datetime | None = None) ->
     )
     weight_fn = _make_relation_weight_fn(sqlite, character_id)
     return {
-        "social": compute_social(events, now, profile, weight_fn),
+        "social": compute_social(
+            events, now, profile, weight_fn,
+            self_name=(getattr(char, "name", None) if char else None),
+        ),
         "boredom": compute_boredom(events, now, profile),
         "body": compute_body(events, now, profile, character_id),
     }
@@ -439,7 +501,84 @@ _BOREDOM_GOOD_LINES = (
 )
 
 
-def pressure_plain_lines(pressures: dict) -> list[str]:
+def _quantile(sorted_values: list[float], q: float) -> float:
+    """ソート済み数列の分位点を線形補間で返す（外部依存を増やさないための小実装）。"""
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    pos = q * (len(sorted_values) - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, len(sorted_values) - 1)
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
+
+
+def compute_speech_thresholds(sqlite, character_id: str, now: datetime | None = None) -> dict:
+    """圧ごとの発話閾値を、キャラ自身のメーター履歴の分位点から決める。
+
+    絶対値の閾値は「その定式化のときたまたま噛み合っていた数字」でしかなく、
+    物理量の定式化を変えるたびに言いすぎ／言わなすぎへ倒れる（実際に、旧・疲労成分では
+    平常運転が 0.46 に張り付き、好調ライン 0.2 へ構造的に到達できなかった）。
+    「その子にとって重い日／軽い日」を分布から決めれば、定式化がラフでも表現は偏らない。
+
+    **沈黙ガード**: 分位点は分布がどれだけ平坦でも必ず上位10%を作るため、素のままだと
+    毎日どれかの圧が何かを言う状態になる（60日ずっと 0.44〜0.46 でも最上位の日は喋る）。
+    分布の幅（IQR）が `_SPEECH_MIN_IQR` 未満の圧は沈黙させ、「中間域は何も言わない＝
+    沈黙も情報」という原則を分位点方式でも保つ。判定は圧ごと — 体調は平坦でも社会圧は
+    動いている、という状態があるため。
+
+    Args:
+        sqlite: SQLiteStore（メーター履歴の読み出しに使う）。
+        character_id: 対象キャラクター ID。
+        now: 基準時刻。None なら現在時刻。
+
+    Returns:
+        {"body"/"social"/"boredom": (high, mid, good) または None}。
+        None はその圧を沈黙させる合図。キー自体が無い圧は絶対値へフォールバックする
+        （ウォームアップ中・メーター読み出しに失敗したとき）。
+    """
+    from datetime import timedelta
+
+    now = now or datetime.now()
+    since = now - timedelta(days=_SPEECH_WINDOW_DAYS)
+    thresholds: dict = {}
+    for name in ("body", "social", "boredom"):
+        try:
+            rows = sqlite.list_meter_snapshots(
+                meter_id=f"pressure_{name}", character_id=character_id, since=since,
+            )
+        except Exception:
+            continue  # 読めなければ絶対値フォールバック（キーを置かない）
+        values = sorted(float(r.value) for r in rows)
+        if len(values) < _SPEECH_MIN_SAMPLES:
+            continue  # ウォームアップ中
+        iqr = _quantile(values, 0.75) - _quantile(values, 0.25)
+        if iqr < _SPEECH_MIN_IQR:
+            thresholds[name] = None  # 平坦すぎる — この圧は黙る
+            continue
+        thresholds[name] = (
+            _quantile(values, _SPEECH_Q_HIGH),
+            _quantile(values, _SPEECH_Q_MID),
+            _quantile(values, _SPEECH_Q_GOOD),
+        )
+    return thresholds
+
+
+def _pick_line(value: float, thresholds, high_pool, mid_pool, good_pool) -> str | None:
+    """1つの圧について、閾値に照らして淡白な一行を選ぶ（該当なしなら None＝沈黙）。"""
+    if thresholds is None:
+        return None  # 沈黙ガード発動中
+    high, mid, good = thresholds
+    if value >= high:
+        return random.choice(high_pool)
+    if value >= mid:
+        return random.choice(mid_pool)
+    if value <= good:
+        return random.choice(good_pool)
+    return None
+
+
+def pressure_plain_lines(pressures: dict, thresholds: dict | None = None) -> list[str]:
     """圧力を「生に近い淡白な一行」へ変換する（プロンプト注入用）。
 
     解釈済みの言葉ではなく物理の報告に留める — どう感じるか・WM body に
@@ -451,32 +590,24 @@ def pressure_plain_lines(pressures: dict) -> list[str]:
 
     Args:
         pressures: compute_pressures の戻り値。
+        thresholds: compute_speech_thresholds の戻り値。省略・キー欠落時はその圧に
+            絶対値閾値を使う（ウォームアップ中の縮退）。値が None の圧は沈黙する。
 
     Returns:
         淡白な一行のリスト（全部ニュートラルなら空リスト）。
     """
+    thresholds = thresholds or {}
+    pools = {
+        "body": (_BODY_HIGH_LINES, _BODY_MID_LINES, _BODY_GOOD_LINES),
+        "social": (_SOCIAL_HIGH_LINES, _SOCIAL_MID_LINES, _SOCIAL_GOOD_LINES),
+        "boredom": (_BOREDOM_HIGH_LINES, _BOREDOM_MID_LINES, _BOREDOM_GOOD_LINES),
+    }
     lines: list[str] = []
-    body = pressures.get("body", 0.0)
-    social = pressures.get("social", 0.0)
-    boredom = pressures.get("boredom", 0.0)
-    if body >= 0.8:
-        lines.append(random.choice(_BODY_HIGH_LINES))
-    elif body >= 0.6:
-        lines.append(random.choice(_BODY_MID_LINES))
-    elif body <= 0.2:
-        lines.append(random.choice(_BODY_GOOD_LINES))
-    if social >= 0.8:
-        lines.append(random.choice(_SOCIAL_HIGH_LINES))
-    elif social >= 0.6:
-        lines.append(random.choice(_SOCIAL_MID_LINES))
-    elif social <= 0.2:
-        lines.append(random.choice(_SOCIAL_GOOD_LINES))
-    if boredom >= 0.8:
-        lines.append(random.choice(_BOREDOM_HIGH_LINES))
-    elif boredom >= 0.6:
-        lines.append(random.choice(_BOREDOM_MID_LINES))
-    elif boredom <= 0.2:
-        lines.append(random.choice(_BOREDOM_GOOD_LINES))
+    for name in ("body", "social", "boredom"):
+        th = thresholds.get(name, _SPEECH_ABS_THRESHOLDS)
+        line = _pick_line(pressures.get(name, 0.0), th, *pools[name])
+        if line:
+            lines.append(line)
     return lines
 
 

@@ -315,7 +315,7 @@ def _action_slots(
                     forecast = "unavailable"
                 else:
                     pressures = _pressures_at(
-                        events, eval_at, profile, char.id, weight_fn
+                        events, eval_at, profile, char.id, weight_fn, self_name=char.name
                     )
                     hot = any(
                         intent_pressure(it, pressures, now=eval_at) >= _URGE_THRESHOLD
@@ -332,6 +332,7 @@ def _action_slots(
 
 def _pressures_at(
     events: list, t: datetime, profile: dict, character_id: str, weight_fn,
+    self_name: str | None = None,
 ) -> dict:
     """封筒リストから時刻 t の圧力3変数を計算する（無風外挿の1点）。
 
@@ -345,6 +346,7 @@ def _pressures_at(
         profile: merge_profile 済みの体質。
         character_id: 対象キャラ（体調圧リズム成分のシード）。
         weight_fn: 社会圧の相手別重み関数。
+        self_name: キャラクター本人の名前（自分との会話を対人接触から除くために使う）。
 
     Returns:
         {"social", "boredom", "body"}（各 0.0〜1.0）。
@@ -352,7 +354,7 @@ def _pressures_at(
     window_start = t - timedelta(days=_EVENT_WINDOW_DAYS)
     windowed = [e for e in events if e.occurred_at >= window_start]
     return {
-        "social": compute_social(windowed, t, profile, weight_fn),
+        "social": compute_social(windowed, t, profile, weight_fn, self_name=self_name),
         "boredom": compute_boredom(windowed, t, profile),
         "body": compute_body(windowed, t, profile, character_id),
     }
@@ -392,13 +394,13 @@ def _pressure_forecast(
     curve_intents = sorted(
         intents,
         key=lambda it: -intent_pressure(
-            it, _pressures_at(events, now, profile, char.id, weight_fn), now=now
+            it, _pressures_at(events, now, profile, char.id, weight_fn, self_name=char.name), now=now
         ),
     )[:_MAX_INTENT_CURVES]
     intent_series: dict = {it.id: [] for it in curve_intents}
 
     for t in grid:
-        p = _pressures_at(events, t, profile, char.id, weight_fn)
+        p = _pressures_at(events, t, profile, char.id, weight_fn, self_name=char.name)
         social.append(round(p["social"], 3))
         boredom.append(round(p["boredom"], 3))
         body.append(round(p["body"], 3))
@@ -423,7 +425,7 @@ def _pressure_forecast(
         )
         if not avail.available:
             continue
-        p = _pressures_at(events, eval_at, profile, char.id, weight_fn)
+        p = _pressures_at(events, eval_at, profile, char.id, weight_fn, self_name=char.name)
         hot = [
             it.description for it in intents
             if intent_pressure(it, p, now=eval_at) >= _URGE_THRESHOLD

@@ -12,6 +12,7 @@
 from backend.services.pressure.engine import (  # noqa: F401
     DEFAULT_PROFILE,
     compute_pressures,
+    compute_speech_thresholds,
     pressure_plain_lines,
     record_pressure_meters,
 )

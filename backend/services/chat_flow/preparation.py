@@ -266,11 +266,18 @@ async def prepare_context(
     motive_lines: list[str] | None = None
     active_intents: list[dict] | None = None
     try:
-        from backend.services.pressure import compute_pressures, pressure_plain_lines
+        from backend.services.pressure import (
+            compute_pressures,
+            compute_speech_thresholds,
+            pressure_plain_lines,
+        )
         sqlite_store = getattr(memory_manager, "sqlite", None)
         if sqlite_store is not None and request.character_id:
             pressures = compute_pressures(sqlite_store, request.character_id)
-            motive_lines = pressure_plain_lines(pressures)
+            # 発話閾値はキャラ自身の分布の分位点から取る（絶対値だと定式化を変える
+            # たびに言いすぎ／言わなすぎへ倒れる。§4.1「表現」）
+            thresholds = compute_speech_thresholds(sqlite_store, request.character_id)
+            motive_lines = pressure_plain_lines(pressures, thresholds)
             active_intents = [
                 {"description": i.description, "target": i.target}
                 for i in sqlite_store.list_intents(

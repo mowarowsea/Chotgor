@@ -31,6 +31,9 @@ from backend.services.pressure.engine import (
     _SOCIAL_MID_LINES,
     DEFAULT_PROFILE,
     _baseline_activity_rate,
+    _canonical_label_map,
+    compute_speech_thresholds,
+    _partner_of,
     compute_boredom,
     compute_body,
     compute_pressures,
@@ -163,6 +166,68 @@ class TestSocialPressure:
         assert p < 0.5
 
 
+class TestPartnerIdentification:
+    """対人接触の「相手」判定を検証するテストクラス。
+
+    うつつの封筒は GM が `@名前:` に書いた文字列がそのまま actor に入るため、
+    次の2つの汚染が構造的に起きる。どちらも社会圧を誤らせるので明示的に守る:
+
+    1. **キャラクター本人の混入** — GM は PC 本人の発話も `@<本人名>:` で書く。
+       素通しすると「自分と会話して人恋しさが癒える」ことになる
+       （はるの実測で30日に89件混入していた）。
+    2. **同一人物の表記揺れ** — 「ひろこ」と「田中ひろこ」が別人として扱われ、
+       relation スレッドと突合できずコールドスタート既定値へ落ちる。
+       正規名の辞書は存在しない（未知 NPC を通す設計）ため、封筒に現れた
+       ラベル集合だけから寄せ先を決める必要がある。
+    """
+
+    def test_self_is_not_a_partner(self):
+        """本人名の npc: 発話は対人接触として数えない。"""
+        ev = _FakeEvent("scene.turn", _NOW, actor="npc:はる")
+        assert _partner_of(ev, self_name="はる") is None
+        # 本人名を渡さなければ従来どおり相手として拾う（後方互換）
+        assert _partner_of(ev) == "はる"
+
+    def test_other_npc_is_still_a_partner(self):
+        """本人以外の npc: 発話はこれまでどおり相手として拾う。"""
+        ev = _FakeEvent("scene.turn", _NOW, actor="npc:田中ひろこ")
+        assert _partner_of(ev, self_name="はる") == "田中ひろこ"
+
+    def test_self_contact_does_not_relieve_social_pressure(self):
+        """自分との会話ばかりの週は、社会圧が下がらない。"""
+        events = [
+            _FakeEvent("scene.turn", _NOW - timedelta(hours=h), actor="npc:はる")
+            for h in range(1, 10)
+        ]
+        p = compute_social(events, _NOW, merge_profile(None), lambda p: 0.9, self_name="はる")
+        assert p == 1.0
+
+    def test_label_variant_folds_into_longer_form(self):
+        """短いラベルは、それを含む一意な長いラベルへ寄る。"""
+        m = _canonical_label_map({"ひろこ", "田中ひろこ", "菊地寛", "user"})
+        assert m == {"ひろこ": "田中ひろこ"}
+
+    def test_ambiguous_label_is_left_alone(self):
+        """寄せ先の候補が複数あるラベルは、取り違えを避けて寄せない。"""
+        m = _canonical_label_map({"佐藤", "佐藤彰", "佐藤花子"})
+        assert "佐藤" not in m
+
+    def test_variants_share_one_relation_weight(self):
+        """表記揺れした接触は同一人物として集約され、関係の重みが引ける。
+
+        「ひろこ」名義の接触も「田中ひろこ」の重み（厚い関係）で安らぐこと。
+        寄せが効かないと既定値（薄い関係）に落ちて社会圧が下がらない。
+        """
+        events = [
+            _FakeEvent("scene.turn", _NOW - timedelta(hours=2), actor="npc:ひろこ"),
+            _FakeEvent("scene.turn", _NOW - timedelta(hours=1), actor="npc:田中ひろこ"),
+        ]
+        weights = {"田中ひろこ": 0.9}
+        sharp = merge_profile({"social": {"sharpness": 1.0}})
+        p = compute_social(events, _NOW, sharp, lambda t: weights.get(t, 0.05))
+        assert p < 0.5
+
+
 class TestBoredomPressure:
     """退屈圧の計算を検証するテストクラス。"""
 
@@ -285,6 +350,84 @@ class TestPlainLines:
         assert any(line in _BODY_GOOD_LINES for line in lines)
         assert any(line in _SOCIAL_GOOD_LINES for line in lines)
         assert any(line in _BOREDOM_GOOD_LINES for line in lines)
+
+
+class TestSpeechThresholds:
+    """発話閾値の分位点化を検証するテストクラス。
+
+    絶対値の閾値は「その定式化のときたまたま噛み合っていた数字」でしかなく、
+    物理量を触るたびに言いすぎ／言わなすぎへ倒れる。そこで閾値をキャラ自身の
+    メーター履歴の分布から取る。ここで守るのは3点:
+
+    1. 十分な履歴と分散があれば分位点が引けること（p90/p75/p20）。
+    2. **沈黙ガード** — 分布が平坦な圧は黙ること。分位点は分布がどれだけ
+       平坦でも必ず上位10%を作るため、これが無いと毎日どれかの圧が喋る。
+    3. **ウォームアップ** — 履歴が足りない間は絶対値へフォールバックし、
+       導入直後に無言にならないこと。
+    """
+
+    @staticmethod
+    def _neutral(**overrides):
+        """全圧を絶対値閾値の沈黙域(0.4)に置き、指定した圧だけ差し替えるヘルパ。
+
+        1つの圧だけを dict に入れると、残りの圧が 0.0 として「好調」と判定され、
+        検証したい圧以外の一行が混ざる。
+        """
+        p = {"body": 0.4, "social": 0.4, "boredom": 0.4}
+        p.update(overrides)
+        return p
+
+    def _seed_meters(self, sqlite_store, char_id, meter_id, values):
+        """メーター履歴を日次1点ずつ過去へ遡って仕込むヘルパ。"""
+        base = datetime.now()
+        for i, v in enumerate(values):
+            sqlite_store.record_meter(
+                meter_id, v, character_id=char_id,
+                occurred_at=base - timedelta(days=i),
+            )
+
+    def test_quantiles_from_history(self, sqlite_store):
+        """十分な履歴と分散があれば p90/p75/p20 が閾値になる。"""
+        char_id, _ = _make_character(sqlite_store)
+        self._seed_meters(
+            sqlite_store, char_id, "pressure_body", [i / 40.0 for i in range(41)]
+        )
+        th = compute_speech_thresholds(sqlite_store, char_id)
+        high, mid, good = th["body"]
+        assert good < mid < high
+        assert 0.85 <= high <= 0.95
+        assert 0.15 <= good <= 0.25
+
+    def test_flat_distribution_is_silenced(self, sqlite_store):
+        """ほぼ動かない圧は沈黙する（IQR 下限ガード）。"""
+        char_id, _ = _make_character(sqlite_store)
+        self._seed_meters(
+            sqlite_store, char_id, "pressure_boredom", [0.45 + (i % 3) * 0.005 for i in range(30)]
+        )
+        th = compute_speech_thresholds(sqlite_store, char_id)
+        assert th["boredom"] is None
+        # 沈黙指定は実際に一行を落とす
+        assert pressure_plain_lines(self._neutral(boredom=0.46), th) == []
+
+    def test_warmup_falls_back_to_absolute(self, sqlite_store):
+        """履歴が足りない間は絶対値閾値へフォールバックする。"""
+        char_id, _ = _make_character(sqlite_store)
+        self._seed_meters(sqlite_store, char_id, "pressure_body", [0.1, 0.9, 0.5])
+        th = compute_speech_thresholds(sqlite_store, char_id)
+        assert "body" not in th  # キーを置かない＝絶対値へ
+        lines = pressure_plain_lines(self._neutral(body=0.85), th)
+        assert len(lines) == 1 and lines[0] in _BODY_HIGH_LINES
+
+    def test_thresholds_shift_what_gets_said(self, sqlite_store):
+        """同じ圧の値でも、その子の分布次第で言うことが変わる。
+
+        分位点化の眼目そのもの: 平均的に体調圧の高い子にとっての 0.5 は
+        「普通の日」であり、低い子にとっては「重い日」になる。
+        """
+        heavy = {"body": (0.9, 0.75, 0.4)}   # 高めに分布している子
+        light = {"body": (0.4, 0.3, 0.1)}    # 低めに分布している子
+        assert pressure_plain_lines(self._neutral(body=0.5), heavy) == []
+        assert pressure_plain_lines(self._neutral(body=0.5), light)[0] in _BODY_HIGH_LINES
 
 
 class TestComputePressuresIntegration:
