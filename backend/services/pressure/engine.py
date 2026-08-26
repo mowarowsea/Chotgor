@@ -36,26 +36,41 @@ _RHYTHM_AMPLITUDE = 0.25
 # 静かな日の自然減衰そのものが回復として働く（睡眠を別イベントとして数えない —
 # 夜間バッチの成否に依存しない堅い回復）。
 _FATIGUE_TAU_DAYS = 1.5
-# 疲労の正規化はキャラ自身の平常活動量から動的に導く（固定の魔法定数を置かない）:
-#   NORM = _FATIGUE_HEADROOM × 平常件数/日 × τ
-# 「平常の HEADROOM 倍の負荷が続くと疲労1.0」。平常はキャラのタイムラインから
-# 導出するので、よく喋る子は基準が上がり同じ量では疲れない（封筒から導く思想）。
+# 定常状態の load を平常件数/日 から導く係数。
+# 封筒は日単位に固まって並ぶ離散データなので、連続近似の τ ではなく等比級数の和
+# Σ_d exp(-d/τ) = 1/(1-exp(-1/τ)) を使う（τ=1.5 で 2.055）。τ で代用すると当日分が
+# 減衰なしで満額入るぶん平常 load を 1.37 倍過小に見積もり、平常運転の体調圧が
+# 中央(0.5)ではなく 0.64 に浮く。
+_FATIGUE_STEADY_FACTOR = 1.0 / (1.0 - math.exp(-1.0 / _FATIGUE_TAU_DAYS))
+# 疲労は固定の魔法定数ではなく、キャラ自身の平常活動量との**比**で測る:
+#   疲労 = 0.5 + 0.5 × log(load / 平常load) / log(_FATIGUE_HEADROOM)
+# 「平常運転＝0.5、平常の HEADROOM 倍＝1.0、平常の 1/HEADROOM 倍＝0.0」。平常は
+# キャラのタイムラインから導出するので、よく喋る子は基準が上がり同じ量では疲れない
+# （封筒から導く思想）。対数なので値がそのまま「平常の何倍か」を表し、疲労離席の
+# θ_hard を絶対値のまま意味づけできる。
 _FATIGUE_HEADROOM = 3.0
 # 平常件数/日 を測る観測窓（日）。短めにして直近の生活リズムへ追従させる
 # （週末たくさん→週明けに疲れ残り、といった週リズムが出る塩梅）。
 _FATIGUE_BASELINE_WINDOW_DAYS = 30
 # 平常が信頼して測れる最小データ日数。これ未満はコールドスタート扱い。
 _FATIGUE_BASELINE_MIN_DAYS = 7
-# コールドスタート時に仮定する平常件数/日。既定 NORM = HEADROOM×45×τ ≈ 200 となり、
-# データが貯まるまでは「200件/日クラスの活動で疲労1.0」の固定基準として振る舞う。
+# コールドスタート時に仮定する平常件数/日。既定の平常 load ≈ 45×2.055 ≈ 92 となり、
+# データが貯まるまでは「1日90件クラスの活動が平常」の固定基準として振る舞う。
 _FATIGUE_DEFAULT_RATE = 45.0
-# 平常件数/日 の下限（寡動キャラでも極端に小さい NORM にしない安全弁）。
+# 平常件数/日 の下限（寡動キャラでも極端に小さい平常 load にしない安全弁）。
 _FATIGUE_MIN_RATE = 15.0
+# load の下限。完全無活動（load=0）で log(0) が発散するのを防ぐ。
+# この値なら ratio が下限クランプ（疲労0.0）に十分届く。
+_FATIGUE_MIN_RATIO = 1e-6
 
-# 退屈圧の観測窓（日）と基準値
+# 退屈圧の観測窓（日）。直近窓と「それ以前」を比べて新規性を測る。
 _BOREDOM_WINDOW_DAYS = 7
-_BOREDOM_BASELINE_EVENTS_PER_DAY = 12.0
-_BOREDOM_DIVERSITY_NORM = 8.0
+# 新規性の比較対象にする「それ以前」の窓（日）。7+23=30 で封筒の取得窓と一致する。
+_BOREDOM_LOOKBACK_DAYS = 23
+# 密度と新規性の配合。w = _BOREDOM_W_BASE + _BOREDOM_W_SPAN × (1 - 体調圧) が
+# 新規性側の重みになる（体調が良い日ほど「代わり映えのなさ」が効く）。
+_BOREDOM_W_BASE = 0.3
+_BOREDOM_W_SPAN = 0.4
 
 # 関係の重みが引けない相手の既定値（コールドスタート）
 _DEFAULT_RELATION_WEIGHT = 0.35
@@ -64,6 +79,12 @@ _DEFAULT_RELATION_WEIGHT = 0.35
 # 絶対値の閾値は「その定式化のときたまたま噛み合っていた数字」でしかなく、物理量の
 # 定式化を触るたびに言いすぎ／言わなすぎへ倒れる。閾値はキャラ自身の分布から取る。
 _SPEECH_WINDOW_DAYS = 60          # 分位点を引くメーター履歴の窓
+# 圧力の定式化を変えた日。これより前のメーターは**別の物差しで測った値**なので
+# 分位点の材料にしない（例: 再定式化で社会圧は 0.63 → 0.00、退屈圧は 0.00 → 0.51 と
+# 分布ごと動いた。混ぜると新しい値が一律「下位」「上位」に貼りつく）。
+# 履歴を消す代わりに読む範囲を切る — 圧力は純関数なので、計器メーターは観測用として
+# そのまま残しておいてよい。**今後また定式化を変えたらこの日付を更新すること。**
+_FORMULA_EPOCH = datetime(2026, 8, 26)
 _SPEECH_MIN_SAMPLES = 20          # これ未満は絶対値へフォールバック（日次1点なので約3週間）
 _SPEECH_MIN_IQR = 0.05            # 分布がこれより平坦な圧は沈黙させる（下記参照）
 _SPEECH_Q_HIGH = 0.90             # 強い表現（HIGH プール）
@@ -173,6 +194,7 @@ def compute_social(
     profile: dict,
     relation_weight_fn,
     self_name: str | None = None,
+    top_weight: float | None = None,
 ) -> float:
     """社会圧 — 「人と関わっていない」の物理量を計算する。
 
@@ -190,10 +212,17 @@ def compute_social(
     しっかり話した日を同じ扱いにしないための調整（メッセージ数を無制限に
     効かせるわけではない）。
 
-    相手別重み: w_eff = 関係の重み ^ (1 + 3×体質の鋭さ)。
-    鋭さ 0（誰でもいい派）なら軽い関係でもそのまま安らぎになるが、
-    鋭さ 1（特定の人じゃないと駄目派）では軽い関係（0.35^4 ≈ 0.015）は
-    ほぼ安らがず、厚い関係（0.9^4 ≈ 0.66）だけが効く。
+    相手別重み: w_eff = 関係の重み^gamma ÷ (そのキャラの最も厚い関係の重み^gamma)、
+    gamma = 1 + 3×体質の鋭さ。鋭さ 0（誰でもいい派）なら軽い関係でもそのまま
+    安らぎになるが、鋭さ 1（特定の人じゃないと駄目派）では本命との差が開き、
+    軽い関係ではほとんど安らがなくなる。
+
+    **最も厚い関係で正規化する**のは、鋭さに「どれだけ安らぐか」の総量まで
+    削らせないため。冪乗の生値を使うと、鋭い体質のキャラは本命と会っていても
+    安らげない（実測: sharpness=0.9・本命の重み0.45 で 0.45^3.7 = 0.052 まで潰れ、
+    毎日会話していても社会圧が 0.6 台に張り付いた）。冪乗の生値は「関係の重みが
+    0.9 前後ある」ことを暗黙の前提にしていたが、WM スレッドの importance は
+    そのスケールで運用されていない。鋭さが決めるのは**誰と安らぐかの選択性**だけにする。
 
     Args:
         events: タイムライン封筒（時系列昇順）。
@@ -201,6 +230,10 @@ def compute_social(
         profile: merge_profile 済みの体質。
         relation_weight_fn: 相手ラベル → 関係の重み(0..1) を返す関数。
         self_name: キャラクター本人の名前（自分との会話を接触から除くために使う）。
+        top_weight: そのキャラが持つ**関係全体**の中で最も厚い重み（正規化の分母）。
+            None なら「今回接触した相手の中の最厚」で代用する。代用は縮退であって
+            等価ではない — 本命と会えていない週に薄い相手とだけ会うと、その相手が
+            分母になって満額安らいでしまうため、実運用では必ず渡すこと。
 
     Returns:
         社会圧（0.0〜1.0）。
@@ -229,10 +262,19 @@ def compute_social(
         if getattr(ev, "modality", None) == "face":
             bucket["face"] = True
 
+    # 最も厚い関係を分母に置く（鋭さは選択性だけを決め、総量は削らない）
+    raw_weights = {
+        partner: max(0.0, min(1.0, float(relation_weight_fn(partner)))) ** gamma
+        for partner, _date in contacts
+    }
+    if top_weight is not None:
+        top = max(0.0, min(1.0, float(top_weight))) ** gamma
+    else:
+        top = max(raw_weights.values(), default=0.0)
+
     relief = 0.0
     for (partner, _date), info in contacts.items():
-        weight = max(0.0, min(1.0, float(relation_weight_fn(partner))))
-        w_eff = weight ** gamma
+        w_eff = min(1.0, raw_weights[partner] / top) if top > 0 else 0.0
         richness = 1.0 + _SOCIAL_RICHNESS_GAIN * (
             min(info["count"], _SOCIAL_RICHNESS_CAP_COUNT) - 1
         )
@@ -241,13 +283,50 @@ def compute_social(
     return max(0.0, min(1.0, 1.0 - relief))
 
 
-def compute_boredom(events: list, now: datetime, profile: dict) -> float:
-    """退屈圧 — 直近タイムラインのイベント密度・多様性の低さを計算する。
+def _event_kinds(events: list, canon: dict) -> set:
+    """封筒の「種類」集合を作る（event_type・actor・origin の異なり）。
 
-    直近 _BOREDOM_WINDOW_DAYS 日の封筒について:
-        密度スコア   = min(1, 1日あたり件数 / 基準値)
-        多様性スコア = min(1, 種類数 / 基準値)（event_type・actor・origin の異なり数）
-        退屈圧 = clamp((1 - 密度×0.5 - 多様性×0.5) × 感度, 0, 1)
+    actor の NPC 名は表記揺れを寄せてから数える。寄せないと「ひろこ」と
+    「田中ひろこ」が別種になり、**同じ相手と会っているのに新顔が現れたように
+    見える**（新規性を過大評価する）。
+    """
+    kinds: set = set()
+    for ev in events:
+        kinds.add(("type", ev.event_type))
+        actor = ev.actor
+        if actor:
+            if actor.startswith("npc:"):
+                name = actor[4:]
+                actor = "npc:" + canon.get(name, name)
+            kinds.add(("actor", actor))
+        kinds.add(("origin", ev.origin))
+    return kinds
+
+
+def compute_boredom(
+    events: list, now: datetime, profile: dict, body: float | None = None,
+) -> float:
+    """退屈圧 — 生活の単調さ。密度の低さと新規性の乏しさから計算する。
+
+        密度   = min(1, 直近窓の件数/日 ÷ 平常件数/日)
+        新規性 = |直近窓の種類 − それ以前の種類| ÷ |直近窓の種類|
+        w      = _BOREDOM_W_BASE + _BOREDOM_W_SPAN × (1 - 体調圧)
+        退屈圧 = clamp((1 - (1-w)×密度 - w×新規性) × 感度, 0, 1)
+
+    2成分ともキャラ自身の平常からの**相対**で測る（体調圧と同じ平常を共有する）。
+    かつては密度基準12件/日・多様性基準8種の固定値だったが、実測（43.9件/日・27種）に対して
+    3.7倍・3.4倍で両方飽和し退屈圧が 0.00 に固定される一方、イベントの少ないキャラは
+    1.00 に固定され、**実質2値**になっていた。
+
+    「多様性＝異なり数の絶対値」をやめて新規性にしたのは、**反復を検出できない**ため。
+    毎日同じ顔ぶれ・同じ種類が繰り返されても異なり数は満点になる。実測では直近7日の
+    27種のうち新顔は2種（7%、しかも表記揺れ由来で実質ゼロ）で、実際には単調な生活を
+    「多様性満点」と誤判定していた。退屈の本質は密度ではなく新規性にある。
+
+    **配合 w を体調圧で変調する**のは、疲れている日に刺激の乏しさが効かないようにするため
+    （疲労時に新奇性希求が落ちる生理と一致）。圧力どうしを結合させる唯一の箇所で、
+    3圧独立の原則に対する意図的な例外。表現としても「しんどい＋沈黙」「好調＋単調」の
+    2つの一行が同じ方向を指し、ユーザ側に「今は放っておこう／今は話しかけよう」が伝わる。
 
     封筒のみの粗い計算でよい — 圧力は「いつ聞くか」だけを決め、
     高退屈圧→問い合わせ→「別に退屈じゃない、穏やかでいい」もまた発見。
@@ -256,25 +335,37 @@ def compute_boredom(events: list, now: datetime, profile: dict) -> float:
         events: タイムライン封筒。
         now: 基準時刻。
         profile: merge_profile 済みの体質。
+        body: 体調圧（配合の変調に使う）。None なら 0.5 で縮退する。
 
     Returns:
         退屈圧（0.0〜1.0）。
     """
     sensitivity = float(profile["boredom"]["sensitivity"])
-    window = [
+    recent = [
         ev for ev in events
         if _days_between(now, ev.occurred_at) <= _BOREDOM_WINDOW_DAYS
     ]
-    per_day = len(window) / _BOREDOM_WINDOW_DAYS
-    density_score = min(1.0, per_day / _BOREDOM_BASELINE_EVENTS_PER_DAY)
-    kinds: set = set()
-    for ev in window:
-        kinds.add(("type", ev.event_type))
-        if ev.actor:
-            kinds.add(("actor", ev.actor))
-        kinds.add(("origin", ev.origin))
-    diversity_score = min(1.0, len(kinds) / _BOREDOM_DIVERSITY_NORM)
-    raw = 1.0 - 0.5 * density_score - 0.5 * diversity_score
+    older = [
+        ev for ev in events
+        if _BOREDOM_WINDOW_DAYS < _days_between(now, ev.occurred_at)
+        <= _BOREDOM_WINDOW_DAYS + _BOREDOM_LOOKBACK_DAYS
+    ]
+
+    per_day = len(recent) / _BOREDOM_WINDOW_DAYS
+    baseline = _baseline_activity_rate(events, now)
+    density = min(1.0, per_day / baseline) if baseline > 0 else 0.0
+
+    canon = _canonical_label_map({
+        ev.actor[4:] for ev in events if ev.actor and ev.actor.startswith("npc:")
+    })
+    kinds_recent = _event_kinds(recent, canon)
+    kinds_older = _event_kinds(older, canon)
+    novelty = (
+        len(kinds_recent - kinds_older) / len(kinds_recent) if kinds_recent else 0.0
+    )
+
+    w = _BOREDOM_W_BASE + _BOREDOM_W_SPAN * (1.0 - (0.5 if body is None else body))
+    raw = 1.0 - (1.0 - w) * density - w * novelty
     return max(0.0, min(1.0, raw * sensitivity))
 
 
@@ -286,12 +377,16 @@ def rhythm_component(character_id: str, now: datetime) -> float:
     **誰も設計していない波** — 体質インタビューでも聞かない。
     乱数は世界に置く: シードが同じなら常に同じ波（絶対時刻に対して決定的）。
 
+    **中心はゼロ**（±振幅/2 で振れる）。波が好調側へ振れなければ「リズム」ではない —
+    以前は `0.5 × (1 + wave)` の片側加算で 0〜+振幅しか動かず、平均 +振幅/2 の
+    恒常的な下駄になっていた（谷でも「下駄が消える」だけで好調な日を作れなかった）。
+
     Args:
         character_id: キャラクター ID（シード）。
         now: 基準時刻。
 
     Returns:
-        リズム成分（0.0〜_RHYTHM_AMPLITUDE）。
+        リズム成分（-_RHYTHM_AMPLITUDE/2 〜 +_RHYTHM_AMPLITUDE/2）。
     """
     rng = random.Random(f"meguri-rhythm:{character_id}")
     peak = 7.0 if rng.random() < 0.5 else 30.0
@@ -300,7 +395,7 @@ def rhythm_component(character_id: str, now: datetime) -> float:
     phase = rng.random()
     days = (now - _RHYTHM_EPOCH).total_seconds() / 86400.0
     wave = math.sin(2.0 * math.pi * (days / period + phase))
-    return _RHYTHM_AMPLITUDE * 0.5 * (1.0 + wave)
+    return _RHYTHM_AMPLITUDE * 0.5 * wave
 
 
 def _baseline_activity_rate(events: list, now: datetime) -> float:
@@ -344,14 +439,28 @@ def compute_body(
 ) -> float:
     """体調圧 — 疲労成分（イベント密度の減衰積分）＋リズム成分（固有周期の波）。
 
-    疲労 = Σ_(活動イベント) exp(-経過日数 / tau) / NORM
-           NORM = _FATIGUE_HEADROOM × 平常件数/日 × tau
+    load     = Σ_(活動イベント) exp(-経過日数 / tau)
+    平常load = 平常件数/日 × _FATIGUE_STEADY_FACTOR   # 定常状態の load
+    ratio    = load / 平常load            # 平常運転で 1.0
+    疲労 = 0.5 + 0.5 × log(ratio) / log(_FATIGUE_HEADROOM)
 
-    正規化 NORM をキャラ自身の平常活動量から動的に導く（固定の魔法定数を置かない）。
-    「平常の HEADROOM 倍の負荷が続くと疲労1.0」。よく喋る子は基準が上がり同じ量では
-    疲れない。夢中で夜更かしした翌日は疲労が溜まった状態から始まる（減衰積分なので
-    「後でどっと来る」は追加実装なしに創発する）。回復は静かな日の指数減衰が担う
-    （τ=1.5 = 1日で約半分回復）。夜間バッチ（night.*）は活動でも回復項でもなく無視する。
+    キャラ自身の平常活動量からの**比**で測る（固定の魔法定数を置かない）。
+    **平常運転＝0.5、平常の HEADROOM 倍＝1.0、平常の 1/HEADROOM 倍＝0.0**。
+    よく喋る子は基準が上がり同じ量では疲れない。夢中で夜更かしした翌日は疲労が
+    溜まった状態から始まる（減衰積分なので「後でどっと来る」は追加実装なしに創発する）。
+    回復は静かな日の指数減衰が担う（τ=1.5 = 1日で約半分回復）。
+    夜間バッチ（night.*）は活動でも回復項でもなく無視する。
+
+    中心を 0.5 に置くのは、**好調側にも解像度を残す**ため。かつては
+    `load / (HEADROOM × 平常rate × τ)` としていたが、定常状態では load ≈ 平常rate × τ
+    なので**定義上、平常運転で 1/HEADROOM ≒ 0.33 に張り付いた**（「平常＝すでに3割疲れて
+    いる」）。逆に超過分だけを取る `max(0, load-平常load)/…` では平常以下が全て 0 に潰れ、
+    今度は好調側が見えなくなる。対数なら平常を挟んで両側に開く。
+    副産物として**値がそのまま「平常の何倍か」を表す**ので、疲労離席の θ_hard を
+    絶対値のまま意味づけできる（0.95 ≒ 平常の2.0倍。§5.2）。
+
+    体質係数 `fatigue_sensitivity` は**超過側（ratio > 1）にのみ**掛ける。
+    「疲れやすさ」であって「回復しにくさ」ではないため、静かな日の落ち方までは変えない。
 
     Args:
         events: タイムライン封筒。
@@ -368,13 +477,21 @@ def compute_body(
         if ev.event_type.startswith("night."):
             continue  # 夜間バッチは活動でも回復でもない（回復は減衰が担う）
         load += math.exp(-_days_between(now, ev.occurred_at) / _FATIGUE_TAU_DAYS)
-    norm = _FATIGUE_HEADROOM * _baseline_activity_rate(events, now) * _FATIGUE_TAU_DAYS
-    fatigue = max(0.0, min(1.0, (load / norm) * sensitivity))
+    base_load = _baseline_activity_rate(events, now) * _FATIGUE_STEADY_FACTOR
+    ratio = max(load, _FATIGUE_MIN_RATIO) / base_load
+    fatigue = 0.5 + 0.5 * math.log(ratio) / math.log(_FATIGUE_HEADROOM)
+    if ratio > 1.0:
+        fatigue = 0.5 + (fatigue - 0.5) * sensitivity
+    fatigue = max(0.0, min(1.0, fatigue))
     return max(0.0, min(1.0, fatigue + rhythm_component(character_id, now)))
 
 
 def _make_relation_weight_fn(sqlite, character_id: str):
-    """相手ラベル → 関係の重み(0..1) を返す関数を作る。
+    """相手ラベル → 関係の重み(0..1) を返す関数と、関係全体の最厚の重みを作る。
+
+    Returns:
+        (weight_fn, top_weight)。top_weight は compute_social の正規化の分母
+        （その子にとって最も厚い関係）。relation スレッドが1件も無ければ既定値。
 
     関係の重み = relation 系 WM スレッド（relation_target 一致）の importance。
     見つからない相手は既定値（コールドスタート）。ユーザも特別扱いしない —
@@ -396,7 +513,8 @@ def _make_relation_weight_fn(sqlite, character_id: str):
         label = user_label if (partner == "user" and user_label) else partner
         return weights.get(label, _DEFAULT_RELATION_WEIGHT)
 
-    return weight_fn
+    top_weight = max(weights.values(), default=_DEFAULT_RELATION_WEIGHT)
+    return weight_fn, top_weight
 
 
 def compute_pressures(sqlite, character_id: str, now: datetime | None = None) -> dict:
@@ -418,14 +536,17 @@ def compute_pressures(sqlite, character_id: str, now: datetime | None = None) ->
     events = sqlite.list_timeline_events(
         character_id, since=now - timedelta(days=_EVENT_WINDOW_DAYS), until=now,
     )
-    weight_fn = _make_relation_weight_fn(sqlite, character_id)
+    weight_fn, top_weight = _make_relation_weight_fn(sqlite, character_id)
+    # 退屈圧は体調圧で配合が変わる（§4.1）ため、体調圧を先に確定させる
+    body = compute_body(events, now, profile, character_id)
     return {
         "social": compute_social(
             events, now, profile, weight_fn,
             self_name=(getattr(char, "name", None) if char else None),
+            top_weight=top_weight,
         ),
-        "boredom": compute_boredom(events, now, profile),
-        "body": compute_body(events, now, profile, character_id),
+        "boredom": compute_boredom(events, now, profile, body=body),
+        "body": body,
     }
 
 
@@ -521,11 +642,18 @@ def compute_speech_thresholds(sqlite, character_id: str, now: datetime | None = 
     平常運転が 0.46 に張り付き、好調ライン 0.2 へ構造的に到達できなかった）。
     「その子にとって重い日／軽い日」を分布から決めれば、定式化がラフでも表現は偏らない。
 
-    **沈黙ガード**: 分位点は分布がどれだけ平坦でも必ず上位10%を作るため、素のままだと
+    **平坦ガード**: 分位点は分布がどれだけ平坦でも必ず上位10%を作るため、素のままだと
     毎日どれかの圧が何かを言う状態になる（60日ずっと 0.44〜0.46 でも最上位の日は喋る）。
-    分布の幅（IQR）が `_SPEECH_MIN_IQR` 未満の圧は沈黙させ、「中間域は何も言わない＝
-    沈黙も情報」という原則を分位点方式でも保つ。判定は圧ごと — 体調は平坦でも社会圧は
-    動いている、という状態があるため。
+    分布の幅（IQR）が `_SPEECH_MIN_IQR` 未満の圧は**絶対値閾値へ戻す**。判定は圧ごと —
+    体調は平坦でも社会圧は動いている、という状態があるため。
+
+    「平坦なら黙る」ではなく「平坦なら絶対値」なのは、張り付き先が中庸とは限らないから。
+    中庸に平坦なら絶対値でもどの帯にも入らず結局沈黙する（目的は達せられる）が、端に
+    張り付いている圧（毎日会えていて社会圧がゼロ、など）は**その事実を言えたほうがよい**。
+    黙らせるとこの情報まで落ちる。
+
+    **移行期**: `_FORMULA_EPOCH` より前のメーターは読まない（別の物差しの値のため）。
+    再定式化の直後は必然的にウォームアップ扱いになり、絶対値閾値で動く。
 
     Args:
         sqlite: SQLiteStore（メーター履歴の読み出しに使う）。
@@ -533,14 +661,14 @@ def compute_speech_thresholds(sqlite, character_id: str, now: datetime | None = 
         now: 基準時刻。None なら現在時刻。
 
     Returns:
-        {"body"/"social"/"boredom": (high, mid, good) または None}。
-        None はその圧を沈黙させる合図。キー自体が無い圧は絶対値へフォールバックする
-        （ウォームアップ中・メーター読み出しに失敗したとき）。
+        {"body"/"social"/"boredom": (high, mid, good)}。
+        キーが無い圧は絶対値閾値へフォールバックする（ウォームアップ中・分布が平坦・
+        メーター読み出しに失敗したとき）。
     """
     from datetime import timedelta
 
     now = now or datetime.now()
-    since = now - timedelta(days=_SPEECH_WINDOW_DAYS)
+    since = max(now - timedelta(days=_SPEECH_WINDOW_DAYS), _FORMULA_EPOCH)
     thresholds: dict = {}
     for name in ("body", "social", "boredom"):
         try:
@@ -554,8 +682,7 @@ def compute_speech_thresholds(sqlite, character_id: str, now: datetime | None = 
             continue  # ウォームアップ中
         iqr = _quantile(values, 0.75) - _quantile(values, 0.25)
         if iqr < _SPEECH_MIN_IQR:
-            thresholds[name] = None  # 平坦すぎる — この圧は黙る
-            continue
+            continue  # 平坦すぎる — 分位点に意味がないので絶対値へ戻す
         thresholds[name] = (
             _quantile(values, _SPEECH_Q_HIGH),
             _quantile(values, _SPEECH_Q_MID),
@@ -566,8 +693,6 @@ def compute_speech_thresholds(sqlite, character_id: str, now: datetime | None = 
 
 def _pick_line(value: float, thresholds, high_pool, mid_pool, good_pool) -> str | None:
     """1つの圧について、閾値に照らして淡白な一行を選ぶ（該当なしなら None＝沈黙）。"""
-    if thresholds is None:
-        return None  # 沈黙ガード発動中
     high, mid, good = thresholds
     if value >= high:
         return random.choice(high_pool)
@@ -591,7 +716,7 @@ def pressure_plain_lines(pressures: dict, thresholds: dict | None = None) -> lis
     Args:
         pressures: compute_pressures の戻り値。
         thresholds: compute_speech_thresholds の戻り値。省略・キー欠落時はその圧に
-            絶対値閾値を使う（ウォームアップ中の縮退）。値が None の圧は沈黙する。
+            絶対値閾値を使う（ウォームアップ中・分布が平坦なときの縮退）。
 
     Returns:
         淡白な一行のリスト（全部ニュートラルなら空リスト）。

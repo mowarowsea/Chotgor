@@ -276,7 +276,7 @@ def _calendar_scenes(
 
 def _action_slots(
     sqlite, char, days: list[date], now: datetime, intents: list, events: list,
-    profile: dict, weight_fn,
+    profile: dict, weight_fn, top_weight: float | None = None,
 ) -> list[dict]:
     """カレンダー期間内の行動権評価スロットと発火予報を計算する。
 
@@ -315,7 +315,7 @@ def _action_slots(
                     forecast = "unavailable"
                 else:
                     pressures = _pressures_at(
-                        events, eval_at, profile, char.id, weight_fn, self_name=char.name
+                        events, eval_at, profile, char.id, weight_fn, self_name=char.name, top_weight=top_weight
                     )
                     hot = any(
                         intent_pressure(it, pressures, now=eval_at) >= _URGE_THRESHOLD
@@ -332,7 +332,7 @@ def _action_slots(
 
 def _pressures_at(
     events: list, t: datetime, profile: dict, character_id: str, weight_fn,
-    self_name: str | None = None,
+    self_name: str | None = None, top_weight: float | None = None,
 ) -> dict:
     """封筒リストから時刻 t の圧力3変数を計算する（無風外挿の1点）。
 
@@ -353,16 +353,19 @@ def _pressures_at(
     """
     window_start = t - timedelta(days=_EVENT_WINDOW_DAYS)
     windowed = [e for e in events if e.occurred_at >= window_start]
+    body = compute_body(windowed, t, profile, character_id)
     return {
-        "social": compute_social(windowed, t, profile, weight_fn, self_name=self_name),
-        "boredom": compute_boredom(windowed, t, profile),
-        "body": compute_body(windowed, t, profile, character_id),
+        "social": compute_social(
+            windowed, t, profile, weight_fn, self_name=self_name, top_weight=top_weight,
+        ),
+        "boredom": compute_boredom(windowed, t, profile, body=body),
+        "body": body,
     }
 
 
 def _pressure_forecast(
     sqlite, char, intents: list, events: list, profile: dict, weight_fn,
-    now: datetime, horizon_hours: int,
+    now: datetime, horizon_hours: int, top_weight: float | None = None,
 ) -> dict:
     """圧力3変数＋意図圧の無風外挿カーブと「問い合わせ予報点」を計算する。
 
@@ -394,13 +397,13 @@ def _pressure_forecast(
     curve_intents = sorted(
         intents,
         key=lambda it: -intent_pressure(
-            it, _pressures_at(events, now, profile, char.id, weight_fn, self_name=char.name), now=now
+            it, _pressures_at(events, now, profile, char.id, weight_fn, self_name=char.name, top_weight=top_weight), now=now
         ),
     )[:_MAX_INTENT_CURVES]
     intent_series: dict = {it.id: [] for it in curve_intents}
 
     for t in grid:
-        p = _pressures_at(events, t, profile, char.id, weight_fn, self_name=char.name)
+        p = _pressures_at(events, t, profile, char.id, weight_fn, self_name=char.name, top_weight=top_weight)
         social.append(round(p["social"], 3))
         boredom.append(round(p["boredom"], 3))
         body.append(round(p["body"], 3))
@@ -425,7 +428,7 @@ def _pressure_forecast(
         )
         if not avail.available:
             continue
-        p = _pressures_at(events, eval_at, profile, char.id, weight_fn, self_name=char.name)
+        p = _pressures_at(events, eval_at, profile, char.id, weight_fn, self_name=char.name, top_weight=top_weight)
         hot = [
             it.description for it in intents
             if intent_pressure(it, p, now=eval_at) >= _URGE_THRESHOLD
@@ -523,7 +526,7 @@ def build_forecast(
 
     # --- 共有材料（1回だけ取得して各セクションで使い回す）---
     profile = merge_profile(getattr(char, "pressure_profile", None))
-    weight_fn = _make_relation_weight_fn(sqlite, character_id)
+    weight_fn, top_weight = _make_relation_weight_fn(sqlite, character_id)
     events = sqlite.list_timeline_events(
         character_id,
         since=now - timedelta(days=_EVENT_WINDOW_DAYS),
@@ -580,6 +583,7 @@ def build_forecast(
         "scenes": _calendar_scenes(sqlite, char, cfg, planned_orm, days),
         "action_slots": _action_slots(
             sqlite, char, days, now, intents, events, profile, weight_fn,
+            top_weight,
         ),
         "usual_enabled": cfg is not None,
     }
@@ -587,6 +591,7 @@ def build_forecast(
     # --- 圧力予報（無風外挿）---
     pressure_forecast = _pressure_forecast(
         sqlite, char, intents, events, profile, weight_fn, now, horizon_hours,
+        top_weight=top_weight,
     )
 
     # --- 決定ログ（実績と不発理由）---

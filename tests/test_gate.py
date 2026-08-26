@@ -209,12 +209,17 @@ class TestFatigueLeave:
     """
 
     def _exhaust(self, sqlite_store, char_id, count=300, base=None):
-        """直近数時間に大量の活動イベントを積んで体調圧を最大化するヘルパ。"""
+        """直近数時間に大量の活動イベントを積んで体調圧を最大化するヘルパ。
+
+        1分刻みで詰めるのは、体調圧が**平常との比の対数**になったため。
+        5分刻み（25時間に散る）だと減衰で load が目減りし、リズム成分（±0.125）の
+        位相次第で θ を跨いだり跨がなかったりしてフレーキーになる。
+        """
         base = base or datetime.now()
         for i in range(count):
             sqlite_store.record_timeline_event(
                 character_id=char_id, event_type="scene.turn",
-                origin="usual", occurred_at=base - timedelta(minutes=i * 5),
+                origin="usual", occurred_at=base - timedelta(minutes=i),
             )
 
     def test_no_fatigue_config_never_fires(self, sqlite_store):
