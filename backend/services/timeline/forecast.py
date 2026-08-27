@@ -314,11 +314,8 @@ def _action_slots(
                 if not avail.available:
                     forecast = "unavailable"
                 else:
-                    pressures = _pressures_at(
-                        events, eval_at, profile, char.id, weight_fn, self_name=char.name, top_weight=top_weight
-                    )
                     hot = any(
-                        intent_pressure(it, pressures, now=eval_at) >= _URGE_THRESHOLD
+                        intent_pressure(it, now=eval_at) >= _URGE_THRESHOLD
                         for it in intents
                     )
                     forecast = "fires" if hot else "quiet"
@@ -396,9 +393,7 @@ def _pressure_forecast(
     # 意図圧カーブは現在圧の高い順に上位のみ（グラフの可読性）
     curve_intents = sorted(
         intents,
-        key=lambda it: -intent_pressure(
-            it, _pressures_at(events, now, profile, char.id, weight_fn, self_name=char.name, top_weight=top_weight), now=now
-        ),
+        key=lambda it: -intent_pressure(it, now=now),
     )[:_MAX_INTENT_CURVES]
     intent_series: dict = {it.id: [] for it in curve_intents}
 
@@ -409,7 +404,7 @@ def _pressure_forecast(
         body.append(round(p["body"], 3))
         for it in curve_intents:
             intent_series[it.id].append(
-                round(intent_pressure(it, p, now=t), 3)
+                round(intent_pressure(it, now=t), 3)
             )
 
     # 問い合わせ予報点: 未来の行動権評価時刻 × available × 閾値超え
@@ -428,10 +423,9 @@ def _pressure_forecast(
         )
         if not avail.available:
             continue
-        p = _pressures_at(events, eval_at, profile, char.id, weight_fn, self_name=char.name, top_weight=top_weight)
         hot = [
             it.description for it in intents
-            if intent_pressure(it, p, now=eval_at) >= _URGE_THRESHOLD
+            if intent_pressure(it, now=eval_at) >= _URGE_THRESHOLD
         ]
         if hot:
             fire_points.append({"at": _iso(eval_at), "descriptions": hot})

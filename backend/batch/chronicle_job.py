@@ -1001,7 +1001,8 @@ async def run_chronicle(
     counts = {**wm_counts, **distill_counts}
 
     # 意図の拾い上げ（めぐり Phase 4・Chronicle 同乗）: 「あとに残りそうな『〜したい』は
-    # ある？　なければないでいい」を本人に問い、失効・不満化の候補も本人に裁かせる。
+    # ある？　なければないでいい」を本人に問い、14日超 active の意図も本人に裁かせる
+    # （満ちた／手放す／不満／このまま継続）。
     # 会話で芽生えた意図は WM に残り、ここ（夢の中）で発見される。
     # 拾い上げの失敗は Chronicle 本体の成功を壊さない。
     try:
@@ -1017,7 +1018,8 @@ async def run_chronicle(
         # スキップ・失敗時は counts に載せない（counts は「実施した処理の件数」の辞書）
         if pickup.get("status") == "success":
             counts["intents"] = {
-                k: pickup.get(k, 0) for k in ("created", "expired", "soured")
+                k: pickup.get(k, 0)
+                for k in ("created", "fulfilled", "expired", "soured")
             }
     except Exception:
         logger.exception("意図の拾い上げに失敗 char=%s", char_label)

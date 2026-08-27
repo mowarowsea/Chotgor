@@ -72,9 +72,8 @@ def evaluate_action_urge(sqlite, character_id: str, now: datetime | None = None)
     active = sqlite.list_intents(character_id, status="active")
     if not active:
         return []
-    pressures = compute_pressures(sqlite, character_id, now=now)
     scored = [
-        (intent_pressure(i, pressures, now=now), i) for i in active
+        (intent_pressure(i, now=now), i) for i in active
     ]
     hot = [(p, i) for p, i in scored if p >= _URGE_THRESHOLD]
     hot.sort(key=lambda t: t[0], reverse=True)
@@ -106,7 +105,7 @@ def action_urge_snapshot(sqlite, character_id: str, now: datetime | None = None)
                 "intent_id": str(i.id),
                 "description": i.description,
                 "source_kind": i.source_kind,
-                "pressure": round(intent_pressure(i, pressures, now=now), 3),
+                "pressure": round(intent_pressure(i, now=now), 3),
             }
             for i in active
         ),

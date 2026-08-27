@@ -10,7 +10,9 @@
 問いの原則:
     - 「あとに残りそうな『〜したい』はある？　なければないでいい。」（捏造の遮断）
     - 重複気味の意図は機械でマージせず、既存 active 一覧を設問に添えて本人に束ねさせる
-    - 失効・不満化は機械が候補を挙げ、本人が裁く
+    - 終端遷移は機械が候補（14日超 active）を挙げるだけで、種別は本人が裁く
+    - 「満ちた」を宣言できる経路をここに置く（2026-08-27）。行動権の帰還だけが fulfilled への
+      道だと、1on1 で話し切った意図が active のまま滞留し、毎ターン block_motive に載り続ける
 """
 
 import logging
@@ -18,16 +20,14 @@ import re
 from datetime import datetime
 
 from backend.services.character_query import ask_character
-from backend.services.intents.lifecycle import (
-    expired_candidates,
-    soured_candidates,
-)
+from backend.services.intents.lifecycle import stale_candidates
 from backend.services.pressure import compute_pressures
 
 logger = logging.getLogger(__name__)
 
 # 返答から意図操作を拾うタグ。書式は本人向け設問文と対で維持すること。
 _NEW_RE = re.compile(r"\[INTENT_NEW:\s*([^|\]]+?)\s*(?:\|\s*([^\]]*?)\s*)?\]")
+_FULFILLED_RE = re.compile(r"\[INTENT_FULFILLED:\s*([0-9a-fA-F-]+)\s*\]")
 _RELEASE_RE = re.compile(r"\[INTENT_RELEASE:\s*([0-9a-fA-F-]+)\s*\]")
 _SOURED_RE = re.compile(r"\[INTENT_SOURED:\s*([0-9a-fA-F-]+)\s*\|\s*([^\]]+?)\s*\]")
 
@@ -55,15 +55,13 @@ def _guess_source_kind(pressures: dict) -> str:
 
 def build_pickup_question(
     active_intents: list,
-    expired: list,
-    soured: list,
+    stale: list,
 ) -> str:
     """拾い上げの設問文を組み立てる。
 
     Args:
         active_intents: 既存の active 意図（束ね・重複判断の材料として添える）。
-        expired: 失効候補（「まだ心にある？」を問う対象）。
-        soured: 不満化候補（「出口がなかった？」を問う対象）。
+        stale: 終端遷移の候補（14日超 active。手放す／満ちた／不満／継続は本人が選ぶ）。
 
     Returns:
         ask_character に渡す設問テキスト。
@@ -85,30 +83,25 @@ def build_pickup_question(
         lines += [
             "新しく挙げるものが上のどれかと同じ・ほぼ同じなら、挙げ直さなくていい。",
         ]
-    if expired:
+    if stale:
         lines += [
             "",
-            "それと、ずいぶん前に書き留めたまま静かになっているものがある。"
-            "これ、まだ心にある？　もう手放していいなら、そう言って:",
+            "それと、書き留めてからしばらく経っているものがある。いまどうなってる？　"
+            "もう果たしたのか、手放していいのか、叶わないままもどかしいのか——"
+            "このまま持っておく、でも構わない:",
         ]
-        for intent in expired:
-            lines.append(f"- [{intent.id}] {intent.description}")
-    if soured:
-        lines += [
-            "",
-            "こっちは、ずっと心にあるのに叶っていないみたいだ。"
-            "もし不満・もどかしさになっているなら、その気持ちを言葉にしてほしい:",
-        ]
-        for intent in soured:
+        for intent in stale:
             lines.append(f"- [{intent.id}] {intent.description}")
     lines += [
         "",
         "答え方（当てはまるものだけ。1〜3個まで）:",
         "- 新しく残したい: `[INTENT_NEW: あなたの言葉のまま | 相手]`"
         "（相手は user / npc:名前 / self のどれか。省略可）",
+        "- もう果たした・満ちた: `[INTENT_FULFILLED: id]`",
         "- 手放す: `[INTENT_RELEASE: id]`",
-        "- 不満になっている: `[INTENT_SOURED: id | 不満の言葉]`",
-        "- 何もなければ、タグは書かなくていい。",
+        "- 叶わないまま不満になっている: `[INTENT_SOURED: id | 不満の言葉]`",
+        "- 何もなければ、タグは書かなくていい"
+        "（触れなかったものは、そのまま持ち続ける扱いになる）。",
     ]
     return "\n".join(lines)
 
@@ -121,6 +114,7 @@ def parse_pickup_response(text: str) -> dict:
 
     Returns:
         {"new": [{"description": str, "target": str|None}],
+         "fulfilled": [id, ...],
          "release": [id, ...],
          "soured": [{"id": str, "words": str}]} の辞書。
     """
@@ -134,12 +128,18 @@ def parse_pickup_response(text: str) -> dict:
             target = f"npc:{target}"
         if description:
             new.append({"description": description, "target": target})
+    fulfilled = [m.group(1).strip() for m in _FULFILLED_RE.finditer(text)]
     release = [m.group(1).strip() for m in _RELEASE_RE.finditer(text)]
     soured = [
         {"id": m.group(1).strip(), "words": m.group(2).strip()}
         for m in _SOURED_RE.finditer(text)
     ]
-    return {"new": new[:_MAX_NEW_INTENTS], "release": release, "soured": soured}
+    return {
+        "new": new[:_MAX_NEW_INTENTS],
+        "fulfilled": fulfilled,
+        "release": release,
+        "soured": soured,
+    }
 
 
 async def run_intent_pickup(
@@ -154,10 +154,11 @@ async def run_intent_pickup(
 ) -> dict:
     """意図の拾い上げを1回実行する（Chronicle 同乗／うつつシーン完走後の共通実装）。
 
-    1. active 意図と現在圧から失効・不満化の候補を挙げる
+    1. active 意図から終端遷移の候補（14日超）を挙げる
     2. ask_character（1on1 同等のシステムプロンプト）で本人に問う
     3. 返答のタグを適用する:
        - INTENT_NEW → create_intent（intent.created 封筒）
+       - INTENT_FULFILLED → resolve_intent(fulfilled)（intent.fulfilled 封筒）
        - INTENT_RELEASE → resolve_intent(expired)（intent.expired 封筒）
        - INTENT_SOURED → resolve_intent(soured)＋不満の言葉を記憶へ刻む
          （不満化＝利害と合流）
@@ -172,7 +173,8 @@ async def run_intent_pickup(
         now: 基準時刻（テスト注入用）。
 
     Returns:
-        {"status": ..., "created": int, "expired": int, "soured": int} の集計 dict。
+        {"status": ..., "created": int, "fulfilled": int, "expired": int,
+         "soured": int} の集計 dict。
     """
     char = sqlite.get_character(character_id)
     if char is None:
@@ -182,13 +184,11 @@ async def run_intent_pickup(
         return {"status": "skipped", "reason": "ghost_model 未設定"}
 
     active = sqlite.list_intents(character_id, status="active")
+    # 圧力は新規意図の source_kind 推定（由来の記録）にだけ使う。意図圧には掛からない
     pressures = compute_pressures(sqlite, character_id, now=now)
-    expired = expired_candidates(active, pressures, now=now)
-    soured = soured_candidates(active, pressures, now=now)
-    # 不満化候補が失効候補と重なることは閾値上ないが、念のため排他にする
-    expired = [i for i in expired if i not in soured]
+    stale = stale_candidates(active, now=now)
 
-    question = build_pickup_question(active, expired, soured)
+    question = build_pickup_question(active, stale)
     response = await ask_character(
         character_id=character_id,
         preset_id=ghost_model,
@@ -214,6 +214,10 @@ async def run_intent_pickup(
             born_from=born_from,
         )
         created += 1
+    fulfilled_count = 0
+    for intent_id in parsed["fulfilled"]:
+        if intent_id in valid_ids and sqlite.resolve_intent(intent_id, "fulfilled"):
+            fulfilled_count += 1
     expired_count = 0
     for intent_id in parsed["release"]:
         if intent_id in valid_ids and sqlite.resolve_intent(intent_id, "expired"):
@@ -242,12 +246,13 @@ async def run_intent_pickup(
                 logger.exception("不満の刻み込みに失敗 char=%s intent=%s", char.name, item["id"])
 
     logger.info(
-        "意図の拾い上げ完了 char=%s born_from=%s created=%d expired=%d soured=%d",
-        char.name, born_from, created, expired_count, soured_count,
+        "意図の拾い上げ完了 char=%s born_from=%s created=%d fulfilled=%d expired=%d soured=%d",
+        char.name, born_from, created, fulfilled_count, expired_count, soured_count,
     )
     return {
         "status": "success",
         "created": created,
+        "fulfilled": fulfilled_count,
         "expired": expired_count,
         "soured": soured_count,
     }

@@ -109,7 +109,7 @@
 | `services/timeline/` | **めぐり（巡り / Aliveness）の投影層＋予報層**。封筒正本（timeline_events）を観測者クラス（self / world_frame / user_ui）別の可視性ポリシーでフィルタする `projector.py`。GM への「現実の接触の記録」ブロックもここ。`forecast.py` は予報パネルの集約純関数（診断・カレンダー・圧力の無風外挿・配達シミュレータ。LLM 不使用） |
 | `services/instruments/` | 計器（監査層）。Tier 1 巡回インバリアント・Tier 2 スメル検知器（正規表現）・Tier 3 判定巡回（LLM サンプリング）。アラームは `lib/instrument_recorder.py` 経由でどこからでも発火できる |
 | `services/pressure/` | 圧力（社会圧・退屈圧・体調圧）。封筒の導関数として毎回計算する純関数（保存しない）＋体質インタビュー（`pressure_profile` 初期化） |
-| `services/intents/` | 意図（「〜したい」の経済層）。意図圧の読み取り時計算・失効/不満化の候補挙げ・拾い上げ（Chronicle 同乗＋うつつ完走後） |
+| `services/intents/` | 意図（「〜したい」の経済層）。意図圧の読み取り時計算（**経過日数のみ・源圧は掛けない**）・終端遷移の候補挙げ（14日超 active）・拾い上げ（Chronicle 同乗＋うつつ完走後） |
 | `services/gate/` | 応答可能性ゲート。`check_availability` 純関数（従来経路: 対面 > away > うつつ進行中 > 生活時間割 ／ 生活カレンダー経路: 対面 > away > schedule_entries 占有圧最大 > OnTime）・メッセージ預かり（escrow）・能動配達（従来: 復帰＋ジッター ／ 生活カレンダー: チェック間隔格子＋決定論 reply_rate 判定 `resolve_delivery_due`）・発話予約の発火（`speech_reservation.py` — speak_later の毎分走査・24h expire・`spontaneous_initiative_daily_cap` を reach_out と共有・`_deliver_session` 共用）・疲労離席の発火式 |
 | `services/schedule/` | **生活カレンダー（Living Schedule）**。`plan_parser.py`（[PLAN]/[EVENT] 行パーサ・24時超え表記・テンプレ裸変換・配達値個別上書き）・`weekly_batch.py`（週次バッチ①GM生成→②本人問い合わせ→schedule_entries template 層入れ替え＋③伏せ枠配置。層フォールバック=前週→テンプレ裸。冪等キー=キャラ別対象 ISO 週）・`scene_selection.py`（②導出のうつつシーン選出＝占有圧上位50%＋ランダムの決定論純関数）・`events.py`（③世界突発の確率配置＝pending 伏せ枠・発火時 GM 具体化→轢き判定（占有圧最大が勝つ）→insert→シーン）・`dilemma.py`（玉突き裁定＝③に轢かれた予定を本人が cancel/reschedule/不満化） |
 | `services/actions/` | 会話外行動権（`runner.py`）。閾値評価（無料）→本人問い合わせ→実行（push / 調べもの / 臨時うつつ）→帰還のループ。push 実体 `execute_push` は `reach_out` とも共有 |
@@ -470,7 +470,9 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 圧力: services/pressure — 封筒の導関数（純関数・保存しない）。pressure_profile は体質インタビューで初期化
   - 動機ブロック（圧力の淡白な一行＋active intents＋話題権）を 1on1 プロンプトへ注入（flow.py）
 意図: intents テーブル＋ services/intents — 拾い上げ2点（Chronicle 同乗・うつつ完走後）、
-  失効/不満化は機械が候補を挙げ本人が裁く（soured の言葉は記憶へ刻む）
+  意図圧は経過日数のみの純関数（行動権の閾値 0.7 へ 8日で到達。源圧は掛けない＝2026-08-27 改訂）、
+  終端遷移は機械が候補（14日超 active）を挙げ、満ちた/手放す/不満/継続を本人が裁く
+  （fulfilled は行動権の帰還と拾い上げの両方から宣言できる。soured の言葉は記憶へ刻む）
 ゲート: services/gate — availability 純関数・メッセージ預かり（chat_messages.delivered_at・
   次リクエスト時に時間差注釈付き配達）・疲労離席（体調圧×engagement 発火式）・take_leave ツール
 生活カレンダー: schedule_entries（実現層・重なり許容・読み取り時に占有圧最大が勝つ）＋

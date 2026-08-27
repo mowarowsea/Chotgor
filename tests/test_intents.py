@@ -3,10 +3,10 @@
 検証対象（docs/planned/aliveness_plan.md §4.3）:
     1. IntentStoreMixin: 作成・一覧・終端遷移と、intent.created / expired /
        soured 封筒の同一トランザクション直書き（intent_id FK 込み）
-    2. lifecycle: 意図圧の読み取り時計算 g(経過日数, source_kind の現在圧)、
-       失効候補（低圧14日）・不満化候補（高圧7日）の候補挙げ
+    2. lifecycle: 意図圧の読み取り時計算 g(経過日数)＝源圧に依存しないこと、
+       終端遷移の候補挙げ（14日超 active の1リスト）
     3. pickup: 設問文の組み立て（既存 active・候補の添付）と
-       返答タグ（INTENT_NEW / RELEASE / SOURED）のパース堅牢性、
+       返答タグ（INTENT_NEW / FULFILLED / RELEASE / SOURED）のパース堅牢性、
        run_intent_pickup の適用（LLM はモック）
 """
 
@@ -16,9 +16,8 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.services.intents.lifecycle import (
-    expired_candidates,
     intent_pressure,
-    soured_candidates,
+    stale_candidates,
 )
 from backend.services.intents.pickup import (
     build_pickup_question,
@@ -134,51 +133,54 @@ class _FakeIntent:
 
 
 class TestLifecycle:
-    """意図圧の読み取り時計算と失効/不満化の候補挙げを検証するテストクラス。"""
+    """意図圧の読み取り時計算と終端遷移の候補挙げを検証するテストクラス。"""
 
     def test_pressure_grows_with_age(self):
-        """経過日数とともに意図圧が単調に増える（14日で飽和）。"""
-        pressures = {"social": 0.5}
-        young = intent_pressure(_FakeIntent(1, "social"), pressures)
-        old = intent_pressure(_FakeIntent(10, "social"), pressures)
-        saturated = intent_pressure(_FakeIntent(30, "social"), pressures)
-        assert young < old <= saturated
+        """経過日数とともに意図圧が単調に増える（14日で 1.0 に飽和）。"""
+        young = intent_pressure(_FakeIntent(1))
+        old = intent_pressure(_FakeIntent(10))
+        saturated = intent_pressure(_FakeIntent(30))
+        assert young < old < saturated
+        assert abs(saturated - 1.0) < 1e-9
 
-    def test_pressure_scales_with_source(self):
-        """source_kind の現在圧が高いほど意図圧が押される。"""
-        intent = _FakeIntent(7, "social")
-        low = intent_pressure(intent, {"social": 0.1})
-        high = intent_pressure(intent, {"social": 0.9})
-        assert low < high
+    def test_pressure_ignores_source_pressure(self):
+        """意図圧は source_kind に左右されない（2026-08-27 の再設計）。
 
-    def test_expired_candidates(self):
-        """低圧のまま14日超の意図だけが失効候補になる。"""
-        pressures = {"social": 0.0, "boredom": 0.0, "body": 0.0}
-        old_low = _FakeIntent(20, "social")     # 低圧・古い → 候補
-        young_low = _FakeIntent(3, "social")    # 低圧・若い → 対象外
-        candidates = expired_candidates([old_low, young_low], pressures)
-        assert candidates == [old_low]
+        源圧を乗算していた頃は、源圧の低い意図が行動権の閾値へ永久に到達できなかった。
+        社会圧が 0（＝平常どおり会えている）でも「これを話したい」は時間とともに育つ、
+        というのが再設計後の意味。source_kind は由来の記録としてのみ残る。
+        """
+        assert intent_pressure(_FakeIntent(10, "social")) == intent_pressure(
+            _FakeIntent(10, "none")
+        )
 
-    def test_soured_candidates(self):
-        """高圧なのに7日超遷移できない意図だけが不満化候補になる。"""
-        pressures = {"social": 1.0}
-        stuck = _FakeIntent(10, "social")   # 高圧・7日超 → 候補
-        fresh = _FakeIntent(2, "social")    # 高圧・若い → まだ行動権の領分
-        candidates = soured_candidates([stuck, fresh], pressures)
-        assert candidates == [stuck]
+    def test_urge_threshold_reached_in_eight_days(self):
+        """行動権の閾値 0.7 へ 8.0 日で到達する（設計書 §4.3 の数値）。"""
+        assert intent_pressure(_FakeIntent(7.9)) < 0.7
+        assert intent_pressure(_FakeIntent(8.1)) >= 0.7
+
+    def test_stale_candidates(self):
+        """14日を超えて active のままの意図だけが、古い順に候補として挙がる。"""
+        old = _FakeIntent(20, "social")
+        older = _FakeIntent(40, "none")
+        young = _FakeIntent(3, "social")    # 行動権がまだ拾いに来る領分
+        candidates = stale_candidates([old, older, young])
+        assert candidates == [older, old]
 
 
 class TestPickupParsing:
     """拾い上げの設問組み立てと返答パースを検証するテストクラス。"""
 
     def test_question_includes_actives_and_candidates(self, sqlite_store):
-        """設問に既存 active 一覧・失効候補・不満化候補が添えられる。"""
+        """設問に既存 active 一覧と終端遷移の候補が添えられ、4つの答え方が示される。"""
         char_id, _ = _make_character(sqlite_store)
         active = sqlite_store.create_intent(char_id, "歌の練習を続けたい")
-        question = build_pickup_question([active], [active], [])
+        question = build_pickup_question([active], [active])
         assert "歌の練習を続けたい" in question
         assert active.id in question
         assert "なければないでいい" in question
+        for tag in ("INTENT_NEW", "INTENT_FULFILLED", "INTENT_RELEASE", "INTENT_SOURED"):
+            assert tag in question
 
     def test_parse_new_with_target(self):
         """INTENT_NEW の説明と相手（省略・正規化含む）をパースできる。"""
@@ -207,10 +209,17 @@ class TestPickupParsing:
         assert parsed["release"] == [iid]
         assert parsed["soured"] == [{"id": iid2, "words": "ずっと叶わなくてもどかしい"}]
 
+    def test_parse_fulfilled(self):
+        """INTENT_FULFILLED（もう果たした）を RELEASE と混同せずパースできる。"""
+        iid = str(uuid.uuid4())
+        parsed = parse_pickup_response(f"あれはもわに話せたよ。[INTENT_FULFILLED: {iid}]")
+        assert parsed["fulfilled"] == [iid]
+        assert parsed["release"] == []
+
     def test_parse_no_tags_is_empty(self):
         """タグなし（なければないでいい）は何も適用されない。"""
         parsed = parse_pickup_response("今日は特にないかな。穏やかな一日だった。")
-        assert parsed == {"new": [], "release": [], "soured": []}
+        assert parsed == {"new": [], "fulfilled": [], "release": [], "soured": []}
 
 
 class TestRunIntentPickup:
@@ -232,10 +241,25 @@ class TestRunIntentPickup:
         """INTENT_NEW が create_intent＋封筒になる。"""
         char_id, _ = _make_character(sqlite_store, ghost_model="p1")
         result = self._run(sqlite_store, char_id, "[INTENT_NEW: 星を見たい | self]")
-        assert result == {"status": "success", "created": 1, "expired": 0, "soured": 0}
+        assert result == {
+            "status": "success", "created": 1,
+            "fulfilled": 0, "expired": 0, "soured": 0,
+        }
         intents = sqlite_store.list_intents(char_id)
         assert intents[0].description == "星を見たい"
         assert intents[0].born_from == "night_chronicle"
+
+    def test_fulfilled_resolves_intent(self, sqlite_store):
+        """INTENT_FULFILLED で本人が「満ちた」と宣言した意図が fulfilled になる。
+
+        行動権の帰還以外に fulfilled への経路が無かった頃は、1on1 で話し切った意図も
+        active のまま滞留し、毎ターン block_motive に載り続けた（同じ話題の反復）。
+        """
+        char_id, _ = _make_character(sqlite_store, ghost_model="p1")
+        intent = sqlite_store.create_intent(char_id, "もわに実験結果を見せたい")
+        result = self._run(sqlite_store, char_id, f"[INTENT_FULFILLED: {intent.id}]")
+        assert result["fulfilled"] == 1
+        assert sqlite_store.get_intent(intent.id).status == "fulfilled"
 
     def test_release_resolves_expired(self, sqlite_store):
         """INTENT_RELEASE で本人が手放した意図が expired になる。"""
