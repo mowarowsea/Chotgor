@@ -63,7 +63,9 @@ async def working_memory_view(
 ):
     """ワーキングメモリのスレッド一覧ページ（読み取り専用）。
 
-    type 指定でスレッド種別を絞り込み、archived=True でアーカイブ済みのみ表示する。
+    type 指定でスレッド種別を絞り込む。初期表示は Open のみで、archived=True で
+    アーカイブ済みのみに切り替える（inscribed_memories の deleted_only と同じ挙動。
+    WM スレッドに論理削除はなく、is_open=0 が「削除済み」相当）。
     記憶の取捨選択はキャラクター自身が行うため、UI からの編集機能は設けない。
     """
     char = request.app.state.sqlite.get_character(character_id)
@@ -74,7 +76,7 @@ async def working_memory_view(
     threads = wm.list_threads_by_type(
         character_id,
         type=type or None,
-        is_open=(False if archived else None),
+        is_open=(False if archived else True),
     )
     types = ["emotion", "body", "task", "topic", "relation"]
     return get_templates().TemplateResponse(
