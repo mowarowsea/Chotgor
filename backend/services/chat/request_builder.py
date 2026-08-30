@@ -23,6 +23,7 @@
 変動ブロック — ターン注釈（build_turn_annotation。最新 user メッセージの末尾へ付加）:
   {block_memories}              — 想起された長期記憶
   {block_time}                  — 時刻コンテキスト
+  {block_place}                 — 対面中の場所（なりゆきの場所判定ラベル）
   {block_schedule}              — 予定コンテキスト（生活カレンダー）
   {block_fetched}               — フェッチした Web コンテンツ
   {block_wm_recalled}           — ワーキングメモリ heat 想起（前景の task/topic）
@@ -59,7 +60,7 @@ from backend.character_actions.carver import (
 )
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_GUIDE
-from backend.services.memory.format import short_thread_id as _short_id
+from backend.services.memory.format import short_date, short_thread_id as _short_id
 
 
 # タグ方式プロバイダー（Ollama/OpenRouter等）共通の禁止条項。
@@ -197,6 +198,8 @@ TURN_ANNOTATION_TEMPLATE = """\
 
 {block_time}
 
+{block_place}
+
 {block_schedule}
 
 {block_fetched}
@@ -238,6 +241,11 @@ def _format_thread_index(t: dict) -> str:
     if atmo:
         extras.append(atmo)
     extras.append(f"重要度{float(t.get('importance', 0.0)):.2f}")
+    # 「いつからの話か」の係留。これが無いと、スレッドの中身が書かれた時点と
+    # 読む時点の区別が付かないまま、現在形の事実として読まれる。
+    started = short_date(t.get("created_at"))
+    if started:
+        extras.append(f"{started}〜")
     return line + "　｜　" + "　｜　".join(extras)
 
 
@@ -249,7 +257,11 @@ def _format_thread_with_post(t: dict) -> str:
         head += f"　｜　{atmo}"
     latest = (t.get("latest_post") or "").strip()
     if latest:
-        return head + f"\n  → {latest}"
+        # ポスト本文には「昨日」「今週」のような書いた時点基準の言い回しが
+        # 混じる。いつ書かれたかが読めないと現時点の話として誤読される。
+        posted = short_date(t.get("latest_post_at"))
+        prefix = f"[{posted}] " if posted else ""
+        return head + f"\n  → {prefix}{latest}"
     return head
 
 
@@ -350,6 +362,27 @@ def _build_time_block(
     if time_since_last_interaction:
         block += f"\n- 【前回の交流から：{time_since_last_interaction}】"
     return block
+
+
+def _build_place_block(face_to_face: bool, current_bg_label: str | None) -> str:
+    """対面中の「いまいる場所」ブロックを返す（対面かつ場所判定済みのときだけ）。
+
+    なりゆき（ambience）の judge は対面中に毎ターン「いま2人がいる場所」を判定して
+    chat_sessions.current_bg_label へ書いているが、従来その値を読むのはフロントの
+    背景画像切り替えだけで、キャラクター本人には渡っていなかった。本人が
+    「どこで話しているか」を知らなければ、記憶にも場所が残らない。
+
+    ラベルの反映は judge の仕様上1ターン遅れる（前ターンの判定結果を見る）。
+    会話中に場所がそう頻繁に変わることはないため、遅れは許容する。
+    システムプロンプトではなくターン注釈へ置くのは、場所が移動しうる変動値であり、
+    安定ブロック側に置くとプロンプトキャッシュを毎ターン壊すため。
+    """
+    if not face_to_face:
+        return ""
+    label = (current_bg_label or "").strip()
+    if not label:
+        return ""
+    return f"## 現在の文脈（場所）\n- 【いまいる場所：{label}】"
 
 
 def _build_fetched_block(fetched_contents: list[dict] | None) -> str:
@@ -539,7 +572,15 @@ def _build_motive_block(
             if not desc:
                 continue
             target = intent.get("target")
-            suffix = f"（相手: {target}）" if target and target != "self" else ""
+            bits = []
+            if target and target != "self":
+                bits.append(f"相手: {target}")
+            # 「いつからの『〜したい』か」。抱えている長さが読めないと、意図圧の
+            # 体感（長く叶わないほど重くなる）と本人の認識がズレる。
+            since = short_date(intent.get("created_at"))
+            if since:
+                bits.append(f"{since}から")
+            suffix = "（" + "・".join(bits) + "）" if bits else ""
             parts.append(f"- {desc}{suffix}")
     parts += [
         "",
@@ -746,6 +787,8 @@ def build_turn_annotation(
     active_intents: list[dict] | None = None,
     schedule_lines: list[str] | None = None,
     previous_anticipation: str = "",
+    face_to_face: bool = False,
+    current_bg_label: str = "",
 ) -> str:
     """毎ターン変動する文脈情報を「ターン注釈」として構築する。
 
@@ -767,6 +810,7 @@ def build_turn_annotation(
         "{block_time}": _build_time_block(
             enable_time_awareness, current_time_str, time_since_last_interaction
         ),
+        "{block_place}": _build_place_block(face_to_face, current_bg_label),
         "{block_schedule}": _build_schedule_block(schedule_lines),
         "{block_fetched}": _build_fetched_block(fetched_contents),
         "{block_wm_recalled}": _build_wm_recalled_block(wm_recalled_threads),

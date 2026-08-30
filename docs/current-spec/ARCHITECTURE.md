@@ -92,7 +92,7 @@
 | `repositories/` | 永続化層。`sqlite/`（ORM・migration・機能別 store mixin）と `lance/`（ベクトルストア、テーブル別 ops）、`embeddings.py`（embedding プロバイダー） |
 | `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / WMスレッド操作 / take_leave / web_search ＋文脈別ツール）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
-| `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00。棚卸し時に Open×Close の類似検出で「もう決着済みの話題を Open のまま抱えていないか」の気づき材料を提示する＝判定のみで close はしない）と `forget_job.py`（長期記憶の忘却、04:00固定） |
+| `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00。棚卸し時に Open×Close の類似検出で「もう決着済みの話題を Open のまま抱えていないか」の気づき材料を提示する＝判定のみで close はしない）と `forget_job.py`（長期記憶の忘却、04:00固定）。加えて `retrace_job.py`（WM の時制の辿り直し。スケジューラーには載せず API から手動起動する単発バッチ） |
 | `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`instrument_recorder`（計器アラームの発火口。どこからでも呼べる）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用）、`optimistic_lock`（設定フォームの楽観ロック＝端末間の先祖返り防止）、`attachments`（添付の受け入れMIME判定＝`attachment_kind` の唯一の根拠）、`initiative_budget`（キャラ自発リクエストの日次予算。reach_out と speak_later が共有）、`notify`（ntfy プッシュ）、`stream_json`（Claude CLI の NDJSON 入出力）、`lenient_json`（LLM 応答の壊れた JSON 救済）、`utils` |
 | `mcp_server.py` | Claude CLI 用 MCP stdio サーバー（backendへのHTTPプロキシ） |
 | `templates/` + `static/` | 管理UIのJinja2テンプレートと `chotgor.css`（デザインシステム。規約は CLAUDE.md） |
@@ -557,7 +557,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 | `/api/chat` | `api/chat.py`, `api/chat_attachments.py` | 1on1セッション・ストリーミング・添付（画像・音声） |
 | `/api/scenario_chat` | `api/scenario_chat/` | シナリオ（scenarios / sessions / stream） |
 | `/api/characters` | `api/characters.py` | キャラクターCRUD |
-| `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行 |
+| `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行・Retrace（WM 時制の辿り直し）手動実行 |
 | `/api/mcp` | `api/mcp_tools.py` | MCPプロキシ用ツール定義・実行（内部API） |
 | `/api/translate` | `api/translation.py` | 翻訳 |
 | `/api/logs` | `api/logs_ui/` | デバッグログ JSON |
@@ -586,6 +586,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 |---|---|
 | `docs/current-spec/memory_recall_algorithm.md` | §3 1on1フロー 1./1b. — 想起クエリ・ハイブリッドスコア・注入量の規定 |
 | `docs/current-spec/character_resident_rules.md` | §3 夜間バッチ — キャラクター本人から見た記憶・Chronicle・Forget |
+| `docs/current-spec/memory_recall_algorithm.md` §4.3.1 | WM・意図の時制アンカリング（表示の絶対日付・相対表現の絶対化・retrace） |
 | `docs/planned/wm_repeat_awareness_plan.md` | §3 夜間バッチ — Chronicle の Open×Close 類似検出と内省誘導 |
 
 ### めぐり（巡り / Aliveness）とその周辺

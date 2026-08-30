@@ -10,7 +10,6 @@
 決定論的なテストにならない）。
 
 検証する観点:
-    - _short_date: ISO 文字列 → MM-DD 表記、壊れた値のフォールバック
     - _format_similarity_hints: ペアあり / なしの出力
     - 統合: run_chronicle が Open×Close の類似ペアを棚卸しプロンプトへ載せること
     - 統合: 類似ペアが無いときも該当なしの文言が入り、プロンプトが壊れないこと
@@ -24,7 +23,6 @@ import pytest
 
 from backend.batch.chronicle_job import (
     _format_similarity_hints,
-    _short_date,
     run_chronicle,
 )
 
@@ -33,32 +31,6 @@ from tests._ghost_model_helpers import (  # noqa: F401
     _setup_char_with_messages,
     working_memory_manager,
 )
-
-
-# ---------------------------------------------------------------------------
-# _short_date
-# ---------------------------------------------------------------------------
-
-class TestShortDate:
-    """Close 日の短縮表記の検証。
-
-    「いつ決着した話か」が分かれば十分な参考情報なので年は落とす。値が壊れていても
-    棚卸し全体を止めないよう、空文字へ倒す（呼び出し側がラベルごと省く）。
-    """
-
-    def test_iso_datetime_becomes_month_day(self):
-        """ISO 8601 の日時から MM-DD だけを取り出すこと。"""
-        assert _short_date("2026-08-13T21:04:05") == "08-13"
-
-    def test_date_only_is_accepted(self):
-        """日付のみの ISO 文字列も受け付けること。"""
-        assert _short_date("2026-08-13") == "08-13"
-
-    def test_broken_value_falls_back_to_empty(self):
-        """None・空・非日付文字列は空文字に倒すこと。"""
-        assert _short_date(None) == ""
-        assert _short_date("") == ""
-        assert _short_date("いつか") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -79,14 +51,19 @@ class TestFormatSimilarityHints:
     """
 
     def test_pair_is_rendered_with_short_ids_and_close_date(self):
-        """Open / Close 双方の短縮 ID・summary と、Close 日が出ること。"""
+        """Open / Close 双方の短縮 ID・summary と、Close 日が出ること。
+
+        Close 日は当年なら MM-DD 表記。年をまたぐと YYYY-MM-DD へ変わる仕様なので、
+        期待値は当年の日付から組む（固定年を書くと年明けに落ちるため）。
+        """
+        closed_at = datetime.now().replace(month=8, day=13, hour=21, minute=4, second=5)
         open_thread = _thread_dict(
             "48e9a044-1111-2222-3333-444455556666", "グラフRAG検証、コスト・粒度で断念方向へ",
         )
         closed_thread = _thread_dict(
             "a8d87fb6-aaaa-bbbb-cccc-ddddeeeeffff",
             "✅日食なつこ実験、WM閉じ忘れ確認まで完了",
-            updated_at="2026-08-13T21:04:05",
+            updated_at=closed_at.isoformat(timespec="seconds"),
         )
 
         text = _format_similarity_hints([(open_thread, closed_thread)])

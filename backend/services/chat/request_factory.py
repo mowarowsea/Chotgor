@@ -74,6 +74,14 @@ def build_character_request(
     from backend.services.character_query import _resolve_user_info
     user_label, user_position = _resolve_user_info(char, settings)
 
+    # 対面中の場所ラベル。なりゆきの judge が chat_sessions.current_bg_label へ
+    # 書いた値を本人へ返すために引く。対面モードでないキャラでは残置値が無害な
+    # まま残るため、対面時のみ読む（request_builder 側でも二重にガードしている）。
+    current_bg_label = ""
+    if session_id and int(getattr(char, "face_to_face_mode", 0) or 0):
+        _session = sqlite.get_chat_session(session_id)
+        current_bg_label = (getattr(_session, "current_bg_label", "") or "") if _session else ""
+
     return ChatRequest(
         character_id=char.id,
         character_name=char.name,
@@ -100,5 +108,6 @@ def build_character_request(
         usual_days_enabled=usual_days_enabled,
         user_label=user_label,
         user_position=user_position,
+        current_bg_label=current_bg_label,
         **overrides,
     )

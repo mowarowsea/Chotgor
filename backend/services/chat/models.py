@@ -70,3 +70,6 @@ class ChatRequest:
     # 注釈ブロックを差し込む。キャラスコープの characters.face_to_face_mode をリクエスト時に
     # 反映する（送信時値の焼き付けは ChatMessage 側で別途行う）。
     face_to_face: bool = False
+    # 対面中の場所判定ラベル（chat_sessions.current_bg_label）。ターン注釈の
+    # 「現在の文脈（場所）」ブロックに使う。judge の仕様上1ターン遅れる。
+    current_bg_label: str = ""

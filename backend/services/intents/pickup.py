@@ -20,6 +20,7 @@ import re
 from datetime import datetime
 
 from backend.services.character_query import ask_character
+from backend.services.memory.format import short_date
 from backend.services.intents.lifecycle import stale_candidates
 from backend.services.pressure import compute_pressures
 
@@ -78,8 +79,14 @@ def build_pickup_question(
             "いまあなたの中にあるもの（すでに書き留めてある分）:",
         ]
         for intent in active_intents:
-            target = f"（相手: {intent.target}）" if intent.target else ""
-            lines.append(f"- [{intent.id}] {intent.description}{target}")
+            bits = []
+            if intent.target:
+                bits.append(f"相手: {intent.target}")
+            since = short_date(getattr(intent, "created_at", None))
+            if since:
+                bits.append(f"{since}から")
+            suffix = "（" + "・".join(bits) + "）" if bits else ""
+            lines.append(f"- [{intent.id}] {intent.description}{suffix}")
         lines += [
             "新しく挙げるものが上のどれかと同じ・ほぼ同じなら、挙げ直さなくていい。",
         ]
@@ -91,7 +98,11 @@ def build_pickup_question(
             "このまま持っておく、でも構わない:",
         ]
         for intent in stale:
-            lines.append(f"- [{intent.id}] {intent.description}")
+            # 「しばらく経っている」だけでは、どれだけ抱えていたのか本人が判断できない。
+            # 手放す／果たした／もどかしい の裁定は、経った長さが分かって初めて選べる。
+            since = short_date(getattr(intent, "created_at", None))
+            suffix = f"（{since}から）" if since else ""
+            lines.append(f"- [{intent.id}] {intent.description}{suffix}")
     lines += [
         "",
         "答え方（当てはまるものだけ。1〜3個まで）:",

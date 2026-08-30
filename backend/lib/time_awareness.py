@@ -111,7 +111,9 @@ def compute_time_awareness(
     if now is None:
         now = datetime.now()
 
-    current_time_str = now.isoformat(timespec="seconds")
+    # 曜日を添える: 「今週」「先週」のような週単位の言い回しを本人が絶対日付へ
+    # 結び直せるようにするため（日付なしの相対表現が記憶へ残る事故への対策）。
+    current_time_str = now.strftime("%Y-%m-%d") + f"({japanese_weekday(now)}) " + now.strftime("%H:%M:%S")
     time_since_last = ""
 
     last_str = settings.get(f"last_interaction_{character_id}")

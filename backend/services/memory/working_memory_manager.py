@@ -182,6 +182,12 @@ class WorkingMemoryManager:
         if include_latest_post or include_posts:
             latest = self.sqlite.get_latest_working_memory_post(thread.id)
             d["latest_post"] = latest.content if latest else None
+            # 最新ポストが「いつ書かれたか」。プロンプト表示で絶対日付を出すために持つ
+            # （書いた時点の「今週」と読む時点の「今週」がズレる事故への対策）。
+            d["latest_post_at"] = (
+                latest.created_at.isoformat(timespec="seconds")
+                if latest and latest.created_at else None
+            )
         if include_posts:
             posts = self.sqlite.list_working_memory_posts(thread.id)
             d["posts"] = [

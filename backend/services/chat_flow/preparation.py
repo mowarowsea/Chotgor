@@ -279,7 +279,8 @@ async def prepare_context(
             thresholds = compute_speech_thresholds(sqlite_store, request.character_id)
             motive_lines = pressure_plain_lines(pressures, thresholds)
             active_intents = [
-                {"description": i.description, "target": i.target}
+                {"description": i.description, "target": i.target,
+                 "created_at": i.created_at.isoformat(timespec="seconds") if i.created_at else None}
                 for i in sqlite_store.list_intents(
                     request.character_id, status="active"
                 )
@@ -336,6 +337,8 @@ async def prepare_context(
         active_intents=active_intents,
         schedule_lines=schedule_lines,
         previous_anticipation=request.previous_anticipation,
+        face_to_face=request.face_to_face,
+        current_bg_label=request.current_bg_label,
     )
     messages = append_turn_annotation(messages, annotation)
 

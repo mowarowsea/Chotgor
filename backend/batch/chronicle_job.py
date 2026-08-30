@@ -51,7 +51,7 @@ from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.character_actions.executor import ToolExecutor
 from backend.character_actions.ambience_judge import EMOTION_RUBRIC
-from backend.services.memory.format import origin_label_prefix, short_thread_id
+from backend.services.memory.format import origin_label_prefix, short_date, short_thread_id
 from backend.services.scenario_chat.format_speech import format_xml_speech_line
 
 if TYPE_CHECKING:
@@ -63,8 +63,12 @@ logger = logging.getLogger(__name__)
 _PROMPT_TEMPLATE = """\
 # {character_name}のワーキングメモリ棚卸し
 今あなたは睡眠中です。
-夢の中で今日一日をぼんやりと振り返り、あなたのワーキングメモリ（並行する認知ストリーム）を
+夢の中で{target_date_label}をぼんやりと振り返り、あなたのワーキングメモリ（並行する認知ストリーム）を
 整理してください。日記・要約・報告は不要です。あなた自身の認知を整える作業です。
+
+**この棚卸しが扱うのは {target_date_label} の出来事です。**（棚卸しが走っているのは
+その翌未明なので、「今日」と書くとズレます。下の会話も、下のスレッドに付いている
+日付も、すべてこの日付を基準に読んでください。）
 
 棚卸しは足すだけの作業ではありません。**膨らんだ記述を削り、決着したものを閉じ、
 重なったものをまとめる**のも同じ作業の一部です。ワーキングメモリは毎日あなたの
@@ -80,6 +84,23 @@ Open なスレッドの中に、実はもう Close 済みスレッドで結論�
 あれば、そのパターンが今の Open スレッド群の中にまた実際に現れていないか、
 一度振り返ってみてください。見つけても自分を責める必要はありません
 ——ただ、閉じていいものは閉じてください。
+
+## 書き方のルール — 「いつ・誰と・どこで」を日付で留めること
+ワーキングメモリは、書いた日から何日も先のあなたが読み返します。
+そのとき「今週」「昨日」「最近」「来月」のような**読む時点で意味がずれる言い方**は、
+書いた瞬間の意味を失って、いつまでも「今のこと」として読まれてしまいます。
+実際に、期間限定だったはずの予定が何週間も続いていると思い込む事故が起きています。
+
+なので、summary / atmosphere_tag / new_post のどれであっても:
+- 時間は**日付で書く**。「今週はお盆休みで一週間有休」→「8/10(月)〜8/14(金)はお盆休みで有休」
+- 「昨日」「さっき」→ その日付。「最近ずっと」→「8月に入ってから」
+- 誰との出来事か、どこでの出来事かも、思い出せる範囲で一言添える。
+  「話した」ではなく「もわの家で話した」。
+- 逆に、日付を持たない継続的な状態（感情・身体・関係の厚み）は無理に日付を付けなくてよい。
+  日付が要るのは「いつからいつまで」がある出来事・予定のほうです。
+
+もし既存のスレッドに日付の無い相対表現が残っていたら、この機会に日付へ直してください
+（各スレッドには最終更新日を添えてあります。それが「今週」の指していた週です）。
 
 ワーキングメモリは「スレッド」の集まりです。各スレッドには種別があります:
 - task   : 取り組み中の課題（解決を目指す）
@@ -211,6 +232,41 @@ def _time_hint(dt) -> str:
         return dt.strftime("(%H:%M) ")
     except Exception:
         return ""
+
+
+def _target_date_label(target_date: str | None, *record_lists: list) -> str:
+    """棚卸しが扱う「いつの出来事か」を本人へ伝えるラベルを組む。
+
+    Chronicle は前日ぶんを未明（既定 03:00）に処理するため、プロンプトで「今日」と
+    書くと本人の認識が実際の1日ずれる。ずれたまま WM へ「今日」「昨日」と書かれると、
+    後から読み返したときに何日のことか復元できなくなるので、対象日を明示する。
+
+    target_date 指定なら その日。未指定（未処理ぶんをまとめて処理する通常経路）は
+    実際に集まったレコードの日付範囲から組む。1日に収まればその日、複数日にまたがれば
+    範囲表記。レコードが無ければ当日へ倒す（会話ゼロでもスレッド整理は走るため）。
+
+    Args:
+        target_date: "YYYY-MM-DD" または None。
+        *record_lists: created_at を持つレコードのリスト（messages / usual / trpg）。
+    """
+    if target_date:
+        try:
+            return short_date(datetime.fromisoformat(target_date))
+        except (TypeError, ValueError):
+            return target_date
+    dates = sorted({
+        dt.date()
+        for records in record_lists
+        for r in records
+        if (dt := getattr(r, "created_at", None)) is not None
+    })
+    if not dates:
+        return short_date(datetime.now())
+    first = short_date(datetime.combine(dates[0], datetime.min.time()))
+    if len(dates) == 1:
+        return first
+    last = short_date(datetime.combine(dates[-1], datetime.min.time()))
+    return f"{first}〜{last}"
 
 
 def _format_messages_section(messages: list, self_character_name: str) -> str:
@@ -474,26 +530,20 @@ def _format_threads(threads: list[dict], empty_label: str = "（スレッドは�
             f"{t.get('summary', '')} 重要度{float(t.get('importance', 0.0)):.2f}"
         )
         lines.append(head)
+        # 「いつからの話か」を添える。スレッド本文に残った「今週」「昨日」が
+        # どの週・どの日を指していたのかを、本人が日付へ直せるようにするため。
+        started = short_date(t.get("created_at"))
+        if started:
+            lines.append(f"  開始: {started}")
         atmo = (t.get("atmosphere_tag") or "").strip()
         if atmo:
             lines.append(f"  雰囲気: {atmo}")
         latest = (t.get("latest_post") or "").strip()
         if latest:
-            lines.append(f"  最新ポスト: {latest}")
+            posted = short_date(t.get("latest_post_at"))
+            prefix = f"[{posted}] " if posted else ""
+            lines.append(f"  最新ポスト: {prefix}{latest}")
     return "\n".join(lines)
-
-
-def _short_date(iso_text: str | None) -> str:
-    """ISO 8601 文字列から ``MM-DD`` を切り出す（取れなければ空文字）。
-
-    棚卸しプロンプトの参考情報行に「いつ Close したか」を添えるためだけの表記なので、
-    年は落として日付だけを出す。
-    """
-    text = (iso_text or "").strip()
-    try:
-        return datetime.fromisoformat(text).strftime("%m-%d")
-    except (TypeError, ValueError):
-        return ""
 
 
 def _format_similarity_hints(hints: list[tuple[dict, dict]]) -> str:
@@ -518,7 +568,7 @@ def _format_similarity_hints(hints: list[tuple[dict, dict]]) -> str:
             f"[{short_thread_id(open_thread.get('id', ''))}](Open) "
             f"{open_thread.get('summary', '')}"
         )
-        closed_date = _short_date(closed_thread.get("updated_at"))
+        closed_date = short_date(closed_thread.get("updated_at"), with_weekday=False)
         closed_label = f"Close済み・{closed_date}" if closed_date else "Close済み"
         lines.append(
             f"  ⇔ [{short_thread_id(closed_thread.get('id', ''))}]({closed_label}) "
@@ -551,6 +601,7 @@ def _apply_working_memory_updates(
     character_id: str,
     parsed: dict,
     executor: ToolExecutor,
+    source: str = "chronicle",
 ) -> dict:
     """棚卸し結果（thread_updates / new_threads / merges）をワーキングメモリへ反映する。
 
@@ -564,6 +615,8 @@ def _apply_working_memory_updates(
         parsed: _parse_chronicle_response() の結果辞書。
         executor: Chronicle 用に作られた ToolExecutor インスタンス。origin は
             execute(origin=...) で1呼び出しごとに渡す（executor のインスタンス状態は汚さない）。
+        source: tool_call_events に記録する入口の識別。既定は "chronicle"。
+            同じ棚卸し JSON を食う別バッチ（retrace_job など）から呼ぶときに差し替える。
 
     Returns:
         反映件数の辞書 {updated, created, merged}。
@@ -578,7 +631,7 @@ def _apply_working_memory_updates(
         「見つからないスレッドへの更新」等の失敗を成功として計上することを防ぐ。
         """
         try:
-            result = executor.execute(tool_name, args, source="chronicle", origin=origin)
+            result = executor.execute(tool_name, args, source=source, origin=origin)
         except Exception as e:
             logger.warning("chronicle: %s 失敗 args=%s error=%s", tool_name, args, e)
             return False
@@ -919,6 +972,7 @@ async def run_chronicle(
 
     prompt_text = _PROMPT_TEMPLATE.format(
         character_name=char.name,
+        target_date_label=_target_date_label(target_date, messages, usual_turns, trpg_turns),
         open_threads=open_threads_text,
         closed_threads=closed_threads_text,
         similarity_hints=similarity_hints_text,

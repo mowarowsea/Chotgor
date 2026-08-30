@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.batch.chronicle_job import run_chronicle, run_pending_chronicles
+from backend.batch.retrace_job import run_retrace
 from backend.batch.forget_job import run_forget_process, run_pending_forget
 from backend.lib.log_context import new_message_id
 
@@ -107,6 +108,27 @@ async def trigger_chronicle(
         working_memory_manager=request.app.state.working_memory_manager,
     )
     return result
+
+
+@router.post("/{character_id}/retrace", status_code=200)
+async def trigger_retrace(request: Request, character_id: str):
+    """指定キャラクターのワーキングメモリの「時制の辿り直し」を手動実行する。
+
+    過去に書かれた「今週」「昨日」のような相対表現を、本人に日付へ書き直して
+    もらう単発の後始末（backend/batch/retrace_job.py の docstring 参照）。
+    スケジューラーには載せておらず、この API からのみ起動する。
+    """
+    char = request.app.state.sqlite.get_character(character_id)
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    new_message_id()
+    return await run_retrace(
+        character_id=character_id,
+        sqlite=request.app.state.sqlite,
+        memory_manager=request.app.state.memory_manager,
+        working_memory_manager=request.app.state.working_memory_manager,
+    )
 
 
 @router.post("/{character_id}/forget", status_code=200)

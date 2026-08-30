@@ -5,6 +5,9 @@ recall_memory() の返り値を表示用テキストに変換する共通関数�
 """
 
 import logging
+from datetime import datetime
+
+from backend.lib.time_awareness import japanese_weekday
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +50,38 @@ def short_thread_id(thread_id: str) -> str:
     WorkingMemoryManager.resolve_thread_id() が前方一致でフル ID に解決する。
     """
     return (thread_id or "")[:8]
+
+
+def short_date(value, *, with_weekday: bool = True) -> str:
+    """日時を記憶表示用の短い絶対日付へ整形する（取れなければ空文字）。
+
+    プロンプトへ出す日付は「いつのことか」を本人が判断できる最小限に絞る:
+    同じ年なら ``MM-DD(曜)``、年をまたぐものだけ ``YYYY-MM-DD(曜)``。
+    曜日を添えるのは「今週」「先週」のような週単位の言い回しを本人が
+    絶対日付へ結び直せるようにするため（お盆休みのような期間限定の事実が、
+    日付の無いまま恒常的な状態として残り続ける事故への対策）。
+
+    Args:
+        value: ISO 8601 文字列または datetime。None・パース不能なら空文字を返す。
+        with_weekday: False なら曜日を付けない。
+
+    Returns:
+        整形済み日付文字列。取れなければ空文字。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value).strip())
+        except (TypeError, ValueError):
+            return ""
+    fmt = "%m-%d" if dt.year == datetime.now().year else "%Y-%m-%d"
+    text = dt.strftime(fmt)
+    if with_weekday:
+        text += f"({japanese_weekday(dt)})"
+    return text
 
 
 def format_recalled_memories(recalled: list) -> str:
