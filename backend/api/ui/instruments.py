@@ -18,6 +18,7 @@ router = APIRouter(prefix="/ui", tags=["ui"])
 
 # Tier 1 インバリアントの表示名（パネルの見出し用）
 _INVARIANT_LABELS = {
+    # 撤去済み（2026-09-02）。新規発火はしないが、過去アラームの表示用にラベルは残す
     "fabrication_backstop": "GMのユーザ捏造（バックストップ発火）",
     "usual_scene_error": "生活の中断（うつつシーンエラー）",
     "embedding_degraded": "記憶の縮退（embedding 障害）",

@@ -96,11 +96,11 @@ class TestInstrumentStore:
 
     def test_fire_and_list_alarms(self, sqlite_store):
         """アラームの追記と severity / invariant / 未確認フィルタが効く。"""
-        sqlite_store.fire_alarm("fabrication_backstop", details={"n": 1})
+        sqlite_store.fire_alarm("night_batch_heartbeat", details={"n": 1})
         sqlite_store.fire_alarm("smell_format_debris", severity="smell")
         assert len(sqlite_store.list_alarms()) == 2
         alarms_only = sqlite_store.list_alarms(severity="alarm")
-        assert [a.invariant_id for a in alarms_only] == ["fabrication_backstop"]
+        assert [a.invariant_id for a in alarms_only] == ["night_batch_heartbeat"]
         assert alarms_only[0].details == {"n": 1}
         by_id = sqlite_store.list_alarms(invariant_id="smell_format_debris")
         assert len(by_id) == 1

@@ -4,7 +4,7 @@ usage_recorder / tool_event_recorder と同じ思想のモジュールレベル�
 main.py の起動時に set_store() で SQLiteStore を注入し、以降は
 backend 内のどこからでも fire_alarm() を呼べる（store 未設定・例外時は no-op）。
 
-即時系インバリアントのフック（fabrication_backstop / usual_scene_error /
+即時系インバリアントのフック（usual_scene_error /
 embedding_degraded）と Tier 2 スメル記録がこれを使う。
 計器は監査者であり、記録の失敗が本処理（チャット・シーン進行）を
 止めてはならないため、例外はすべて握り潰してログに残すだけにする。

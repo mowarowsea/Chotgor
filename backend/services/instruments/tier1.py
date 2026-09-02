@@ -1,6 +1,6 @@
 """計器 Tier 1 — インバリアント（機械・真偽確定）の巡回チェック。
 
-即時系（fabrication_backstop / usual_scene_error / embedding_degraded）は
+即時系（usual_scene_error / embedding_degraded）は
 発生点のフックが lib/instrument_recorder.fire_alarm を直接呼ぶため、
 本モジュールは **巡回系** のチェックだけを持つ:
 

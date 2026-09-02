@@ -25,7 +25,7 @@ class InstrumentStoreMixin:
 
         Args:
             invariant_id: 発火したインバリアント/検知器の ID
-                （fabrication_backstop / usual_scene_error / smell_format_debris 等）。
+                （usual_scene_error / smell_format_debris 等）。
             severity: "alarm"（調査対象・静音期間の計算対象）または
                 "smell"（Tier 2 の疑い記録・誤検知許容）。
             details: 発火文脈（キャラ名・対象 ID・検知内容など）。

@@ -578,7 +578,7 @@ class Alarm(Base):
     __tablename__ = "alarms"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    invariant_id = Column(String, nullable=False, index=True)  # fabrication_backstop / usual_scene_error 等
+    invariant_id = Column(String, nullable=False, index=True)  # usual_scene_error / night_batch_heartbeat 等
     severity = Column(String, nullable=False, default="alarm")  # alarm | smell
     occurred_at = Column(DateTime, nullable=False, default=lambda: datetime.now(), index=True)
     details = Column(JSON, nullable=True)          # 発火文脈（キャラ名・対象ID・検知内容など）

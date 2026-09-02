@@ -16,7 +16,7 @@ UtteranceDelta / ThinkingDelta / TurnRecord の列を非同期 yield する抽�
 """
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
 from backend.lib.tag_parser import StreamingTagStripper
@@ -171,9 +171,6 @@ class EngineResult:
     safety filter ブロック等）。エラー発生時は raw_response が部分・空の可能性が
     あるため、呼び出し側は provider_error の有無で SQLite 保存・スライディングウィ
     ンドウへの混入をスキップする判断を行う。
-    parser_warnings はパーサが破棄した代弁ブロックの警告
-    （「user_alias 代弁ブロックを破棄」等）。計器 Tier 1 `fabrication_backstop` の
-    発火材料として上位（service）へ伝える。
     yielded_to は GM が `@<PC名>:` で指名した話者名。非 None なら「GM がターンを
     明け渡した」ことを意味し、その時点でストリームを打ち切っている（raw_response も
     打ち切り時点までの部分応答）。上位はこの PC へルーティングする。
@@ -181,7 +178,6 @@ class EngineResult:
 
     raw_response: str
     provider_error: str | None = None
-    parser_warnings: list[str] = field(default_factory=list)
     yielded_to: str | None = None
 
 
@@ -483,7 +479,6 @@ class EnsembleEngine:
             yield EngineResult(
                 raw_response="",
                 provider_error=provider_error,
-                parser_warnings=list(parser.warnings),
             )
             return
 
@@ -504,10 +499,9 @@ class EnsembleEngine:
         if final is not None:
             yield final
 
-        # ターン副産物（parser の破棄警告は fabrication_backstop 計器の材料）。
-        # yielded_to が入っていれば raw_response は打ち切り時点までの部分応答になる。
+        # ターン副産物。yielded_to が入っていれば raw_response は打ち切り時点までの
+        # 部分応答になる。
         yield EngineResult(
             raw_response="".join(raw_chunks),
-            parser_warnings=list(parser.warnings),
             yielded_to=parser.yielded_to,
         )
