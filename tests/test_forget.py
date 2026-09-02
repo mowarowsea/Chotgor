@@ -509,6 +509,38 @@ async def test_forget_distill_path_deletes_all_candidates(sqlite_store):
 
 
 @pytest.mark.asyncio
+async def test_forget_distill_path_records_night_envelope(sqlite_store):
+    """蒸留パス完走時に night.forget 封筒が正本へ1件残ること。
+
+    昇華ループ経路は封筒を書かずに return していたため、忘却が毎晩走っていても
+    タイムラインから「夢（忘却）」が欠落し、計器 night_batch_heartbeat が
+    「3日以上 Forget 封筒が無い」と誤発火し続けていた（2026-09-02 修正）。
+    封筒は payload 完結型で、候補数と削除数の外形だけを載せる
+    （個々の忘却は memory.forgotten 側に載る）。
+    """
+    char_id = "char-distill-envelope"
+    preset_id = _make_preset(sqlite_store)
+    manager = _make_manager_with_candidates(sqlite_store, char_id, ["m1", "m2"])
+
+    with patch("backend.batch.forget_job.ask_character_with_tools", new=AsyncMock(return_value=True)):
+        await run_forget_process(
+            character_id=char_id,
+            character_name="TestChar",
+            memory_manager=manager,
+            sqlite=sqlite_store,
+            settings={},
+            threshold=1.0,
+            ghost_model=preset_id,
+        )
+
+    envelopes = sqlite_store.list_timeline_events(
+        char_id, event_type_prefixes=["night.forget"], limit=10
+    )
+    assert len(envelopes) == 1
+    assert envelopes[0].payload == {"candidates_count": 2, "deleted_count": 2}
+
+
+@pytest.mark.asyncio
 async def test_forget_distill_path_true_does_not_call_ask_character(sqlite_store):
     """蒸留成功（True）の場合、バイナリ判定用の ask_character は呼ばれないこと。"""
     char_id = "char-distill-no-binary"

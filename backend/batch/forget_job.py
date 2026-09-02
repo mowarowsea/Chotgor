@@ -123,6 +123,19 @@ async def run_forget_process(
         for m in candidates:
             memory_manager.delete_inscribed_memory(m.id, character_id)
             deleted_count += 1
+        # タイムライン封筒（night.forget）: 忘却レビューが走ったことを正本に載せる。
+        # バイナリ判定経路にも同じ追記があるが、あちらは tool-use 非対応プロバイダー
+        # 専用の fallback なので、経路ごとに1回ずつ書く形を保つ。
+        sqlite.record_timeline_event(
+            character_id=character_id,
+            event_type="night.forget",
+            actor="character",
+            origin="real",
+            payload={
+                "candidates_count": len(candidates),
+                "deleted_count": deleted_count,
+            },
+        )
         logger.info(
             "forget(昇華) 完了 char=%s candidates=%d deleted=%d",
             char_label, len(candidates), deleted_count,
