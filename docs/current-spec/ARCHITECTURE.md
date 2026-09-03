@@ -566,6 +566,12 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 
 名前/UUID→キャラクター・プリセットの解決は `api/resource_resolver.py` に一元化。
 
+キャラ単位の「利用可能モデル」設定（旧 `characters.enabled_providers`）は廃止した。
+`llm_model_presets` に登録済みのプリセットは、プロバイダーが利用可能（APIキー設定済み、
+もしくは鍵不要）である限り全キャラで使える — GM プリセットと同じ扱い。
+キャラ固有のモデル指定として残るのは `ghost_model`（記憶処理＝Chronicle・忘却などで
+本人が使う声）と `judge_preset_id`（なりゆき judge）の2つだけ。
+
 ## 5. 関連ドキュメント
 
 索引は `docs/README.md`。ここは「この地図のどの節を深掘りするならどれを読むか」の対応表。

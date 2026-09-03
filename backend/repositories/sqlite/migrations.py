@@ -1333,6 +1333,34 @@ class SQLiteMigrationsMixin:
                     "ALTER TABLE characters DROP COLUMN switch_angle_enabled"
                 )
 
+    def _migrate_drop_enabled_providers(self) -> None:
+        """利用モデル設定の撤去に伴い `characters.enabled_providers` 列を削除する。
+
+        キャラ単位の「使えるモデル」ホワイトリストは廃止し、システムに登録済みの
+        プリセットは全キャラで使えるようにした（GM プリセットと同じ扱い）。
+        キャラ固有のモデル指定として残るのは `ghost_model` / `judge_preset_id` のみ。
+        SQLite 3.35+ の DROP COLUMN を使う。新規DBには列が無いため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "characters" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(characters)"
+                ).fetchall()
+            }
+            if "enabled_providers" in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE characters DROP COLUMN enabled_providers"
+                )
+
     def _migrate_face_to_face_bg_images(self) -> None:
         """対面背景画像の複数化（なりゆき ambience Step 3）。
 

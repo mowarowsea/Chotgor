@@ -33,7 +33,7 @@
    16. UTILITIES             — ch-row-gap / ch-spacer / ch-stack 等
    17. PAGE HEAD ＋ 詳細部品  — ch-pagehead / ch-chapter / ch-section / ch-switch-row
    18. LEGACY BRIDGES        — 旧 style.css のクラス名を保持し新テーマで上書き
-                               （accordion / icon upload / crop modal）。JSが参照するため改名不可。
+                               （icon upload / crop modal）。JSが参照するため改名不可。
    19. INFO BOX / ACTION BAR — ch-info / ch-actionbar
    20. LOGS                  — 旧 .log-* を chotgor 側で上書き（最後に置き、base の後で@mediaが効く）
    21. HELP POPOVER          — ch-help（ⓘ アイコン＋補足ポップオーバー）
@@ -1513,55 +1513,12 @@ html::-webkit-scrollbar-track,
 /* ████████████████████████████████████████████████████████████
    LEGACY BRIDGES（18）— 旧 style.css のクラス名を温存し新テーマで上書き
    ------------------------------------------------------------
-   下記 accordion / icon upload / crop modal / (末尾の) logs は、JS が
+   下記 icon upload / crop modal / (末尾の) logs は、JS が
    クラス名・ID を参照するため改名できない。chotgor.css は style.css の
    "後" に読み込まれるので、同名・同 specificity でも後勝ちで新テーマが効く。
    旧テーマがハードコード色（#202020 系 surface）を当てている箇所は、必ず
    background 等を明示リセットして --ch-* トークンへ寄せること（地色ブリード対策）。
    ████████████████████████████████████████████████████████████ */
-
-/* ============================================================
-   ACCORDION — モデルプリセット（JS が参照する旧クラス名を保持）
-   ============================================================ */
-.accordion { display: flex; flex-direction: column; gap: 8px; }
-.accordion-item {
-  border: 1px solid var(--ch-sep);
-  border-radius: var(--ch-radius-md);
-  background: var(--ch-bg-s);
-  overflow: hidden;
-}
-.accordion-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  /* 旧 surface-2(#292929) のハードコード地色をテーマ追従の沈み色に置換 */
-  background: var(--ch-bg-s);
-}
-.accordion-header strong { font-family: var(--ch-f); font-size: 13px !important; font-weight: 500; color: var(--ch-t) !important; }
-.accordion-toggle {
-  background: transparent;
-  border: none;
-  color: var(--ch-t3);
-  cursor: pointer;
-  font-size: 11px;
-  padding: 0;
-  width: 16px;
-}
-.btn-remove {
-  margin-left: auto;
-  background: transparent;
-  border: none;
-  color: var(--ch-t3);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 2px 6px;
-  border-radius: var(--ch-radius-sm);
-  transition: color .15s, background .15s;
-}
-.btn-remove:hover { color: var(--ch-danger); background: var(--ch-danger-bg); }
-.accordion-body { padding: 4px 12px 12px; border-top: 1px solid var(--ch-sep); }
-.accordion-body .form-group { margin-top: 12px; }
 
 /* シナリオバナー — 一覧サムネイル（scenarios）と編集ページプレビュー（scenario_edit） */
 .ch-row__banner {
@@ -1589,27 +1546,6 @@ html::-webkit-scrollbar-track,
   font-family: var(--ch-fm);
   font-size: 11px;
 }
-
-/* Ghost Model 選択 — アコーディオンヘッダ内のスライドトグル型ラジオ（character_edit） */
-.ghost-pick {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-.ghost-pick + .btn-remove { margin-left: 8px; }
-.ghost-pick__label {
-  font-family: var(--ch-fm);
-  font-size: 10px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--ch-t4);
-  transition: color .15s;
-}
-.ghost-pick:has(input:checked) .ghost-pick__label { color: var(--ch-a); }
-.add-model-row { display: flex; gap: 8px; margin-top: 10px; }
-.add-model-row .form-control { flex: 1; }
 
 /* ============================================================
    ICON UPLOAD（旧クラス名を保持）

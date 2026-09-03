@@ -65,7 +65,7 @@ class PcAssignment:
         character_name: player_type="character" のとき、Chotgor キャラの本名。
             `@<character_name>` でメンションされた場合のフォールバック解決に使う。
         preset_id: player_type="character" のとき、使う LLMModelPreset の ID。
-            未指定なら呼び出し側で enabled_providers 先頭をフォールバックする。
+            未指定なら呼び出し側でキャラの ghost_model へフォールバックする。
     """
 
     slot_id: str

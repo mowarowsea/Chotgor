@@ -27,21 +27,6 @@ from backend.services.character_query import ask_character
 router = APIRouter(prefix="/ui", tags=["ui"])
 
 
-def _build_enabled_providers(form) -> dict:
-    """フォームから enabled_providers 辞書を構築する。
-
-    create_character・update_character の両方で同じロジックが必要なため一元化する。
-    キー存在＝有効の判定のみに使うため、値は空 dict とする。
-
-    Args:
-        form: await request.form() の結果。
-
-    Returns:
-        {preset_id: {}} の辞書。
-    """
-    return {pid: {} for pid in form.getlist("preset_ids")}
-
-
 # --- Characters ---
 
 @router.get("/characters", response_class=HTMLResponse)
@@ -83,8 +68,6 @@ async def create_character(request: Request):
     if not name:
         return RedirectResponse(url="/ui/characters/new", status_code=303)
 
-    enabled_providers = _build_enabled_providers(form)
-
     image_data = await _read_image_data(form)
 
     char_id = str(uuid.uuid4())
@@ -95,7 +78,6 @@ async def create_character(request: Request):
         character_id=char_id,
         name=name,
         system_prompt_block1=form.get("system_prompt_block1", ""),
-        enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         image_data=image_data,
         judge_preset_id=judge_preset_id,
@@ -168,14 +150,11 @@ async def update_character(request: Request, character_id: str):
     if not verify(form, character_fingerprint(sqlite, character_id)):
         return _conflict_response(request, form, f"/ui/characters/{character_id}")
 
-    enabled_providers = _build_enabled_providers(form)
-
     ghost_model = form.get("ghost_model") or None
     judge_preset_id = form.get("judge_preset_id") or None
 
     update_kwargs: dict = dict(
         system_prompt_block1=form.get("system_prompt_block1", ""),
-        enabled_providers=enabled_providers,
         ghost_model=ghost_model,
         judge_preset_id=judge_preset_id,
         user_label=(form.get("user_label") or "").strip(),

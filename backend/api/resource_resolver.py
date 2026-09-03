@@ -79,25 +79,3 @@ def require_preset(sqlite, identifier: str):
     if preset is None:
         raise HTTPException(status_code=404, detail=f"モデルプリセット '{identifier}' が見つかりません")
     return preset
-
-
-def require_model_config(character, preset):
-    """キャラクターに対してプリセットが有効化されているか検証し、設定辞書を返す。
-
-    Args:
-        character: Character ORM オブジェクト。
-        preset: LLMModelPreset ORM オブジェクト。
-
-    Returns:
-        enabled_providers[preset.id] の設定辞書。
-
-    Raises:
-        HTTPException 400: プリセットがキャラクターで有効化されていない場合。
-    """
-    model_config = (character.enabled_providers or {}).get(preset.id)
-    if model_config is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"プリセット '{preset.name}' はキャラクター '{character.name}' で有効化されていません",
-        )
-    return model_config

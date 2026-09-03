@@ -272,7 +272,6 @@ class TestStreamMessage:
         character.name = "alice"
         character.system_prompt_block1 = ""
         character.meta_instructions = ""
-        character.enabled_providers = {"preset-1": {}}
 
         preset = MagicMock()
         preset.id = "preset-1"
@@ -402,7 +401,6 @@ class TestStreamMessage:
         character.name = "alice"
         character.system_prompt_block1 = ""
         character.meta_instructions = ""
-        character.enabled_providers = {"gemini": {}}
 
         preset = MagicMock()
         preset.id = "preset-1"

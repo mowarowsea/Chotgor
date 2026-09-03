@@ -311,57 +311,29 @@
             <h2 class="ch-chapter__title">engine <small>— 動かす仕組み</small></h2>
         </div>
 
-        {# ── models ・ 利用モデル ── #}
+        {# ── ghost ・ 記憶処理のモデル ── #}
         <details class="ch-section ch-section--collapsible">
             <summary class="ch-section__head">
-                <h3 class="ch-section-title">models <small>・ 利用モデル</small></h3>
+                <h3 class="ch-section-title">ghost <small>・ 記憶処理のモデル</small></h3>
             </summary>
 
-            <div class="ch-field">
-                <span class="ch-label">利用モデル{{ ch_help(
-                    '<p>有効にしたモデルがチャット画面のモデルリストに表示されます。</p>'
-                    '<p><code>ghost</code> スイッチで、Chronicle・忘却処理に使うモデル（Ghost Model）を1つ選べます。'
-                    '選択済みのスイッチをもう一度押すと未設定に戻ります。</p>'
+            <div class="ch-field" style="margin-bottom:0">
+                <label class="ch-label" for="ghost_model">Ghost Model{{ ch_help(
+                    '<p>Chronicle（夜の棚卸し）・忘却など、会話の外で本人が記憶を扱うときに使うモデル。</p>'
+                    '<p>未設定だとそれらの処理の対象外になります。</p>'
+                    '<p>チャットで使うモデルはキャラ単位の設定を廃止しました。'
+                    '<a href="/ui/model-presets">models</a> に登録済みのモデルはすべて選べます。</p>'
                 ) }}
-                </span>
-
-                <div class="accordion" id="model-accordion">
+                </label>
+                <select id="ghost_model" name="ghost_model" class="ch-select">
+                    <option value="">(未設定)</option>
                     {% for preset in model_presets %}
-                    {% set cfg = (character.enabled_providers or {}).get(preset.id) if character else none %}
-                    {% if cfg is not none %}
-                    <div class="accordion-item" data-preset-id="{{ preset.id }}">
-                        <input type="hidden" name="preset_ids" value="{{ preset.id }}">
-                        <div class="accordion-header">
-                            <strong>{{ preset.name }}</strong>
-                            <span class="ch-tag ch-tag--accent">{{ provider_labels.get(preset.provider, preset.provider) }}</span>
-                            <label class="ghost-pick" title="Ghost Model（Chronicle・忘却処理に使うモデル）に設定する">
-                                <span class="ghost-pick__label">ghost</span>
-                                <span class="ch-toggle">
-                                    <input type="radio" name="ghost_model" value="{{ preset.id }}"
-                                        {% if character and character.ghost_model == preset.id %}checked{% endif %}>
-                                    <span class="ch-toggle__track"></span>
-                                </span>
-                            </label>
-                            <button type="button" class="btn-remove" onclick="removePreset(this, '{{ preset.id }}')">✕</button>
-                        </div>
-                    </div>
-                    {% endif %}
+                    <option value="{{ preset.id }}"
+                        {% if character and character.ghost_model == preset.id %}selected{% endif %}>
+                        {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
+                    </option>
                     {% endfor %}
-                </div>
-
-                <div class="add-model-row">
-                    <select id="preset-select" class="ch-select">
-                        <option value="">-- モデルを選択 --</option>
-                        {% for preset in model_presets %}
-                        <option value="{{ preset.id }}" data-name="{{ preset.name }}"
-                            data-provider-label="{{ provider_labels.get(preset.provider, preset.provider) }}"
-                            {% if character and (character.enabled_providers or {}).get(preset.id) is not none %}disabled{% endif %}>
-                            {{ preset.name }} ({{ provider_labels.get(preset.provider, preset.provider) }})
-                        </option>
-                        {% endfor %}
-                    </select>
-                    <button type="button" class="ch-btn" onclick="addPreset()">+ 追加</button>
-                </div>
+                </select>
 
                 {% if not model_presets %}
                 <p class="ch-hint" style="margin-top:8px">
@@ -370,7 +342,6 @@
                 </p>
                 {% endif %}
             </div>
-
         </details>
 
         {# ════════════ CHAPTER 3 — めぐり ════════════ #}
@@ -831,81 +802,6 @@
 
 {% block scripts %}
 <script>
-    /**
-     * Ghost Model ラジオに「選択済みをもう一度クリックで解除」の挙動を取り付ける。
-     * ラジオ単体では未設定に戻せないため、2度目のクリックで checked を外して
-     * 明示的に自動保存をトリガーする（change イベントが発生しないため）。
-     */
-    function attachGhostRadio(radio) {
-        radio.dataset.wasChecked = radio.checked ? '1' : '0';
-        radio.addEventListener('click', function () {
-            if (this.dataset.wasChecked === '1') {
-                this.checked = false;
-                this.dataset.wasChecked = '0';
-                if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
-            } else {
-                document.querySelectorAll('#model-accordion input[name="ghost_model"]')
-                    .forEach(r => { r.dataset.wasChecked = '0'; });
-                this.dataset.wasChecked = '1';
-            }
-        });
-    }
-
-    /** プリセットをアコーディオンから削除する。 */
-    function removePreset(btn, presetId) {
-        btn.closest('.accordion-item').remove();
-        const opt = document.querySelector(`#preset-select option[value="${presetId}"]`);
-        if (opt) opt.disabled = false;
-        // モデルの削除は DOM 操作のみでイベントを伴わないため、明示的に保存する。
-        if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
-    }
-
-    /** 選択したプリセットをアコーディオンに追加する。 */
-    function addPreset() {
-        const sel = document.getElementById('preset-select');
-        const opt = sel.options[sel.selectedIndex];
-        if (!opt || !opt.value) return;
-
-        const presetId = opt.value;
-        const name = opt.dataset.name;
-        const providerLabel = opt.dataset.providerLabel;
-
-        if (document.querySelector(`.accordion-item[data-preset-id="${presetId}"]`)) return;
-
-        const accordion = document.getElementById('model-accordion');
-        const item = document.createElement('div');
-        item.className = 'accordion-item';
-        item.dataset.presetId = presetId;
-        item.innerHTML = `
-        <input type="hidden" name="preset_ids" value="${presetId}">
-        <div class="accordion-header">
-            <strong>${name}</strong>
-            <span class="ch-tag ch-tag--accent">${providerLabel}</span>
-            <label class="ghost-pick" title="Ghost Model（Chronicle・忘却処理に使うモデル）に設定する">
-                <span class="ghost-pick__label">ghost</span>
-                <span class="ch-toggle">
-                    <input type="radio" name="ghost_model" value="${presetId}">
-                    <span class="ch-toggle__track"></span>
-                </span>
-            </label>
-            <button type="button" class="btn-remove" onclick="removePreset(this, '${presetId}')">✕</button>
-        </div>
-    `;
-        accordion.appendChild(item);
-        attachGhostRadio(item.querySelector('input[name="ghost_model"]'));
-
-        opt.disabled = true;
-        sel.value = '';
-        // モデルの追加は DOM 操作のみでイベントを伴わないため、明示的に保存する。
-        if (window.chotgorAutosave) window.chotgorAutosave('form[data-autosave]');
-    }
-
-    // ページロード時の初期化
-    document.addEventListener('DOMContentLoaded', () => {
-        document.querySelectorAll('#model-accordion input[name="ghost_model"]')
-            .forEach(attachGhostRadio);
-    });
-
     // ── アイコントリミング (Cropper.js) ──────────────
 
     /** @type {Cropper|null} 現在のCropperインスタンス */

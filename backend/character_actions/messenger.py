@@ -166,22 +166,16 @@ class Messenger:
         self.default_origin = default_origin
 
     def _resolve_push_preset(self, char):
-        """push 用のプリセットを解決する（ghost_model 優先・enabled_providers 先頭へフォールバック）。
+        """push 用のプリセットを解決する（本人の声 ＝ ghost_model）。
 
         新規セッションの model_id（{char_name}@{preset_name}）組み立てに使う。
 
         Returns:
-            LLMModelPreset ORM。解決できなければ None。
+            LLMModelPreset ORM。ghost_model 未設定・不明なら None。
         """
         ghost_model = getattr(char, "ghost_model", None)
         if ghost_model:
-            preset = self.sqlite_store.get_model_preset(ghost_model)
-            if preset is not None:
-                return preset
-        for preset_id in (getattr(char, "enabled_providers", None) or {}):
-            preset = self.sqlite_store.get_model_preset(preset_id)
-            if preset is not None:
-                return preset
+            return self.sqlite_store.get_model_preset(ghost_model)
         return None
 
     def reach_out(self, message: str, visit: bool = False) -> str:

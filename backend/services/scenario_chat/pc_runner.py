@@ -216,7 +216,7 @@ async def stream_pc_response(
         user_alias: ユーザのタグ名。履歴整形と PC 自覚プロンプトに使う。
         history: scenario_turns ORM の昇順リスト（最新の GM 発話まで含む）。
         preset_id: 使用する LLMModelPreset の ID（pc_assignments 単位か、ない場合は
-            キャラの enabled_providers 先頭。呼び出し側で解決して渡す）。
+            キャラの ghost_model。呼び出し側で解決して渡す）。
         sqlite: SQLiteStore。
         settings: グローバル設定辞書。
         chat_service: PC 1 ターンの LLM ディスパッチを担う ChatService インスタンス。

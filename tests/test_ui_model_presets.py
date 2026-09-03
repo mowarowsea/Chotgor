@@ -113,24 +113,14 @@ class TestModelsApiOrder:
     def test_presets_sorted_within_character(self, sqlite_store, models_client):
         """キャラクターごとにプロバイダー順→モデルID順→プリセット名順で返ること。
 
-        APIキー必須のプロバイダー（anthropic / google）は settings に鍵がないと
-        除外されるため、ここで設定してから検証する。
+        キャラ単位の利用モデル設定は廃止したので、キャラ側に何も指定しなくても
+        登録済みプリセットが全件返る。APIキー必須のプロバイダー（anthropic /
+        google）は settings に鍵がないと除外されるため、ここで設定してから検証する。
         """
         _seed_presets(sqlite_store)
         sqlite_store.set_setting("anthropic_api_key", "dummy")
         sqlite_store.set_setting("google_api_key", "dummy")
-        sqlite_store.create_character(
-            "char-1",
-            "はる",
-            enabled_providers={
-                "p-google": {},
-                "p-ant-b": {},
-                "p-ollama": {},
-                "p-ant-a": {},
-                "p-cli": {},
-                "p-ant-c": {},
-            },
-        )
+        sqlite_store.create_character("char-1", "はる")
 
         data = models_client.get("/v1/models").json()["data"]
 
@@ -151,6 +141,31 @@ class TestModelsApiOrder:
         assert [m["attachment_kinds"] for m in data] == [
             ["image"], ["image"], ["image"], ["image"], ["audio", "image"], ["image"],
         ]
+
+    def test_providers_without_api_key_are_excluded(self, sqlite_store, models_client):
+        """APIキー未設定のプロバイダーのプリセットは一覧から落ちること。
+
+        「登録済みは全キャラで使える」に変えても、鍵がなくて実際には呼べない
+        プロバイダーまで並べてしまわないことを守る。
+        """
+        _seed_presets(sqlite_store)
+        sqlite_store.create_character("char-1", "はる")
+
+        data = models_client.get("/v1/models").json()["data"]
+
+        # 鍵不要の claude_cli / ollama だけが残る
+        assert [m["id"] for m in data] == ["はる@CLI", "はる@Qwen"]
+
+    def test_every_character_gets_every_preset(self, sqlite_store, models_client):
+        """複数キャラがいれば「全キャラ × 全プリセット」の直積になること。"""
+        sqlite_store.create_model_preset("p-cli", "CLI", "claude_cli", "")
+        sqlite_store.create_model_preset("p-ollama", "Qwen", "ollama", "qwen2.5:latest")
+        sqlite_store.create_character("char-1", "はる")
+        sqlite_store.create_character("char-2", "さくら")
+
+        ids = [m["id"] for m in models_client.get("/v1/models").json()["data"]]
+
+        assert set(ids) == {"はる@CLI", "はる@Qwen", "さくら@CLI", "さくら@Qwen"}
 
 
 class TestModelPresetsPage:

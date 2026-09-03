@@ -559,7 +559,7 @@ def _resolve_pc_preset_id(pc, sqlite) -> str:
 
     解決順:
         1. pc.preset_id（セッション側 pc_assignments で指定された preset）
-        2. キャラの enabled_providers の任意の1エントリ
+        2. キャラの ghost_model（本人の声の既定）
 
     Args:
         pc: PcAssignment（player_type="character"）。
@@ -575,10 +575,9 @@ def _resolve_pc_preset_id(pc, sqlite) -> str:
     char = sqlite.get_character(pc.character_id)
     if not char:
         return ""
-    enabled = getattr(char, "enabled_providers", None) or {}
-    for preset_id in enabled.keys():
-        if sqlite.get_model_preset(preset_id):
-            return preset_id
+    ghost_model = getattr(char, "ghost_model", None)
+    if ghost_model and sqlite.get_model_preset(ghost_model):
+        return ghost_model
     return ""
 
 

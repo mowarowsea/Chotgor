@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from backend.api.resource_resolver import (
     parse_model_id,
     require_character,
-    require_model_config,
     require_preset,
     resolve_character,
     resolve_preset,
@@ -91,25 +90,3 @@ def test_require_preset_raises_404_when_not_found():
         require_preset(sqlite, "missing")
 
     assert exc_info.value.status_code == 404
-
-
-def test_require_model_config_returns_enabled_provider_config():
-    character = SimpleNamespace(
-        name="Momo",
-        enabled_providers={"preset-1": {}},
-    )
-    preset = SimpleNamespace(id="preset-1", name="default")
-
-    config = require_model_config(character, preset)
-
-    assert config == {}
-
-
-def test_require_model_config_raises_400_when_preset_not_enabled():
-    character = SimpleNamespace(name="Momo", enabled_providers={})
-    preset = SimpleNamespace(id="preset-1", name="default")
-
-    with pytest.raises(HTTPException) as exc_info:
-        require_model_config(character, preset)
-
-    assert exc_info.value.status_code == 400

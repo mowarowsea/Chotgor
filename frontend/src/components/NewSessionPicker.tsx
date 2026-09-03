@@ -606,7 +606,7 @@ export default function NewSessionPicker({
                         PC枠の名前は GM が `@&lt;name&gt;` で呼ぶ際に使われます。
                         キャラ本名でも呼べます。NPC 名・Narrator と被ると起動時にエラーになります。
                         preset を「(キャラ既定)」のままにすると、そのキャラの
-                        enabled_providers の先頭が使われます。
+                        Ghost Model が使われます。
                       </p>
                     </div>
                   )}

@@ -41,7 +41,7 @@ export interface PcSlot {
  *
  *  - player_type="user": そのスロットをユーザ本人が担当する。
  *  - player_type="character": Chotgor の AI キャラが担当する。character_id 必須、
- *    preset_id 推奨（未指定ならキャラの enabled_providers 先頭がフォールバック）。
+ *    preset_id 推奨（未指定ならキャラの ghost_model がフォールバック）。
  */
 export interface PcAssignment {
   slot_id: string;

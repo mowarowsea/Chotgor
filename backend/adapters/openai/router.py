@@ -11,7 +11,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from backend.api.resource_resolver import parse_model_id, resolve_character, resolve_preset, require_model_config
+from backend.api.resource_resolver import parse_model_id, resolve_character, resolve_preset
 from backend.services.chat.models import ChatRequest, Message
 from backend.services.chat.service import extract_text_content
 from backend.lib.debug_logger import logger
@@ -104,7 +104,9 @@ def _format_completion(model: str, text: str) -> dict:
 async def list_models(request: Request):
     """利用可能な character@preset_id の組み合わせをモデル一覧として返す。
 
-    キャラクターごとに「プロバイダー表示順 → モデルID → プリセット名」でソートして返す。
+    キャラ単位の利用モデル設定は廃止した。システムに登録済みのプリセットのうち、
+    プロバイダーが利用可能（APIキー設定済み等）なものは全キャラで使える。
+    並びは「プロバイダー表示順 → モデルID → プリセット名」。
     フロントエンドはこの配列順をそのまま表示順に使うため、並びはここが正となる。
     """
     from backend.providers.registry import model_preset_sort_key
@@ -114,16 +116,12 @@ async def list_models(request: Request):
     available = _available_providers(settings)
     characters = state.sqlite.list_characters()
 
+    usable = [p for p in state.sqlite.list_model_presets() if p.provider in available]
+    usable.sort(key=model_preset_sort_key)
+
     data = []
     for char in characters:
-        enabled = []
-        for preset_id in (char.enabled_providers or {}):
-            preset = state.sqlite.get_model_preset(preset_id)
-            if preset is None or preset.provider not in available:
-                continue
-            enabled.append(preset)
-        enabled.sort(key=model_preset_sort_key)
-        for preset in enabled:
+        for preset in usable:
             data.append({
                 "id": f"{char.name}@{preset.name}",
                 "object": "model",
@@ -157,9 +155,6 @@ async def chat_completions(request: Request, body: OAIChatRequest):
     preset = resolve_preset(state.sqlite, preset_id)
     if preset is None:
         raise HTTPException(status_code=404, detail=f"Model preset '{preset_id}' not found")
-
-    # プリセットがキャラクターで有効化されているか検証する（無効なら HTTPException 400）
-    require_model_config(character, preset)
 
     settings = state.sqlite.get_all_settings()
 

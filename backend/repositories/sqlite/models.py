@@ -107,7 +107,7 @@ class ChatAttachment(Base):
 
 
 class Character(Base):
-    """キャラクター — 人格・システムプロンプト・プロバイダー設定を保持するテーブル。"""
+    """キャラクター — 人格・システムプロンプト・各種モデル指定を保持するテーブル。"""
 
     __tablename__ = "characters"
 
@@ -116,7 +116,6 @@ class Character(Base):
     system_prompt_block1 = Column(Text, nullable=False, default="")
     inner_narrative = Column(Text, nullable=False, default="")  # 内的叙述（キャラクター自身の自己物語テキスト）
     cleanup_config = Column(JSON, nullable=False, default=dict)
-    enabled_providers = Column(JSON, nullable=False, default=dict)
     ghost_model = Column(String, nullable=True)  # chronicle/forget に使うプリセットID
     image_data = Column(Text, nullable=True)  # base64 data URI
     # チャットバブルの配色スロット（0〜9）。NULL は「自動」でフロントが名前ハッシュから決める。

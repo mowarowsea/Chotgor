@@ -24,7 +24,7 @@ from backend.lib.log_context import (
     current_log_session_id,
     current_log_target,
 )
-from backend.api.resource_resolver import parse_model_id, require_character, require_preset, require_model_config, resolve_preset
+from backend.api.resource_resolver import parse_model_id, require_character, require_preset, resolve_preset
 from backend.api.utils import build_1on1_history, build_message_content, format_memories_for_sse, message_to_dict, session_to_dict
 from backend.services.chat.request_factory import build_character_request, latest_anticipation
 from backend.services.chat.content import apply_context_window
@@ -123,8 +123,6 @@ async def build_1on1_chat_request(
 
     character = require_character(state.sqlite, char_name)
     preset = require_preset(state.sqlite, preset_name)
-    # プリセットがキャラクターで有効化されているか検証する（無効なら HTTPException 400）
-    require_model_config(character, preset)
 
     settings = state.sqlite.get_all_settings()
 

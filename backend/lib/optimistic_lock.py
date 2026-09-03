@@ -36,7 +36,6 @@ FORCE_FIELD = "_fp_force"
 CHARACTER_FIELDS = (
     "name",
     "system_prompt_block1",
-    "enabled_providers",
     "ghost_model",
     "judge_preset_id",
     "user_label",

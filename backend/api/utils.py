@@ -30,7 +30,7 @@ def fmt_dt(dt: datetime | None) -> str | None:
 def char_to_dict(char) -> dict:
     """Character ORM オブジェクトを API レスポンス用 dict に変換する。
 
-    image_data / face_to_face_bg_images の画像本体 / enabled_providers は含まない
+    image_data / face_to_face_bg_images の画像本体は含まない
     （サイズ・センシティビティのため。背景画像は別エンドポイント経由でバイナリ取得）。
     背景はラベル一覧（face_to_face_bg_labels）のみ返し、フロントは
     `/api/characters/{id}/face_to_face_bg_image?label=...` で画像本体を解決する。
