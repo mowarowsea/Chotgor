@@ -78,6 +78,20 @@ interface UseScenarioChatDeps {
   setMsgLogIds: Dispatch<SetStateAction<Record<string, string>>>;
 }
 
+/**
+ * シナリオ発話送信（ストリーム消費）の結果。
+ *
+ * 引き直しの失敗を呼び出し側が検知して巻き戻しを戻すために返す。
+ * ストリームは `error` イベントでも例外を投げずに終わるため、成否は戻り値で伝える。
+ */
+interface ScenarioSendResult {
+  /** ストリームが error イベント・例外なしで終わったか。 */
+  ok: boolean;
+  /** この送信で保存された最初のターンID（1件も保存されなければ null）。
+   *  失敗した試行を後片付けするときの削除起点に使う。 */
+  firstSavedTurnId: string | null;
+}
+
 /** useScenarioChat が返す state・setter・ハンドラ群。 */
 interface UseScenarioChatResult {
   /** シナリオプレイセッション一覧（サイドバーで session に混ぜる）。 */
@@ -147,7 +161,7 @@ interface UseScenarioChatResult {
     content: string,
     autoAdvance?: boolean,
     yieldTo?: string,
-  ) => Promise<void>;
+  ) => Promise<ScenarioSendResult>;
   /** ensemble_pc 専用「ターンを譲る」操作。指定先（PC枠名/"GM"/"ALL"）に発話を回す。
    *  内部は handleScenarioSend("", true, undefined, target) のラッパー。 */
   handleScenarioYieldTo: (target: string) => Promise<void>;
@@ -468,11 +482,15 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       autoAdvance: boolean = false,
       yieldTo?: string,
     ) => {
-      if (!activeScenarioSession) return;
+      if (!activeScenarioSession) return { ok: false, firstSavedTurnId: null };
       setError(null);
       setSending(true);
       setScenarioPending([]);
       setScenarioStreamingReasoning(null);
+      // ストリームの成否と、この送信で最初に保存されたターン。引き直しが失敗したとき、
+      // 途中まで保存された分を片付けて巻き戻しを戻すために呼び出し側が使う。
+      let ok = true;
+      let firstSavedTurnId: string | null = null;
       // この送信の世代。完了後の後処理が着弾する頃に次の送信が始まっていたら、
       // 古い結果で上書きしないための番号（`sendSeqRef` の説明を参照）。
       const seq = ++sendSeqRef.current;
@@ -498,6 +516,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
         onEvent: (ev) => {
           if (ev.type === "user_saved") {
             // user_saved はユーザ発話を確定ターンとしてリストに追加する
+            if (!firstSavedTurnId) firstSavedTurnId = ev.turn.id;
             setScenarioTurns((prev) => [...prev, ev.turn]);
           } else if (ev.type === "turn_start") {
             // 新しい吹き出しを未確定として追加する。GM (speaker_type 有) と PC (character 有)
@@ -531,6 +550,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             setScenarioStreamingReasoning(pendingReasoning);
           } else if (ev.type === "turn_end") {
             // 確定ターンとしてリストに追加し、対応する未確定吹き出しを除く
+            if (!firstSavedTurnId) firstSavedTurnId = ev.turn.id;
             setScenarioTurns((prev) => [...prev, ev.turn]);
             if (newPending.length > 0) newPending.shift();
             setScenarioPending([...newPending]);
@@ -583,6 +603,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             });
           } else if (ev.type === "error") {
             // GM 由来は message のみ、PC 由来は character も付く。
+            ok = false;
             if (ev.character) {
               setError(`${ev.character}: ${ev.message}`);
             } else {
@@ -594,6 +615,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
           }
         },
         onError: (e) => {
+          ok = false;
           setError(String(e));
         },
       });
@@ -638,6 +660,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
           setSending(false);
         }
       }
+      return { ok, firstSavedTurnId };
     },
     [
       activeScenarioSession,
@@ -648,6 +671,35 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       setElapsedMap,
       setMsgLogIds,
     ],
+  );
+
+  /**
+   * 引き直しに失敗したとき、巻き戻した枝を本線へ戻す。
+   *
+   * 巻き戻しは非活性化なので、元のレスポンスは枝として DB に残っている。
+   * 失敗した試行で途中まで保存されたターン（ユーザ発話だけ、など）は枝として
+   * 残す意味がなく、放置すると枝ナビに中身のない兄弟が増え続けるので物理削除する。
+   * 失敗分は必ず最新の `turn_index` を持つので、その先頭から消せば他の枝は巻き添えにならない。
+   */
+  const restoreRolledBackGeneration = useCallback(
+    async (
+      sessionId: string,
+      generationId: string,
+      failedFirstTurnId: string | null,
+    ) => {
+      if (failedFirstTurnId) {
+        await deleteScenarioTurnsFrom(sessionId, failedFirstTurnId, false);
+      }
+      const turns = await activateScenarioGeneration(
+        sessionId,
+        generationId,
+        TURN_PAGE_SIZE,
+      );
+      // DB は元に戻すが、画面への反映は開いたままのセッションに限る
+      // （待っている間に別セッションへ移っていたら、そちらの表示を壊さない）。
+      if (activeSessionIdRef.current === sessionId) applyTurnWindow(turns);
+    },
+    [activeSessionIdRef, applyTurnWindow],
   );
 
   /**
@@ -662,6 +714,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
    * 巻き戻しは非活性化（枝として保持）なので、引き直した結果が気に入らなければ
    * 枝ナビ（◀ 2/3 ▶）で元のレスポンスへ戻せる。巻き戻し起点をユーザ発話に揃えるのは、
    * 兄弟枝の分岐点（＝その 1 つ前の turn_index）を毎回同じ値にするため。
+   * 引き直しがエラーで終わった場合は `restoreRolledBackGeneration` で巻き戻しを戻す。
    */
   const handleScenarioRegenerate = useCallback(async () => {
     if (!activeScenarioSession) return;
@@ -683,7 +736,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     // 直前に user 発話があるかを見て、通常 / auto_advance を判別。
     const prev = lastTurnStart > 0 ? scenarioTurns[lastTurnStart - 1] : null;
     let pivot: ScenarioTurn;
-    let resend: () => Promise<void>;
+    let resend: () => Promise<ScenarioSendResult>;
     if (prev && prev.speaker_type === "user") {
       // 通常レスポンス: user を含めて巻き戻し、同じ発話で再ストリーム
       pivot = prev;
@@ -700,17 +753,36 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
       resend = () => handleScenarioSend(content, false);
     }
 
+    const sessionId = activeScenarioSession.id;
     const pivotIndex = pivot.turn_index;
+    // 引き直しに失敗したとき本線へ戻すための枝キー。枝機構より前に作られたターンは
+    // null で、その場合は戻せない（従来どおりエラー表示だけで終わる）。
+    const pivotGenerationId = pivot.generation_id ?? null;
     try {
-      await deleteScenarioTurnsFrom(activeScenarioSession.id, pivot.id);
+      await deleteScenarioTurnsFrom(sessionId, pivot.id);
       setScenarioTurns((prevTurns) =>
         prevTurns.filter((t) => t.turn_index < pivotIndex),
       );
-      await resend();
+      const result = await resend();
+      if (!result.ok && pivotGenerationId) {
+        // 引き直しが失敗した。ガチャを外しただけで元のレスポンスを失わないよう、
+        // 巻き戻した枝を本線へ戻す（エラー表示は resend 側が出したものを残す）。
+        await restoreRolledBackGeneration(
+          sessionId,
+          pivotGenerationId,
+          result.firstSavedTurnId,
+        );
+      }
     } catch (e) {
       setError(String(e));
     }
-  }, [activeScenarioSession, scenarioTurns, handleScenarioSend, setError]);
+  }, [
+    activeScenarioSession,
+    scenarioTurns,
+    handleScenarioSend,
+    restoreRolledBackGeneration,
+    setError,
+  ]);
 
   /**
    * シナリオの GM 応答を 1 レスポンス分破棄してユーザ入力待ちに戻す。

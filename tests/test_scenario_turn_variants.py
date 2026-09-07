@@ -291,6 +291,106 @@ class TestActivateGeneration:
         assert sqlite_store.activate_scenario_generation(session.id, "genA1") is False
 
 
+class TestFailedRegenerateRestore:
+    """引き直しに失敗したときの復元シーケンスを検証する。
+
+    フロント（useScenarioChat）の引き直しは
+      1. 起点ユーザ発話以降を非活性化（枝として保持）
+      2. 再ストリーム
+    という順で走り、2 がエラーで終わった場合に
+      3. 失敗した試行で保存された分を物理削除
+      4. 元の枝を再活性化
+    で巻き戻しを戻す。ガチャを外しただけで直前のレスポンスを失わないための経路で、
+    ここではその 1→4 が「元に戻る」ことと、後片付けの安全性を確認する。
+    """
+
+    def _setup(self, sqlite_store):
+        """「intro → (reqA, resA)」まで進んだセッションを用意する。
+
+        引き直しの起点はユーザ発話なので、ユーザ発話と GM 応答が同じ枝
+        （gen1）に入っている実運用と同じ形にしておく。
+
+        Returns:
+            (session, intro ターン, gen1 のターン列)
+        """
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        intro = _make_turn(sqlite_store, session.id, content="intro")
+        gen1 = _make_generation(
+            sqlite_store, session.id, "gen1", intro.turn_index, ["reqA", "resA"],
+        )
+        return session, intro, gen1
+
+    def test_restores_original_response_after_failed_attempt(self, sqlite_store):
+        """引き直しが失敗しても、元のユーザ発話とレスポンスが本線へ戻ること。"""
+        session, intro, gen1 = self._setup(sqlite_store)
+
+        # 1. 引き直し: 起点ユーザ発話（gen1 の先頭）以降を巻き戻す
+        assert sqlite_store.deactivate_scenario_turns_from(session.id, gen1[0].id) is True
+        assert [t.content for t in sqlite_store.list_scenario_turns(session.id)] == ["intro"]
+
+        # 2. 再ストリームがユーザ発話だけ保存してエラーで終わった
+        failed = _make_generation(
+            sqlite_store, session.id, "gen2", intro.turn_index, ["reqA"],
+        )
+
+        # 3. 失敗分を物理削除 → 4. 元の枝を再活性化
+        assert sqlite_store.delete_scenario_turns_from(session.id, failed[0].id) is True
+        assert sqlite_store.activate_scenario_generation(session.id, "gen1") is True
+
+        assert [t.content for t in sqlite_store.list_scenario_turns(session.id)] == [
+            "intro", "reqA", "resA",
+        ]
+
+    def test_failed_attempt_leaves_no_sibling_branch(self, sqlite_store):
+        """失敗した試行が、中身のない兄弟枝として枝ナビに残らないこと。
+
+        非活性のまま放置すると、引き直しを外すたびに「ユーザ発話だけの枝」が
+        兄弟として増え、枝ナビ（◀ 1/3 ▶）が実体のない選択肢で埋まる。
+        """
+        session, intro, gen1 = self._setup(sqlite_store)
+        sqlite_store.deactivate_scenario_turns_from(session.id, gen1[0].id)
+        failed = _make_generation(
+            sqlite_store, session.id, "gen2", intro.turn_index, ["reqA"],
+        )
+
+        sqlite_store.delete_scenario_turns_from(session.id, failed[0].id)
+        sqlite_store.activate_scenario_generation(session.id, "gen1")
+
+        variants = sqlite_store.list_scenario_generation_variants(session.id)
+        assert "gen2" not in variants
+        assert variants["gen1"]["count"] == 1
+
+    def test_cleanup_keeps_variants_drawn_before(self, sqlite_store):
+        """失敗分の後片付けが、それ以前に引いた兄弟枝を巻き添えにしないこと。
+
+        物理削除は「指定 turn_index 以降を枝ごと」消すため、失敗分が常に最新の
+        turn_index を持つ（＝最後に保存された）ことに依存している。ここが崩れると
+        過去のガチャ結果まで消える。
+        """
+        session, intro, gen1 = self._setup(sqlite_store)
+        # 1回目の引き直しは成功して gen2 が生えた
+        sqlite_store.deactivate_scenario_turns_from(session.id, gen1[0].id)
+        gen2 = _make_generation(
+            sqlite_store, session.id, "gen2", intro.turn_index, ["reqA", "resA-2"],
+        )
+        # 2回目の引き直しはユーザ発話だけ保存して失敗した
+        sqlite_store.deactivate_scenario_turns_from(session.id, gen2[0].id)
+        failed = _make_generation(
+            sqlite_store, session.id, "gen3", intro.turn_index, ["reqA"],
+        )
+
+        sqlite_store.delete_scenario_turns_from(session.id, failed[0].id)
+        sqlite_store.activate_scenario_generation(session.id, "gen2")
+
+        assert [t.content for t in sqlite_store.list_scenario_turns(session.id)] == [
+            "intro", "reqA", "resA-2",
+        ]
+        variants = sqlite_store.list_scenario_generation_variants(session.id)
+        assert set(variants) == {"gen1", "gen2"}
+        assert variants["gen2"]["count"] == 2
+
+
 class TestTimelineEnvelopes:
     """枝の出入りとタイムライン封筒（めぐり）の整合を検証する。"""
 
