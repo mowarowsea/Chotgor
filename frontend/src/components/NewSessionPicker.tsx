@@ -79,6 +79,39 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** バナー未設定シナリオ用の代替バナー。
+ *  バナーありのカードと縦幅（3:1）を揃え、一覧で高さがバラついて埋もれるのを防ぐ。 */
+function BannerFallback() {
+  return (
+    <div
+      className="w-full flex items-center justify-center"
+      style={{
+        aspectRatio: "3 / 1",
+        background: `repeating-linear-gradient(
+          -45deg,
+          rgb(var(--ch-s2)) 0px,
+          rgb(var(--ch-s2)) 6px,
+          rgb(var(--ch-s1)) 6px,
+          rgb(var(--ch-s1)) 12px
+        )`,
+        borderBottom: "1px solid var(--ch-sep2)",
+      }}
+    >
+      <span
+        className="text-[10px] font-mono px-2 py-0.5 rounded"
+        style={{
+          letterSpacing: "0.12em",
+          color: "rgb(var(--ch-t3))",
+          background: "rgb(var(--ch-s3) / 0.72)",
+          border: "1px solid var(--ch-sep2)",
+        }}
+      >
+        NO BANNER
+      </span>
+    </div>
+  );
+}
+
 /** 新規セッション作成モーダル本体。 */
 export default function NewSessionPicker({
   models,
@@ -381,13 +414,15 @@ export default function NewSessionPicker({
                             background: active ? "oklch(50% 0.13 226 / 0.08)" : "transparent",
                           }}
                         >
-                          {t.banner_data && (
+                          {t.banner_data ? (
                             <img
                               src={t.banner_data}
                               alt={t.title}
                               className="w-full object-cover"
                               style={{ aspectRatio: "3 / 1" }}
                             />
+                          ) : (
+                            <BannerFallback />
                           )}
                           <div
                             className="text-xs font-semibold px-2.5 py-2"
