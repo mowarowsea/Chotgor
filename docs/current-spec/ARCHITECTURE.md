@@ -213,6 +213,16 @@ frontend useChat
   heartbeat（`: ping` コメント行）を流し、切断そのものを減らす。切断は
   `log_warning("sse_disconnect", ...)` で MAIN 行に記録される。経緯・不採用案は
   `docs/planned/sse_disconnect_resilience_plan.md`。
+- **引き直し（再生成）は「新しい応答が確定するまで旧応答を消さない」**。
+  フロントは削除 API を呼ばず、`regenerate_from`（起点となる直前のユーザ発話ID）を付けて
+  同じ stream API を叩く。サーバはその発話を作り直さずに使い回し（履歴からは置き換え対象の
+  旧ターンを除外する）、応答が確定した瞬間にだけ旧ターンを `delete_chat_messages_from` で
+  落として置き換える。旧実装は「先に消してから再送」だったため、モデルがエラーを返すと
+  元の応答が DB ごと失われ（封筒も無駄に retracted され、宙に浮いたユーザ発話が残り）、
+  引き直しガチャを外すとユーザ発話を編集し直すまで再試行できなかった。
+  引き直しは配達済みターンのやり直しなので、応答可能性ゲート（預かり判定）は通さない。
+  発話そのものを書き換える**編集**は従来どおり「以降を削除して再送」（発話が変わる以上、
+  それに対して引いた応答は無効なので残さない）。
 - tool-use 対応プロバイダーはネイティブ function calling、非対応（Claude CLI / Ollama 等）は
   `lib/tag_parser.py` による `[TAG:...]` 抽出でツールを実行する（二経路ある点に注意）。
 - claude_cli プロバイダーだけは特殊で、CLI を subprocess 起動し MCP（mcp_server.py）経由で

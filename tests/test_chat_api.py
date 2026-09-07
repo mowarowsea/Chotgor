@@ -525,6 +525,217 @@ class TestStreamMessage:
 
 
 # ---------------------------------------------------------------------------
+# POST /api/chat/sessions/{session_id}/messages/stream （引き直し / regenerate_from）
+# ---------------------------------------------------------------------------
+
+class TestStreamMessageRegenerate:
+    """引き直し（再生成）経路のテスト。
+
+    検証したいのは「新しい応答が確定するまで旧応答を消さない」という置き換えの原子性。
+    フロントが先に消していた旧実装では、モデルがエラーを返した瞬間に元の応答が DB ごと
+    失われ、引き直しガチャを外すと直前の応答を取り戻せなくなっていた。
+    ここでは (1) 発話を作り直さないこと (2) 旧応答の削除が応答確定の直前にだけ走ること
+    (3) エラー時には何も消えないこと (4) 旧ターンが履歴・本文に混ざらないこと を押さえる。
+    """
+
+    def _make_sqlite(self, sid):
+        """「ユーザ発話 u1 → キャラ応答 c1」が保存済みのセッションを模した sqlite モック。
+
+        u1 を起点に引き直す状況を作る。create_chat_message / delete_chat_messages_from は
+        呼び出し順を calls に記録し、置き換えが「削除 → 保存」の順で起きることを
+        テスト側から検証できるようにする。
+
+        Returns:
+            (sqlite モック, u1, c1, 保存済みメッセージのリスト, 呼び出し順の記録)
+        """
+        session = _fake_session(sid=sid, model_id="alice@gemini", title="既存タイトル")
+        u1 = _fake_message(mid="u1", session_id=sid, role="user", content="こんにちは")
+        c1 = _fake_message(mid="c1", session_id=sid, role="character", content="旧応答")
+        c1.character_name = "alice"
+
+        saved = [u1, c1]
+        calls = []
+
+        def fake_create_message(message_id, session_id, role, content, **kwargs):
+            calls.append(("create", role))
+            msg = _fake_message(mid=message_id, session_id=session_id, role=role, content=content)
+            saved.append(msg)
+            return msg
+
+        def fake_delete_from(session_id, message_id):
+            calls.append(("delete", message_id))
+            ids = [m.id for m in saved]
+            if message_id not in ids:
+                return False
+            del saved[ids.index(message_id):]
+            return True
+
+        character = MagicMock()
+        character.id = "char-1"
+        character.name = "alice"
+        character.system_prompt_block1 = ""
+        character.meta_instructions = ""
+
+        preset = MagicMock()
+        preset.id = "preset-1"
+        preset.provider = "anthropic"
+        preset.model_id = "claude-sonnet-4-6"
+        preset.thinking_level = "default"
+
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = session
+        sqlite.create_chat_message.side_effect = fake_create_message
+        sqlite.delete_chat_messages_from.side_effect = fake_delete_from
+        sqlite.list_chat_messages.side_effect = lambda session_id: list(saved)
+        sqlite.get_character_by_name.return_value = character
+        sqlite.get_character.return_value = character
+        sqlite.get_model_preset_by_name.return_value = preset
+        sqlite.get_model_preset.return_value = preset
+        sqlite.get_all_settings.return_value = {"enable_time_awareness": "false"}
+        sqlite.update_chat_session.return_value = session
+        sqlite.set_setting.return_value = None
+
+        return sqlite, u1, c1, saved, calls
+
+    def _post(self, sid, sqlite, body, fake_stream):
+        """ストリーミングエンドポイントを叩く共通ヘルパー。"""
+        chat_service = MagicMock()
+        chat_service.execute_stream = fake_stream
+        memory_manager = MagicMock()
+        memory_manager.recall_inscribed_memory.return_value = []
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("backend.lib.debug_logger.ChotgorLogger.log_front_output", lambda *_: None)
+            client = TestClient(_make_app(sqlite, chat_service, memory_manager))
+            return client.post(f"/api/chat/sessions/{sid}/messages/stream", json=body)
+
+    @staticmethod
+    def _events(res):
+        """SSE レスポンスボディをイベント辞書のリストへ変換する。"""
+        return [
+            json.loads(line[6:])
+            for line in res.text.splitlines()
+            if line.startswith("data: ")
+        ]
+
+    def test_reuses_existing_user_message(self):
+        """引き直しではユーザ発話を作り直さず、既存の発話をそのまま返すこと。"""
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, _saved, _calls = self._make_sqlite(sid)
+
+        async def fake_stream(_request):
+            yield ("text", "新応答")
+
+        res = self._post(
+            sid, sqlite, {"content": "こんにちは", "regenerate_from": "u1"}, fake_stream
+        )
+
+        done = next(e for e in self._events(res) if e["type"] == "done")
+        assert done["user_message"]["id"] == "u1"
+        # 新規保存はキャラ応答の1件だけ（ユーザ発話は再 INSERT されない）
+        roles = [c.kwargs["role"] for c in sqlite.create_chat_message.call_args_list]
+        assert roles == ["character"]
+
+    def test_replaces_old_response_only_after_response_settles(self):
+        """旧応答の削除が、新しい応答の保存直前に1回だけ走ること（置き換えの原子性）。"""
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, saved, calls = self._make_sqlite(sid)
+
+        async def fake_stream(_request):
+            yield ("text", "新応答")
+
+        self._post(
+            sid, sqlite, {"content": "こんにちは", "regenerate_from": "u1"}, fake_stream
+        )
+
+        assert calls == [("delete", "c1"), ("create", "character")]
+        assert [m.id for m in saved][0] == "u1"
+        assert [m.content for m in saved] == ["こんにちは", "新応答"]
+
+    def test_keeps_old_response_when_model_errors(self):
+        """モデルがエラーを返したら、旧応答も発話も一切消えない・増えないこと。
+
+        これが本経路の存在理由。引き直しを外しても直前の応答が残るので、
+        ユーザは発話を編集し直さずにもう一度引き直せる。
+        """
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, saved, calls = self._make_sqlite(sid)
+
+        async def failing_stream(_request):
+            raise RuntimeError("模擬的なモデル側エラー")
+            yield ("text", "")  # async generator にするための到達しない yield
+
+        res = self._post(
+            sid, sqlite, {"content": "こんにちは", "regenerate_from": "u1"}, failing_stream
+        )
+
+        types = [e["type"] for e in self._events(res)]
+        assert "error" in types
+        assert "done" not in types
+        assert calls == []
+        sqlite.delete_chat_messages_from.assert_not_called()
+        sqlite.create_chat_message.assert_not_called()
+        assert [m.id for m in saved] == ["u1", "c1"]
+
+    def test_replaced_turn_is_excluded_from_prompt(self):
+        """引き直し対象の旧応答は履歴に混ざらず、本文は保存済み発話が使われること。
+
+        旧ターンは DB に残したまま引き直すため、履歴から明示的に外さないと
+        「同じ発話が2回続く」プロンプトになってしまう。
+        本文はフロントが送る content ではなく保存済み発話を正とする。
+        """
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, _saved, _calls = self._make_sqlite(sid)
+        captured = []
+
+        async def fake_stream(request):
+            captured.append(request)
+            yield ("text", "新応答")
+
+        self._post(
+            sid,
+            sqlite,
+            {"content": "フロントが送ってきた別の本文", "regenerate_from": "u1"},
+            fake_stream,
+        )
+
+        contents = [str(m.content) for m in captured[0].messages]
+        assert not any("旧応答" in c for c in contents)
+        assert contents[-1] == "こんにちは"
+        assert not any("フロントが送ってきた別の本文" in c for c in contents)
+
+    def test_unknown_regenerate_from_returns_404(self):
+        """存在しないメッセージIDを起点に指定したら 404 を返すこと。"""
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, _saved, _calls = self._make_sqlite(sid)
+
+        async def fake_stream(_request):
+            yield ("text", "新応答")
+
+        res = self._post(
+            sid, sqlite, {"content": "こんにちは", "regenerate_from": "no-such-id"}, fake_stream
+        )
+        assert res.status_code == 404
+
+    def test_regenerate_from_character_message_returns_400(self):
+        """キャラクター発話を起点に指定したら 400 を返すこと。
+
+        引き直しの起点は必ずユーザ発話（＝その発話への応答を引き直す）。
+        キャラ発話を起点にすると発話そのものが履歴から落ちるため、入口で弾く。
+        """
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, _saved, _calls = self._make_sqlite(sid)
+
+        async def fake_stream(_request):
+            yield ("text", "新応答")
+
+        res = self._post(
+            sid, sqlite, {"content": "こんにちは", "regenerate_from": "c1"}, fake_stream
+        )
+        assert res.status_code == 400
+
+
+# ---------------------------------------------------------------------------
 # DELETE /api/chat/sessions/{session_id}/messages/from/{message_id}
 # ---------------------------------------------------------------------------
 

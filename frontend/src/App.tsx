@@ -302,6 +302,7 @@ export default function App() {
     resetStreamingState: resetChatStreamingState,
     doStream,
     handleRetry,
+    handleRegenerate,
     handleDeleteMessage,
   } = useChat({
     activeSessionId,
@@ -753,6 +754,7 @@ export default function App() {
             reasoningMap={reasoningMap}
             onSend={handleSend}
             onRetry={handleRetry}
+            onRegenerate={handleRegenerate}
             onDeleteMessage={handleDeleteMessage}
             onHeaderVisibilityChange={setHeaderVisible}
             msgLogIds={msgLogIds}

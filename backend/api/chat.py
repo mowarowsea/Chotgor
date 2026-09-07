@@ -97,6 +97,9 @@ class MessageCreate(BaseModel):
     content: str
     attachment_ids: list[str] | None = None
     model_id: str | None = None  # 送信時に使用するモデルを上書きする。省略時はセッションの model_id を使う。
+    # 引き直し（再生成）の起点となるユーザ発話ID。指定時はその発話を作り直さずに
+    # 使い回し、旧応答は新しい応答が確定するまで消さない（失敗しても元の応答が残る）。
+    regenerate_from: str | None = None
 
 
 async def build_1on1_chat_request(
@@ -295,6 +298,34 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     # 黙って捨てると「渡ったように見えて渡っていない」状態になるため、400 で返す。
     _reject_unsupported_attachments(state, effective_model_id, body.attachment_ids)
 
+    # --- 引き直し（再生成）の解決 ---
+    # 旧ターンはここでは消さない。新しい応答が確定した瞬間にだけ置き換える。
+    # 先に消す実装だと、引き直しに失敗した時点で元の応答が DB ごと失われてしまう。
+    regen_user_msg = None
+    regen_replaced: list = []
+    if body.regenerate_from:
+        _all_msgs = state.sqlite.list_chat_messages(session_id)
+        _pivot = next(
+            (i for i, m in enumerate(_all_msgs) if m.id == body.regenerate_from), None
+        )
+        if _pivot is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+        if _all_msgs[_pivot].role != "user":
+            raise HTTPException(
+                status_code=400, detail="引き直しの起点はユーザ発話でなければなりません"
+            )
+        regen_user_msg = _all_msgs[_pivot]
+        regen_replaced = _all_msgs[_pivot + 1:]
+
+    def _drop_replaced_turn() -> None:
+        """引き直しで置き換えられる旧ターンを削除する。
+
+        新しい応答を保存する直前にだけ呼ぶこと。ここを前倒しすると、モデルが
+        エラーを返したときに元の応答を失う（封筒も無駄に retracted される）。
+        """
+        if regen_replaced:
+            state.sqlite.delete_chat_messages_from(session_id, regen_replaced[0].id)
+
     # estranged チェック: relationship_status="estranged" のキャラクターへのリクエストをSSEで拒否する
     char_for_estranged = state.sqlite.get_character_by_name(char_name_for_check)
     # 当該キャラの現在の対面モード（0/1）。送信時の値をメッセージへ焼き付ける。
@@ -302,15 +333,20 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     current_face_to_face = int(getattr(char_for_estranged, "face_to_face_mode", 0) or 0) if char_for_estranged else 0
     if char_for_estranged and getattr(char_for_estranged, "relationship_status", "active") == "estranged":
         estranged_text = f"{char_name_for_check}はあなたとの別れを決断しました。この関係は修復できません。"
-        user_msg_id_e = str(uuid.uuid4())
-        user_msg_e = state.sqlite.create_chat_message(
-            message_id=user_msg_id_e,
-            session_id=session_id,
-            role="user",
-            content=body.content,
-            attachments=body.attachment_ids or None,
-            face_to_face=current_face_to_face,
-        )
+        if regen_user_msg is not None:
+            # 引き直しならモデルを呼ばずに確定するので、この時点で置き換えてよい。
+            _drop_replaced_turn()
+            user_msg_e = regen_user_msg
+        else:
+            user_msg_id_e = str(uuid.uuid4())
+            user_msg_e = state.sqlite.create_chat_message(
+                message_id=user_msg_id_e,
+                session_id=session_id,
+                role="user",
+                content=body.content,
+                attachments=body.attachment_ids or None,
+                face_to_face=current_face_to_face,
+            )
         sys_msg_id_e = str(uuid.uuid4())
         sys_msg_e = state.sqlite.create_chat_message(
             message_id=sys_msg_id_e,
@@ -361,21 +397,27 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         ),
         sqlite=state.sqlite,
     )
-    _sync_response = _availability.state == "OnTime"
+    # 引き直しは「配達済みのターンをやり直す」操作なので、預かり判定は通さない。
+    _sync_response = regen_user_msg is not None or _availability.state == "OnTime"
 
-    user_msg_id = str(uuid.uuid4())
-    user_msg = state.sqlite.create_chat_message(
-        message_id=user_msg_id,
-        session_id=session_id,
-        role="user",
-        content=body.content,
-        attachments=body.attachment_ids or None,
-        face_to_face=current_face_to_face,
-        delivered=_sync_response,
-    )
-    asyncio.create_task(asyncio.to_thread(
-        index_message_sync, user_msg, _chat_char_ids, state.vector_store, _chat_user_name
-    ))
+    if regen_user_msg is not None:
+        # 引き直しでは発話を作り直さない（同じ発話への応答だけを引き直す）。
+        # ベクトル登録も初回で済んでいるため再実行しない。
+        user_msg = regen_user_msg
+    else:
+        user_msg_id = str(uuid.uuid4())
+        user_msg = state.sqlite.create_chat_message(
+            message_id=user_msg_id,
+            session_id=session_id,
+            role="user",
+            content=body.content,
+            attachments=body.attachment_ids or None,
+            face_to_face=current_face_to_face,
+            delivered=_sync_response,
+        )
+        asyncio.create_task(asyncio.to_thread(
+            index_message_sync, user_msg, _chat_char_ids, state.vector_store, _chat_user_name
+        ))
 
     if not _sync_response and not already_exited:
         # 預かり通知（システムメッセージ）: 既存の退席フローと同じ SSE 形で返す。
@@ -419,6 +461,7 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
     if already_exited:
         # 退席済み → 全退席者のシステムメッセージを1件返す
+        _drop_replaced_turn()
         sys_text = _build_all_exited_message(exited_chars)
         sys_msg_id = str(uuid.uuid4())
         sys_msg = state.sqlite.create_chat_message(
@@ -447,7 +490,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         )
 
     history_before = state.sqlite.list_chat_messages(session_id)
-    history = [m for m in history_before if m.id != user_msg_id]
+    # 引き直しでは置き換え対象の旧ターンがまだ DB に残っているため、履歴からも外す。
+    _excluded_ids = {user_msg.id, *(m.id for m in regen_replaced)}
+    history = [m for m in history_before if m.id not in _excluded_ids]
 
     # 預かり分の配達（めぐり Phase 5）: available でここまで来たら、過去の預かり
     # メッセージをまとめて配達する。LLM に渡すコピーにだけ時間差注釈を付け
@@ -469,8 +514,15 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
     else:
         effective_title = session.title
 
+    # 引き直しは保存済み発話をそのまま渡す（フロントが送る内容とのズレを作らない）。
+    _sent_content = regen_user_msg.content if regen_user_msg is not None else body.content
+    _sent_attachment_ids = (
+        list(regen_user_msg.attachments or [])
+        if regen_user_msg is not None
+        else (body.attachment_ids or [])
+    )
     user_content: str | list = build_message_content(
-        body.content, body.attachment_ids or [], state.sqlite, state.uploads_dir
+        _sent_content, _sent_attachment_ids, state.sqlite, state.uploads_dir
     )
 
     try:
@@ -540,6 +592,9 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         if accumulated_reasoning:
             logger.log_reasoning(accumulated_reasoning)
         used_char_name, used_preset_name = effective_model_id.rsplit("@", 1) if "@" in effective_model_id else (effective_model_id, None)
+
+        # ここまで来た＝応答が確定した。この瞬間にだけ旧ターンを落として置き換える。
+        _drop_replaced_turn()
 
         char_msg_id = str(uuid.uuid4())
         char_msg = state.sqlite.create_chat_message(

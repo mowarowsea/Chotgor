@@ -37,11 +37,22 @@ interface Props {
    */
   onSend: (content: string, files: File[]) => void;
   /**
-   * ユーザメッセージ編集・キャラクター応答再生成コールバック。
+   * ユーザメッセージ編集コールバック。
    * fromMessageId 以降を削除して content で再送する。
-   * attachments には再送する添付リストを渡す（再生成時は元メッセージの添付を引き継ぐ）。
+   * attachments には再送する添付リストを渡す。
    */
   onRetry: (fromMessageId: string, content: string, attachments: Attachment[]) => void;
+  /**
+   * キャラクター応答の引き直し（再生成）コールバック。
+   * 旧応答は削除せず、置き換えはサーバ側に任せる（失敗したら元の応答が残る）。
+   * replaced には引き直しで置き換わる旧応答（起点ユーザ発話以降）を渡す。
+   */
+  onRegenerate?: (
+    fromMessageId: string,
+    content: string,
+    attachments: Attachment[],
+    replaced: ChatMessage[],
+  ) => void | Promise<void>;
   /**
    * 末尾ユーザメッセージの削除コールバック（再送なし）。
    * 未指定ならユーザバブルにゴミ箱を出さない。
@@ -76,6 +87,7 @@ export default function ChatView({
   reasoningMap,
   onSend,
   onRetry,
+  onRegenerate,
   onDeleteMessage,
   onHeaderVisibilityChange,
   msgLogIds,
@@ -112,6 +124,7 @@ export default function ChatView({
           streamingReasoning={streamingReasoning}
           characterName={characterName}
           onRetry={onRetry}
+          onRegenerate={onRegenerate}
           onDeleteMessage={onDeleteMessage}
           onHeaderVisibilityChange={onHeaderVisibilityChange}
           msgLogIds={msgLogIds}

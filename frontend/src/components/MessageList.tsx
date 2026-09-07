@@ -37,9 +37,20 @@ interface Props {
     characterName?: string;
     /** 空の状態の時のメッセージ */
     emptyMessage?: string;
-    /** メッセージ編集・再生成時のコールバック。
+    /** ユーザ発話の編集コールバック（以降を削除して再送する）。
      *  返した Promise が解決するまで再生成ボタンは無効化される（二度押し防止）。 */
     onRetry?: (fromMessageId: string, content: string, attachments: Attachment[]) => void | Promise<void>;
+    /**
+     * キャラクター応答の引き直し（再生成）コールバック。
+     * `replaced` には引き直しで置き換わる旧応答（起点ユーザ発話以降）を渡す。
+     * 未指定なら onRetry へフォールバックする（旧挙動: 先に消してから再送）。
+     */
+    onRegenerate?: (
+        fromMessageId: string,
+        content: string,
+        attachments: Attachment[],
+        replaced: ChatMessage[],
+    ) => void | Promise<void>;
     /** 末尾ユーザメッセージの削除コールバック。渡された時だけ末尾バブルにゴミ箱を出す。 */
     onDeleteMessage?: (messageId: string) => void | Promise<void>;
     /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
@@ -67,6 +78,7 @@ export default function MessageList({
     emptyMessage = "メッセージを送ってみてください",
     onHeaderVisibilityChange,
     onRetry,
+    onRegenerate,
     onDeleteMessage,
     msgLogIds = {},
     elapsedMap = {},
@@ -182,12 +194,24 @@ export default function MessageList({
                         logMessageId={msgLogIds[msg.id]}
                         elapsedMs={elapsedMap[msg.id]}
                         // 再ストリームの Promise はそのまま返す（解決まで再生成ボタンを無効化するため）。
-                        onRegenerate={onRetry ? () => {
-                            const precedingUser = [...messages]
-                                .slice(0, idx)
-                                .reverse()
-                                .find((m) => m.role === "user");
-                            if (precedingUser) {
+                        onRegenerate={onRegenerate || onRetry ? () => {
+                            let userIdx = -1;
+                            for (let i = idx - 1; i >= 0; i--) {
+                                if (messages[i].role === "user") { userIdx = i; break; }
+                            }
+                            if (userIdx < 0) return;
+                            const precedingUser = messages[userIdx];
+                            if (onRegenerate) {
+                                // 置き換わる旧応答（起点ユーザ発話以降）も渡す。引き直しに
+                                // 失敗したとき、呼び出し側がこれを画面へ戻すために使う。
+                                return onRegenerate(
+                                    precedingUser.id,
+                                    precedingUser.content,
+                                    precedingUser.attachments ?? [],
+                                    messages.slice(userIdx + 1),
+                                );
+                            }
+                            if (onRetry) {
                                 return onRetry(precedingUser.id, precedingUser.content, precedingUser.attachments ?? []);
                             }
                         } : undefined}

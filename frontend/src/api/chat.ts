@@ -180,12 +180,19 @@ export type StreamEvent =
   | { type: "done"; log_message_id?: string; user_message: ChatMessage; character_message: ChatMessage }
   | { type: "error"; message: string };
 
-/** メッセージをSSEでストリーミング送信し、イベントをyieldする。 */
+/**
+ * メッセージをSSEでストリーミング送信し、イベントをyieldする。
+ *
+ * `regenerateFrom`（引き直しの起点となるユーザ発話ID）を渡すと引き直しモードになる。
+ * サーバは発話を作り直さず、旧応答も新しい応答が確定するまで消さないため、
+ * 引き直しに失敗しても元の応答は残る。
+ */
 export async function* streamMessage(
   sessionId: string,
   content: string,
   attachmentIds?: string[],
-  modelId?: string
+  modelId?: string,
+  regenerateFrom?: string
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
     method: "POST",
@@ -194,6 +201,7 @@ export async function* streamMessage(
       content,
       ...(attachmentIds && attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
       ...(modelId ? { model_id: modelId } : {}),
+      ...(regenerateFrom ? { regenerate_from: regenerateFrom } : {}),
     }),
   });
 

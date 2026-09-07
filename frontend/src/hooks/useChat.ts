@@ -73,20 +73,34 @@ interface UseChatResult {
   /** ストリーミング系 state を初期化する（セッション切り替え時に呼ぶ）。 */
   resetStreamingState: () => void;
   /**
-   * 1on1 ストリーミング送信の実体（handleSend / handleRetry から呼ばれる）。
+   * 1on1 ストリーミング送信の実体（handleSend / handleRetry / handleRegenerate から呼ばれる）。
    * 楽観的ユーザメッセージ表示 + SSE受信を行う。
+   * `regenerateFrom` を渡すと引き直しモードになり、楽観バブルを足さない
+   * （サーバも発話を作り直さず、その発話をそのまま使い回すため）。
+   * @returns 応答が確定したら true、ストリームがエラーで終わったら false。
    */
   doStream: (
     sessionId: string,
     content: string,
     attachments?: Attachment[],
     modelId?: string,
-  ) => Promise<void>;
-  /** 編集・再生成: fromMessageId 以降を削除して再送する。 */
+    regenerateFrom?: string,
+  ) => Promise<boolean>;
+  /** ユーザ発話の編集: fromMessageId 以降を削除して再送する。 */
   handleRetry: (
     fromMessageId: string,
     content: string,
     attachments?: Attachment[],
+  ) => Promise<void>;
+  /**
+   * キャラクター応答の引き直し（再生成）。
+   * 旧応答は消さずにサーバへ置き換えを任せるため、失敗しても元の応答を失わない。
+   */
+  handleRegenerate: (
+    fromMessageId: string,
+    content: string,
+    attachments: Attachment[],
+    replaced: ChatMessage[],
   ) => Promise<void>;
   /** 末尾ユーザメッセージの削除（再送はしない）。 */
   handleDeleteMessage: (messageId: string) => Promise<void>;
@@ -134,14 +148,17 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     content: string,
     attachments: Attachment[] = [],
     modelId?: string,
-  ) => {
+    regenerateFrom?: string,
+  ): Promise<boolean> => {
     setError(null);
     setStreamingContent("");
     setStreamingReasoning(null);
     // モデルリクエスト〜応答完了までの経過時間を計測する開始時刻。
     const streamStartedAt = performance.now();
 
-    const optimisticUserMsg: ChatMessage = {
+    // 引き直しでは発話を作り直さない（サーバも既存発話を使い回す）ため、楽観バブルは足さない。
+    // 画面に残っているユーザ発話の下へ、そのまま新しい応答が生えてくる。
+    const optimisticUserMsg: ChatMessage | null = regenerateFrom ? null : {
       id: `optimistic-${Date.now()}`,
       session_id: sessionId,
       role: "user",
@@ -149,15 +166,19 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       attachments: attachments.length > 0 ? attachments : undefined,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, optimisticUserMsg]);
+    if (optimisticUserMsg) {
+      setMessages((prev) => [...prev, optimisticUserMsg]);
+    }
 
     let accumulatedReasoning = "";
     // done イベントを onEvent 内で同期的に処理しきれない（fetchSessions が await を要する）
     // ため、最終 done event を変数に退避してループ後に await する。
     type DoneEvent = Extract<StreamEvent, { type: "done" }>;
     let pendingDone: DoneEvent | null = null;
+    // ストリームがエラーで終わったか（呼び出し側が旧応答を戻すかの判断に使う）。
+    let failed = false;
     await consumeStream<StreamEvent>({
-      stream: streamMessage(sessionId, content, attachments.map((a) => a.id), modelId),
+      stream: streamMessage(sessionId, content, attachments.map((a) => a.id), modelId, regenerateFrom),
       onEvent: (event) => {
         if (event.type === "chunk") {
           setStreamingContent((prev) => (prev ?? "") + event.content);
@@ -172,9 +193,12 @@ export function useChat(deps: UseChatDeps): UseChatResult {
         }
       },
       onError: (e) => {
+        failed = true;
         setStreamingContent(null);
         setStreamingReasoning(null);
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
+        if (optimisticUserMsg) {
+          setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
+        }
         setError(String(e));
       },
     });
@@ -189,7 +213,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       const userMessage = doneEvent.user_message;
       const characterMessage = doneEvent.character_message;
 
-      if (sessionId !== activeSessionIdRef.current) return;
+      if (sessionId !== activeSessionIdRef.current) return true;
       if (accumulatedReasoning) {
         const reasoning = accumulatedReasoning;
         setReasoningMap((prev) => ({ ...prev, [charMsgId]: reasoning }));
@@ -203,8 +227,10 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       }));
       setStreamingContent(null);
       setStreamingReasoning(null);
+      // 楽観バブル（通常送信）と、サーバが返した確定ユーザ発話（引き直しでは既に
+      // 画面にいる同一メッセージ）の両方を落としてから、確定した1ターンを置き直す。
       setMessages((prev) => [
-        ...prev.filter((m) => m.id !== optimisticUserMsg.id),
+        ...prev.filter((m) => m.id !== optimisticUserMsg?.id && m.id !== userMessage.id),
         userMessage,
         characterMessage,
       ]);
@@ -219,6 +245,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       ]);
       setSessions(updated);
     }
+    return !failed;
   }, [
     activeSessionIdRef,
     setMessages,
@@ -230,10 +257,11 @@ export function useChat(deps: UseChatDeps): UseChatResult {
   ]);
 
   /**
-   * ユーザメッセージ編集 / キャラクター応答再生成の共通ハンドラ。
+   * ユーザメッセージ編集のハンドラ。
    * fromMessageId 以降をDBから削除し、content でストリームを再送する。
-   * 再生成の場合は fromMessageId = 直前ユーザメッセージのID、content = そのメッセージ本文。
-   * attachments = 再送する添付リスト（再生成時は元メッセージの添付を引き継ぐ）。
+   *
+   * 発話そのものを書き換える以上、その発話に対して引いた応答は無効なので先に消す。
+   * 引き直し（再生成）は発話が変わらないので handleRegenerate 側を使うこと。
    */
   const handleRetry = useCallback(async (
     fromMessageId: string,
@@ -257,6 +285,57 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       setSending(false);
     }
   }, [activeSessionId, sending, selectedModel, doStream, setError, setSending, setMessages]);
+
+  /**
+   * キャラクター応答の引き直し（再生成）。
+   *
+   * 旧応答をフロントから削除せず、サーバへ「新しい応答が確定した瞬間に置き換える」ことを
+   * 任せる（`regenerate_from`）。画面では引き直し中だけ旧応答を伏せ、失敗したら戻す。
+   * ガチャを外しても直前の応答を失わないための経路。
+   *
+   * @param replaced - 引き直しで置き換わる旧応答（起点ユーザ発話以降）。失敗時に画面へ戻す。
+   */
+  const handleRegenerate = useCallback(async (
+    fromMessageId: string,
+    content: string,
+    attachments: Attachment[] = [],
+    replaced: ChatMessage[] = [],
+  ) => {
+    if (!activeSessionId || sending) return;
+    setSending(true);
+    setError(null);
+    // 起点ユーザ発話までを残して、旧応答は画面から伏せる（DBからは消さない）。
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === fromMessageId);
+      return idx >= 0 ? prev.slice(0, idx + 1) : prev;
+    });
+    /** 伏せた旧応答を画面へ戻す。セッションを切り替えていたら何もしない。 */
+    const restoreReplaced = () => {
+      if (replaced.length === 0) return;
+      if (activeSessionIdRef.current !== activeSessionId) return;
+      setMessages((prev) => [...prev, ...replaced]);
+    };
+    try {
+      const ok = await doStream(
+        activeSessionId, content, attachments, selectedModel || undefined, fromMessageId,
+      );
+      if (!ok) restoreReplaced();
+    } catch (e) {
+      setError(String(e));
+      restoreReplaced();
+    } finally {
+      setSending(false);
+    }
+  }, [
+    activeSessionId,
+    sending,
+    selectedModel,
+    doStream,
+    activeSessionIdRef,
+    setError,
+    setSending,
+    setMessages,
+  ]);
 
   /**
    * ユーザメッセージの削除。
@@ -288,6 +367,7 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     resetStreamingState,
     doStream,
     handleRetry,
+    handleRegenerate,
     handleDeleteMessage,
   };
 }
