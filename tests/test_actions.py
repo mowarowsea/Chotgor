@@ -93,6 +93,43 @@ class TestEvaluateUrge:
         sqlite_store.create_intent(char_id, "ふと思っただけ", source_kind="none")
         assert evaluate_action_urge(sqlite_store, char_id) == []
 
+    def test_recently_acted_intent_is_on_cooldown(self, sqlite_store):
+        """直近に実行済みの意図はクールダウン中で候補から外れる。
+
+        意図圧は経過日数の単調増加なので、圧降順は実質「古い順」になる。完了条件を
+        持たない「反応を見たい」型の意図は fulfilled 宣言が出にくく、最古のまま
+        居座って毎日 push され続けていた（はるの実測で同一意図が3日で3回）。
+        settled（§4.3）を打ち忘れたときの保険として、物理側でも連続実行を止める。
+        """
+        char_id, _ = _make_character(sqlite_store)
+        intent = _make_hot_intent(sqlite_store, char_id)
+        sqlite_store.record_timeline_event(
+            character_id=char_id,
+            event_type="action.performed",
+            actor="character",
+            intent_id=intent.id,
+        )
+        assert evaluate_action_urge(sqlite_store, char_id) == []
+
+    def test_settled_intent_drops_below_threshold(self, sqlite_store):
+        """一区切りを打たれた意図は圧が下限へ戻り、候補から外れる。"""
+        char_id, _ = _make_character(sqlite_store)
+        intent = _make_hot_intent(sqlite_store, char_id)
+        assert [i.id for i in evaluate_action_urge(sqlite_store, char_id)] == [intent.id]
+        sqlite_store.settle_intent(intent.id)
+        assert evaluate_action_urge(sqlite_store, char_id) == []
+
+    def test_candidates_are_capped(self, sqlite_store):
+        """候補は上限件数まで（多すぎる選択肢は選択を薄める）。
+
+        上限が2件だった頃は、閾値超えが10件あっても3位以下が行動権に一度も出ないまま
+        14日の裁定へ流れていた。上限は残しつつ広げる。
+        """
+        char_id, _ = _make_character(sqlite_store)
+        for i in range(8):
+            _make_hot_intent(sqlite_store, char_id, description=f"意図{i}")
+        assert len(evaluate_action_urge(sqlite_store, char_id)) == 4
+
 
 class TestPushSessionTitle:
     """push セッションタイトルの自動生成（push_session_title）を検証するテストクラス。
@@ -174,6 +211,25 @@ class TestRunActionCycle:
         char_id, _ = _make_character(sqlite_store, action_menu={"push": True})
         result = self._run(sqlite_store, char_id, [])
         assert result["status"] == "skipped"
+
+    def test_return_settles_without_terminating(self, sqlite_store):
+        """帰還で [INTENT_SETTLED] を宣言すると、終端せず意図圧だけが落ちる。
+
+        帰還の問いは「満ちた？　まだ？」の二値だったため、「だいぶ落ちたが完全ではない」が
+        0%（何も起きない）へ丸められ、迷えば必ず保持側へ倒れていた。settled はその中間で、
+        status は active のまま起点だけが今へ移る。
+        """
+        char_id, _ = _make_character(sqlite_store, action_menu={"push": True})
+        intent = _make_hot_intent(sqlite_store, char_id)
+        result = self._run(sqlite_store, char_id, [
+            f"送ってみる。\n[ACTION: {intent.id} | push | 聞いてほしいことがある]",
+            f"満ちてはいない。でも一区切り。\n[INTENT_SETTLED: {intent.id}]",
+        ])
+        assert result["status"] == "executed"
+        assert result["fulfilled"] is False
+        assert result["settled"] is True
+        assert sqlite_store.get_intent(intent.id).status == "active"
+        assert intent.id in sqlite_store.latest_settled_map(char_id)
 
     def test_decline_executes_nothing(self, sqlite_store):
         """本人がタグを書かなければ見送り — 何も実行されない。"""

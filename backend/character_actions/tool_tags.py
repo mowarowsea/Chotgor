@@ -37,6 +37,8 @@ TAG_META: dict[str, dict[str, str]] = {
     "POWER_RECALL":                 {"label": "強想起",          "cls": "tag-recall"},
     "END_SESSION":                  {"label": "セッション終了",  "cls": "tag-end"},
     "ANTICIPATE_RESPONSE":          {"label": "予想",            "cls": "tag-anticipate"},
+    "INTENT_SETTLED":               {"label": "意図・一区切り",  "cls": "tag-intent"},
+    "INTENT_FULFILLED":             {"label": "意図・充足",      "cls": "tag-intent"},
     "POST_WORKING_MEMORY_THREAD":   {"label": "WMポスト",        "cls": "tag-wm"},
     "READ_WORKING_MEMORY_THREAD":   {"label": "WM読込",          "cls": "tag-wm"},
     "READ_WORKING_MEMORY_LIST":     {"label": "WM一覧",          "cls": "tag-wm"},

@@ -690,6 +690,22 @@ class TestMotiveBlock:
         )
         assert "あの本の続きを読みたい" in annotation
 
+    def test_block_shows_short_intent_id(self):
+        """意図行に短縮8桁の ID が出る（1on1 の決着タグが参照するため）。
+
+        ID が見えていないと、本人は会話の中で [INTENT_SETTLED:...] を書きようがない。
+        ワーキングメモリのスレッド一覧と同じ短縮表記で、解決は前方一致。
+        """
+        annotation = build_turn_annotation(
+            motive_lines=[],
+            active_intents=[{
+                "id": "1b86c1e9-2222-3333-4444-555555555555",
+                "description": "もわの反応を見たい", "target": "user",
+            }],
+        )
+        assert "[1b86c1e9]" in annotation
+        assert "1b86c1e9-2222" not in annotation  # 完全 ID はトークンの無駄
+
     def test_block_absent_when_empty(self):
         """素材ゼロならブロック自体が出ない（毎ターンのノイズにしない）。"""
         annotation = build_turn_annotation(

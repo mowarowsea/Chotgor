@@ -20,6 +20,9 @@ from typing import TYPE_CHECKING
 
 _log = logging.getLogger(__name__)
 
+# 動機ブロックへ載せる意図の上限（意図圧の高い順）。めぐり §5.3。
+_MOTIVE_INTENT_LIMIT = 5
+
 if TYPE_CHECKING:
     from backend.services.memory.manager import InscribedMemoryManager
     from backend.services.memory.working_memory_manager import WorkingMemoryManager
@@ -271,6 +274,7 @@ async def prepare_context(
             compute_speech_thresholds,
             pressure_plain_lines,
         )
+        from backend.services.intents.lifecycle import intent_pressure
         sqlite_store = getattr(memory_manager, "sqlite", None)
         if sqlite_store is not None and request.character_id:
             pressures = compute_pressures(sqlite_store, request.character_id)
@@ -278,12 +282,18 @@ async def prepare_context(
             # たびに言いすぎ／言わなすぎへ倒れる。§4.1「表現」）
             thresholds = compute_speech_thresholds(sqlite_store, request.character_id)
             motive_lines = pressure_plain_lines(pressures, thresholds)
+            # 意図は active 全件ではなく**意図圧の上位 N 件**だけ載せる（めぐり §5.3）。
+            # 全件だと在庫がそのままプロンプトへ出てユーザ発話を物量で埋め、発話者の
+            # 取り違えを誘発する。行動権が掴むのは最高圧の意図なので、上位 N には必ず入る。
+            settled_map = sqlite_store.latest_settled_map(request.character_id)
+            ranked = sorted(
+                sqlite_store.list_intents(request.character_id, status="active"),
+                key=lambda i: -intent_pressure(i, settled_at=settled_map.get(i.id)),
+            )
             active_intents = [
-                {"description": i.description, "target": i.target,
+                {"id": i.id, "description": i.description, "target": i.target,
                  "created_at": i.created_at.isoformat(timespec="seconds") if i.created_at else None}
-                for i in sqlite_store.list_intents(
-                    request.character_id, status="active"
-                )
+                for i in ranked[:_MOTIVE_INTENT_LIMIT]
             ] or None
     except Exception:
         _log.exception("圧力計算に失敗 char=%s", request.character_id)
@@ -320,6 +330,10 @@ async def prepare_context(
         user_position=request.user_position,
         face_to_face=request.face_to_face,
         context_tool_hints=context_tool_hints or None,
+        # 決着タグのガイドは、参照できる意図が動機ブロックに載っているときだけ出す。
+        # 意図ゼロの日はガイドも消えるためシステムプロンプトが変わる（キャッシュが切れる）が、
+        # ID の無いタグ説明だけを毎ターン載せ続けるほうが害が大きい。
+        include_intent_marks_guide=bool(active_intents),
     )
 
     # --- ターン注釈（変動ブロック）を最新 user メッセージへ付加 ---

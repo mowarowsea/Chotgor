@@ -24,6 +24,7 @@ from pathlib import Path
 
 from backend.character_actions import tool_tags
 from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_NAME
+from backend.character_actions.intent_settler import INTENT_MARK_TAG_NAMES
 from backend.lib.stream_json import iter_stream_json_events
 from backend.lib.tag_parser import parse_tags
 
@@ -115,6 +116,10 @@ def _parse_tag_body(tag_name: str, body: str) -> dict:
     elif tag_name == "ANTICIPATE_RESPONSE":
         # body 全体がキャラクター本人の予想・期待テキスト
         fields["予想"] = body
+
+    elif tag_name in INTENT_MARK_TAG_NAMES:
+        # body は意図ID（短縮8桁）。本文はプロンプト側にあるのでIDだけ出す
+        fields["意図ID"] = body
 
     elif tag_name in ("POWER_RECALL", "END_SESSION"):
         # body がそのまま内容
@@ -315,6 +320,9 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
 
     # 予想タグは経路によらず本文から抽出する（最後の1件のみ）
     anticipation_tags = _last_anticipation_tag(text)
+    # 意図の決着タグも ANTICIPATE_RESPONSE と同じ全プロバイダー一律タグなので、
+    # ツール呼び出しの有無によらず本文から独立して拾う
+    anticipation_tags = _intent_mark_tags(text) + anticipation_tags
 
     # ツール呼び出し（JSON / stream-json）を優先して試みる
     tool_call_tags = _extract_function_calls_from_json(text)
@@ -338,6 +346,29 @@ def _extract_tags_from_file(file_path: Path) -> list[dict]:
 
     # 予想タグは応答末尾に書かれる運用のため、リスト末尾に合流させる
     return _dedupe_tags([_parse_tag_body(tn, body) for _, tn, body in flat] + anticipation_tags)
+
+
+def _intent_mark_tags(text: str) -> list[dict]:
+    """テキストから意図の決着タグ（SETTLED / FULFILLED）を出現順に抽出する。
+
+    ANTICIPATE_RESPONSE と違い1ターンに複数あり得るため、最後の1件に絞らない。
+
+    Args:
+        text: ログ本文。
+
+    Returns:
+        構造化タグ辞書のリスト（出現順）。
+    """
+    try:
+        _, matches = parse_tags(text, INTENT_MARK_TAG_NAMES)
+    except Exception:
+        return []
+    flat: list[tuple[int, str, str]] = []
+    for tag_name in INTENT_MARK_TAG_NAMES:
+        for m in matches.get(tag_name, []):
+            flat.append((m.start, tag_name, m.body))
+    flat.sort(key=lambda x: x[0])
+    return [_parse_tag_body(tn, body) for _, tn, body in flat]
 
 
 def _dedupe_tags(tags: list[dict]) -> list[dict]:

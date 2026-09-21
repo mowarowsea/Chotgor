@@ -109,10 +109,10 @@
 | `services/timeline/` | **めぐり（巡り / Aliveness）の投影層＋予報層**。封筒正本（timeline_events）を観測者クラス（self / world_frame / user_ui）別の可視性ポリシーでフィルタする `projector.py`。GM への「現実の接触の記録」ブロックもここ。`forecast.py` は予報パネルの集約純関数（診断・カレンダー・圧力の無風外挿・配達シミュレータ。LLM 不使用） |
 | `services/instruments/` | 計器（監査層）。Tier 1 巡回インバリアント・Tier 2 スメル検知器（正規表現）・Tier 3 判定巡回（LLM サンプリング）。アラームは `lib/instrument_recorder.py` 経由でどこからでも発火できる |
 | `services/pressure/` | 圧力（社会圧・退屈圧・体調圧）。封筒の導関数として毎回計算する純関数（保存しない）＋体質インタビュー（`pressure_profile` 初期化） |
-| `services/intents/` | 意図（「〜したい」の経済層）。意図圧の読み取り時計算（**経過日数のみ・源圧は掛けない**）・終端遷移の候補挙げ（14日超 active）・拾い上げ（Chronicle 同乗＋うつつ完走後） |
+| `services/intents/` | 意図（「〜したい」の経済層）。意図圧の読み取り時計算（**起点からの経過日数のみ・源圧は掛けない**。起点＝created_at と最終 `intent.settled` の遅いほう）・終端遷移の候補挙げ（settled 起点で14日超 active）・拾い上げ（Chronicle 同乗＋うつつ完走後）・計器メーター（在庫/settled発生数/最大意図圧） |
 | `services/gate/` | 応答可能性ゲート。`check_availability` 純関数（従来経路: 対面 > away > うつつ進行中 > 生活時間割 ／ 生活カレンダー経路: 対面 > away > schedule_entries 占有圧最大 > OnTime）・メッセージ預かり（escrow）・能動配達（従来: 復帰＋ジッター ／ 生活カレンダー: チェック間隔格子＋決定論 reply_rate 判定 `resolve_delivery_due`）・発話予約の発火（`speech_reservation.py` — speak_later の毎分走査・24h expire・`spontaneous_initiative_daily_cap` を reach_out と共有・`_deliver_session` 共用）・疲労離席の発火式 |
 | `services/schedule/` | **生活カレンダー（Living Schedule）**。`plan_parser.py`（[PLAN]/[EVENT] 行パーサ・24時超え表記・テンプレ裸変換・配達値個別上書き）・`weekly_batch.py`（週次バッチ①GM生成→②本人問い合わせ→schedule_entries template 層入れ替え＋③伏せ枠配置。層フォールバック=前週→テンプレ裸。冪等キー=キャラ別対象 ISO 週）・`scene_selection.py`（②導出のうつつシーン選出＝占有圧上位50%＋ランダムの決定論純関数）・`events.py`（③世界突発の確率配置＝pending 伏せ枠・発火時 GM 具体化→轢き判定（占有圧最大が勝つ）→insert→シーン）・`dilemma.py`（玉突き裁定＝③に轢かれた予定を本人が cancel/reschedule/不満化） |
-| `services/actions/` | 会話外行動権（`runner.py`）。閾値評価（無料）→本人問い合わせ→実行（push / 調べもの / 臨時うつつ）→帰還のループ。push 実体 `execute_push` は `reach_out` とも共有 |
+| `services/actions/` | 会話外行動権（`runner.py`）。閾値評価（無料。意図圧降順の上位4件・直近3日に実行した意図はクールダウンで除外）→本人問い合わせ→実行（push / 調べもの / 臨時うつつ）→帰還（満ちた/一区切り/まだ）のループ。push 実体 `execute_push` は `reach_out` とも共有 |
 
 ### character_actions/ の内訳
 
@@ -130,6 +130,7 @@
 | `rescheduler.py` | `override_schedule`（1on1専用・当日予定の一時上書き）。state=OnTime/haru/adhoc/occupancy0.85 のエントリを insert するだけ（占有圧最大が勝つ読み取り解決）。`parse_until_time` は 24時超え表記対応・常に24h以内 |
 | `later_speaker.py` | `speak_later`（1on1専用・キャラ発の時限発話の仕掛け）。時刻＋用件メモを speech_reservations へ pending insert（本文は発火時に本人が生成）。未来 availability は無風仮定で仕掛け時にエラー判定・72h horizon・同一セッションの pending は superseded に倒して置き直し。発火は `services/gate/speech_reservation.py` |
 | `context_tools.py` | **コンテキスト別ツール出し分けの単一判定点**。reach_out=うつつのみ（cap到達日は非露出）／visit_user=1on1かつ対面OFF／override_schedule=1on1かつ生活カレンダー有効／speak_later=1on1かつ発話予約有効（speak_later_enabled=1）。消費者は3系統: ①flow.py→provider.extra_tools（in-process tool-use）②mcp_server.py→GET /api/mcp/tools?character_id&origin&session_id（claude_cli）③flow.py→build_system_prompt(context_tool_hints) |
+| `intent_settler.py` | `[INTENT_SETTLED:]` / `[INTENT_FULFILLED:]` タグ抽出・ID解決（短縮8桁の前方一致）・適用。1on1 会話の最中に意図の決着を本人が宣言する受け口で、**anticipator と同じ全プロバイダー一律テキストタグ**（ツール化しない）。settled は終端せず意図圧の起点だけを今へ移す |
 | `anticipator.py` | `[ANTICIPATE_RESPONSE:]` タグ抽出（相手の反応への期待）。**予想の対象は相手（1on1=ユーザ／シナリオ GM=PC）の反応だけ**に限定し、それを受けた自分・NPC の返し方は書かせない（予想が次ターンの台本になる自己成就の遮断。GM 側の同趣旨の規則は `scenario_chat/prompt_builder.py` の出力規則） |
 | `ambience_judge.py` | なりゆき judge（判定）: LLM がキャラクターの感情状態を毎ターン外部判定。judge プリセットは `judge_preset_id`。将来は場所ラベル等の軸も担う |
 | `character_context.py` | 通常チャット以外でキャラクターとして問い合わせる際の共通コンテキストブロック構築 |
@@ -481,11 +482,17 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
   チャート系列色は `--ch-viz-1〜4`（chotgor.css・両テーマ検証済み）、描画は
   static/forecast.js（vanilla SVG）。仕様: docs/planned/forecast_panel_plan.md
 圧力: services/pressure — 封筒の導関数（純関数・保存しない）。pressure_profile は体質インタビューで初期化
-  - 動機ブロック（圧力の淡白な一行＋active intents＋話題権）を 1on1 プロンプトへ注入（flow.py）
+  - 動機ブロック（圧力の淡白な一行＋**意図圧上位5件**の active intents（短縮ID付き）＋話題権）を
+    1on1 プロンプトへ注入（flow.py）。全件載せると在庫がユーザ発話を物量で埋め、発話者の
+    取り違えを招くため上位のみ
 意図: intents テーブル＋ services/intents — 拾い上げ2点（Chronicle 同乗・うつつ完走後）、
-  意図圧は経過日数のみの純関数（行動権の閾値 0.7 へ 8日で到達。源圧は掛けない＝2026-08-27 改訂）、
+  意図圧は起点からの経過日数のみの純関数（行動権の閾値 0.7 へ 8日で到達。源圧は掛けない＝2026-08-27 改訂）、
   終端遷移は機械が候補（14日超 active）を挙げ、満ちた/手放す/不満/継続を本人が裁く
   （fulfilled は行動権の帰還と拾い上げの両方から宣言できる。soured の言葉は記憶へ刻む）
+  - **一区切り（`intent.settled` 封筒）が意図圧の唯一の減衰源**（2026-09-21）。status は active の
+    まま起点が今へ移り、8日でまた再燃する。受け口は3箇所 — 行動権の帰還／夜の拾い上げ／
+    1on1 本文タグ（character_actions/intent_settler.py）。満足度カラムは持たない（圧力は保存しない）
+  - 拾い上げの回答上限は入口（新規3件）と出口（整理は無制限）で分ける。在庫10件超で整理を促す一行
 ゲート: services/gate — availability 純関数・メッセージ預かり（chat_messages.delivered_at・
   次リクエスト時に時間差注釈付き配達）・疲労離席（体調圧×engagement 発火式）・take_leave ツール
 生活カレンダー: schedule_entries（実現層・重なり許容・読み取り時に占有圧最大が勝つ）＋

@@ -7,6 +7,9 @@
     - 作成時に intent.created、遷移時に intent.fulfilled / expired / soured の
       封筒を **同一トランザクション** で直書きする（遷移だけがイベント。
       意図圧の増減は連続量なので封筒に載せない）。
+    - 一区切り（intent.settled）も封筒だけで表す。status は active のまま変わらず、
+      意図圧の**起点**がこの封筒の時刻へ移る（docs/planned/aliveness_plan.md §4.3
+      「意図圧の減衰源」）。満足度カラムを持たないのは「圧力は保存しない」を守るため。
     - 封筒の intent_id 列がこのテーブルへの FK になる。
 """
 
@@ -104,6 +107,107 @@ class IntentStoreMixin:
             if status is not None:
                 q = q.filter(Intent.status == status)
             return q.order_by(Intent.created_at.desc()).limit(limit).all()
+
+    def settle_intent(self, intent_id: str):
+        """意図に「一区切り」を刻む — status は active のまま封筒だけ残す。
+
+        終端遷移ではない。まだ持っている意図の圧を落とすためだけの遷移で、
+        意図圧の起点がこの封筒の時刻へ移る（`latest_settled_map` が読み出す）。
+        時間が経てば圧はまた積み上がる＝「やっぱり納得いかない」が再燃する。
+
+        Args:
+            intent_id: 対象意図 ID。
+
+        Returns:
+            対象の Intent。存在しない・すでに終端済みなら None。
+        """
+        from backend.repositories.sqlite.models import Intent
+
+        with self.get_session() as session:
+            intent = session.get(Intent, intent_id)
+            if intent is None or intent.status != "active":
+                return None
+            intent.updated_at = datetime.now()
+            self._append_timeline_event(
+                session,
+                character_id=intent.character_id,
+                event_type="intent.settled",
+                actor="character",
+                counterpart=(
+                    intent.target if intent.target and intent.target != "self" else None
+                ),
+                origin="real",
+                source_table="intents",
+                source_id=intent_id,
+                intent_id=intent_id,
+            )
+            session.commit()
+            session.refresh(intent)
+            return intent
+
+    def latest_settled_map(self, character_id: str) -> dict:
+        """意図ごとの最終 intent.settled 時刻を返す。
+
+        意図圧・stale 判定の起点計算に使う（保存カラムを持たず封筒から導出する）。
+
+        Args:
+            character_id: 対象キャラクター。
+
+        Returns:
+            {intent_id: 最終 settled の occurred_at} の辞書。settled が無い意図は含まない。
+        """
+        from backend.repositories.sqlite.models import TimelineEvent
+
+        with self.get_session() as session:
+            rows = (
+                session.query(TimelineEvent.intent_id, TimelineEvent.occurred_at)
+                .filter(
+                    TimelineEvent.character_id == character_id,
+                    TimelineEvent.event_type == "intent.settled",
+                    TimelineEvent.retracted_at.is_(None),
+                    TimelineEvent.intent_id.isnot(None),
+                )
+                .all()
+            )
+        latest: dict = {}
+        for intent_id, occurred_at in rows:
+            if occurred_at is None:
+                continue
+            current = latest.get(intent_id)
+            if current is None or occurred_at > current:
+                latest[intent_id] = occurred_at
+        return latest
+
+    def last_action_at_map(self, character_id: str) -> dict:
+        """意図ごとの最終 action.performed 時刻を返す（行動権のクールダウン判定用）。
+
+        Args:
+            character_id: 対象キャラクター。
+
+        Returns:
+            {intent_id: 最終実行の occurred_at} の辞書。
+        """
+        from backend.repositories.sqlite.models import TimelineEvent
+
+        with self.get_session() as session:
+            rows = (
+                session.query(TimelineEvent.intent_id, TimelineEvent.occurred_at)
+                .filter(
+                    TimelineEvent.character_id == character_id,
+                    TimelineEvent.event_type == "action.performed",
+                    TimelineEvent.retracted_at.is_(None),
+                    TimelineEvent.intent_id.isnot(None),
+                )
+                .all()
+            )
+        latest: dict = {}
+        for intent_id, occurred_at in rows:
+            if occurred_at is None:
+                continue
+            current = latest.get(intent_id)
+            if current is None or occurred_at > current:
+                latest[intent_id] = occurred_at
+        return latest
 
     def resolve_intent(
         self,

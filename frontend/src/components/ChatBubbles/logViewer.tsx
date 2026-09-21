@@ -14,6 +14,7 @@ export const TAG_COLORS: Record<string, string> = {
   "tag-narrative":  "bg-blue-950/60 text-blue-300",
   "tag-recall":     "bg-rose-950/60 text-rose-300",
   "tag-anticipate": "bg-fuchsia-950/60 text-fuchsia-300",
+  "tag-intent":     "bg-amber-950/60 text-amber-300",
   "tag-end":        "bg-ch-s3 text-ch-t2",
   "tag-unknown":    "bg-ch-s3 text-ch-t3",
 };

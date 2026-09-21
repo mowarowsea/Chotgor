@@ -294,12 +294,14 @@ async def _instruments_patrol(app: FastAPI) -> None:
     meters = record_bloat_meters(app.state.sqlite)
     # 圧力は保存しない純関数だが、傾向観測の日次スナップショットだけ残す
     pressure_meters = record_pressure_meters(app.state.sqlite)
+    from backend.services.intents import record_intent_meters
+    intent_meters = record_intent_meters(app.state.sqlite)
     judge_result = await run_judgement_patrol(
         app.state.sqlite, app.state.sqlite.get_all_settings()
     )
     _log.info(
-        "計器巡回 完了 patrol=%s meters=%d pressure=%d judge=%s",
-        summary, meters, pressure_meters, judge_result.get("status"),
+        "計器巡回 完了 patrol=%s meters=%d pressure=%d intent=%d judge=%s",
+        summary, meters, pressure_meters, intent_meters, judge_result.get("status"),
     )
 
 

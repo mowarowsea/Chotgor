@@ -13,6 +13,11 @@
     - 終端遷移は機械が候補（14日超 active）を挙げるだけで、種別は本人が裁く
     - 「満ちた」を宣言できる経路をここに置く（2026-08-27）。行動権の帰還だけが fulfilled への
       道だと、1on1 で話し切った意図が active のまま滞留し、毎ターン block_motive に載り続ける
+    - 「一区切り（settled）」も選べる（2026-09-21）。終端せずに意図圧だけ落とす遷移で、
+      「まだ納得してはいないが今は落ち着いた」を表す唯一の語彙
+    - **回答上限は入口と出口で分ける**（2026-09-21）。新規は3件までだが、整理（終端・一区切り）は
+      無制限。以前は設問が全操作まとめて「1〜3個まで」と書いていたため、在庫が溜まっても
+      3枠しか使えず、しかも筆頭の「新しく残したい」に枠を食われていた
 """
 
 import logging
@@ -29,14 +34,27 @@ logger = logging.getLogger(__name__)
 # 返答から意図操作を拾うタグ。書式は本人向け設問文と対で維持すること。
 _NEW_RE = re.compile(r"\[INTENT_NEW:\s*([^|\]]+?)\s*(?:\|\s*([^\]]*?)\s*)?\]")
 _FULFILLED_RE = re.compile(r"\[INTENT_FULFILLED:\s*([0-9a-fA-F-]+)\s*\]")
+_SETTLED_RE = re.compile(r"\[INTENT_SETTLED:\s*([0-9a-fA-F-]+)\s*\]")
 _RELEASE_RE = re.compile(r"\[INTENT_RELEASE:\s*([0-9a-fA-F-]+)\s*\]")
 _SOURED_RE = re.compile(r"\[INTENT_SOURED:\s*([0-9a-fA-F-]+)\s*\|\s*([^\]]+?)\s*\]")
 
 # 新規意図の source_kind 推定に使う閾値（現在圧が最も高い源を当てる。全部低ければ none）
 _SOURCE_KIND_MIN = 0.5
 
-# 一晩に拾い上げる新規意図の上限（暴走ガード）
+# 一晩に拾い上げる新規意図の上限（暴走ガード）。整理側（終端・一区切り）には上限を置かない
+# — 入口と出口が同じ枠を奪い合うと在庫が減らなくなる（めぐり §4.3）。
 _MAX_NEW_INTENTS = 3
+
+# この件数を超えて抱えているときは、設問に「整理していい」の一行を添える。
+# 促すだけで、何を残すかを決めるのは本人（機械は候補を挙げ、本人が裁く）。
+_TIDY_HINT_THRESHOLD = 10
+
+# 「なければないでいい」への素直な返答が、そのまま意図として登録される事故を塞ぐ。
+# description がこれらだけの [INTENT_NEW] は捨てる。
+_EMPTY_DESCRIPTIONS = {
+    "なし", "無し", "特になし", "特に無し", "ない", "無い",
+    "なかった", "特にない", "特にありません", "ありません", "none", "-", "—",
+}
 
 
 def _guess_source_kind(pressures: dict) -> str:
@@ -90,6 +108,13 @@ def build_pickup_question(
         lines += [
             "新しく挙げるものが上のどれかと同じ・ほぼ同じなら、挙げ直さなくていい。",
         ]
+    if len(active_intents) > _TIDY_HINT_THRESHOLD:
+        # 在庫が膨らんでいる事実だけを伝える。何を残すかは本人が決める。
+        lines += [
+            "",
+            f"いま {len(active_intents)} 件抱えている。多いと思うなら、"
+            "この機会にまとめて整理してかまわない（**何件でもいい**）。",
+        ]
     if stale:
         lines += [
             "",
@@ -105,12 +130,17 @@ def build_pickup_question(
             lines.append(f"- [{intent.id}] {intent.description}{suffix}")
     lines += [
         "",
-        "答え方（当てはまるものだけ。1〜3個まで）:",
+        "答え方（当てはまるものだけ）:",
         "- 新しく残したい: `[INTENT_NEW: あなたの言葉のまま | 相手]`"
-        "（相手は user / npc:名前 / self のどれか。省略可）",
+        "（相手は user / npc:名前 / self のどれか。省略可）"
+        f"— **{_MAX_NEW_INTENTS}件まで**",
         "- もう果たした・満ちた: `[INTENT_FULFILLED: id]`",
+        "- まだ持っているけれど、今は落ち着いた: `[INTENT_SETTLED: id]`"
+        "（手放すのではない。時間が経てばまた頭をもたげる）",
         "- 手放す: `[INTENT_RELEASE: id]`",
         "- 叶わないまま不満になっている: `[INTENT_SOURED: id | 不満の言葉]`",
+        "- 上の4つ（果たした／落ち着いた／手放す／不満）に**件数の制限はない**。"
+        "いくつでも挙げていい。",
         "- 何もなければ、タグは書かなくていい"
         "（触れなかったものは、そのまま持ち続ける扱いになる）。",
     ]
@@ -126,8 +156,10 @@ def parse_pickup_response(text: str) -> dict:
     Returns:
         {"new": [{"description": str, "target": str|None}],
          "fulfilled": [id, ...],
+         "settled": [id, ...],
          "release": [id, ...],
          "soured": [{"id": str, "words": str}]} の辞書。
+        new 以外に件数上限は無い（整理を3件で頭打ちにすると在庫が減らない）。
     """
     text = text or ""
     new: list[dict] = []
@@ -137,9 +169,11 @@ def parse_pickup_response(text: str) -> dict:
         if target and target not in ("user", "self") and not target.startswith("npc:"):
             # 書式外の相手表記は npc 扱いに正規化する（本人の言葉は description 側にある）
             target = f"npc:{target}"
-        if description:
+        # 「なければないでいい」への素直な返答が意図として登録される事故を塞ぐ
+        if description and description.strip("。．.!！ 　").lower() not in _EMPTY_DESCRIPTIONS:
             new.append({"description": description, "target": target})
     fulfilled = [m.group(1).strip() for m in _FULFILLED_RE.finditer(text)]
+    settled = [m.group(1).strip() for m in _SETTLED_RE.finditer(text)]
     release = [m.group(1).strip() for m in _RELEASE_RE.finditer(text)]
     soured = [
         {"id": m.group(1).strip(), "words": m.group(2).strip()}
@@ -148,6 +182,7 @@ def parse_pickup_response(text: str) -> dict:
     return {
         "new": new[:_MAX_NEW_INTENTS],
         "fulfilled": fulfilled,
+        "settled": settled,
         "release": release,
         "soured": soured,
     }
@@ -170,6 +205,7 @@ async def run_intent_pickup(
     3. 返答のタグを適用する:
        - INTENT_NEW → create_intent（intent.created 封筒）
        - INTENT_FULFILLED → resolve_intent(fulfilled)（intent.fulfilled 封筒）
+       - INTENT_SETTLED → settle_intent（intent.settled 封筒。status は active のまま）
        - INTENT_RELEASE → resolve_intent(expired)（intent.expired 封筒）
        - INTENT_SOURED → resolve_intent(soured)＋不満の言葉を記憶へ刻む
          （不満化＝利害と合流）
@@ -184,8 +220,8 @@ async def run_intent_pickup(
         now: 基準時刻（テスト注入用）。
 
     Returns:
-        {"status": ..., "created": int, "fulfilled": int, "expired": int,
-         "soured": int} の集計 dict。
+        {"status": ..., "created": int, "fulfilled": int, "settled": int,
+         "expired": int, "soured": int} の集計 dict。
     """
     char = sqlite.get_character(character_id)
     if char is None:
@@ -197,7 +233,9 @@ async def run_intent_pickup(
     active = sqlite.list_intents(character_id, status="active")
     # 圧力は新規意図の source_kind 推定（由来の記録）にだけ使う。意図圧には掛からない
     pressures = compute_pressures(sqlite, character_id, now=now)
-    stale = stale_candidates(active, now=now)
+    # 一区切り済みの意図は起点が移っているため裁定候補から外れる（めぐり §4.3）
+    settled_map = sqlite.latest_settled_map(character_id)
+    stale = stale_candidates(active, now=now, settled_map=settled_map)
 
     question = build_pickup_question(active, stale)
     response = await ask_character(
@@ -229,6 +267,11 @@ async def run_intent_pickup(
     for intent_id in parsed["fulfilled"]:
         if intent_id in valid_ids and sqlite.resolve_intent(intent_id, "fulfilled"):
             fulfilled_count += 1
+    settled_count = 0
+    for intent_id in parsed["settled"]:
+        # 終端ではない — status は active のまま、意図圧の起点だけが今へ移る
+        if intent_id in valid_ids and sqlite.settle_intent(intent_id):
+            settled_count += 1
     expired_count = 0
     for intent_id in parsed["release"]:
         if intent_id in valid_ids and sqlite.resolve_intent(intent_id, "expired"):
@@ -257,13 +300,16 @@ async def run_intent_pickup(
                 logger.exception("不満の刻み込みに失敗 char=%s intent=%s", char.name, item["id"])
 
     logger.info(
-        "意図の拾い上げ完了 char=%s born_from=%s created=%d fulfilled=%d expired=%d soured=%d",
-        char.name, born_from, created, fulfilled_count, expired_count, soured_count,
+        "意図の拾い上げ完了 char=%s born_from=%s created=%d fulfilled=%d settled=%d "
+        "expired=%d soured=%d",
+        char.name, born_from, created, fulfilled_count, settled_count,
+        expired_count, soured_count,
     )
     return {
         "status": "success",
         "created": created,
         "fulfilled": fulfilled_count,
+        "settled": settled_count,
         "expired": expired_count,
         "soured": soured_count,
     }

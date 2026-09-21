@@ -196,6 +196,10 @@ class StreamingTagStripper:
         "[POWER_RECALL:",  # マーカー前テキストはUIへ流すが、タグ自体は除去する。
         # full_text（生テキスト）にはタグが残るため、ストリーム終了後に Recaller で検出できる。
         "[ANTICIPATE_RESPONSE:",  # 次ターンの予想（期待）タグ。全プロバイダー一律でストリームから除去する。
+        # 意図の決着タグ（めぐり §4.3）。ANTICIPATE_RESPONSE と同じ全プロバイダー一律タグで、
+        # ユーザには見せない。full_text には残るため、ストリーム終了後に抽出・適用できる。
+        "[INTENT_SETTLED:",
+        "[INTENT_FULFILLED:",
     ]
 
     # バッファがこの長さを超えたら強制フラッシュ（無限バッファを防ぐ）

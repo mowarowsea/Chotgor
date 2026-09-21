@@ -11,7 +11,7 @@ import logging
 import random
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from backend.services.character_query import ask_character_with_tools
 from backend.services.intents.lifecycle import intent_pressure
@@ -21,8 +21,13 @@ logger = logging.getLogger(__name__)
 
 # 行動問い合わせを起こす意図圧の閾値
 _URGE_THRESHOLD = 0.7
-# 問い合わせに載せる意図の上限（多すぎる選択肢は選択を薄める）
-_MAX_CANDIDATES = 2
+# 問い合わせに載せる意図の上限（多すぎる選択肢は選択を薄める）。
+# 2件だった頃は、圧降順＝実質「古い順」のため3位以下が行動権に一度も出ないまま
+# 14日の裁定へ流れていた（めぐり §5.3 の不採用記録）。
+_MAX_CANDIDATES = 4
+# 同じ意図で連続実行しないためのクールダウン日数。settled（§4.3）を打ち忘れたときの保険で、
+# 「反応を見たい」型のように完了条件が無い意図が毎日 push され続けるのを物理側で止める。
+_ACTION_COOLDOWN_DAYS = 3
 # 行動権の評価周期（分）と、ジッターの最大幅（分）
 _EVAL_PERIOD_MINUTES = 120
 _JITTER_MAX_MINUTES = 60
@@ -37,6 +42,7 @@ _ACTION_RE = re.compile(
     r"\[ACTION:\s*([0-9a-fA-F-]+)\s*\|\s*(push|research|scene)\s*(?:\|\s*([^\]]*?)\s*)?\]"
 )
 _FULFILLED_RE = re.compile(r"\[INTENT_FULFILLED:\s*([0-9a-fA-F-]+)\s*\]")
+_SETTLED_RE = re.compile(r"\[INTENT_SETTLED:\s*([0-9a-fA-F-]+)\s*\]")
 
 
 def jittered_slot_time(character_id: str, slot_start: datetime) -> datetime:
@@ -65,6 +71,8 @@ def evaluate_action_urge(sqlite, character_id: str, now: datetime | None = None)
         character_id: 対象キャラクター。
         now: 基準時刻。
 
+    直近 _ACTION_COOLDOWN_DAYS 日に実行済みの意図は候補から外す（同一意図の連続実行の抑止）。
+
     Returns:
         意図圧の高い順に並んだ候補 Intent リスト（最大 _MAX_CANDIDATES 件）。
         閾値超えが無ければ空リスト（LLM は呼ばれない）。
@@ -72,8 +80,17 @@ def evaluate_action_urge(sqlite, character_id: str, now: datetime | None = None)
     active = sqlite.list_intents(character_id, status="active")
     if not active:
         return []
+    now = now or datetime.now()
+    settled_map = sqlite.latest_settled_map(character_id)
+    last_action = sqlite.last_action_at_map(character_id)
+    cooldown = timedelta(days=_ACTION_COOLDOWN_DAYS)
     scored = [
-        (intent_pressure(i, now=now), i) for i in active
+        (intent_pressure(i, now=now, settled_at=settled_map.get(i.id)), i)
+        for i in active
+        if not (
+            last_action.get(i.id) is not None
+            and now - last_action[i.id] < cooldown
+        )
     ]
     hot = [(p, i) for p, i in scored if p >= _URGE_THRESHOLD]
     hot.sort(key=lambda t: t[0], reverse=True)
@@ -99,13 +116,16 @@ def action_urge_snapshot(sqlite, character_id: str, now: datetime | None = None)
     """
     active = sqlite.list_intents(character_id, status="active")
     pressures = compute_pressures(sqlite, character_id, now=now)
+    settled_map = sqlite.latest_settled_map(character_id)
     scored = sorted(
         (
             {
                 "intent_id": str(i.id),
                 "description": i.description,
                 "source_kind": i.source_kind,
-                "pressure": round(intent_pressure(i, now=now), 3),
+                "pressure": round(
+                    intent_pressure(i, now=now, settled_at=settled_map.get(i.id)), 3
+                ),
             }
             for i in active
         ),
@@ -489,7 +509,7 @@ async def run_action_cycle(
         payload={"menu": menu_key, **result},
     )
 
-    # 6. 帰還: 「これで満ちた？　まだ？」を本人が宣言（fulfilled / active 継続）
+    # 6. 帰還: 「満ちた／一区切り／まだ」を本人が宣言（fulfilled / settled / active 継続）
     return_lines = [
         f"さっきの「{intent.description}」、{result['summary']}。",
     ]
@@ -500,9 +520,11 @@ async def run_action_cycle(
         )
     return_lines += [
         "",
-        "これで満ちた？　まだ？",
-        f"- 満ちたなら: `[INTENT_FULFILLED: {intent.id}]`",
-        "- まだ続くなら、タグは書かなくていい（そのまま心に残る）。",
+        "これで満ちた？　それとも一区切りついただけ？　まだ？",
+        f"- もう出てこないなら: `[INTENT_FULFILLED: {intent.id}]`",
+        f"- まだ持っているけれど今は落ち着いたなら: `[INTENT_SETTLED: {intent.id}]`"
+        "（手放すのではない。時間が経てばまた頭をもたげる）",
+        "- まだ全然なら、タグは書かなくていい（そのまま心に残る）。",
     ]
     return_response = await ask_character_with_tools(
         character_id=character_id,
@@ -520,25 +542,33 @@ async def run_action_cycle(
         return_response=True,
     )
     fulfilled = False
+    settled = False
     if return_response:
         m = _FULFILLED_RE.search(return_response)
         if m and m.group(1).strip() == intent.id:
             fulfilled = bool(sqlite.resolve_intent(intent.id, "fulfilled"))
+        if not fulfilled:
+            # 終端しないが意図圧の起点は今へ移る（§4.3）。fulfilled が優先。
+            m = _SETTLED_RE.search(return_response)
+            if m and m.group(1).strip() == intent.id:
+                settled = bool(sqlite.settle_intent(intent.id))
 
     logger.info(
-        "行動サイクル完了 char=%s menu=%s intent=%s fulfilled=%s",
-        char.name, menu_key, intent.id, fulfilled,
+        "行動サイクル完了 char=%s menu=%s intent=%s fulfilled=%s settled=%s",
+        char.name, menu_key, intent.id, fulfilled, settled,
     )
     _record("fired", f"{menu_key} 実行", details={
         "menu": menu_key,
         "intent_id": str(intent.id),
         "summary": result.get("summary"),
         "fulfilled": fulfilled,
+        "settled": settled,
     })
     return {
         "status": "executed",
         "menu": menu_key,
         "intent_id": intent.id,
         "fulfilled": fulfilled,
+        "settled": settled,
         "result": result,
     }

@@ -3,11 +3,12 @@
 検証対象（docs/planned/aliveness_plan.md §4.3）:
     1. IntentStoreMixin: 作成・一覧・終端遷移と、intent.created / expired /
        soured 封筒の同一トランザクション直書き（intent_id FK 込み）
-    2. lifecycle: 意図圧の読み取り時計算 g(経過日数)＝源圧に依存しないこと、
-       終端遷移の候補挙げ（14日超 active の1リスト）
+    2. lifecycle: 意図圧の読み取り時計算 g(起点からの経過日数)＝源圧に依存しないこと、
+       一区切り（settled）による起点リセット、終端遷移の候補挙げ（14日超 active の1リスト）
     3. pickup: 設問文の組み立て（既存 active・候補の添付）と
-       返答タグ（INTENT_NEW / FULFILLED / RELEASE / SOURED）のパース堅牢性、
+       返答タグ（INTENT_NEW / FULFILLED / SETTLED / RELEASE / SOURED）のパース堅牢性、
        run_intent_pickup の適用（LLM はモック）
+    4. intent_settler: 1on1 本文タグからの決着宣言（抽出・ID解決・適用）
 """
 
 import asyncio
@@ -15,6 +16,11 @@ import uuid
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from backend.character_actions.intent_settler import (
+    apply_intent_marks,
+    extract_intent_marks,
+    resolve_intent_ref,
+)
 from backend.services.intents.lifecycle import (
     intent_pressure,
     stale_candidates,
@@ -167,6 +173,43 @@ class TestLifecycle:
         candidates = stale_candidates([old, older, young])
         assert candidates == [older, old]
 
+    def test_settled_resets_pressure_origin(self):
+        """一区切り（settled）が打たれると意図圧が下限へ戻る。
+
+        意図圧の唯一の減衰源。源圧の乗算を外した 2026-08-27 以降、意図圧は経過日数の
+        単調増加関数で「下がる経路が終端遷移しかない」状態になっていた。settled は
+        終端せずに起点だけを今へ移す遷移で、「まだ持っているが今は落ち着いた」を表す。
+        """
+        intent = _FakeIntent(30)  # 飽和（1.0）まで抱えた意図
+        assert abs(intent_pressure(intent) - 1.0) < 1e-9
+        just_settled = intent_pressure(intent, settled_at=datetime.now())
+        assert abs(just_settled - 0.3) < 1e-3
+
+    def test_settled_pressure_rebuilds_over_time(self):
+        """settled 後も時間が経てば圧は積み上がる（やっぱり納得いかない、の再燃）。
+
+        settled は「手放す」ではないので、8日後には再び行動権の閾値 0.7 へ到達する。
+        創発として再燃するのが狙いで、再燃のための追加実装は持たない。
+        """
+        intent = _FakeIntent(60)
+        settled_at = datetime.now() - timedelta(days=8.1)
+        assert intent_pressure(intent, settled_at=settled_at) >= 0.7
+        settled_recent = datetime.now() - timedelta(days=7.9)
+        assert intent_pressure(intent, settled_at=settled_recent) < 0.7
+
+    def test_settled_intent_leaves_stale_candidates(self):
+        """一区切り済みの意図は 14日の裁定候補から外れる。
+
+        起点が settled へ移るため経過日数が測り直される。これが無いと、
+        一区切りついたばかりの意図が「しばらく経っている」として毎晩問われてしまう。
+        """
+        old = _FakeIntent(20, "social")
+        settled = _FakeIntent(40, "none")
+        candidates = stale_candidates(
+            [old, settled], settled_map={settled.id: datetime.now()}
+        )
+        assert candidates == [old]
+
 
 class TestPickupParsing:
     """拾い上げの設問組み立てと返答パースを検証するテストクラス。"""
@@ -216,10 +259,68 @@ class TestPickupParsing:
         assert parsed["fulfilled"] == [iid]
         assert parsed["release"] == []
 
+    def test_parse_settled(self):
+        """INTENT_SETTLED（一区切り）を FULFILLED と混同せずパースできる。
+
+        タグ名が INTENT_FULFILLED と接頭辞を共有しないため誤照合はしないが、
+        「満ちた」と「落ち着いた」は意味が違う（前者は終端、後者は active 継続）ので
+        別枠で返ることを固定する。
+        """
+        iid = str(uuid.uuid4())
+        parsed = parse_pickup_response(f"ひとまず落ち着いた。[INTENT_SETTLED: {iid}]")
+        assert parsed["settled"] == [iid]
+        assert parsed["fulfilled"] == []
+
+    def test_parse_drops_empty_description(self):
+        """「なし」だけの INTENT_NEW は意図として登録しない。
+
+        設問が「なければないでいい」と促すため、本人が素直に
+        `[INTENT_NEW: なし]` と答えることがある。これをそのまま登録すると、
+        捏造遮断の文言が逆に在庫を増やす（はるの実データで1件混入していた）。
+        """
+        parsed = parse_pickup_response(
+            "\n".join([
+                "[INTENT_NEW: なし]",
+                "[INTENT_NEW: 特になし | self]",
+                "[INTENT_NEW: 星を見たい]",
+            ])
+        )
+        assert parsed["new"] == [{"description": "星を見たい", "target": None}]
+
+    def test_question_separates_entry_and_exit_limits(self, sqlite_store):
+        """件数上限は新規（入口）にだけ掛かり、整理（出口）は無制限と明示される。
+
+        旧設問は全操作まとめて「1〜3個まで」と書いていたため、在庫が21件あっても
+        本人は3枠しか使えないと読み、しかも筆頭の「新しく残したい」に枠を食われて
+        整理が進まなかった（出口の詰まりの主因）。
+        """
+        char_id, _ = _make_character(sqlite_store)
+        active = sqlite_store.create_intent(char_id, "歌の練習を続けたい")
+        question = build_pickup_question([active], [])
+        assert "1〜3個まで" not in question
+        assert "3件まで" in question          # 新規にだけ掛かる上限
+        assert "件数の制限はない" in question  # 整理側は無制限
+        assert "INTENT_SETTLED" in question
+
+    def test_question_hints_tidying_when_inventory_is_large(self, sqlite_store):
+        """在庫が閾値を超えていると、設問に「整理していい」の一行が添えられる。
+
+        機械は在庫が膨らんでいる事実だけを伝え、何を残すかは本人が決める
+        （「機械は候補を挙げ、本人が裁く」の範囲に収める）。
+        """
+        char_id, _ = _make_character(sqlite_store)
+        many = [
+            sqlite_store.create_intent(char_id, f"意図{i}") for i in range(11)
+        ]
+        assert "件抱えている" in build_pickup_question(many, [])
+        assert "件抱えている" not in build_pickup_question(many[:3], [])
+
     def test_parse_no_tags_is_empty(self):
         """タグなし（なければないでいい）は何も適用されない。"""
         parsed = parse_pickup_response("今日は特にないかな。穏やかな一日だった。")
-        assert parsed == {"new": [], "fulfilled": [], "release": [], "soured": []}
+        assert parsed == {
+            "new": [], "fulfilled": [], "settled": [], "release": [], "soured": [],
+        }
 
 
 class TestRunIntentPickup:
@@ -243,7 +344,7 @@ class TestRunIntentPickup:
         result = self._run(sqlite_store, char_id, "[INTENT_NEW: 星を見たい | self]")
         assert result == {
             "status": "success", "created": 1,
-            "fulfilled": 0, "expired": 0, "soured": 0,
+            "fulfilled": 0, "settled": 0, "expired": 0, "soured": 0,
         }
         intents = sqlite_store.list_intents(char_id)
         assert intents[0].description == "星を見たい"
@@ -303,3 +404,124 @@ class TestRunIntentPickup:
             char_id, sqlite_store, {}, born_from="usual_scene",
         ))
         assert result["status"] == "skipped"
+
+
+class TestSettleIntent:
+    """一区切り（settled）の永続化を検証するテストクラス。
+
+    settled は終端遷移ではない。status は active のまま、封筒 intent.settled だけが
+    増える。満足度カラムを持たないのは「圧力は保存しない」（§4.1）を守るためで、
+    意図圧の起点は封筒から読み直される。
+    """
+
+    def test_settle_keeps_active_and_writes_envelope(self, sqlite_store):
+        """settle_intent は status を変えず intent.settled 封筒を残す。"""
+        char_id, _ = _make_character(sqlite_store)
+        intent = sqlite_store.create_intent(char_id, "もわの反応を見たい", target="user")
+        result = sqlite_store.settle_intent(intent.id)
+        assert result is not None
+        assert result.status == "active"
+        events = [
+            e for e in sqlite_store.list_timeline_events(char_id)
+            if e.event_type == "intent.settled"
+        ]
+        assert len(events) == 1
+        assert events[0].intent_id == intent.id
+        assert events[0].counterpart == "user"
+
+    def test_settle_is_repeatable(self, sqlite_store):
+        """一区切りは何度でも打てる（そのたびに起点が今へ移る）。"""
+        char_id, _ = _make_character(sqlite_store)
+        intent = sqlite_store.create_intent(char_id, "また気になってきた")
+        sqlite_store.settle_intent(intent.id)
+        sqlite_store.settle_intent(intent.id)
+        assert len(sqlite_store.latest_settled_map(char_id)) == 1
+
+    def test_settle_ignores_terminated_intent(self, sqlite_store):
+        """終端済みの意図には打てない（None が返る）。"""
+        char_id, _ = _make_character(sqlite_store)
+        intent = sqlite_store.create_intent(char_id, "もう終わった話")
+        sqlite_store.resolve_intent(intent.id, "fulfilled")
+        assert sqlite_store.settle_intent(intent.id) is None
+
+    def test_latest_settled_map_returns_newest(self, sqlite_store):
+        """latest_settled_map は意図ごとの最新 settled を返す。"""
+        char_id, _ = _make_character(sqlite_store)
+        a = sqlite_store.create_intent(char_id, "意図A")
+        b = sqlite_store.create_intent(char_id, "意図B")
+        sqlite_store.settle_intent(a.id)
+        mapping = sqlite_store.latest_settled_map(char_id)
+        assert a.id in mapping
+        assert b.id not in mapping
+
+
+class TestIntentMarks:
+    """1on1 本文タグからの決着宣言（intent_settler）を検証するテストクラス。
+
+    受け口を 1on1 に置く理由は、push の帰還が「ユーザがまだ読んでいない」時点で走るため。
+    「反応を見たい」型の意図にとっての決着は、実際に反応が起きた会話の中にしかなく、
+    そこに受け口が無いと夜の拾い上げまで圧が下がらない（同じ日に二度話しかける事故）。
+    ANTICIPATE_RESPONSE と同じ全プロバイダー一律テキストタグで、ツール化しない。
+    """
+
+    def test_extract_removes_tags_and_keeps_order(self):
+        """タグを本文から除去し、出現順に (種別, ID断片) を返す。"""
+        text = "その癖、やっぱり出たね。[INTENT_SETTLED: 1b86c1e9] それはそれとして……"
+        clean, marks = extract_intent_marks(text)
+        assert "INTENT_SETTLED" not in clean
+        assert "その癖、やっぱり出たね。" in clean
+        assert marks == [("settled", "1b86c1e9")]
+
+    def test_extract_limits_to_two_marks(self):
+        """1ターンに適用するのは2件まで（乱発の歯止め）。"""
+        text = " ".join(
+            f"[INTENT_SETTLED: {i:08x}]" for i in range(5)
+        )
+        _, marks = extract_intent_marks(text)
+        assert len(marks) == 2
+
+    def test_extract_distinguishes_kinds(self):
+        """SETTLED（継続）と FULFILLED（終端）を取り違えない。"""
+        text = "[INTENT_FULFILLED: aaaaaaaa][INTENT_SETTLED: bbbbbbbb]"
+        _, marks = extract_intent_marks(text)
+        assert marks == [("fulfilled", "aaaaaaaa"), ("settled", "bbbbbbbb")]
+
+    def test_resolve_ref_by_prefix(self, sqlite_store):
+        """短縮8桁の前方一致で完全 ID へ解決する（WM スレッドと同じ流儀）。"""
+        char_id, _ = _make_character(sqlite_store)
+        intent = sqlite_store.create_intent(char_id, "解決対象")
+        active = sqlite_store.list_intents(char_id)
+        assert resolve_intent_ref(intent.id[:8], active) == intent.id
+        assert resolve_intent_ref(intent.id, active) == intent.id
+        assert resolve_intent_ref("ffffffff", active) is None
+        assert resolve_intent_ref("", active) is None
+
+    def test_apply_settles_and_fulfills(self, sqlite_store):
+        """settled は active のまま、fulfilled は終端させる。"""
+        char_id, _ = _make_character(sqlite_store)
+        a = sqlite_store.create_intent(char_id, "落ち着いた方")
+        b = sqlite_store.create_intent(char_id, "果たした方")
+        applied = apply_intent_marks(
+            sqlite_store, char_id,
+            [("settled", a.id[:8]), ("fulfilled", b.id[:8])],
+        )
+        assert {x["kind"] for x in applied} == {"settled", "fulfilled"}
+        assert sqlite_store.get_intent(a.id).status == "active"
+        assert sqlite_store.get_intent(b.id).status == "fulfilled"
+        assert a.id in sqlite_store.latest_settled_map(char_id)
+
+    def test_apply_ignores_unresolvable_ref(self, sqlite_store):
+        """解決できない ID は黙って捨てる（本人の書き間違いで会話を壊さない）。"""
+        char_id, _ = _make_character(sqlite_store)
+        sqlite_store.create_intent(char_id, "無関係な意図")
+        assert apply_intent_marks(sqlite_store, char_id, [("settled", "deadbeef")]) == []
+
+    def test_apply_is_idempotent_within_a_turn(self, sqlite_store):
+        """同じ意図を1ターンに二度指しても1回しか適用しない。"""
+        char_id, _ = _make_character(sqlite_store)
+        intent = sqlite_store.create_intent(char_id, "二度書かれた意図")
+        applied = apply_intent_marks(
+            sqlite_store, char_id,
+            [("settled", intent.id[:8]), ("settled", intent.id[:8])],
+        )
+        assert len(applied) == 1

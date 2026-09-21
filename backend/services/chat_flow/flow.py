@@ -27,6 +27,10 @@ _log = logging.getLogger(__name__)
 
 from backend.lib.debug_logger import logger
 from backend.character_actions.anticipator import extract_anticipation
+from backend.character_actions.intent_settler import (
+    apply_intent_marks,
+    extract_intent_marks,
+)
 from backend.services.memory.manager import InscribedMemoryManager
 from backend.services.memory.working_memory_manager import WorkingMemoryManager
 from backend.providers.base import LLMApiError
@@ -126,6 +130,9 @@ class ChatFlow:
         # 予想（ANTICIPATE_RESPONSE）タグは本文から除去する（この非ストリーミング経路では
         # 保存先が無いため抽出値は捨てるが、ユーザー向けテキストにタグを残さない）。
         clean_text, _ = extract_anticipation(clean_text)
+        # 意図の決着タグも同様に除去する。副作用（意図への適用）はストリーミング経路が担い、
+        # ここでは本文にタグを残さないことだけを保証する。
+        clean_text, _ = extract_intent_marks(clean_text)
 
         logger.log_front_output(clean_text)
         self._log_debug("CHAT", request, ctx.messages, clean_text)
@@ -305,6 +312,29 @@ class ChatFlow:
             record_tool_event(
                 "anticipate_response", {"content": anticipation}, source="anticipation",
             )
+
+        # 意図の決着（INTENT_SETTLED / INTENT_FULFILLED）タグ。予想と同じく全プロバイダー
+        # 一律タグなので、tool-use / タグ方式のどちらの clean_text からも同じ地点で取り出す。
+        # settled は終端ではなく意図圧の起点リセット（めぐり §4.3）。
+        clean_text, intent_marks = extract_intent_marks(clean_text)
+        if intent_marks and request.character_id:
+            sqlite_store = getattr(self.memory_manager, "sqlite", None)
+            if sqlite_store is not None:
+                try:
+                    applied = apply_intent_marks(
+                        sqlite_store, request.character_id, intent_marks
+                    )
+                except Exception:
+                    _log.exception(
+                        "意図の決着タグ適用に失敗 char=%s", request.character_id
+                    )
+                    applied = []
+                for item in applied:
+                    record_tool_event(
+                        f"intent_{item['kind']}",
+                        {"intent_id": item["intent_id"], "content": item["description"]},
+                        source="intent_mark",
+                    )
 
         # FrontOutput は ambience タスク起動より前にログする。
         # asyncio.create_task はコンテキストをコピーするため、

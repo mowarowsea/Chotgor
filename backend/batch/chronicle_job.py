@@ -1073,7 +1073,7 @@ async def run_chronicle(
         if pickup.get("status") == "success":
             counts["intents"] = {
                 k: pickup.get(k, 0)
-                for k in ("created", "fulfilled", "expired", "soured")
+                for k in ("created", "fulfilled", "settled", "expired", "soured")
             }
     except Exception:
         logger.exception("意図の拾い上げに失敗 char=%s", char_label)

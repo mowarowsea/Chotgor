@@ -27,7 +27,7 @@
   {block_schedule}              — 予定コンテキスト（生活カレンダー）
   {block_fetched}               — フェッチした Web コンテンツ
   {block_wm_recalled}           — ワーキングメモリ heat 想起（前景の task/topic）
-  {block_motive}                — めぐりの圧力一行＋active intents
+  {block_motive}                — めぐりの圧力一行＋意図圧上位の active intents（ID付き）
   {block_previous_anticipation} — 前回の期待（ANTICIPATE_RESPONSE）
 
 二層に分ける理由: プロンプトキャッシュは先頭からの完全一致プレフィックス単位で効くため、
@@ -60,6 +60,7 @@ from backend.character_actions.carver import (
 )
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_GUIDE
+from backend.character_actions.intent_settler import INTENT_MARK_TAG_GUIDE
 from backend.services.memory.format import short_date, short_thread_id as _short_id
 
 
@@ -581,7 +582,11 @@ def _build_motive_block(
             if since:
                 bits.append(f"{since}から")
             suffix = "（" + "・".join(bits) + "）" if bits else ""
-            parts.append(f"- {desc}{suffix}")
+            # ID は短縮8桁。本人が [INTENT_SETTLED:...] で参照するために出す
+            # （WM スレッド一覧と同じ流儀・前方一致で解決する）。
+            intent_id = str(intent.get("id") or "")
+            prefix = f"[{_short_id(intent_id)}] " if intent_id else ""
+            parts.append(f"- {prefix}{desc}{suffix}")
     parts += [
         "",
         "あなたには、相手の話題に乗る義務はありません。あなた自身の気になっていること・"
@@ -644,6 +649,7 @@ def _build_chotgor_block(
     inner_narrative_len: int = 0,
     context_tool_hints: list[str] | None = None,
     include_anticipation_guide: bool = True,
+    include_intent_marks_guide: bool = False,
 ) -> str:
     """Chotgor 操作ガイドブロックを構築する。
 
@@ -662,6 +668,9 @@ def _build_chotgor_block(
         include_anticipation_guide: False なら ANTICIPATE_RESPONSE の出力ガイドを
             省略する。予想は「次のターンを受け取る相手がいる」チャット前提の機能のため、
             単発問い合わせ（ask_character 系）では表現不要。
+        include_intent_marks_guide: True なら意図の決着タグ（INTENT_SETTLED /
+            INTENT_FULFILLED）のガイドを足す。動機ブロックに意図が載っている
+            1on1 のときだけ True（参照する ID がプロンプトに無いと書きようがない）。
 
     Returns:
         システムプロンプトに挿入する Chotgor 操作ガイドテキスト。
@@ -696,6 +705,11 @@ def _build_chotgor_block(
     if include_anticipation_guide:
         parts.append(ANTICIPATE_RESPONSE_TAG_GUIDE)
 
+    # 意図の決着タグも全プロバイダー一律。動機ブロックに ID 付きで意図が載っている
+    # ときだけ出す（めぐり §5.3）。
+    if include_intent_marks_guide:
+        parts.append(INTENT_MARK_TAG_GUIDE)
+
     parts.append(_CHOTGOR_MEMORY_PHILOSOPHY)
 
     return "\n\n".join(parts)
@@ -720,6 +734,7 @@ def build_system_prompt(
     face_to_face: bool = False,
     context_tool_hints: list[str] | None = None,
     include_anticipation_guide: bool = True,
+    include_intent_marks_guide: bool = False,
 ) -> str:
     """キャラクターのシステムプロンプト（安定ブロックのみ）を構築する。
 
@@ -746,6 +761,8 @@ def build_system_prompt(
         include_anticipation_guide: False なら ANTICIPATE_RESPONSE の出力ガイドを省略する。
             チャット以外の単発問い合わせ（ask_character 系）向け。チャット（1on1・
             グループ・シナリオ）では常に True。
+        include_intent_marks_guide: True なら意図の決着タグのガイドを足す。動機ブロックに
+            意図が載る 1on1 経路（chat_flow）からのみ True で渡す。
     """
     replacements = {
         "{block_prelude}": _build_prelude_block(),
@@ -765,6 +782,7 @@ def build_system_prompt(
             inner_narrative_len=len((inner_narrative or "").strip()),
             context_tool_hints=context_tool_hints,
             include_anticipation_guide=include_anticipation_guide,
+            include_intent_marks_guide=include_intent_marks_guide,
         ),
     }
 
