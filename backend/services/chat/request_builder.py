@@ -212,13 +212,27 @@ TURN_ANNOTATION_TEMPLATE = """\
 {block_previous_anticipation}
 """
 
-# 注釈の冒頭に置く、キャラクター本人向けの説明ヘッダ。
-# 「ユーザの発言ではない」ことを明示して、Chotgor からの添え書きだと分かる形にする。
+# 注釈の冒頭に置く、キャラクター本人向けの説明ヘッダ。{user_label} には相手の呼称が入る。
+# 発信者（Chotgor）を名乗らないのは、注釈にキャラ自身の内面（想起記憶・動機）も
+# 含まれ、外から押し付けたように読めるため。
 _TURN_ANNOTATION_HEADER = (
-    "---\n"
-    "【このターンの文脈（Chotgorより）】\n"
-    "ここから下はユーザの発言ではありません。Chotgor がこのターンに添えた文脈情報です。"
+    "【このターンの文脈】\n"
+    "これは{user_label}の発言ではありません。このターンに添えられた文脈情報です。"
 )
+
+# 呼称が未設定のときヘッダで使う代替表現
+_FALLBACK_USER_LABEL = "相手"
+
+# ターン注釈を包むタグ。claude_cli の会話整形はこのタグの開始位置で最新 user
+# メッセージを「ユーザ発言」と「文脈」に分割するため、名前を変えるときは
+# providers/claude_cli_provider.py の分割処理も追随させること。
+TURN_CONTEXT_OPEN = "<turn_context>"
+TURN_CONTEXT_CLOSE = "</turn_context>"
+
+
+def wrap_turn_context(text: str) -> str:
+    """文脈テキストを `<turn_context>` で包む（ユーザ発言との境界を明示するため）。"""
+    return f"{TURN_CONTEXT_OPEN}\n{text}\n{TURN_CONTEXT_CLOSE}"
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -807,6 +821,7 @@ def build_turn_annotation(
     previous_anticipation: str = "",
     face_to_face: bool = False,
     current_bg_label: str = "",
+    user_label: str = "",
 ) -> str:
     """毎ターン変動する文脈情報を「ターン注釈」として構築する。
 
@@ -817,6 +832,9 @@ def build_turn_annotation(
 
     各ブロックの整形は `_build_*_block` をそのまま共有しており、キャラクターに
     見える情報の中身・見出しはシステムプロンプト時代と変わらない。
+
+    注釈全体は `<turn_context>` で包む。ユーザ発言の直後に地続きで置くと、
+    キャラ一人称の想起記憶などが誰の言葉か曖昧になり、発話者の取り違えを招くため。
 
     Returns:
         整形済み注釈テキスト。全素材が空なら空文字列（注釈自体を付加しない）。
@@ -840,13 +858,14 @@ def build_turn_annotation(
     if not any(v for v in replacements.values()):
         return ""
 
-    result = TURN_ANNOTATION_TEMPLATE.replace(
-        "{annotation_header}", _TURN_ANNOTATION_HEADER
+    header = _TURN_ANNOTATION_HEADER.replace(
+        "{user_label}", (user_label or "").strip() or _FALLBACK_USER_LABEL
     )
+    result = TURN_ANNOTATION_TEMPLATE.replace("{annotation_header}", header)
     for tag, value in replacements.items():
         result = result.replace(tag, value)
 
-    return _collapse_blank_lines(result).strip()
+    return wrap_turn_context(_collapse_blank_lines(result).strip())
 
 
 def append_turn_annotation(messages: list[dict], annotation: str) -> list[dict]:

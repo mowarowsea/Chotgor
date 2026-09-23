@@ -210,6 +210,7 @@ async def ask_character(
         recalled_memories=recalled or None,
         recalled_identity_memories=recalled_identity or None,
         wm_recalled_threads=wm_recalled_threads,
+        user_label=user_label,
     )
     messages = append_turn_annotation(messages, annotation)
 
@@ -346,7 +347,9 @@ async def ask_character_with_tools(
     )
     # 変動情報（WM heat 想起）はターン注釈として最新 user メッセージへ付加する
     # （1on1 チャットと同じ認知構造。キャラクター問い合わせ原則）。
-    annotation = build_turn_annotation(wm_recalled_threads=wm_recalled_threads)
+    annotation = build_turn_annotation(
+        wm_recalled_threads=wm_recalled_threads, user_label=user_label,
+    )
     messages = append_turn_annotation(messages, annotation)
 
     tool_executor = ToolExecutor(

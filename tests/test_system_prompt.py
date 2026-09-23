@@ -190,17 +190,36 @@ def test_turn_annotation_empty_when_no_material():
 
 
 def test_turn_annotation_has_header_when_material_exists():
-    """素材があるとき、注釈冒頭に Chotgor からの説明ヘッダが付くこと。
+    """素材があるとき、注釈冒頭に説明ヘッダが付き、全体が <turn_context> で包まれること。
 
-    注釈は user メッセージの末尾に付加されるため、「ユーザの発言ではない」ことを
-    キャラクター本人に明示しないと、発言の帰属を誤解する恐れがある。
+    注釈は user メッセージの末尾に付加されるため、「相手の発言ではない」ことを
+    キャラクター本人に明示しないと、発言の帰属を誤解する恐れがある。実際に1on1で
+    キャラが自分の発言をユーザの発言と取り違える事故が起きており、見出しの文言だけ
+    でなくタグで境界を切ることで、キャラ一人称の想起記憶がユーザ発言に地続きで
+    読まれるのを防ぐ（2026-09-23）。ヘッダは相手を user_label で名指しする。
+    """
+    annotation = build_turn_annotation(
+        enable_time_awareness=True,
+        current_time_str="2026-03-08T12:00:00",
+        user_label="もわ",
+    )
+    assert annotation.startswith("<turn_context>\n【このターンの文脈】")
+    assert annotation.endswith("</turn_context>")
+    assert "これはもわの発言ではありません" in annotation
+
+
+def test_turn_annotation_header_falls_back_without_user_label():
+    """user_label が空のとき、ヘッダは「相手」で代替されること。
+
+    呼称未設定のキャラやバッチ問い合わせでも「{user_label}」が生のまま残ったり、
+    「の発言ではありません」のように主語が欠けたりしないことを守る。
     """
     annotation = build_turn_annotation(
         enable_time_awareness=True,
         current_time_str="2026-03-08T12:00:00",
     )
-    assert "【このターンの文脈（Chotgorより）】" in annotation
-    assert "ユーザの発言ではありません" in annotation
+    assert "これは相手の発言ではありません" in annotation
+    assert "{user_label}" not in annotation
 
 
 def test_turn_annotation_time_disabled_by_default():

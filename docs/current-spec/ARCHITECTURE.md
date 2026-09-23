@@ -184,8 +184,8 @@ frontend useChat
           request_builder.py モジュール docstring）:
           - build_system_prompt: 安定ブロックのみ（前提/キャラ/ユーザ像/WM一覧・固定/inner_narrative/ガイド）
           - build_turn_annotation + append_turn_annotation: 変動ブロック（想起記憶/時刻/fetched/
-            WM heat想起/圧力・意図/前回期待）を最新userメッセージ末尾へ注釈として付加
-            （LLMリクエスト限り。DB履歴には残らない）
+            WM heat想起/圧力・意図/前回期待）を `<turn_context>` で包んで最新userメッセージ
+            末尾へ注釈として付加（LLMリクエスト限り。DB履歴には残らない）
       4.  providers/registry 経由でプロバイダーへディスパッチ（SSEストリーミング）
       5.  応答からツールタグ/tool-use を処理（Inscriber / Carver / Anticipator…）
       6.  履歴を SQLite 保存 + indexer が LanceDB chat_turns へ upsert
@@ -253,6 +253,38 @@ frontend useChat
     メッセージのみで、キャラクター側のターンをイベントとして流し込むことはできない
     （だから履歴のテキスト化は残る）。data URL でないもの・Anthropic 非対応の
     media_type（image/bmp 等）は黙って捨てる（画像1枚で発話まるごと失敗させない）。
+  - **会話テキストは「タグ＝話者」で揃える（発話者取り違え対策、2026-09-23）**:
+    1on1 では `_format_conversation` に `user_label` を渡し、次の形にする。
+    ```
+    <history>
+    <もわ>…</もわ>
+    <はる>…</はる>
+    </history>
+
+    <もわ>最新の発言</もわ>
+
+    <turn_context>
+    【このターンの文脈】…（想起記憶・時刻・動機など。build_turn_annotation が包む）
+    </turn_context>
+    ```
+    - 旧形式は履歴のユーザが `<human>` と抽象化され、最新発言は `</history>` の後ろに
+      裸で置かれ、その直後にタグ無しのターン注釈（キャラ一人称の想起記憶を含む）が
+      地続きで続いていた。どこからどこまでが誰の発言か読み取りにくく、キャラが
+      自分の発言をユーザの発言と取り違える事故が少なくない頻度で起きていた。
+    - 最新の user メッセージは最初の `<turn_context>` で分割し、手前だけをユーザ発言
+      として `<user_label>` で包む。手前が空（発話予約の単独発火＝合成注釈だけの
+      ターン）ならユーザタグは付けない。発話予約の合成注釈も `<turn_context>` で包む
+      （Chotgor 由来の文脈をユーザ発言として見せないため）。
+    - `user_label` を渡さない経路（character_query のバッチ問い合わせ等）は旧形式
+      （`<human>`・最新は素通し）のまま。そこでの user ロールはユーザ本人ではなく
+      Chotgor からの問い合わせなので、ユーザ名で包むと逆に誤帰属になる。
+    - 不採用: 最新発言を `<current_request>` で包む案。`</history>` の外にあること
+      自体が「今の発言」の目印で重複し、"request" はキャラを依頼処理役として扱う
+      枠組みになるため。注釈タグ名 `<chotgor>` は「Chotgor がキャラの内面を押し付けて
+      いる」ように読めるため、`<your_mind>` はタグ＝話者の規則から外れ（キャラ自身の
+      思考・発言と混ざる）中身に時刻や Web 本文も含むため、`working_context` は
+      Working Memory と紛らわしく、`premise` は押し付けの響き、`background` は
+      対面背景（なりゆき）と衝突するため、それぞれ棄却。
 - ツール実行は両経路とも `lib/tool_event_recorder.py` が `tool_call_events` テーブルへ
   実行時記録する（tool-use 経路は `ToolExecutor.execute()` の関門で、タグ経路は各
   `*_from_text` で記録）。Logs 画面のツール使用表示はこのイベントを読むだけで、

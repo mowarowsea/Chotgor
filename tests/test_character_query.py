@@ -300,7 +300,7 @@ class TestAskCharacterRecall:
         system_prompt, messages = provider.generate.call_args[0]
         last_user_content = messages[-1]["content"]
         # 記憶はターン注釈（最新 user メッセージ末尾）に載る
-        assert "【このターンの文脈（Chotgorより）】" in last_user_content
+        assert "【このターンの文脈】" in last_user_content
         assert "アイデンティティ記憶" in last_user_content
         assert "その他の記憶" in last_user_content
         # システムプロンプト側には混入しない（安定プレフィックス維持）

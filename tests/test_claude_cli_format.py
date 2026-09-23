@@ -91,6 +91,125 @@ class TestFormatConversation:
         assert result == expected
 
 
+class TestFormatConversationSpeakerTags:
+    """1on1（user_label あり）で「タグ＝話者」に揃える整形のテスト。
+
+    旧形式では履歴のユーザが `<human>` と抽象化され、最新発言は `</history>` の後ろに
+    裸で置かれ、その直後にタグ無しのターン注釈（キャラ一人称の想起記憶を含む）が
+    地続きで続いていた。このため、はるが自分の発言をもわの発言と取り違える事故が
+    少なくない頻度で起きていた（2026-09-23）。ここでは次の契約を守る:
+    - 履歴・最新発言ともユーザ側を user_label のタグで包む
+    - 最新発言末尾のターン注釈（<turn_context>）はユーザタグの外に出す
+    - 最新ターンがターン注釈だけ（発話予約の単独発火）ならユーザタグを付けない
+      （Chotgor 由来の文脈をユーザ発言として見せると、逆に誤帰属になる）
+    - user_label 未指定の経路（バッチ問い合わせ）は旧形式のまま
+    """
+
+    def test_history_and_latest_use_user_label(self):
+        """履歴も最新発言も <もわ> で包まれ、<human> が現れないこと。"""
+        messages = [
+            {"role": "user", "content": "ユーザの発言だよ"},
+            {"role": "assistant", "content": "知ってる"},
+            {"role": "user", "content": "最後の返信だよ"},
+        ]
+        result = _format_conversation(messages, "はる", "もわ")
+        assert result == (
+            "<history>\n"
+            "<もわ>ユーザの発言だよ</もわ>\n"
+            "<はる>知ってる</はる>\n"
+            "</history>\n\n"
+            "<もわ>最後の返信だよ</もわ>"
+        )
+        assert "<human>" not in result
+
+    def test_turn_context_is_placed_outside_user_tag(self):
+        """注釈付きの最新発言は、発言だけが <もわ> に入り注釈はその外に出ること。"""
+        messages = [
+            {"role": "user", "content": "前の話"},
+            {"role": "assistant", "content": "うん"},
+            {
+                "role": "user",
+                "content": "最後の返信だよ\n\n<turn_context>\n【このターンの文脈】\n記憶\n</turn_context>",
+            },
+        ]
+        result = _format_conversation(messages, "はる", "もわ")
+        assert result.endswith(
+            "</history>\n\n"
+            "<もわ>最後の返信だよ</もわ>\n\n"
+            "<turn_context>\n【このターンの文脈】\n記憶\n</turn_context>"
+        )
+
+    def test_context_only_turn_has_no_user_tag(self):
+        """最新ターンが注釈だけ（発話予約の単独発火）なら <もわ> を付けないこと。
+
+        合成注釈と通常のターン注釈の2ブロックが並んでも、両方ともタグの外に残る。
+        """
+        latest = (
+            "<turn_context>\n（いま 10:00。あなたから声をかける番）\n</turn_context>\n\n"
+            "<turn_context>\n【このターンの文脈】\n</turn_context>"
+        )
+        messages = [
+            {"role": "user", "content": "おやすみ"},
+            {"role": "assistant", "content": "おやすみ"},
+            {"role": "user", "content": latest},
+        ]
+        result = _format_conversation(messages, "はる", "もわ")
+        assert result.endswith("</history>\n\n" + latest)
+        assert result.count("<もわ>") == 1  # 履歴側の1件のみ
+
+    def test_single_message_is_wrapped_with_user_label(self):
+        """セッション最初の発言（履歴なし）も <もわ> で包まれること。"""
+        messages = [{"role": "user", "content": "はじめまして"}]
+        assert _format_conversation(messages, "はる", "もわ") == "<もわ>はじめまして</もわ>"
+
+    def test_multipart_latest_with_annotation_part(self):
+        """画像添付などマルチパートでも、注釈パートがタグの外に出ること。
+
+        append_turn_annotation はマルチパート時に注釈を別テキストパートとして足すため、
+        パートの連結後に分割できることを確認する。
+        """
+        messages = [
+            {"role": "user", "content": "前"},
+            {"role": "assistant", "content": "うん"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "これ見て"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                    {"type": "text", "text": "\n\n<turn_context>\n文脈\n</turn_context>"},
+                ],
+            },
+        ]
+        result = _format_conversation(messages, "はる", "もわ")
+        assert result.endswith("<もわ>これ見て</もわ>\n\n<turn_context>\n文脈\n</turn_context>")
+
+    def test_without_user_label_keeps_legacy_format(self):
+        """user_label 未指定なら旧形式（<human>・最新は素通し）のままであること。
+
+        バッチ問い合わせ（character_query）の user ロールはユーザ本人ではなく
+        Chotgor からの問い合わせなので、ユーザ名で包んではならない。
+        """
+        messages = [
+            {"role": "user", "content": "問い"},
+            {"role": "assistant", "content": "答え"},
+            {"role": "user", "content": "次の問い\n\n<turn_context>\n文脈\n</turn_context>"},
+        ]
+        result = _format_conversation(messages, "はる")
+        assert "<human>問い</human>" in result
+        assert result.endswith("</history>\n\n次の問い\n\n<turn_context>\n文脈\n</turn_context>")
+
+    def test_turn_context_tag_matches_request_builder(self):
+        """分割に使うタグ名が request_builder の注釈タグと一致していること。
+
+        providers→services の import 逆流を避けるため値を複製しているので、
+        片方だけ改名されると分割が効かなくなり注釈がユーザ発言に取り込まれる。
+        """
+        from backend.providers.claude_cli_provider import _TURN_CONTEXT_OPEN
+        from backend.services.chat.request_builder import TURN_CONTEXT_OPEN
+
+        assert _TURN_CONTEXT_OPEN == TURN_CONTEXT_OPEN
+
+
 class TestMakeEnvBatchContext:
     """``ClaudeCliProvider._make_env(batch_context=...)`` のテスト。
 

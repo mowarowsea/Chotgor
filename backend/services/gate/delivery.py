@@ -53,6 +53,7 @@ from backend.lib.log_context import (
     new_message_id,
 )
 from backend.services.chat.indexer import get_participant_char_ids, index_message_sync
+from backend.services.chat.request_builder import wrap_turn_context
 from backend.services.chat_flow.scene_loop import LoopState, SceneLoop
 from backend.services.chat_flow.strategies import OneOnOneExecutor, OneOnOneRouter
 from backend.services.gate.availability import (
@@ -291,6 +292,11 @@ async def _deliver_session(
     ]
     if not pending and (require_pending or not extra_annotation):
         return  # 走査後にユーザターンが先に配達したケース（レース）— 何もしない
+
+    if extra_annotation:
+        # 合成注釈は Chotgor 由来の文脈であってユーザの発言ではない。<turn_context> で
+        # 包み、claude_cli の会話整形がユーザ発言として <user_label> で包まないようにする。
+        extra_annotation = wrap_turn_context(extra_annotation)
 
     # api 層のヘルパーは lazy import（api → services の逆流 import を起動時に作らない）
     from backend.api.chat import build_1on1_chat_request

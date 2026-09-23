@@ -256,6 +256,8 @@ async def prepare_context(
         # character_name は claude_cli の conversation 整形（<キャラ名>...</キャラ名>）に使う。
         # 未指定だと <character> へフォールバックして「自分の発話」感が薄れるため必ず渡す。
         character_name=request.character_name or "",
+        # user_label は claude_cli で履歴・最新発言のユーザ側タグ（<もわ>...</もわ>）に使う。
+        user_label=request.user_label or "",
         character_id=request.character_id,
         session_id=request.session_id or "",
         allowed_tools=request.allowed_tools,
@@ -353,6 +355,7 @@ async def prepare_context(
         previous_anticipation=request.previous_anticipation,
         face_to_face=request.face_to_face,
         current_bg_label=request.current_bg_label,
+        user_label=request.user_label,
     )
     messages = append_turn_annotation(messages, annotation)
 

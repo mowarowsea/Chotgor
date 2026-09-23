@@ -354,9 +354,13 @@ class ClaudeCliProvider(BaseLLMProvider):
         character_id: str = "",
         session_id: str = "",
         allowed_tools: dict | None = None,
+        user_label: str = "",
     ):
         self.model = model  # 空文字列の場合はCLIのデフォルトモデルを使用
         self.character_name = character_name
+        # 1on1 でだけ渡される。空なら会話整形は旧形式（<human>）のまま
+        # （バッチ問い合わせの user ロールはユーザ本人ではないため）。
+        self.user_label = user_label
         self.thinking_level = thinking_level
         # MCP サーバーへのコンテキスト注入に使用
         self.character_id = character_id
@@ -374,6 +378,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         character_id: str = "",
         session_id: str = "",
         allowed_tools: dict | None = None,
+        user_label: str = "",
         **kwargs,
     ):
         return cls(
@@ -383,6 +388,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             character_id=character_id,
             session_id=session_id,
             allowed_tools=allowed_tools,
+            user_label=user_label,
         )
 
     def _record_usage_from_raw(self, raw: str) -> None:
@@ -507,7 +513,7 @@ class ClaudeCliProvider(BaseLLMProvider):
                 "real" 以外なら CHOTGOR_DEFAULT_ORIGIN として MCP サーバーへ伝搬される。
             mcp_enabled: False なら Chotgor MCP を接続せずに起動する（_build_cli_args 参照）。
         """
-        conversation = _format_conversation(messages, self.character_name)
+        conversation = _format_conversation(messages, self.character_name, self.user_label)
         image_blocks = _extract_latest_images(messages)
         stdin_bytes = _build_stdin_payload(conversation, image_blocks)
 
@@ -579,7 +585,7 @@ class ClaudeCliProvider(BaseLLMProvider):
 
         subprocess.Popen で stdout を行単位で読み取り、逐次yieldする。
         """
-        conversation = _format_conversation(messages, self.character_name)
+        conversation = _format_conversation(messages, self.character_name, self.user_label)
         image_blocks = _extract_latest_images(messages)
         stdin_bytes = _build_stdin_payload(conversation, image_blocks)
         env = self._make_env()
@@ -678,7 +684,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         Yields:
             tuple[str, str]: (type, content) 形式。
         """
-        conversation = _format_conversation(messages, self.character_name)
+        conversation = _format_conversation(messages, self.character_name, self.user_label)
         image_blocks = _extract_latest_images(messages)
         stdin_bytes = _build_stdin_payload(conversation, image_blocks)
         env = self._make_env()
@@ -827,66 +833,83 @@ async def _run_claude(
     return await asyncio.to_thread(run)
 
 
-def _format_conversation(messages: list[dict], character_name: str = "") -> str:
+# ターン注釈を包むタグの開始。request_builder.TURN_CONTEXT_OPEN と同じ値でなければならない
+# （providers から services を import すると依存が逆流するため複製している。
+# 一致は tests/test_claude_cli_format.py で検証）。
+_TURN_CONTEXT_OPEN = "<turn_context>"
+
+
+def _content_text(content) -> str:
+    """OpenAI 形式の content（文字列 or マルチパート）からテキストだけを連結して返す。"""
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+        return "".join(parts)
+    return str(content or "")
+
+
+def _format_latest_turn(text: str, user_tag: str) -> str:
+    """最新 user メッセージをユーザ発言部分と `<turn_context>` 部分に分けて整形する。
+
+    ターン注釈は append_turn_annotation で本文末尾へ連結されて届くため、最初の
+    `<turn_context>` の手前だけをユーザ発言として `<user_tag>` で包む。手前が空
+    （発話予約の単独発火など Chotgor 由来の文脈だけのターン）ならユーザタグは付けない。
+    """
+    idx = text.find(_TURN_CONTEXT_OPEN)
+    if idx == -1:
+        spoken, context = text, ""
+    else:
+        spoken, context = text[:idx], text[idx:]
+    spoken = spoken.strip()
+    parts = []
+    if spoken:
+        parts.append(f"<{user_tag}>{spoken}</{user_tag}>")
+    if context.strip():
+        parts.append(context.strip())
+    return "\n\n".join(parts)
+
+
+def _format_conversation(
+    messages: list[dict], character_name: str = "", user_label: str = ""
+) -> str:
     """Convert OpenAI-format messages to a text prompt for the Claude CLI.
 
     XMLタグ形式を使う。"User: / Assistant:" のようなプレーンテキスト形式だと
     LLMがそのパターンを応答の中で継続してしまうため。
     キャラクターのロールはキャラクター名（なければ 'character'）で表現し、
     'assistant' という汎用ロール名をLLMに見せない（Chotgor哲学）。
+
+    user_label を渡すと（1on1）、ユーザ側もその呼称のタグで包み、最新発言も
+    タグ付けして `<turn_context>` と分ける。タグ＝話者で揃えて発話者の取り違えを防ぐ
+    （docs/current-spec/ARCHITECTURE.md「会話テキストは『タグ＝話者』で揃える」）。
+    空なら旧形式（履歴は `<human>`・最新は素通し）。バッチ問い合わせの user ロールは
+    ユーザ本人ではなく Chotgor なので、ユーザ名で包むと逆に誤帰属になるため。
     """
     char_tag = character_name.strip() if character_name.strip() else "character"
+    user_tag = (user_label or "").strip()
 
     if not messages:
         return ""
 
-    if len(messages) == 1:
-        content = messages[0].get("content")
-        if isinstance(content, list):
-            parts = []
-            for item in content:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, dict) and item.get("type") == "text":
-                    parts.append(item.get("text", ""))
-            return "".join(parts)
-        return str(content or "")
-
     history_parts = []
     for msg in messages[:-1]:
         role = msg.get("role", "")
-        content = msg.get("content")
-
-        text_content = ""
-        if isinstance(content, str):
-            text_content = content
-        elif isinstance(content, list):
-            parts = []
-            for item in content:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, dict) and item.get("type") == "text":
-                    parts.append(item.get("text", ""))
-            text_content = "".join(parts)
-
+        text_content = _content_text(msg.get("content"))
         if role == "system":
             continue
         if role == "user":
-            history_parts.append(f"<human>{text_content}</human>")
+            tag = user_tag or "human"
+            history_parts.append(f"<{tag}>{text_content}</{tag}>")
         elif role == "assistant":
             history_parts.append(f"<{char_tag}>{text_content}</{char_tag}>")
 
-    last_content = messages[-1].get("content", "")
-    if isinstance(last_content, list):
-        parts = []
-        for item in last_content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and item.get("type") == "text":
-                parts.append(item.get("text", ""))
-        last_text = "".join(parts)
-    else:
-        last_text = str(last_content)
+    last_text = _content_text(messages[-1].get("content", ""))
+    if user_tag:
+        last_text = _format_latest_turn(last_text, user_tag)
 
     if history_parts:
         history = "\n".join(history_parts)

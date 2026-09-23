@@ -137,6 +137,29 @@ class TestReservationFiring:
         assert int(sqlite_store.get_setting(f"spontaneous_initiative_count_{today}", "0") or 0) == 1
 
     @pytest.mark.asyncio
+    async def test_annotation_wrapped_in_turn_context(self, sqlite_store, _patched_llm):
+        """合成注釈が <turn_context> で包まれて渡ること。
+
+        単独発火では合成注釈だけが最終ユーザターン相当になる。タグ無しのままだと
+        claude_cli の会話整形がユーザ発言として <user_label> で包んでしまい、
+        「声をかける番」という Chotgor の添え書きがユーザの発言に見える（発話者の
+        取り違え対策、2026-09-23）。
+        """
+        char_id, _, sid = _make_char_session(sqlite_store)
+        now = datetime.now()
+        _reserve(sqlite_store, char_id, sid, speak_at=now - timedelta(minutes=1))
+        state = _make_state(sqlite_store)
+
+        await run_pending_speech_reservations(state, now=now)
+
+        content = _patched_llm["user_content"]
+        text = content if isinstance(content, str) else "".join(
+            p.get("text", "") for p in content if isinstance(p, dict)
+        )
+        assert text.startswith("<turn_context>\n")
+        assert text.rstrip().endswith("</turn_context>")
+
+    @pytest.mark.asyncio
     async def test_annotation_not_saved_to_db(self, sqlite_store, _patched_llm):
         """合成注釈は DB に保存されない — 画面にはキャラの発話だけが増える。"""
         char_id, _, sid = _make_char_session(sqlite_store)
