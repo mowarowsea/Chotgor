@@ -959,3 +959,83 @@ class TestCollectAllScenes:
         assert scenes[0].scene_tag == "はるの日常"
         assert "太郎" in scenes[1].scene_tag
         assert scenes[2].scene_tag == "はるの日常"
+
+    def test_usual_scenes_filtered_by_since_dt(self, sqlite_store):
+        """うつつ過去シーンが多数ある場合、scenes_per_day（N）で指定された起点より前のシーンが除外されること。"""
+        import time
+        _make_usual_session(sqlite_store)
+        # シーン0 (3個前CLOSE)
+        sqlite_store.create_scenario_turn(
+            turn_id="u0_start", session_id="usess", turn_index=0,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="昔の朝", raw_response="GM0_start",
+        )
+        sqlite_store.create_scenario_turn(
+            turn_id="u0_close", session_id="usess", turn_index=1,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="昔の夜。[SCENE_CLOSE]", raw_response="GM0_close [SCENE_CLOSE]",
+        )
+        time.sleep(0.02)
+        # シーン1 (2個前CLOSE)
+        sqlite_store.create_scenario_turn(
+            turn_id="u1_start", session_id="usess", turn_index=2,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="一昨日の朝", raw_response="GM1_start",
+        )
+        sqlite_store.create_scenario_turn(
+            turn_id="u1_close", session_id="usess", turn_index=3,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="一昨日の夜。[SCENE_CLOSE]", raw_response="GM1_close [SCENE_CLOSE]",
+        )
+        time.sleep(0.02)
+        # シーン2 (1個前CLOSE = 最新CLOSE)
+        sqlite_store.create_scenario_turn(
+            turn_id="u2_start", session_id="usess", turn_index=4,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="昨日の朝", raw_response="GM2_start",
+        )
+        sqlite_store.create_scenario_turn(
+            turn_id="u2_close", session_id="usess", turn_index=5,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="昨日の夜。[SCENE_CLOSE]", raw_response="GM2_close [SCENE_CLOSE]",
+        )
+        time.sleep(0.02)
+        # シーン3 (現在進行中)
+        sqlite_store.create_scenario_turn(
+            turn_id="u3_start", session_id="usess", turn_index=6,
+            speaker_type="narrator", speaker_id=None, speaker_name="Narrator",
+            content="今朝の出来事", raw_response="GM3_start",
+        )
+
+        history = sqlite_store.list_scenario_turns("usess")
+
+        # N=1 の場合: 直近の SCENE_CLOSE（シーン2の終わり）以降 → シーン2（直前）と シーン3（今回）の2シーンのみ
+        scenes_n1 = collect_all_scenes(
+            sqlite_store, history=history,
+            self_character_id="char-haru", character_name="はる",
+            user_label="太郎", scenes_per_day=1,
+        )
+        usual_n1 = [s for s in scenes_n1 if s.scene_tag == "はるの日常"]
+        contents_n1 = [t.content for s in usual_n1 for t in s.turns]
+
+        assert len(usual_n1) == 2
+        assert "昨日の朝" in contents_n1
+        assert "今朝の出来事" in contents_n1
+        assert "昔の朝" not in contents_n1
+        assert "一昨日の朝" not in contents_n1
+
+        # N=2 の場合: 2個前の SCENE_CLOSE（シーン1の終わり）以降 → シーン1, シーン2, シーン3 の3シーン
+        scenes_n2 = collect_all_scenes(
+            sqlite_store, history=history,
+            self_character_id="char-haru", character_name="はる",
+            user_label="太郎", scenes_per_day=2,
+        )
+        usual_n2 = [s for s in scenes_n2 if s.scene_tag == "はるの日常"]
+        contents_n2 = [t.content for s in usual_n2 for t in s.turns]
+
+        assert len(usual_n2) == 3
+        assert "一昨日の朝" in contents_n2
+        assert "昨日の朝" in contents_n2
+        assert "今朝の出来事" in contents_n2
+        assert "昔の朝" not in contents_n2
+

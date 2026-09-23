@@ -40,8 +40,17 @@ services:
       - "8085:80"
     environment:
       - TZ=Asia/Tokyo
+      # attachment-cache-dir を使うには base-url (外部から見えるこのサーバー自身の URL) の指定が必須
+      - NTFY_BASE_URL=http://100.121.83.66:8085
+      # 通知アイコン (X-Icon / favicon) を送るには attachment 機能を有効化する必要がある
+      - NTFY_ATTACHMENT_CACHE_DIR=/var/cache/ntfy/attachments
+      - NTFY_ATTACHMENT_TOTAL_SIZE_LIMIT=200M
+      - NTFY_ATTACHMENT_FILE_SIZE_LIMIT=2M
+    volumes:
+      - ntfy-attachments:/var/cache/ntfy/attachments
     command: serve
     restart: unless-stopped
 
 volumes:
   infinity-data:
+  ntfy-attachments:

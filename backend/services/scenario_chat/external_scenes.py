@@ -244,11 +244,13 @@ def _build_usual_scenes(
     self_speaker_tag: str,
     user_label: str,
     narrator_name: str,
+    since_dt: datetime | None = None,
 ) -> list[Scene]:
     """うつつ scenario_turns（同一セッションの全ターン）をシーン単位に分割して Scene 列を返す。
 
     SCENE_CLOSE 観測後、別 raw_response の GM ターンに切り替わった地点で次シーンに分割する。
     PC ターン（raw="" のことが多い）が間に挟まっても境界とは見なさない（既存 _format_scenario_history_for_pc と同じ判定）。
+    since_dt が指定された場合、その時刻より前に終了したシーン（全ターンの created_at < since_dt）は除外する。
     """
     scenes: list[Scene] = []
     user_tag = _sanitize_xml_tag_name(user_label or "user")
@@ -294,6 +296,12 @@ def _build_usual_scenes(
             current.turns.append(SpeechTurn(turn.created_at, tag, content))
         if _scene_close_in(raw, content):
             pending_close_raw = raw
+
+    if since_dt is not None:
+        scenes = [
+            s for s in scenes
+            if s.turns and max(t.created_at for t in s.turns) >= since_dt
+        ]
     return scenes
 
 
@@ -471,7 +479,8 @@ def collect_all_scenes(
         until_dt = datetime.now()
     since_dt = resolve_since_dt(sqlite, self_character_id, scenes_per_day=scenes_per_day)
     usual_scenes = _build_usual_scenes(
-        history, self_character_id, character_name, user_label, narrator_name
+        history, self_character_id, character_name, user_label, narrator_name,
+        since_dt=since_dt,
     )
     ext_scenes: list[Scene] = []
     ext_scenes.extend(_build_1on1_scenes(sqlite, character_name, user_label, since_dt, until_dt))
