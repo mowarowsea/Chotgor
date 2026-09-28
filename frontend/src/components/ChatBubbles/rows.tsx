@@ -117,6 +117,10 @@ function CharacterBubbleImpl({
   onRegenerate,
   logMessageId,
   elapsedMs,
+  variantIndex,
+  variantCount,
+  onPrevVariant,
+  onNextVariant,
 }: {
   characterName: string;
   /** プリセット名。指定時は名前行に @プリセット を表示する。 */
@@ -134,6 +138,12 @@ function CharacterBubbleImpl({
   logMessageId?: string;
   /** モデルへリクエストしてから応答完了までの経過時間（ミリ秒）。 */
   elapsedMs?: number;
+  /** 枝ナビの現在位置と総数（1on1 レスポンスガチャ）。総数 2 以上で ◀ n/m ▶ を出す。 */
+  variantIndex?: number;
+  variantCount?: number;
+  /** 前後の枝へ切り替える。Promise を返すと解決まで枝ナビが無効化される。 */
+  onPrevVariant?: ActionHandler;
+  onNextVariant?: ActionHandler;
 }) {
   // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
   const { revealed, rowProps, bubbleProps } = useRevealControls(!sending);
@@ -172,6 +182,10 @@ function CharacterBubbleImpl({
           onRegenerate={onRegenerate}
           logMessageId={logMessageId}
           elapsedMs={elapsedMs}
+          variantIndex={variantIndex}
+          variantCount={variantCount}
+          onPrevVariant={onPrevVariant}
+          onNextVariant={onNextVariant}
           revealed={revealed}
         />
       )}
@@ -292,8 +306,11 @@ export const CharacterBubble = React.memo(CharacterBubbleImpl, (prev, next) => {
     prev.sending === next.sending &&
     prev.logMessageId === next.logMessageId &&
     prev.elapsedMs === next.elapsedMs &&
+    prev.variantIndex === next.variantIndex &&
+    prev.variantCount === next.variantCount &&
     // 関数の同一性は見ないが「渡されているか」は見る（操作の可否が切り替わるため）。
-    (prev.onRegenerate === undefined) === (next.onRegenerate === undefined)
+    (prev.onRegenerate === undefined) === (next.onRegenerate === undefined) &&
+    (prev.onPrevVariant === undefined) === (next.onPrevVariant === undefined)
   );
 });
 

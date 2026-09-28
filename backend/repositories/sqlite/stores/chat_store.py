@@ -1,5 +1,6 @@
 """チャットセッション・メッセージ・画像 CRUD — SQLiteStore Mixin。"""
 
+import uuid
 from datetime import datetime
 
 from sqlalchemy import false, or_
@@ -65,7 +66,9 @@ class ChatStoreMixin:
     def delete_chat_session(self, session_id: str) -> bool:
         """チャットセッションとそのメッセージ・添付レコードを削除する。"""
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatSession, ChatMessage, ChatAttachment
+            from backend.repositories.sqlite.store import (
+                ChatAttachment, ChatMessage, ChatMessageVariant, ChatSession,
+            )
             # 封筒は削除せず retracted マーク（セッションごと消してもタイムラインの
             # 存在記録は残す。retracted は全観測者から hidden）
             message_ids = [
@@ -78,6 +81,9 @@ class ChatStoreMixin:
                 session, "chat_messages", message_ids
             )
             session.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
+            session.query(ChatMessageVariant).filter(
+                ChatMessageVariant.session_id == session_id
+            ).delete()
             session.query(ChatAttachment).filter(ChatAttachment.session_id == session_id).delete()
             obj = session.get(ChatSession, session_id)
             if not obj:
@@ -118,7 +124,7 @@ class ChatStoreMixin:
                 既定 True（即配達＝従来挙動）。
         """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatMessage, ChatSession
+            from backend.repositories.sqlite.store import ChatMessage
             msg = ChatMessage(
                 id=message_id,
                 session_id=session_id,
@@ -141,27 +147,7 @@ class ChatStoreMixin:
             # 預かり（delivered=False）のメッセージもまだキャラの身に起きていないため
             # ここでは載せず、配達時（mark_messages_delivered）に封筒を作る。
             if not is_system_message and delivered:
-                chat_session = session.get(ChatSession, session_id)
-                char_name = None
-                if chat_session and chat_session.model_id:
-                    # model_id = "{char_name}@{preset_name}" からキャラ名を取り出す
-                    char_name = chat_session.model_id.rsplit("@", 1)[0]
-                char_id = self._resolve_character_id_by_name_in_session(
-                    session, char_name or ""
-                )
-                if char_id:
-                    self._append_timeline_event(
-                        session,
-                        character_id=char_id,
-                        event_type="chat.message",
-                        actor="user" if role == "user" else "character",
-                        counterpart="user",
-                        origin="real",
-                        modality="face" if face_to_face else "text",
-                        session_id=session_id,
-                        source_table="chat_messages",
-                        source_id=message_id,
-                    )
+                self._append_chat_message_envelope(session, msg)
             session.commit()
             session.refresh(msg)
             return msg
@@ -305,7 +291,7 @@ class ChatStoreMixin:
         if not message_ids:
             return
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatMessage, ChatSession
+            from backend.repositories.sqlite.store import ChatMessage
             now = datetime.now()
             msgs = (
                 session.query(ChatMessage)
@@ -317,27 +303,7 @@ class ChatStoreMixin:
             )
             for msg in msgs:
                 msg.delivered_at = now
-                chat_session = session.get(ChatSession, msg.session_id)
-                char_name = None
-                if chat_session and chat_session.model_id:
-                    char_name = chat_session.model_id.rsplit("@", 1)[0]
-                char_id = self._resolve_character_id_by_name_in_session(
-                    session, char_name or ""
-                )
-                if char_id:
-                    self._append_timeline_event(
-                        session,
-                        character_id=char_id,
-                        event_type="chat.message",
-                        occurred_at=now,
-                        actor="user" if msg.role == "user" else "character",
-                        counterpart="user",
-                        origin="real",
-                        modality="face" if msg.face_to_face else "text",
-                        session_id=msg.session_id,
-                        source_table="chat_messages",
-                        source_id=msg.id,
-                    )
+                self._append_chat_message_envelope(session, msg, occurred_at=now)
             session.commit()
 
     def list_sessions_with_undelivered(self) -> list:
@@ -365,9 +331,13 @@ class ChatStoreMixin:
             return rows
 
     def delete_chat_messages_from(self, session_id: str, message_id: str) -> bool:
-        """指定メッセージ以降（自身を含む）をすべて削除する。"""
+        """指定メッセージ以降（自身を含む）をすべて削除する。
+
+        消えるユーザ発話を起点とする退避応答（chat_message_variants）も一緒に消す。
+        発話が変わる／なくなる以上、それに対して引いた応答は無効なため。
+        """
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ChatMessage
+            from backend.repositories.sqlite.store import ChatMessage, ChatMessageVariant
             all_ids: list[str] = [
                 row[0]
                 for row in (
@@ -384,12 +354,198 @@ class ChatStoreMixin:
             session.query(ChatMessage).filter(
                 ChatMessage.id.in_(ids_to_delete)
             ).delete(synchronize_session=False)
+            session.query(ChatMessageVariant).filter(
+                ChatMessageVariant.anchor_message_id.in_(ids_to_delete)
+            ).delete(synchronize_session=False)
             # 封筒は削除せず retracted マーク（不可逆性の担保。データは残す）
             self._retract_timeline_events_in_session(
                 session, "chat_messages", ids_to_delete
             )
             session.commit()
             return True
+
+    # --- Chat Message Variants（1on1 レスポンスガチャ）---
+    # docs/planned/chat_turn_variants_plan.md。選ばれなかった応答は chat_messages から
+    # 別テーブルへ行ごと移すので、chat_messages を読む既存経路からは一切見えない。
+
+    def _append_chat_message_envelope(self, session, msg, occurred_at=None) -> None:
+        """chat.message 封筒を1件積む（同一トランザクション内で呼ぶこと）。"""
+        from backend.repositories.sqlite.store import ChatSession
+        chat_session = session.get(ChatSession, msg.session_id)
+        char_name = None
+        if chat_session and chat_session.model_id:
+            # model_id = "{char_name}@{preset_name}" からキャラ名を取り出す
+            char_name = chat_session.model_id.rsplit("@", 1)[0]
+        char_id = self._resolve_character_id_by_name_in_session(session, char_name or "")
+        if not char_id:
+            return
+        self._append_timeline_event(
+            session,
+            character_id=char_id,
+            event_type="chat.message",
+            occurred_at=occurred_at,
+            actor="user" if msg.role == "user" else "character",
+            counterpart="user",
+            origin="real",
+            modality="face" if msg.face_to_face else "text",
+            session_id=msg.session_id,
+            source_table="chat_messages",
+            source_id=msg.id,
+        )
+
+    @staticmethod
+    def _copy_chat_message_columns(src, dst_cls):
+        """src の列のうち dst_cls にもある列を名前で写した dst_cls インスタンスを返す。"""
+        dst_cols = {c.name for c in dst_cls.__table__.columns}
+        return dst_cls(**{
+            c.name: getattr(src, c.name)
+            for c in src.__table__.columns
+            if c.name in dst_cols
+        })
+
+    def _archive_messages_in_session(self, session, anchor_message_id: str, msgs: list) -> None:
+        """msgs を1つの退避グループとして chat_message_variants へ移す。封筒は retract。"""
+        from backend.repositories.sqlite.store import ChatMessageVariant
+        if not msgs:
+            return
+        group_id = str(uuid.uuid4())
+        now = datetime.now()
+        for m in msgs:
+            v = self._copy_chat_message_columns(m, ChatMessageVariant)
+            v.anchor_message_id = anchor_message_id
+            v.variant_group_id = group_id
+            v.archived_at = now
+            session.add(v)
+            session.delete(m)
+        self._retract_timeline_events_in_session(
+            session, "chat_messages", [m.id for m in msgs]
+        )
+
+    def _tail_after_anchor(self, session, session_id: str, anchor_message_id: str) -> list | None:
+        """起点ユーザ発話より後の本線メッセージを返す。
+
+        起点が本線の最新ユーザ発話でない（＝後ろにユーザ発話がある）なら None。
+        レスポンスガチャは最新ターン限定のため。
+        """
+        from backend.repositories.sqlite.store import ChatMessage
+        msgs = (
+            session.query(ChatMessage)
+            .filter(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.asc())
+            .all()
+        )
+        idx = next((i for i, m in enumerate(msgs) if m.id == anchor_message_id), None)
+        if idx is None or msgs[idx].role != "user":
+            return None
+        tail = msgs[idx + 1:]
+        if any(m.role == "user" for m in tail):
+            return None
+        return tail
+
+    def archive_chat_messages_as_variant(
+        self, session_id: str, anchor_message_id: str
+    ) -> list[str] | None:
+        """最新ターンの応答（起点ユーザ発話より後の行）を退避グループとして移す。
+
+        Returns:
+            退避したメッセージ ID のリスト（LanceDB からの削除に使う）。
+            起点が最新ユーザ発話でないなど退避できないときは None（呼び出し側は
+            従来どおり物理削除に切り替える）。
+        """
+        with self.get_session() as session:
+            tail = self._tail_after_anchor(session, session_id, anchor_message_id)
+            if tail is None:
+                return None
+            archived_ids = [m.id for m in tail]
+            self._archive_messages_in_session(session, anchor_message_id, tail)
+            session.commit()
+            return archived_ids
+
+    def _variant_groups_in_session(
+        self, session, session_id: str, anchor_message_id: str, tail: list
+    ) -> list[tuple[str | None, list]]:
+        """兄弟の応答グループを枝番号順に返す。本線にいるグループの group_id は None。
+
+        並びは各グループ先頭行の created_at 昇順。復元しても created_at は元の値の
+        ままなので、往復しても番号は変わらない。
+        """
+        from backend.repositories.sqlite.store import ChatMessageVariant
+        rows = (
+            session.query(ChatMessageVariant)
+            .filter(
+                ChatMessageVariant.session_id == session_id,
+                ChatMessageVariant.anchor_message_id == anchor_message_id,
+            )
+            .order_by(ChatMessageVariant.created_at.asc())
+            .all()
+        )
+        groups: dict[str | None, list] = {}
+        for r in rows:
+            groups.setdefault(r.variant_group_id, []).append(r)
+        if tail:
+            groups[None] = tail
+        return sorted(
+            groups.items(),
+            key=lambda kv: kv[1][0].created_at or datetime.min,
+        )
+
+    def get_chat_variant_info(self, session_id: str, anchor_message_id: str) -> dict | None:
+        """最新ターンの枝ナビ情報 `{"index": n, "count": m}` を返す（1 始まり）。
+
+        起点が最新ユーザ発話でない・退避グループがないときは None。
+        """
+        with self.get_session() as session:
+            tail = self._tail_after_anchor(session, session_id, anchor_message_id)
+            if not tail:
+                return None
+            groups = self._variant_groups_in_session(
+                session, session_id, anchor_message_id, tail
+            )
+            if len(groups) < 2:
+                return None
+            index = next(i for i, (gid, _) in enumerate(groups) if gid is None) + 1
+            return {"index": index, "count": len(groups)}
+
+    def activate_chat_variant(
+        self, session_id: str, anchor_message_id: str, index: int
+    ) -> tuple[list[str], list] | None:
+        """最新ターンの応答を index 番目（1 始まり）の枝へ切り替える。
+
+        本線にいる応答を退避し、選んだグループを同じ ID のまま chat_messages へ戻す。
+        戻した行には新しい chat.message 封筒を積む（retract の取り消しはしない。
+        「もう一度本線に戻った」という新しい事実として扱う — めぐりの不可逆性）。
+
+        Returns:
+            `(退避したID群, 復元した ChatMessage 群)`。起点が不正・index 範囲外なら None。
+            すでに本線の枝を指定したときは `([], 現在の本線)`。
+        """
+        from backend.repositories.sqlite.store import ChatMessage
+        with self.get_session() as session:
+            tail = self._tail_after_anchor(session, session_id, anchor_message_id)
+            if tail is None:
+                return None
+            groups = self._variant_groups_in_session(
+                session, session_id, anchor_message_id, tail
+            )
+            if not 1 <= index <= len(groups):
+                return None
+            target_gid, target_rows = groups[index - 1]
+            if target_gid is None:
+                return [], tail
+            archived_ids = [m.id for m in tail]
+            self._archive_messages_in_session(session, anchor_message_id, tail)
+            restored = []
+            for v in target_rows:
+                m = self._copy_chat_message_columns(v, ChatMessage)
+                session.delete(v)
+                session.add(m)
+                if not m.is_system_message and m.delivered_at is not None:
+                    self._append_chat_message_envelope(session, m)
+                restored.append(m)
+            session.commit()
+            for m in restored:
+                session.refresh(m)
+            return archived_ids, restored
 
     # --- Chat Attachments ---
 

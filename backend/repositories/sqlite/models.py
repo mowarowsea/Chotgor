@@ -91,6 +91,38 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
+class ChatMessageVariant(Base):
+    """1on1 の引き直しで選ばれなかった応答の退避先 — docs/planned/chat_turn_variants_plan.md。
+
+    `chat_messages` と同じ列を持つ（退避・復元は列を名前で丸ごとコピーする）。
+    ChatMessage に列を足したらここにも同じ列を足すこと。足し忘れた列は退避時に落ちる。
+    `id` は元の chat_messages.id。復元時に同じ ID で戻し、こちらの行は消す。
+    """
+
+    __tablename__ = "chat_message_variants"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, nullable=False, index=True)
+    role = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    reasoning = Column(Text, nullable=True)
+    attachments = Column(JSON, nullable=True)
+    character_name = Column(String, nullable=True)
+    preset_name = Column(String, nullable=True)
+    is_system_message = Column(Integer, nullable=True)
+    chronicled_at = Column(DateTime, nullable=True)
+    log_message_id = Column(String, nullable=True)
+    anticipation = Column(Text, nullable=True)
+    face_to_face = Column(Integer, nullable=False, default=0)
+    delivered_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=True)
+    # その応答が返事をしていたユーザ発話の ID。同じ値を持つグループ同士が兄弟。
+    anchor_message_id = Column(String, nullable=False, index=True)
+    # 1回の応答（起点ユーザ発話より後の行の束）をまとめるキー。
+    variant_group_id = Column(String, nullable=False, index=True)
+    archived_at = Column(DateTime, default=lambda: datetime.now())
+
+
 class ChatAttachment(Base):
     """チャット添付ファイル — セッションに紐づく添付（画像・音声）のメタデータ。
 

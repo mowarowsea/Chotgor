@@ -53,6 +53,11 @@ interface Props {
     ) => void | Promise<void>;
     /** 末尾ユーザメッセージの削除コールバック。渡された時だけ末尾バブルにゴミ箱を出す。 */
     onDeleteMessage?: (messageId: string) => void | Promise<void>;
+    /**
+     * 最新ターンの応答を index 番目（1始まり）の枝へ切り替えるコールバック。
+     * 渡されていて、末尾のキャラ応答に variant_count >= 2 があるときだけ ◀ ▶ を出す。
+     */
+    onSwitchVariant?: (anchorMessageId: string, index: number) => void | Promise<void>;
     /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
     msgLogIds?: Record<string, string>;
     /** char_msg_id → モデル応答完了までの経過時間（ミリ秒）のマッピング。 */
@@ -80,6 +85,7 @@ export default function MessageList({
     onRetry,
     onRegenerate,
     onDeleteMessage,
+    onSwitchVariant,
     msgLogIds = {},
     elapsedMap = {},
     translucentBubbles = false,
@@ -181,6 +187,12 @@ export default function MessageList({
                 }
 
                 const charName = msg.character_name ?? characterName;
+                // 枝ナビは最新ターン限定なので、セッション末尾のキャラ応答にだけ出す。
+                // 次の発話が積まれた時点で、古い応答の variant_* は残っていても表示しない。
+                const anchorId = msg.variant_anchor_id;
+                const showVariants =
+                    !!onSwitchVariant && !!anchorId && idx === messages.length - 1;
+                const variantIndex = msg.variant_index ?? 1;
 
                 return (
                     <CharacterBubble
@@ -193,6 +205,10 @@ export default function MessageList({
                         sending={sending}
                         logMessageId={msgLogIds[msg.id]}
                         elapsedMs={elapsedMap[msg.id]}
+                        variantIndex={showVariants ? variantIndex : undefined}
+                        variantCount={showVariants ? msg.variant_count : undefined}
+                        onPrevVariant={showVariants ? () => onSwitchVariant(anchorId, variantIndex - 1) : undefined}
+                        onNextVariant={showVariants ? () => onSwitchVariant(anchorId, variantIndex + 1) : undefined}
                         // 再ストリームの Promise はそのまま返す（解決まで再生成ボタンを無効化するため）。
                         onRegenerate={onRegenerate || onRetry ? () => {
                             let userIdx = -1;

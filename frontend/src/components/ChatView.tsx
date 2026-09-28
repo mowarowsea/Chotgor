@@ -58,6 +58,8 @@ interface Props {
    * 未指定ならユーザバブルにゴミ箱を出さない。
    */
   onDeleteMessage?: (messageId: string) => void | Promise<void>;
+  /** 最新ターンの応答を index 番目（1始まり）の枝へ切り替える（◀ ▶）。 */
+  onSwitchVariant?: (anchorMessageId: string, index: number) => void | Promise<void>;
   /** スクロールに応じたヘッダー表示/非表示の通知コールバック。 */
   onHeaderVisibilityChange?: (visible: boolean) => void;
   /** char_msg_id → log_message_id のマッピング。バブルのログ折りたたみに使用する。 */
@@ -89,6 +91,7 @@ export default function ChatView({
   onRetry,
   onRegenerate,
   onDeleteMessage,
+  onSwitchVariant,
   onHeaderVisibilityChange,
   msgLogIds,
   elapsedMap,
@@ -126,6 +129,7 @@ export default function ChatView({
           onRetry={onRetry}
           onRegenerate={onRegenerate}
           onDeleteMessage={onDeleteMessage}
+          onSwitchVariant={onSwitchVariant}
           onHeaderVisibilityChange={onHeaderVisibilityChange}
           msgLogIds={msgLogIds}
           elapsedMap={elapsedMap}

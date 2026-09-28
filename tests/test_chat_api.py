@@ -26,6 +26,9 @@ def _make_app(sqlite_mock, chat_service_mock=None, memory_manager_mock=None) -> 
     """モック state を持つ最小 FastAPI アプリを生成するファクトリ。"""
     app = FastAPI()
     app.include_router(chat_module.router)
+    # 枝ナビ情報は既定で「兄弟なし」。MagicMock のままだと応答 JSON に混ざって
+    # シリアライズできない。枝を検証するテストは side_effect で上書きする。
+    sqlite_mock.get_chat_variant_info.return_value = None
     app.state.sqlite = sqlite_mock
     app.state.chat_service = chat_service_mock or MagicMock()
     app.state.memory_manager = memory_manager_mock or MagicMock()
@@ -541,9 +544,10 @@ class TestStreamMessageRegenerate:
     def _make_sqlite(self, sid):
         """「ユーザ発話 u1 → キャラ応答 c1」が保存済みのセッションを模した sqlite モック。
 
-        u1 を起点に引き直す状況を作る。create_chat_message / delete_chat_messages_from は
-        呼び出し順を calls に記録し、置き換えが「削除 → 保存」の順で起きることを
-        テスト側から検証できるようにする。
+        u1 を起点に引き直す状況を作る。create_chat_message / delete_chat_messages_from /
+        archive_chat_messages_as_variant は呼び出し順を calls に記録し、置き換えが
+        「退避（または削除）→ 保存」の順で起きることをテスト側から検証できるようにする。
+        退避された行は本物のストアと同じく本線（saved）から消える。
 
         Returns:
             (sqlite モック, u1, c1, 保存済みメッセージのリスト, 呼び出し順の記録)
@@ -576,6 +580,13 @@ class TestStreamMessageRegenerate:
         character.system_prompt_block1 = ""
         character.meta_instructions = ""
 
+        def fake_archive(session_id, anchor_message_id):
+            calls.append(("archive", anchor_message_id))
+            ids = [m.id for m in saved]
+            tail = saved[ids.index(anchor_message_id) + 1:]
+            del saved[ids.index(anchor_message_id) + 1:]
+            return [m.id for m in tail]
+
         preset = MagicMock()
         preset.id = "preset-1"
         preset.provider = "anthropic"
@@ -586,6 +597,7 @@ class TestStreamMessageRegenerate:
         sqlite.get_chat_session.return_value = session
         sqlite.create_chat_message.side_effect = fake_create_message
         sqlite.delete_chat_messages_from.side_effect = fake_delete_from
+        sqlite.archive_chat_messages_as_variant.side_effect = fake_archive
         sqlite.list_chat_messages.side_effect = lambda session_id: list(saved)
         sqlite.get_character_by_name.return_value = character
         sqlite.get_character.return_value = character
@@ -637,7 +649,11 @@ class TestStreamMessageRegenerate:
         assert roles == ["character"]
 
     def test_replaces_old_response_only_after_response_settles(self):
-        """旧応答の削除が、新しい応答の保存直前に1回だけ走ること（置き換えの原子性）。"""
+        """旧応答の退避が、新しい応答の保存直前に1回だけ走ること（置き換えの原子性）。
+
+        最新ターンの引き直しなので、旧応答は物理削除ではなく退避される
+        （◀ ▶ で選び直せるように残す）。
+        """
         sid = str(uuid.uuid4())
         sqlite, _u1, _c1, saved, calls = self._make_sqlite(sid)
 
@@ -648,7 +664,8 @@ class TestStreamMessageRegenerate:
             sid, sqlite, {"content": "こんにちは", "regenerate_from": "u1"}, fake_stream
         )
 
-        assert calls == [("delete", "c1"), ("create", "character")]
+        assert calls == [("archive", "u1"), ("create", "character")]
+        sqlite.delete_chat_messages_from.assert_not_called()
         assert [m.id for m in saved][0] == "u1"
         assert [m.content for m in saved] == ["こんにちは", "新応答"]
 
@@ -674,8 +691,57 @@ class TestStreamMessageRegenerate:
         assert "done" not in types
         assert calls == []
         sqlite.delete_chat_messages_from.assert_not_called()
+        sqlite.archive_chat_messages_as_variant.assert_not_called()
         sqlite.create_chat_message.assert_not_called()
         assert [m.id for m in saved] == ["u1", "c1"]
+
+    def test_falls_back_to_delete_when_not_latest_turn(self):
+        """退避できない（最新ターンでない）引き直しは、従来どおり物理削除に切り替わること。
+
+        過去の応答からの引き直しは下流ごと巻き戻る操作で、枝ナビ（最新ターン限定）の
+        対象外。ストアが None を返したら delete_chat_messages_from へ落ちる。
+        """
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, saved, calls = self._make_sqlite(sid)
+
+        def refuse_archive(session_id, anchor_message_id):
+            calls.append(("archive", anchor_message_id))
+            return None
+
+        sqlite.archive_chat_messages_as_variant.side_effect = refuse_archive
+
+        async def fake_stream(_request):
+            yield ("text", "新応答")
+
+        self._post(
+            sid, sqlite, {"content": "こんにちは", "regenerate_from": "u1"}, fake_stream
+        )
+
+        assert calls == [("archive", "u1"), ("delete", "c1"), ("create", "character")]
+        assert [m.content for m in saved] == ["こんにちは", "新応答"]
+
+    def test_done_event_carries_variant_info(self):
+        """兄弟の応答があれば、done のキャラ応答に枝ナビ情報が載ること。
+
+        フロントはこれを見て ◀ n/m ▶ を出す。追加リクエストなしで出せるよう
+        done に埋め込む。_make_app が既定 return_value=None を入れるので
+        side_effect で上書きする。
+        """
+        sid = str(uuid.uuid4())
+        sqlite, _u1, _c1, _saved, _calls = self._make_sqlite(sid)
+        sqlite.get_chat_variant_info.side_effect = lambda *_: {"index": 2, "count": 2}
+
+        async def fake_stream(_request):
+            yield ("text", "新応答")
+
+        res = self._post(
+            sid, sqlite, {"content": "こんにちは", "regenerate_from": "u1"}, fake_stream
+        )
+
+        done = next(e for e in self._events(res) if e["type"] == "done")
+        cm = done["character_message"]
+        assert (cm["variant_index"], cm["variant_count"]) == (2, 2)
+        assert cm["variant_anchor_id"] == "u1"
 
     def test_replaced_turn_is_excluded_from_prompt(self):
         """引き直し対象の旧応答は履歴に混ざらず、本文は保存済み発話が使われること。
@@ -733,6 +799,95 @@ class TestStreamMessageRegenerate:
             sid, sqlite, {"content": "こんにちは", "regenerate_from": "c1"}, fake_stream
         )
         assert res.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/sessions/{session_id}/variants/activate （1on1 レスポンスガチャ）
+# ---------------------------------------------------------------------------
+
+class TestActivateVariant:
+    """最新ターンの応答を ◀ ▶ で切り替える API のテスト。
+
+    docs/planned/chat_turn_variants_plan.md。切替の実体（退避・復元・封筒）はストアの
+    責務なのでここではモックし、API 層の責務である
+    (1) 最新ターン以外・範囲外は 400 で弾く
+    (2) 戻した応答を枝ナビ情報付きで返す
+    (3) ベクトルを本線に揃える（退避分を削除し、戻した分を再登録）
+    を押さえる。
+    """
+
+    def _sqlite(self, sid, activate_result):
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.activate_chat_variant.return_value = activate_result
+        sqlite.get_setting.return_value = "ユーザ"
+        return sqlite
+
+    def _post(self, app, sid, index):
+        return TestClient(app).post(
+            f"/api/chat/sessions/{sid}/variants/activate",
+            json={"anchor_message_id": "u1", "index": index},
+        )
+
+    def test_returns_restored_messages_with_variant_info(self):
+        """切替後の応答が、枝ナビ情報付きで返ること。"""
+        sid = str(uuid.uuid4())
+        restored = _fake_message(mid="c1", session_id=sid, role="character", content="前の応答")
+        sqlite = self._sqlite(sid, (["c2"], [restored]))
+        app = _make_app(sqlite)
+        sqlite.get_chat_variant_info.side_effect = lambda *_: {"index": 1, "count": 2}
+
+        res = self._post(app, sid, 1)
+
+        assert res.status_code == 200
+        msgs = res.json()["messages"]
+        assert [m["id"] for m in msgs] == ["c1"]
+        assert (msgs[0]["variant_index"], msgs[0]["variant_count"]) == (1, 2)
+        sqlite.activate_chat_variant.assert_called_once_with(sid, "u1", 1)
+
+    def test_syncs_vectors_after_switch(self):
+        """退避した応答はベクトルから消え、戻した応答は再登録されること。
+
+        選ばれなかった応答が想起（power_recall）に出てこないようにするため。
+        """
+        sid = str(uuid.uuid4())
+        restored = _fake_message(mid="c1", session_id=sid, role="character", content="前の応答")
+        app = _make_app(self._sqlite(sid, (["c2"], [restored])))
+        indexed = []
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                chat_module, "index_message_sync",
+                lambda m, *_args, **_kw: indexed.append(m.id),
+            )
+            mp.setattr(chat_module, "get_participant_char_ids", lambda *_: ["char-1"])
+            self._post(app, sid, 1)
+
+        app.state.vector_store.delete_chat_turns.assert_called_once_with(["c2"])
+        assert indexed == ["c1"]
+
+    def test_already_active_variant_skips_vector_sync(self):
+        """本線にいる枝を指定したら何も動かさない（ベクトルも触らない）こと。"""
+        sid = str(uuid.uuid4())
+        current = _fake_message(mid="c2", session_id=sid, role="character", content="今の応答")
+        app = _make_app(self._sqlite(sid, ([], [current])))
+
+        res = self._post(app, sid, 2)
+
+        assert res.status_code == 200
+        app.state.vector_store.delete_chat_turns.assert_not_called()
+
+    def test_not_latest_turn_returns_400(self):
+        """最新ターン以外・範囲外の指定（ストアが None）は 400 を返すこと。"""
+        sid = str(uuid.uuid4())
+        app = _make_app(self._sqlite(sid, None))
+        assert self._post(app, sid, 9).status_code == 400
+
+    def test_unknown_session_returns_404(self):
+        """存在しないセッションは 404 を返すこと。"""
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = None
+        assert self._post(_make_app(sqlite), "no-such", 1).status_code == 404
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@
 
 import asyncio
 import json
+import threading
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -33,6 +34,11 @@ from backend.services.chat_flow.strategies import OneOnOneExecutor, OneOnOneRout
 from backend.services.memory.format import format_recalled_threads
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# 枝切替のベクトル同期（削除→再登録）を直列化する。バックグラウンドで走るため、
+# 連続で切り替えると「後の切替の削除」が「前の切替の再登録」より先に走り、
+# 退避済みの応答がベクトルに残ることがある。
+_variant_vector_lock = threading.Lock()
 
 
 def _build_farewell_message(char_name: str, reason: str, farewell_type: str) -> str:
@@ -194,7 +200,63 @@ async def get_session(request: Request, session_id: str):
     messages = request.app.state.sqlite.list_chat_messages(session_id)
     result = session_to_dict(session)
     result["messages"] = [message_to_dict(m, request.app.state.sqlite) for m in messages]
+    # 枝ナビは最新ターン限定なので、末尾のキャラ応答にだけ付ける。
+    anchor = next((m for m in reversed(messages) if m.role == "user"), None)
+    if anchor is not None and result["messages"] and messages[-1].role != "user":
+        _attach_variant_info(request.app.state, session_id, anchor.id, result["messages"][-1])
     return result
+
+
+class VariantActivate(BaseModel):
+    """最新ターンの応答を切り替えるリクエスト。"""
+
+    anchor_message_id: str
+    index: int  # 1 始まりの枝番号
+
+
+def _attach_variant_info(state, session_id: str, anchor_message_id: str, msg_dict: dict) -> None:
+    """最新ターンに兄弟の応答があれば、キャラ応答の dict に枝ナビ情報を足す。"""
+    info = state.sqlite.get_chat_variant_info(session_id, anchor_message_id)
+    if info:
+        msg_dict["variant_index"] = info["index"]
+        msg_dict["variant_count"] = info["count"]
+        msg_dict["variant_anchor_id"] = anchor_message_id
+
+
+@router.post("/sessions/{session_id}/variants/activate")
+async def activate_variant(request: Request, session_id: str, body: VariantActivate):
+    """最新ターンの応答を指定の枝へ切り替え、切替後の応答群を返す。
+
+    docs/planned/chat_turn_variants_plan.md。切り替えられるのは最新ターンだけ。
+    """
+    state = request.app.state
+    session = state.sqlite.get_chat_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    result = state.sqlite.activate_chat_variant(
+        session_id, body.anchor_message_id, body.index
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=400, detail="最新ターンの応答以外は切り替えられません"
+        )
+    archived_ids, restored = result
+    if archived_ids:
+        # ベクトルも本線に揃える（退避分を外し、戻した分を登録し直す）。
+        char_ids = get_participant_char_ids(session, state.sqlite)
+        user_name = state.sqlite.get_setting("user_name", "ユーザ")
+
+        def _sync_vectors() -> None:
+            with _variant_vector_lock:
+                state.vector_store.delete_chat_turns(archived_ids)
+                for m in restored:
+                    index_message_sync(m, char_ids, state.vector_store, user_name)
+
+        asyncio.create_task(asyncio.to_thread(_sync_vectors))
+    messages = [message_to_dict(m, state.sqlite) for m in restored]
+    if messages:
+        _attach_variant_info(state, session_id, body.anchor_message_id, messages[-1])
+    return {"messages": messages}
 
 
 @router.patch("/sessions/{session_id}")
@@ -318,13 +380,28 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
         regen_replaced = _all_msgs[_pivot + 1:]
 
     def _drop_replaced_turn() -> None:
-        """引き直しで置き換えられる旧ターンを削除する。
+        """引き直しで置き換えられる旧ターンを本線から外す。
+
+        最新ターンなら chat_message_variants へ退避して ◀ ▶ で選び直せるようにし、
+        過去ターンからの引き直し（下流ごと巻き戻る）なら従来どおり物理削除する。
 
         新しい応答を保存する直前にだけ呼ぶこと。ここを前倒しすると、モデルが
         エラーを返したときに元の応答を失う（封筒も無駄に retracted される）。
         """
-        if regen_replaced:
+        if not regen_replaced:
+            return
+        archived_ids = state.sqlite.archive_chat_messages_as_variant(
+            session_id, regen_user_msg.id
+        )
+        if archived_ids is None:
             state.sqlite.delete_chat_messages_from(session_id, regen_replaced[0].id)
+            return
+        # 選ばれなかった応答が想起に出ないよう、ベクトルからも外す。
+        def _drop_vectors() -> None:
+            with _variant_vector_lock:
+                state.vector_store.delete_chat_turns(archived_ids)
+
+        asyncio.create_task(asyncio.to_thread(_drop_vectors))
 
     # estranged チェック: relationship_status="estranged" のキャラクターへのリクエストをSSEで拒否する
     char_for_estranged = state.sqlite.get_character_by_name(char_name_for_check)
@@ -626,10 +703,12 @@ async def stream_message(request: Request, session_id: str, body: MessageCreate)
 
         state.sqlite.update_chat_session(session_id, title=effective_title, model_id=effective_model_id)
 
+        char_msg_dict = message_to_dict(char_msg, state.sqlite)
+        _attach_variant_info(state, session_id, user_msg.id, char_msg_dict)
         yield ("done", {
             "log_message_id": log_msg_id,
             "user_message": message_to_dict(user_msg, state.sqlite),
-            "character_message": message_to_dict(char_msg, state.sqlite),
+            "character_message": char_msg_dict,
         })
 
     return StreamingResponse(

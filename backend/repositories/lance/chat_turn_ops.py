@@ -104,6 +104,15 @@ class ChatTurnOpsMixin:
             })
         return turns
 
+    def delete_chat_turns(self, message_ids: list[str]) -> None:
+        """指定メッセージ ID のチャット履歴ターンを全キャラ分削除する。"""
+        if not message_ids or _TABLE_CHAT_TURNS not in self._list_table_names():
+            return
+        ids = ", ".join(_quote_id(i) for i in message_ids)
+        with self._write_lock:
+            tbl = self._db.open_table(_TABLE_CHAT_TURNS)
+            tbl.delete(f"id IN ({ids})")
+
     def delete_all_chat_turns(self, character_id: str) -> None:
         """指定キャラクターの全チャット履歴ターンを削除する（キャラクター削除時に使用）。"""
         if _TABLE_CHAT_TURNS not in self._list_table_names():

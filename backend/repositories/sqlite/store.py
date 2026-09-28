@@ -37,6 +37,7 @@ from backend.repositories.sqlite.models import (  # noqa: F401
     Character,
     ChatAttachment,
     ChatMessage,
+    ChatMessageVariant,
     ChatSession,
     DebugLogEntry,
     GlobalSetting,

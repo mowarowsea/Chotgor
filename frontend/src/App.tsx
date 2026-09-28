@@ -304,6 +304,7 @@ export default function App() {
     handleRetry,
     handleRegenerate,
     handleDeleteMessage,
+    handleSwitchVariant,
   } = useChat({
     activeSessionId,
     sending,
@@ -756,6 +757,7 @@ export default function App() {
             onRetry={handleRetry}
             onRegenerate={handleRegenerate}
             onDeleteMessage={handleDeleteMessage}
+            onSwitchVariant={handleSwitchVariant}
             onHeaderVisibilityChange={setHeaderVisible}
             msgLogIds={msgLogIds}
             elapsedMap={elapsedMap}

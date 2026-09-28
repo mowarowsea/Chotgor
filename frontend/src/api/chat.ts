@@ -78,6 +78,11 @@ export interface ChatMessage {
   /** デバッグログフォルダ名（8桁hex）。CHOTGOR_DEBUG=1 時のみ存在する。 */
   log_message_id?: string;
   created_at: string;
+  /** 枝ナビ（1on1 レスポンスガチャ）の現在位置と総数。最新ターンのキャラ応答にだけ付く。 */
+  variant_index?: number;
+  variant_count?: number;
+  /** 枝の起点ユーザ発話ID（切替 API に渡す）。 */
+  variant_anchor_id?: string;
 }
 
 export interface SessionDetail extends Session {
@@ -232,6 +237,25 @@ export async function deleteMessagesFrom(sessionId: string, messageId: string): 
     method: "DELETE",
   });
   if (!res.ok) throw new Error("メッセージの削除に失敗しました");
+}
+
+/**
+ * 最新ターンの応答を index 番目（1始まり）の枝へ切り替え、切替後の応答群を返す。
+ * 返る応答は起点ユーザ発話より後ろに置き換えるだけでよい。
+ */
+export async function activateVariant(
+  sessionId: string,
+  anchorMessageId: string,
+  index: number,
+): Promise<ChatMessage[]> {
+  const res = await fetch(`/api/chat/sessions/${sessionId}/variants/activate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ anchor_message_id: anchorMessageId, index }),
+  });
+  if (!res.ok) throw new Error("レスポンスの切り替えに失敗しました");
+  const data = await res.json();
+  return data.messages as ChatMessage[];
 }
 
 /** ユーザ名を取得する。 */

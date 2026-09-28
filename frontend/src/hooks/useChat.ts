@@ -15,6 +15,7 @@ import {
   type SetStateAction,
 } from "react";
 import {
+  activateVariant,
   deleteMessagesFrom,
   fetchCharacters,
   fetchSessions,
@@ -104,6 +105,8 @@ interface UseChatResult {
   ) => Promise<void>;
   /** 末尾ユーザメッセージの削除（再送はしない）。 */
   handleDeleteMessage: (messageId: string) => Promise<void>;
+  /** 最新ターンの応答を index 番目（1始まり）の枝へ切り替える（◀ ▶）。 */
+  handleSwitchVariant: (anchorMessageId: string, index: number) => Promise<void>;
 }
 
 /**
@@ -359,6 +362,37 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     }
   }, [activeSessionId, sending, setError, setMessages]);
 
+  /**
+   * 最新ターンの応答を別の枝へ切り替える（1on1 レスポンスガチャ）。
+   *
+   * サーバが返す切替後の応答群で、起点ユーザ発話より後ろを置き換える。
+   * 戻ってきた応答は reasoning / ログ ID を持っているので、表示用マップにも反映する
+   * （reasoningMap はセッション読込時にしか復元していないため）。
+   */
+  const handleSwitchVariant = useCallback(async (anchorMessageId: string, index: number) => {
+    if (!activeSessionId || sending) return;
+    const sessionId = activeSessionId;
+    setError(null);
+    try {
+      const restored = await activateVariant(sessionId, anchorMessageId, index);
+      if (activeSessionIdRef.current !== sessionId) return;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === anchorMessageId);
+        return idx >= 0 ? [...prev.slice(0, idx + 1), ...restored] : prev;
+      });
+      const reasonings = Object.fromEntries(
+        restored.filter((m) => m.reasoning).map((m) => [m.id, m.reasoning as string]),
+      );
+      const logIds = Object.fromEntries(
+        restored.filter((m) => m.log_message_id).map((m) => [m.id, m.log_message_id as string]),
+      );
+      setReasoningMap((prev) => ({ ...prev, ...reasonings }));
+      setMsgLogIds((prev) => ({ ...prev, ...logIds }));
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [activeSessionId, sending, activeSessionIdRef, setError, setMessages, setMsgLogIds]);
+
   return {
     streamingContent,
     streamingReasoning,
@@ -369,5 +403,6 @@ export function useChat(deps: UseChatDeps): UseChatResult {
     handleRetry,
     handleRegenerate,
     handleDeleteMessage,
+    handleSwitchVariant,
   };
 }
