@@ -129,6 +129,10 @@ class BaseLLMProvider:
     # True のプロバイダーは _tool_turn() と _extend_messages_with_results() を実装し、
     # タグ方式ではなくtool-use（function calling）で記憶を操作する。
     SUPPORTS_TOOLS: bool = False
+    # True なら SUPPORTS_TOOLS 経路でも generate_with_tools_stream()（型付きチャンクを
+    # 逐次 yield）を持ち、1on1 はそちらで本文を逐次表示する。ツールループが外部で完結する
+    # claude_cli のみ。in-process ループのプロバイダーは従来どおり一括。
+    STREAMS_TOOL_TURNS: bool = False
     # このプロバイダーが受け取れる添付種別（lib/attachments.attachment_kind の戻り値）。
     # UI の入口ガード（FileDialog の accept）と送信時検証の唯一の根拠。
     # 既定は画像のみ。音声を渡せるのは実測で Gemini だけ。

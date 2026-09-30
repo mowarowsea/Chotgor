@@ -249,6 +249,16 @@ frontend useChat
     `--strict-mcp-config`（`--mcp-config` 未指定と併せて MCP サーバー0本）で起動し、
     使えない手を最初から見せない。`generate_with_tools()` は MCP ループ本体なので
     従来どおり接続する。
+  - **1on1 は逐次表示（`STREAMS_TOOL_TURNS`）**: ツールループが CLI 内で完結するため、
+    ChatFlow はツール方式でも `generate_with_tools_stream()` で本文を逐次流す
+    （マーカー除去はタグ方式と同じ `StreamingTagStripper`、予想・意図決着タグの抽出は
+    ストリーム終了後の共通地点）。CLI は `--include-partial-messages` で
+    トークン差分（`stream_event` の text_delta / thinking_delta）と完成版 `assistant`
+    イベントを二重に出すので、`_StreamChunkParser` が message.id 単位で差分を流した
+    メッセージの完成版を捨てる（差分が来なかったメッセージだけ完成版から拾う）。
+    バッチ処理（`ask_character_with_tools` 等）は従来どおり一括の `generate_with_tools()`。
+    in-process でツールループを回すプロバイダー（Anthropic 等）は途中にツール実行が挟まる
+    ため逐次化していない。
   - **入力は常に stream-json（＝添付画像の受け渡し経路）**: CLI へは
     `--input-format stream-json` で stdin へ NDJSON 1行を流す。テキスト入力には
     添付画像を渡す手段がないため、画像の有無で経路を分けず一本化している。

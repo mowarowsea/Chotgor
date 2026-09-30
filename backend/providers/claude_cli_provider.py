@@ -129,7 +129,7 @@ def _build_cli_args(
         "--system-prompt-file", system_prompt_path,
         "--thinking", "adaptive", # thinking blockが出ない問題対応。効かないかも。（ClaudeCodeCLI Issueに記載あり）
         "--thinking-display", "summarized", # thinking blockが出ない問題対応。効かないかも。（ClaudeCodeCLI Issueに記載あり）
-        "--include-partial-messages", # 出力のストリーム化。効いてないっぽい。
+        "--include-partial-messages", # stream_event（トークン差分）を出させる。読むのは _StreamChunkParser
     ]
     if not mcp_enabled:
         # --mcp-config を渡さずに --strict-mcp-config を付けると、参照する MCP 設定が
@@ -321,6 +321,56 @@ def _extract_thinking_from_stream_json(raw: str) -> str:
     return collected
 
 
+class _StreamChunkParser:
+    """stream-json のイベント列から表示用の型付きチャンク（"text" / "thinking"）を切り出す。
+
+    ``--include-partial-messages`` 下では同じ内容が stream_event の差分
+    （text_delta / thinking_delta）と完成版の assistant イベントの二重に届く。
+    差分を流したメッセージの assistant イベントは捨て、差分が来なかったメッセージ
+    （partial 非対応の CLI 等）だけ assistant イベントから拾う。判定は message.id 単位
+    （content_block_delta 自体は id を持たないため、直前の message_start の id に紐付ける）。
+    """
+
+    def __init__(self) -> None:
+        self._current_id: str | None = None
+        self._streamed_ids: set[str] = set()
+
+    def feed(self, event: dict) -> list[tuple[str, str]]:
+        etype = event.get("type")
+        if etype == "stream_event":
+            inner = event.get("event") or {}
+            itype = inner.get("type")
+            if itype == "message_start":
+                self._current_id = (inner.get("message") or {}).get("id")
+                return []
+            if itype != "content_block_delta":
+                return []
+            delta = inner.get("delta") or {}
+            dtype = delta.get("type")
+            if dtype == "text_delta" and delta.get("text"):
+                chunk = ("text", delta["text"])
+            elif dtype == "thinking_delta" and delta.get("thinking"):
+                chunk = ("thinking", delta["thinking"])
+            else:
+                return []
+            if self._current_id:
+                self._streamed_ids.add(self._current_id)
+            return [chunk]
+        if etype == "assistant":
+            message = event.get("message") or {}
+            if message.get("id") in self._streamed_ids:
+                return []
+            chunks: list[tuple[str, str]] = []
+            for block in message.get("content", []):
+                btype = block.get("type")
+                if btype == "thinking" and block.get("thinking"):
+                    chunks.append(("thinking", block["thinking"]))
+                elif btype == "text" and block.get("text"):
+                    chunks.append(("text", block["text"]))
+            return chunks
+        return []
+
+
 class ClaudeCliProvider(BaseLLMProvider):
     PROVIDER_ID = "claude_cli"
     DEFAULT_MODEL = ""
@@ -328,6 +378,7 @@ class ClaudeCliProvider(BaseLLMProvider):
     # MCP サーバー経由でtool-useを実現するため True に設定する。
     # generate_with_tools() をオーバーライドしてClaude CLI内部のMCPループに委譲する。
     SUPPORTS_TOOLS = True
+    STREAMS_TOOL_TURNS = True
 
     @classmethod
     async def list_models(cls, settings: dict) -> list[dict]:
@@ -581,113 +632,52 @@ class ClaudeCliProvider(BaseLLMProvider):
         return _parse_stream_json(raw)
 
     async def generate_stream(self, system_prompt: str, messages: list[dict]):
-        """Claude CLI からテキストチャンクをストリーミングで取得する。
-
-        subprocess.Popen で stdout を行単位で読み取り、逐次yieldする。
-        """
-        conversation = _format_conversation(messages, self.character_name, self.user_label)
-        image_blocks = _extract_latest_images(messages)
-        stdin_bytes = _build_stdin_payload(conversation, image_blocks)
-        env = self._make_env()
-
-        # system_prompt はコマンドライン引数ではなく一時ファイル経由で渡す
-        # （_build_cli_args docstring 参照。長大な GM プロンプトが Windows の
-        # コマンドライン長上限に達すると FileNotFoundError に化ける罠がある）。
-        sys_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8"
-        )
-        sys_file.write(system_prompt)
-        sys_file.close()
-
-        import threading
-
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        self._log_request({
-            "system_prompt": system_prompt,
-            "conversation": conversation,
-            "images": len(image_blocks),
-        })
-
-        def run():
-            """subprocess.Popenでストリーミング出力を行単位で読み、キューへ送信する。"""
-            raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
-            try:
-                proc, pre_lines = _spawn_cli_mcp_guarded(
-                    _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools),
-                    stdin_bytes,
-                    env,
-                )
-
-                for line in _cli_output_lines(proc, pre_lines):
-                    raw_lines.append(line)
-                    try:
-                        event = json.loads(line)
-                        if event.get("type") == "assistant":
-                            for block in event.get("message", {}).get("content", []):
-                                if block.get("type") == "text" and block["text"]:
-                                    safe_loop_call(loop, queue.put_nowait, block["text"])
-                    except json.JSONDecodeError:
-                        pass
-
-                proc.wait()
-                if proc.returncode != 0:
-                    err = proc.stderr.read().decode("utf-8", errors="replace")
-                    safe_loop_call(
-                        loop, queue.put_nowait,
-                        RuntimeError(f"Claude CLI exited with code {proc.returncode}: {err[:500]}")
-                    )
-            except FileNotFoundError:
-                safe_loop_call(
-                    loop, queue.put_nowait,
-                    RuntimeError("claude CLI が見つかりません。Claude Code がインストール・認証済みか確認してください")
-                )
-            except Exception as e:
-                safe_loop_call(loop, queue.put_nowait, RuntimeError(str(e)))
-            finally:
-                # ツール呼び出しを含む全NDJSONイベント行をログに記録する。
-                # テキストのみだとtool_useブロックが欠落してログUIにバッジが表示されない。
-                raw_joined = "\n".join(raw_lines)
-                self._log_response(raw_joined)
-                # contextvars は ctx.run でコピー済みのため、このスレッドからの記録でも
-                # feature / target / request_id が正しく付く。
-                self._record_usage_from_raw(raw_joined)
-                try:
-                    os.unlink(sys_file.name)
-                except Exception:
-                    pass
-                safe_loop_call(loop, queue.put_nowait, None)
-
-        ctx = contextvars.copy_context()
-        threading.Thread(target=lambda: ctx.run(run), daemon=True).start()
-
-        while True:
-            item = await queue.get()
-            if item is None:
+        """Claude CLI からテキストチャンクをストリーミングで取得する（MCP ツール付き）。"""
+        async for chunk_type, content in self._stream_typed(system_prompt, messages, self._make_env()):
+            if chunk_type == "text":
+                yield content
+            elif chunk_type == "error":
+                yield content
                 break
-            if isinstance(item, RuntimeError):
-                yield f"[Claude CLI error: {item}]"
-                break
-            yield item
 
     async def generate_stream_typed(self, system_prompt: str, messages: list[dict]):
         """Claude CLIからthinkingブロックを含む型付きチャンクをストリーミングで取得する。
 
-        stream-json 形式の assistant イベントを解析し、
-        content ブロックの type ("thinking" / "text") に応じて
-        ("thinking", text) または ("text", text) タプルをyieldする。
+        ("thinking", text) / ("text", text) をトークン差分単位で yield する。
         プロセス起動失敗・非ゼロ終了などのエラーは ("error", msg) として yield する。
         呼び出し側は ("error", ...) を出力に積まず、状況に応じて UI 表示・蒸留スキップ
         などの分岐を行う。
+        """
+        async for item in self._stream_typed(system_prompt, messages, self._make_env()):
+            yield item
 
-        Yields:
-            tuple[str, str]: (type, content) 形式。
+    async def generate_with_tools_stream(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        tool_executor,
+    ):
+        """generate_with_tools のストリーミング版（1on1 の逐次表示用）。
+
+        ツールは CLI 内部の MCP ループが回すため、Python 側でやることは
+        generate_with_tools と同じく env（batch_context / origin）の受け渡しだけ。
+        戻り値の代わりに generate_stream_typed と同形式の型付きチャンクを yield する。
+        エラーは例外ではなく ("error", msg) で通知する。
+        """
+        batch_context = getattr(tool_executor, "batch_context", None) if tool_executor else None
+        default_origin = getattr(tool_executor, "default_origin", "real") if tool_executor else "real"
+        env = self._make_env(batch_context=batch_context, default_origin=default_origin)
+        async for item in self._stream_typed(system_prompt, messages, env):
+            yield item
+
+    async def _stream_typed(self, system_prompt: str, messages: list[dict], env: dict):
+        """CLI を Popen で起動し、stream-json を行単位で読んで型付きチャンクを yield する。
+
+        stream 系3メソッドの共通実装。チャンクの切り出しは _StreamChunkParser 参照。
         """
         conversation = _format_conversation(messages, self.character_name, self.user_label)
         image_blocks = _extract_latest_images(messages)
         stdin_bytes = _build_stdin_payload(conversation, image_blocks)
-        env = self._make_env()
 
         # system_prompt はコマンドライン引数ではなく一時ファイル経由で渡す
         # （_build_cli_args docstring 参照。長大な GM プロンプトが Windows の
@@ -710,13 +700,9 @@ class ClaudeCliProvider(BaseLLMProvider):
         })
 
         def run():
-            """subprocess.Popenでstream-json出力を行単位で読み、型付きチャンクをキューへ送信する。
-
-            assistant イベントの content 配列を走査し、
-            type == "thinking" は ("thinking", ...) として、
-            type == "text" は ("text", ...) として送信する。
-            """
+            """subprocess.Popenでstream-json出力を行単位で読み、型付きチャンクをキューへ送信する。"""
             raw_lines: list[str] = []  # 全NDJSONイベント行（ツール呼び出し含む、ログ用）
+            parser = _StreamChunkParser()
             try:
                 proc, pre_lines = _spawn_cli_mcp_guarded(
                     _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools),
@@ -728,19 +714,10 @@ class ClaudeCliProvider(BaseLLMProvider):
                     raw_lines.append(line)
                     try:
                         event = json.loads(line)
-                        if event.get("type") == "assistant":
-                            for block in event.get("message", {}).get("content", []):
-                                btype = block.get("type")
-                                if btype == "thinking" and block.get("thinking"):
-                                    safe_loop_call(
-                                        loop, queue.put_nowait, ("thinking", block["thinking"])
-                                    )
-                                elif btype == "text" and block.get("text"):
-                                    safe_loop_call(
-                                        loop, queue.put_nowait, ("text", block["text"])
-                                    )
                     except json.JSONDecodeError:
-                        pass
+                        continue
+                    for chunk in parser.feed(event):
+                        safe_loop_call(loop, queue.put_nowait, chunk)
 
                 proc.wait()
                 if proc.returncode != 0:

@@ -361,6 +361,7 @@ async def test_execute_stream_with_tools_yields_text():
 
     fake_provider = MagicMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("ツール経由の返答", ""))
 
     with (
@@ -389,6 +390,7 @@ async def test_execute_stream_with_tools_error_yields_error_text():
 
     fake_provider = MagicMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("tools boom"))
 
     with (

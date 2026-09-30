@@ -76,6 +76,39 @@ class ChatFlow:
 
     # --- 内部ヘルパー ---
 
+    async def _relay_typed_stream(self, stream, request: ChatRequest, label: str, out: dict):
+        """プロバイダの型付きストリームをマーカー除去しながら中継する（タグ方式／ツール方式共用）。
+
+        結果は out に積む: ``full_text`` = マーカー込みの生テキスト（後段のタグ抽出用）、
+        ``error`` = プロバイダ由来エラー文言（無ければ None）。エラー文言は発話ではないので
+        text には積まず、呼び出し側が provider_error として流す。例外はそのまま送出する。
+        """
+        stripper = StreamingTagStripper()
+        out["full_text"] = ""
+        out["error"] = None
+        async for chunk_type, content in stream:
+            if chunk_type == "thinking":
+                yield ("thinking", content)
+            elif chunk_type == "text":
+                out["full_text"] += content
+                safe_chunk = stripper.feed(content)
+                if safe_chunk:
+                    yield ("text", safe_chunk)
+            elif chunk_type == "error":
+                out["error"] = content or "[provider error]"
+                _log.warning(
+                    "LLM provider エラー（%s）char=%s@%s: %s",
+                    label,
+                    request.character_name,
+                    request.current_preset_name or request.provider,
+                    (content or "")[:300],
+                )
+                break
+        # エラーで打ち切った場合も、そこまでに届いていた発話は取りこぼさない
+        remaining = stripper.flush()
+        if remaining:
+            yield ("text", remaining)
+
     def _log_debug(self, label: str, request: ChatRequest, messages: list[dict], clean_text: str) -> None:
         """LLM呼び出しの操作ログを出力する。char_label は {name}@{preset} 形式で出力する。"""
         char_label = f"{request.character_name}@{request.current_preset_name or request.provider}"
@@ -147,7 +180,8 @@ class ChatFlow:
                 ("inscribed_memories",      list[dict])          : 想起した記憶リスト（最初に1回だけyield）
                 ("recall_error",  str)                  : 想起失敗時のUI表示メッセージ（失敗時のみ1回）
                 ("thinking",      str)                  : 思考ブロック（リアルタイム）
-                ("text",          str)                  : クリーンな応答テキスト（最後に1回）
+                ("text",          str)                  : クリーンな応答テキスト（逐次対応プロバイダは
+                                                          チャンク単位で複数回、それ以外は最後に1回）
                 ("provider_error", str)                 : プロバイダ由来エラー（発生時のみ1回、直後に終了）
 
         ``provider_error`` はキャラクターの発話ではなく「応答が得られなかった」事実を表す。
@@ -194,7 +228,27 @@ class ChatFlow:
             default_origin=request.default_origin,
             source_preset_id=request.current_preset_id,
         )
-        if ctx.provider_impl.SUPPORTS_TOOLS:
+        # ツール方式でも逐次表示できるプロバイダ（claude_cli: ツールループが CLI 内で
+        # 完結するので本文をそのまま流せる）。
+        if ctx.provider_impl.SUPPORTS_TOOLS and ctx.provider_impl.STREAMS_TOOL_TURNS:
+            relay: dict = {}
+            try:
+                async for event in self._relay_typed_stream(
+                    ctx.provider_impl.generate_with_tools_stream(ctx.system_prompt, ctx.messages, tool_executor),
+                    request, "ツール方式", relay,
+                ):
+                    yield event
+            except Exception as e:
+                _log.exception("LLM呼び出し失敗（ツール方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
+                yield ("provider_error", f"[Error: {type(e).__name__}: {e}]")
+                return
+            if relay["error"] is not None:
+                yield ("provider_error", relay["error"])
+                return
+            # タグ除去前の生テキスト。予想・意図決着タグは下の共通地点で抽出する。
+            clean_text = relay["full_text"]
+            text_already_streamed = True
+        elif ctx.provider_impl.SUPPORTS_TOOLS:
             try:
                 clean_text, thinking_text = await ctx.provider_impl.generate_with_tools(ctx.system_prompt, ctx.messages, tool_executor)
             except LLMApiError as e:
@@ -210,47 +264,21 @@ class ChatFlow:
             if thinking_text:
                 yield ("thinking", thinking_text)
         else:
-            full_text = ""
-            stripper = StreamingTagStripper()
-            # プロバイダ由来エラーを検知したら保持し、バッファ flush 後に provider_error として流す。
-            provider_error_text: str | None = None
-
+            relay = {}
             try:
-                async for chunk_type, content in ctx.provider_impl.generate_stream_typed(ctx.system_prompt, ctx.messages):
-                    if chunk_type == "thinking":
-                        yield ("thinking", content)
-                    elif chunk_type == "text":
-                        full_text += content
-                        # マーカーを除去しながらリアルタイムでチャンクをyieldする
-                        safe_chunk = stripper.feed(content)
-                        if safe_chunk:
-                            yield ("text", safe_chunk)
-                    elif chunk_type == "error":
-                        # プロバイダ由来エラー（APIキー未設定・SDK 例外・safety filter 等）。
-                        # エラー文言は発話ではないので text には積まず provider_error として流す。
-                        # 後段の inscribe/carve/recall のマーカー解析もエラー文字列を誤抽出する
-                        # ため走らせない（バッファ flush だけ済ませて終了する）。
-                        provider_error_text = content or "[provider error]"
-                        _log.warning(
-                            "LLM provider エラー（タグ方式）char=%s@%s: %s",
-                            request.character_name,
-                            request.current_preset_name or request.provider,
-                            (content or "")[:300],
-                        )
-                        break
+                async for event in self._relay_typed_stream(
+                    ctx.provider_impl.generate_stream_typed(ctx.system_prompt, ctx.messages),
+                    request, "タグ方式", relay,
+                ):
+                    yield event
             except Exception as e:
                 _log.exception("LLM呼び出し失敗（タグ方式）char=%s@%s", request.character_name, request.current_preset_name or request.provider)
                 yield ("provider_error", f"[Error: {type(e).__name__}: {e}]")
                 return
-
-            # ストリーム終了後、バッファに残ったテキストを流す
-            # （エラーで打ち切った場合も、そこまでに届いていた発話は取りこぼさない）
-            remaining = stripper.flush()
-            if remaining:
-                yield ("text", remaining)
-            if provider_error_text is not None:
-                yield ("provider_error", provider_error_text)
+            if relay["error"] is not None:
+                yield ("provider_error", relay["error"])
                 return
+            full_text = relay["full_text"]
             text_already_streamed = True
 
             # PowerRecall: Inscriber 等の後処理より先に実行し、検知したら即 return する。

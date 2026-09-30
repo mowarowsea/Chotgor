@@ -441,6 +441,7 @@ class TestAskCharacterWithTools:
         """generate_with_tools() が例外を送出したとき False を返すこと（例外が伝播しないこと）。"""
         failing_provider = MagicMock()
         failing_provider.SUPPORTS_TOOLS = True
+        failing_provider.STREAMS_TOOL_TURNS = False
         failing_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("LLM unreachable"))
         with patch("backend.services.character_query.create_provider", return_value=failing_provider), \
              patch("backend.character_actions.executor.ToolExecutor"):
@@ -521,6 +522,7 @@ class TestAskCharacterWithTools:
 
         api_error_provider = MagicMock()
         api_error_provider.SUPPORTS_TOOLS = True
+        api_error_provider.STREAMS_TOOL_TURNS = False
         api_error_provider.generate_with_tools = AsyncMock(
             side_effect=LLMApiError("[Error: anthropic_api_key が設定されていません。Settings ページで設定してください]")
         )

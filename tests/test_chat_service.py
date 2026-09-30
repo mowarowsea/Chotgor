@@ -139,6 +139,7 @@ async def test_chat_service_execute_with_tools_returns_text():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi via tools!", ""))
 
     with (
@@ -170,6 +171,7 @@ async def test_chat_service_execute_with_tools_error_returns_error_string():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(side_effect=RuntimeError("tools oops"))
 
     with (
@@ -471,6 +473,7 @@ async def test_execute_stream_yields_recall_error_on_embedding_failure():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
@@ -510,6 +513,7 @@ async def test_execute_stream_yields_generic_recall_error_on_other_failure():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
@@ -539,6 +543,7 @@ async def test_execute_stream_no_recall_error_on_success():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
@@ -574,6 +579,7 @@ async def test_execute_stream_yields_anticipation_event():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(
         return_value=("こんにちは！[ANTICIPATE_RESPONSE:次は質問が来ると思う]", "")
     )
@@ -618,6 +624,7 @@ async def test_prepare_context_passes_memory_degraded_on_recall_embedding_failur
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
@@ -661,6 +668,7 @@ async def test_prepare_context_passes_memory_degraded_on_wm_embedding_failure():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
@@ -694,6 +702,7 @@ async def test_prepare_context_memory_degraded_false_on_success():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
 
     with (
@@ -739,6 +748,7 @@ def _build_prepare_context_mocks(long_content: str):
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(return_value=("Hi there!", ""))
     return memory_manager, working_memory_manager, request, fake_provider
 
@@ -938,6 +948,7 @@ async def test_execute_stream_yields_provider_error_not_text_on_tool_path():
 
     fake_provider = AsyncMock()
     fake_provider.SUPPORTS_TOOLS = True
+    fake_provider.STREAMS_TOOL_TURNS = False
     fake_provider.generate_with_tools = AsyncMock(
         side_effect=LLMApiError("[Error: Claude Code exited with code 1]")
     )
