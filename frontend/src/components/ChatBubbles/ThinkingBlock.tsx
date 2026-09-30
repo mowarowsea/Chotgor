@@ -91,21 +91,24 @@ function ThreadLine({ line }: { line: string }) {
  * 折りたたみ可能な補助ブロックの共通シェル。
  * 「想起した記憶」ブロックと「スケッチ」ブロックはこれを土台に個別インスタンス化され、
  * 開閉状態・翻訳状態を互いに独立して持つ（これが別アコーディオン化の実体）。
- * ストリーミング中は自動展開する。展開状態かつ非ストリーミング時に翻訳ボタンを表示する。
+ * autoExpand 指定時はストリーミング中に自動展開する。展開状態かつ非ストリーミング時に翻訳ボタンを表示する。
  */
 function CollapsibleAuxBlock({
   label,
   streaming = false,
+  autoExpand = true,
   translateSource,
   children,
 }: {
   label: string;
   streaming?: boolean;
+  /** false ならストリーミング中も閉じたまま始め、ユーザが開いたときだけ開く。 */
+  autoExpand?: boolean;
   /** 翻訳ボタン押下時に送る原文。このブロックが担当する行のみを渡す。 */
   translateSource: string;
   children: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(streaming);
+  const [expanded, setExpanded] = useState(streaming && autoExpand);
   const [translation, setTranslation] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
@@ -203,6 +206,7 @@ export function ThinkingBlock({
         <CollapsibleAuxBlock
           label="想起した記憶"
           streaming={streaming}
+          autoExpand={false}
           translateSource={[...memoryLines, ...threadLines].join("\n")}
         >
           {memoryLines.length > 0 && (
