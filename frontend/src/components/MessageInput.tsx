@@ -1,6 +1,7 @@
 /**
  * メッセージ入力フォーム共通コンポーネント。
- * テキスト入力（auto-grow）、Ctrl+Enter での送信、添付（画像・音声）、添付プレビュー機能を提供する。
+ * テキスト入力（auto-grow）、Ctrl+Enter での送信、添付（画像・音声。クリップボードからの貼り付け可）、
+ * 添付プレビュー機能を提供する。
  * セッション別に入力下書きを localStorage にキャッシュし、セッション切り替え後も復元する。
  */
 import { useEffect, useRef, useState } from "react";
@@ -128,6 +129,26 @@ export default function MessageInput({
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selected = Array.from(e.target.files ?? []);
         e.target.value = "";
+        addFiles(selected);
+    };
+
+    /**
+     * クリップボードの画像等を添付に積む。
+     * Office やブラウザからのコピーは「テキスト＋画像」が同時に載るため、
+     * テキストがあるときは既定の貼り付けも止めない（画像だけ黙って足される）。
+     */
+    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        if (!allowAttachments) return;
+        const pasted = Array.from(e.clipboardData.files);
+        if (pasted.length === 0) return;
+        if (!e.clipboardData.getData("text/plain")) {
+            e.preventDefault();
+        }
+        addFiles(pasted);
+    };
+
+    /** 選択・貼り付けされたファイルを検査して添付リストへ足す。 */
+    const addFiles = (selected: File[]) => {
         if (selected.length === 0) return;
         // accept をすり抜けた分をここで弾く（スマホの FileDialog は accept を
         // 尊重しないことがある）。黙って捨てず、弾いた理由を出す。
@@ -225,6 +246,7 @@ export default function MessageInput({
                         value={input}
                         onChange={handleChange}
                         onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
                         // 標準の placeholder は paddingBottom（ツールボタン用の余白）の影響を受けて
                         // 2行目もボタン上に描画されてしまう。要件「2行目はボタンと同じ行に出したい」を
                         // 満たすため placeholder 属性は使わず、下で擬似 placeholder を被せる。
