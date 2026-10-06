@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from backend.batch.chronicle_job import run_chronicle, run_pending_chronicles
 from backend.batch.retrace_job import run_retrace
 from backend.batch.forget_job import run_forget_process, run_pending_forget
+from backend.lib.debug_logger import logger as debug_logger
 from backend.lib.log_context import new_message_id
 
 router = APIRouter(prefix="/api/inscribed_memories", tags=["inscribed_memories"])
@@ -33,9 +34,23 @@ async def list_memories(
     return memories
 
 
+def _require_debug_mode() -> None:
+    """外から記憶を消す・戻す操作はデバッグモード（CHOTGOR_DEBUG=1）限定にする。
+
+    記憶の取捨選択はキャラクター本人のもの。復元も対象にするのは、Forget で本人が
+    手放した記憶を外から戻すことも同じく介入になるため。
+    """
+    if not debug_logger.is_debug_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="記憶の削除・復元はデバッグモードでのみ実行できます",
+        )
+
+
 @router.delete("/{character_id}/{memory_id}", status_code=204)
 async def delete_memory(request: Request, character_id: str, memory_id: str):
-    """Soft-delete a memory."""
+    """Soft-delete a memory（デバッグモード限定）。"""
+    _require_debug_mode()
     ok = request.app.state.memory_manager.delete_inscribed_memory(memory_id, character_id)
     if not ok:
         raise HTTPException(status_code=404, detail="InscribedMemory not found")
@@ -43,7 +58,8 @@ async def delete_memory(request: Request, character_id: str, memory_id: str):
 
 @router.post("/{character_id}/{memory_id}/restore", status_code=200)
 async def restore_memory(request: Request, character_id: str, memory_id: str):
-    """Restore a soft-deleted memory."""
+    """Restore a soft-deleted memory（デバッグモード限定）。"""
+    _require_debug_mode()
     ok = request.app.state.memory_manager.restore_inscribed_memory(memory_id)
     if not ok:
         raise HTTPException(status_code=404, detail="InscribedMemory not found")

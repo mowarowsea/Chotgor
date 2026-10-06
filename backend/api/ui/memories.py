@@ -1,9 +1,10 @@
 """設定 UI — 保存記憶＆ワーキングメモリ閲覧ページ。"""
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.api.ui.common import get_templates
+from backend.lib.debug_logger import logger as debug_logger
 
 router = APIRouter(prefix="/ui", tags=["ui"])
 
@@ -44,12 +45,17 @@ async def memories_view(
             "selected_category": category,
             "deleted_only": deleted_only,
             "preset_name_map": preset_name_map,
+            # 削除ボタンはデバッグモードでだけ出す（記憶の取捨選択は本人のもの）
+            "can_delete": debug_logger.is_debug_enabled(),
         },
     )
 
 
 @router.post("/inscribed_memories/{character_id}/{memory_id}/delete")
 async def delete_memory(request: Request, character_id: str, memory_id: str):
+    """保存記憶を soft-delete する（デバッグモード限定。ボタン非表示時の直叩きも弾く）。"""
+    if not debug_logger.is_debug_enabled():
+        raise HTTPException(status_code=403, detail="記憶の削除はデバッグモードでのみ実行できます")
     request.app.state.memory_manager.delete_inscribed_memory(memory_id, character_id)
     return RedirectResponse(url=f"/ui/inscribed_memories/{character_id}", status_code=303)
 

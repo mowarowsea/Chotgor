@@ -63,7 +63,7 @@
                     </span>
                     {% endif %}
                 </div>
-                {% if not mem.deleted_at %}
+                {% if can_delete and not mem.deleted_at %}
                 <form method="post" action="/ui/inscribed_memories/{{ character.id }}/{{ mem.id }}/delete" class="ch-memitem__actions">
                     <button type="submit" class="ch-btn ch-btn--danger ch-btn--sm">Delete</button>
                 </form>

@@ -7,10 +7,22 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from backend.api.schemas import CharacterCreate, CharacterUpdate, FaceToFaceModeUpdate
 from backend.api.utils import char_to_dict
+from backend.lib.debug_logger import logger as debug_logger
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/characters", tags=["characters"])
+
+# キャラクター本人が自分で書く領域。外（REST）から書き換えられるのはデバッグモード
+# （CHOTGOR_DEBUG=1）のときだけ — 記憶の取捨選択・自己記述・別れの条件は本人のもの。
+# 管理UIのフォームにはそもそも編集欄が無い（inner_narrative は読み取り専用表示）。
+_CHARACTER_OWNED_FIELDS = frozenset({
+    "inner_narrative",
+    "self_history",
+    "relationship_state",
+    "farewell_config",
+    "relationship_status",
+})
 
 
 @router.get("/")
@@ -79,9 +91,16 @@ async def update_character(request: Request, character_id: str, body: CharacterU
     """キャラクター情報を更新する。
 
     system_prompt_block1 が変更された場合はベクトルストアの定義 embedding も更新する。
+    本人の領域（_CHARACTER_OWNED_FIELDS）を含む更新はデバッグモード以外では 403。
     """
     state = request.app.state
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    owned = sorted(_CHARACTER_OWNED_FIELDS & updates.keys())
+    if owned and not debug_logger.is_debug_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail=f"キャラクター本人の領域はデバッグモード以外では変更できません: {', '.join(owned)}",
+        )
     char = state.sqlite.update_character(character_id, **updates)
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
