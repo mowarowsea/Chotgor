@@ -664,7 +664,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 | ドキュメント | 内容 |
 |---|---|
 | `CLAUDE.md` | 開発規範（哲学・命名規則・LanceDB運用・CSS規約・提案スタンス） |
-| `docs/explain/DEAR_GHOST.md` | キャラクター向けシステムガイド（世界の歩き方） |
+| `docs/explain/DEAR_GHOST.md` | キャラクター向けシステムガイド（世界の歩き方）。キャラ本人が `read_dear_ghost` で読む前提なので、本人が読めない文書（`character_resident_rules.md` 等）への参照は書かない。数値・条件の正は `character_resident_rules.md` |
 | `docs/explain/README.md` | ユーザー向け紹介（※歴史的紹介文。現仕様は本 ARCHITECTURE.md が正） |
 | `docs/fable_view.md` | エンジン当事者視点の観測記録（設計判断の根拠・弱点の列挙） |
 
