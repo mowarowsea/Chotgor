@@ -76,8 +76,11 @@ class JevClient:
         return resp.json()
 
     async def list_models(self) -> list[str]:
+        # レスポンス形が公開ドキュメントに無いため、OpenAI 互換 {"data": [...]}・
+        # {"models": [...]}・素の配列のいずれでも、要素が文字列でも dict でも受ける
         data = await self._request("GET", "/models")
-        return [m.get("id", "") for m in data.get("data", [])]
+        items = data if isinstance(data, list) else (data.get("data") or data.get("models") or [])
+        return [m if isinstance(m, str) else (m.get("id") or m.get("name") or "") for m in items]
 
     async def decide(self, state: Any, questions: dict[str, dict], model: str = "") -> dict:
         """state に対して questions を判定し、レスポンス全体（model / answers / usage）を返す。"""
@@ -86,7 +89,11 @@ class JevClient:
 
 
 async def _connection_check() -> None:
+    import json
+
     client = JevClient.from_settings()
+    raw = await client._request("GET", "/models")
+    print("models(raw):", json.dumps(raw, ensure_ascii=False)[:1000])
     print("models:", await client.list_models())
     result = await client.decide(
         state="もわ: ただいまー、今日めっちゃ疲れた……",
@@ -104,8 +111,6 @@ async def _connection_check() -> None:
             },
         },
     )
-    import json
-
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
