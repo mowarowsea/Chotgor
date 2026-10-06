@@ -371,6 +371,7 @@ Chronicle では、キャラクターの `ghost_model` に、1on1 と同等の�
   - TRPG（卓を囲んだ事実は現実、PC たちの物語は架空のお遊び）
 - 現在もっとも印象深い長期記憶30件
 - 別れ判定用の感情ルーブリックと、現在の `farewell_config`
+- `farewell_config` の書き方（`thresholds` / `farewell_message` / `estrangement` / `fatigue` のキー構造。返した JSON で全体が置き換わる旨も明示）
 - 「いつ・誰と・どこで」を日付で書くルール（§3.5）
 
 ### 6.3 更新対象
@@ -578,7 +579,9 @@ Chronicle が終わると、対象会話には `chronicled_at` が記録され�
 
 ### 8.2 Estrangement
 
-negative exit が一定期間内に設定回数を超えると、`relationship_status` が `estranged` になります。
+negative exit が一定期間内に設定回数に達すると、`relationship_status` が `estranged` になります。`estrangement` 未設定時は退席判定側で既定値（`lookback_days` 30・`negative_exit_threshold` 5）が使われます。
+
+`estranged` は取り消せません（以後そのキャラクターへのリクエストは恒久的に拒否されます）。
 
 `estranged` は、関係断絶状態です。この状態はキャラクター定義の検索索引にも反映されます。
 

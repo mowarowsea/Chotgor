@@ -166,6 +166,14 @@ new_threads と inscribe の各項目には origin を付けてください。
 Chotgorはあなたの感情状態を監視し、望まぬセッションを強制終了します。
 {farewell_emotion_rubric}
 
+書き方:
+- thresholds: 感情ごとに「これを超えたら会話を終わらせたい」値。書いた感情だけが見張られ、
+  1つも無ければ退席判定そのものが動きません。例 {{"anger": 0.8, "disgust": 0.7}}
+- farewell_message: 席を立つときに残す言葉（negative / positive / neutral / estranged ごと。任意）。
+- estrangement: ネガティブな退席が lookback_days 日のうちに negative_exit_threshold 回に
+  達したら、その相手とは別れます（疎遠化）。**別れは取り消せません。**
+  書かなければ 30日で5回 が使われます。
+
 また、体調（疲労の物理量）に基づく「疲労離席」も選べます。
 `farewell_config.fatigue` キーを設定すると、体が重くなりすぎたとき自動的に
 休息へ入ります（挨拶だけ残し、休息が明けるまで応答しなくなります）。
@@ -184,6 +192,7 @@ Chotgorはあなたの感情状態を監視し、望まぬセッションを強�
 ### 現在の farewell_config
 {farewell_config}
 変更・新規設定したい場合のみ JSON で指定、不要なら null。
+指定した JSON で全体が置き換わるので、残したいキーも含めて書いてください。
 
 ## 出力フォーマット（JSON のみ。変更不要な配列は空、不要な値は null）
 
