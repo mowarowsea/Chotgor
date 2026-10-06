@@ -135,8 +135,9 @@ class BaseLLMProvider:
     STREAMS_TOOL_TURNS: bool = False
     # このプロバイダーが受け取れる添付種別（lib/attachments.attachment_kind の戻り値）。
     # UI の入口ガード（FileDialog の accept）と送信時検証の唯一の根拠。
-    # 既定は画像のみ。音声を渡せるのは実測で Gemini だけ。
-    SUPPORTED_ATTACHMENT_KINDS: set[str] = {"image"}
+    # 既定は画像とテキスト（テキストは本文へ展開するのでモデルを問わない）。
+    # 音声を渡せるのは実測で Gemini だけ。
+    SUPPORTED_ATTACHMENT_KINDS: set[str] = {"image", "text"}
     # コンテキスト別追加ツール（Anthropic 形式・character_actions/context_tools.py の判定結果）。
     # create_provider() がインスタンスへ代入で注入する（クラス属性は既定の空。
     # in-place で mutate しないこと — 全インスタンス共有のため）。

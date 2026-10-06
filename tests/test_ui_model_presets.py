@@ -139,7 +139,8 @@ class TestModelsApiOrder:
         # 添付の入口ガードの根拠（受け取れる種別）も渡していること。
         # 音声を渡せるのは Gemini だけなので、google だけ audio を含む。
         assert [m["attachment_kinds"] for m in data] == [
-            ["image"], ["image"], ["image"], ["image"], ["audio", "image"], ["image"],
+            ["image", "text"], ["image", "text"], ["image", "text"], ["image", "text"],
+            ["audio", "image", "text"], ["image", "text"],
         ]
 
     def test_providers_without_api_key_are_excluded(self, sqlite_store, models_client):

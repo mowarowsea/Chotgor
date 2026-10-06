@@ -1,14 +1,15 @@
 """メッセージコンテンツ構築ユーティリティ。
 
-添付（画像・音声）付きメッセージの OpenAI 準拠形式への変換と、
+添付（画像・音声・テキスト）付きメッセージの OpenAI 準拠形式への変換と、
 1on1チャット履歴の Message リスト変換を提供する。
 """
 
 import base64
+import html
 import os
 from typing import Any
 
-from backend.lib.attachments import attachment_kind, audio_format
+from backend.lib.attachments import attachment_kind, audio_format, decode_text
 from backend.services.chat.models import Message
 
 
@@ -27,7 +28,8 @@ def build_message_content(
     パートの形式は mime から導出した種別で出し分ける:
         image → `{"type": "image_url", "image_url": {"url": "data:...;base64,..."}}`
         audio → `{"type": "input_audio", "input_audio": {"data": ..., "format": "mp3"}}`
-    どちらも OpenAI 準拠。独自形式を作らずに済み、将来 openai_provider が音声へ
+        text  → `{"type": "text", "text": "\n\n<file name=\"...\">...</file>"}`
+    いずれも OpenAI 準拠。テキストは全プロバイダーがそのまま扱える text パートにする。独自形式を作らずに済み、将来 openai_provider が音声へ
     対応したときそのまま乗る（Anthropic は音声非対応なので寄せる理由がない）。
 
     Args:
@@ -51,20 +53,24 @@ def build_message_content(
         if not os.path.exists(att_path):
             continue
         mime = getattr(att_meta, "mime_type", None)
-        part = _build_attachment_part(att_path, mime)
+        filename = getattr(att_meta, "filename", None)
+        part = _build_attachment_part(att_path, mime, filename)
         if part:
             parts.append(part)
 
     return parts if len(parts) > 1 else text
 
 
-def _build_attachment_part(att_path: str, mime_type) -> dict | None:
+def _build_attachment_part(att_path: str, mime_type, filename=None) -> dict | None:
     """添付ファイル1件をコンテンツパートへ変換する。種別を導出できなければ None。"""
     kind = attachment_kind(mime_type)
     if kind is None:
         return None
     with open(att_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
+        data = f.read()
+    if kind == "text":
+        return {"type": "text", "text": _wrap_text_file(decode_text(data), filename)}
+    b64 = base64.b64encode(data).decode()
     if kind == "audio":
         fmt = audio_format(mime_type)
         if not fmt:
@@ -76,10 +82,22 @@ def _build_attachment_part(att_path: str, mime_type) -> dict | None:
     }
 
 
+def _wrap_text_file(body: str, filename) -> str:
+    """テキスト添付を `<file name="...">` で包む。
+
+    先頭の空行は claude_cli がテキストパートを区切りなしで連結するため
+    （本文とファイルが1行にくっつくのを防ぐ）。
+    """
+    name = html.escape(filename, quote=True) if isinstance(filename, str) else ""
+    open_tag = f'<file name="{name}">' if name else "<file>"
+    return f"\n\n{open_tag}\n{body.rstrip()}\n</file>"
+
+
 #: 過去ターンの添付を置き換える痕跡テキスト。種別ごとに1行（同種は1行にまとめる）。
 _ATTACHMENT_TRACES = {
     "image": "[画像を見せた]",
     "audio": "[音声を聴かせた]",
+    "text": "[テキストファイルを渡した]",
 }
 #: 種別を導出できなかった添付（DB に残る旧レコード等）の痕跡。
 _ATTACHMENT_TRACE_FALLBACK = "[ファイルを渡した]"
@@ -92,16 +110,26 @@ def attachment_trace(text: str, attachment_ids: list[str], sqlite) -> str:
     「何かを渡した」事実まで消えてしまうため、種別だけを残した1行を本文に足す。
 
     種別が同じ添付は1行にまとめる（枚数は残さない）。
+    テキストだけはファイル名が会話の参照点になるので、名前を並べて残す
+    （`[テキストファイルを渡した: a.md, b.txt]`）。
     """
     if not attachment_ids or not sqlite:
         return text
     traces: list[str] = []
+    text_names: list[str] = []
     for att_id in attachment_ids:
         att_meta = sqlite.get_chat_attachment(att_id)
         kind = attachment_kind(getattr(att_meta, "mime_type", None)) if att_meta else None
         trace = _ATTACHMENT_TRACES.get(kind, _ATTACHMENT_TRACE_FALLBACK)
+        if kind == "text":
+            filename = getattr(att_meta, "filename", None)
+            if isinstance(filename, str) and filename and filename not in text_names:
+                text_names.append(filename)
         if trace not in traces:
             traces.append(trace)
+    if text_names:
+        named = f"[テキストファイルを渡した: {', '.join(text_names)}]"
+        traces = [named if t == _ATTACHMENT_TRACES["text"] else t for t in traces]
     if not traces:
         return text
     joined = "\n".join(traces)

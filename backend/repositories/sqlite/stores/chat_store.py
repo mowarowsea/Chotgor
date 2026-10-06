@@ -555,8 +555,9 @@ class ChatStoreMixin:
         session_id: str,
         mime_type: str,
         message_id: str | None = None,
+        filename: str | None = None,
     ):
-        """添付レコード（画像・音声）を作成する。"""
+        """添付レコード（画像・音声・テキスト）を作成する。"""
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ChatAttachment
             att = ChatAttachment(
@@ -564,6 +565,7 @@ class ChatStoreMixin:
                 session_id=session_id,
                 message_id=message_id,
                 mime_type=mime_type,
+                filename=filename,
             )
             session.add(att)
             session.commit()

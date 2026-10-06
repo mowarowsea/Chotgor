@@ -124,9 +124,9 @@ class ChatMessageVariant(Base):
 
 
 class ChatAttachment(Base):
-    """チャット添付ファイル — セッションに紐づく添付（画像・音声）のメタデータ。
+    """チャット添付ファイル — セッションに紐づく添付（画像・音声・テキスト）のメタデータ。
 
-    種別（image / audio）は専用列を持たず mime_type から導出する。
+    種別（image / audio / text）は専用列を持たず mime_type から導出する。
     """
 
     __tablename__ = "chat_attachments"
@@ -135,6 +135,8 @@ class ChatAttachment(Base):
     session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
     message_id = Column(String, nullable=True)  # メッセージ保存後に設定
     mime_type = Column(String, nullable=False)
+    # 元のファイル名。テキスト添付ではキャラクターへ中身と一緒に見せる。旧レコードは NULL。
+    filename = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 

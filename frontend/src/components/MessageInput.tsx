@@ -10,7 +10,7 @@ import { useEditingLocked } from "../hooks/useEditingLock";
 import {
     acceptAttribute,
     attachmentButtonTitle,
-    attachmentKind,
+    fileAttachmentKind,
     rejectionReason,
     type AttachmentKind,
 } from "../lib/attachments";
@@ -28,7 +28,7 @@ interface Props {
     allowAttachments?: boolean;
     /**
      * 選択中プリセットが受け取れる添付種別（/v1/models の attachment_kinds）。
-     * FileDialog の accept と選択後の検査の根拠。省略時は画像のみ。
+     * FileDialog の accept と選択後の検査の根拠。省略時は画像・テキスト。
      */
     attachmentKinds?: AttachmentKind[];
     /** ユーザターンスキップコールバック。指定時はスキップボタンを表示する。 */
@@ -52,7 +52,7 @@ export default function MessageInput({
     onSend,
     placeholder = "メッセージを入力… (Ctrl+Enter で送信)",
     allowAttachments = true,
-    attachmentKinds = ["image"],
+    attachmentKinds = ["image", "text"],
     onSkip,
     allowEmptySend = false,
     extraTools,
@@ -197,13 +197,22 @@ export default function MessageInput({
                     <div className="text-[11px] text-red-500">{attachmentError}</div>
                 )}
 
-                {/* 添付プレビュー: 画像はサムネ、音声はファイル名チップ＋プレイヤー
-                    （音声を createObjectURL で <img> に食わせると壊れるため描き分ける）。 */}
+                {/* 添付プレビュー: 画像はサムネ、音声はファイル名チップ＋プレイヤー、テキストはファイル名チップ
+                    （画像以外を createObjectURL で <img> に食わせると壊れるため描き分ける）。 */}
                 {allowAttachments && pendingFiles.length > 0 && (
                     <div className="flex gap-2 flex-wrap items-start">
                         {pendingFiles.map((file, idx) => (
                             <div key={idx} className="relative group/thumb">
-                                {attachmentKind(file.type) === "audio" ? (
+                                {fileAttachmentKind(file) === "text" ? (
+                                    <div
+                                        className="flex items-center rounded-md px-2 py-1.5 max-w-[240px]"
+                                        style={{ border: "1px solid var(--ch-sep2)" }}
+                                    >
+                                        <span className="text-[11px] text-ch-t2 truncate" title={file.name}>
+                                            📄 {file.name}
+                                        </span>
+                                    </div>
+                                ) : fileAttachmentKind(file) === "audio" ? (
                                     <div
                                         className="flex flex-col gap-1 rounded-md px-2 py-1.5 max-w-[240px]"
                                         style={{ border: "1px solid var(--ch-sep2)" }}

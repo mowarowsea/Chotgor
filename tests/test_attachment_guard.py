@@ -34,11 +34,11 @@ class TestSupportedAttachmentKinds:
 
     def test_google_accepts_audio(self):
         """google は音声を受け取れること（Gemini の inline_data 経由）。"""
-        assert supported_attachment_kinds("google") == ["audio", "image"]
+        assert supported_attachment_kinds("google") == ["audio", "image", "text"]
 
     def test_claude_cli_rejects_audio(self):
-        """claude_cli は画像のみ（Anthropic は音声入力を持たない）。"""
-        assert supported_attachment_kinds("claude_cli") == ["image"]
+        """claude_cli は画像とテキスト（Anthropic は音声入力を持たない）。"""
+        assert supported_attachment_kinds("claude_cli") == ["image", "text"]
 
     @pytest.mark.parametrize(
         "provider_id",
@@ -48,9 +48,14 @@ class TestSupportedAttachmentKinds:
         """google 以外のプロバイダーは音声を受け取らないこと。"""
         assert "audio" not in supported_attachment_kinds(provider_id)
 
-    def test_unknown_provider_falls_back_to_image_only(self):
-        """未知の provider_id は既定（画像のみ）に落ちること。"""
-        assert supported_attachment_kinds("nonexistent") == ["image"]
+    @pytest.mark.parametrize("provider_id", list(PROVIDER_REGISTRY))
+    def test_every_provider_accepts_text(self, provider_id):
+        """テキスト添付は本文へ展開するだけなので、全プロバイダーが受け取れること。"""
+        assert "text" in supported_attachment_kinds(provider_id)
+
+    def test_unknown_provider_falls_back_to_default(self):
+        """未知の provider_id は既定（画像・テキスト）に落ちること。"""
+        assert supported_attachment_kinds("nonexistent") == ["image", "text"]
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +145,12 @@ class TestRejectUnsupportedAttachmentsHelper:
         state = self._state("claude_cli", {"a1": "image/png"})
         chat_module._reject_unsupported_attachments(state, "はる@p1", ["a1"])
 
+    @pytest.mark.parametrize("provider", ["claude_cli", "anthropic", "ollama", "google"])
+    def test_text_is_allowed_everywhere(self, provider):
+        """テキスト添付はどのプロバイダーでも弾かれないこと（本文へ展開するだけ）。"""
+        state = self._state(provider, {"a1": "text/plain"})
+        chat_module._reject_unsupported_attachments(state, "はる@p1", ["a1"])
+
     def test_no_attachment_is_allowed(self):
         """添付なしなら何も見ずに通ること。"""
         state = self._state("claude_cli", {})
@@ -208,6 +219,21 @@ class TestMessageToDictAttachments:
         result = message_to_dict(self._msg(["a1"]), sqlite)
 
         assert result["attachments"] == [{"id": "a1", "mime_type": "audio/mpeg"}]
+
+    def test_text_attachment_carries_filename(self):
+        """ファイル名を持つ添付は {id, mime_type, filename} で返ること（チップ表示用）。"""
+        from backend.api.utils import message_to_dict
+
+        sqlite = MagicMock()
+        sqlite.get_chat_attachment.return_value = MagicMock(
+            mime_type="text/plain", filename="memo.txt"
+        )
+
+        result = message_to_dict(self._msg(["a1"]), sqlite)
+
+        assert result["attachments"] == [
+            {"id": "a1", "mime_type": "text/plain", "filename": "memo.txt"}
+        ]
 
     def test_missing_metadata_yields_id_only(self):
         """メタデータを引けない添付は id だけを返すこと（表示は画像扱いになる）。"""

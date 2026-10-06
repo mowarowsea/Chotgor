@@ -152,7 +152,7 @@
 |---|---|
 | `data/chotgor.db` | SQLite。キャラクター・セッション・記憶メタデータ・設定の source of truth |
 | `data/lancedb/` | LanceDB。`inscribed_memories` / `chat_turns` / `definitions` / `working_memory_threads` の4テーブル（単一テーブル＋`character_id` フィルタ方式） |
-| `data/uploads/` | チャット添付の実体（画像・音声）。ファイル名は添付ID（拡張子なし）、種別・MIME は `chat_attachments` 側 |
+| `data/uploads/` | チャット添付の実体（画像・音声・テキスト）。ファイル名は添付ID（拡張子なし）、種別・MIME は `chat_attachments` 側 |
 
 ### debug/ ・ logs/（gitignore対象）
 
@@ -192,20 +192,24 @@ frontend useChat
       7.  debug_logger がログ記録
 ```
 
-- **添付（画像・音声）は「最新ターンにだけ存在する」**。
+- **添付（画像・音声・テキスト）は「最新ターンにだけ存在する」**。
   アップロードは `POST /api/chat/sessions/{id}/attachments`（受け入れ MIME の判定は
   `lib/attachments.attachment_kind` が唯一の根拠）、実体は `data/uploads/{添付ID}`、
-  メタデータは `chat_attachments`（種別カラムは持たず mime から導出）。
+  メタデータは `chat_attachments`（種別カラムは持たず mime から導出。ファイル名は `filename`）。
+  MIME が当てにならないテキスト（`.md` が空 MIME 等）はアップロード時に拡張子から
+  `text/plain` へ正規化して保存する（`resolve_upload_mime`）。
   送信時、最新ターンだけ `services/chat/content.build_message_content` が
-  コンテンツパート（画像 = `image_url` の data URL / 音声 = OpenAI 準拠の `input_audio`）
+  コンテンツパート（画像 = `image_url` の data URL / 音声 = OpenAI 準拠の `input_audio` /
+  テキスト = `<file name="…">…</file>` で包んだ text パート）
   へ載せ、履歴側は `build_1on1_history` が痕跡テキスト（`[画像を見せた]` /
-  `[音声を聴かせた]`）へ落とす。実体を毎ターン再送しないのが目的で、印象を残すかは
+  `[音声を聴かせた]` / `[テキストファイルを渡した: 名前]`）へ落とす。実体を毎ターン再送しないのが目的で、印象を残すかは
   キャラクター自身が `inscribe_memory` で決める。
   **音声を受け取れるのは Gemini（`google`）だけ**（Anthropic は音声入力を持たない）。
   能力は `BaseLLMProvider.SUPPORTED_ATTACHMENT_KINDS` が宣言し、`/v1/models` の
   `attachment_kinds` としてフロントへ渡り、FileDialog の accept・選択後の MIME 検査・
   送信 API の 400 の三段で「渡らないのに渡ったように見える」状態を作らせない。
-  設計と不採用案は `docs/planned/audio_attachment_plan.md`。
+  テキストは全プロバイダーが受け取れる（1 MB 超はアップロード時に 400）。
+  設計と不採用案は `docs/planned/audio_attachment_plan.md`・`docs/planned/text_attachment_plan.md`。
 - **SSE 送出と生成は分離されている（`lib/sse_runner.py`。1on1／シナリオ共用）**。
   生成本体（LLM 呼び出し〜DB 保存）は `asyncio.Task` で走り、送出側は Queue を読むだけ。
   **クライアントが切断してもタスクは cancel せず完走させる** — 保存が `yield` より後ろに
@@ -622,7 +626,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 
 | prefix | ファイル | 用途 |
 |---|---|---|
-| `/api/chat` | `api/chat.py`, `api/chat_attachments.py` | 1on1セッション・ストリーミング・添付（画像・音声） |
+| `/api/chat` | `api/chat.py`, `api/chat_attachments.py` | 1on1セッション・ストリーミング・添付（画像・音声・テキスト） |
 | `/api/scenario_chat` | `api/scenario_chat/` | シナリオ（scenarios / sessions / stream） |
 | `/api/characters` | `api/characters.py` | キャラクターCRUD |
 | `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行・Retrace（WM 時制の辿り直し）手動実行 |
@@ -691,3 +695,4 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 | `docs/planned/audio_attachment_plan.md` | §3 1on1フロー「添付」— 音声・画像の受け渡しと寿命 |
 | `docs/planned/switch_angle_removal_plan.md` | 撤去記録（現行コードに機能は無い） |
 | `docs/old/backend_data_design.md` | アーカイブ。現行のテーブル定義は `repositories/sqlite/models.py` が正 |
+| `docs/planned/text_attachment_plan.md` | §3 1on1フロー「添付」— テキストファイルの受け渡し |

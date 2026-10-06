@@ -108,7 +108,7 @@ def create_provider(provider_id: str, model: str, settings: dict, **kwargs) -> B
 def supported_attachment_kinds(provider_id: str) -> list[str]:
     """プロバイダーが受け取れる添付種別を返す（安定順・UI 表示と検証の根拠）。
 
-    未知の provider_id には既定（画像のみ）を返す。プロバイダーによって
+    未知の provider_id には既定（画像・テキスト）を返す。プロバイダーによって
     「聴ける／聴けない」が割れるため、UI の入口ガードと送信時検証の双方が
     ここを唯一の根拠にする。
     """

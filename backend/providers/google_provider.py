@@ -99,7 +99,7 @@ class GoogleProvider(BaseLLMProvider):
     REQUIRES_API_KEY = True
     SUPPORTS_TOOLS = True
     # Gemini は inline_data で音声を受け取れる（曲を聴かせられる唯一の経路）。
-    SUPPORTED_ATTACHMENT_KINDS = {"image", "audio"}
+    SUPPORTED_ATTACHMENT_KINDS = {"image", "audio", "text"}
 
     def __init__(self, api_key: str, model: str = "", thinking_level: str = "default"):
         self.api_key = api_key

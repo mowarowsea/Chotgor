@@ -1,5 +1,5 @@
 /**
- * 添付表示 — 画像のサムネイルグリッド／フルサイズモーダルと、音声プレイヤー。
+ * 添付表示 — 画像のサムネイルグリッド／フルサイズモーダル、音声プレイヤー、テキストのファイル名チップ。
  */
 import { useState } from "react";
 import type { Attachment } from "../../api";
@@ -21,10 +21,31 @@ export function AttachmentGrid({ attachments }: { attachments: Attachment[] }) {
 
   // mime を引けなかった添付は画像扱い（旧レコード互換）。
   const audios = attachments.filter((a) => attachmentKind(a.mime_type) === "audio");
-  const images = attachments.filter((a) => attachmentKind(a.mime_type) !== "audio");
+  const texts = attachments.filter((a) => attachmentKind(a.mime_type) === "text");
+  const images = attachments.filter((a) => {
+    const kind = attachmentKind(a.mime_type);
+    return kind !== "audio" && kind !== "text";
+  });
 
   return (
     <>
+      {texts.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 justify-end mb-1">
+          {texts.map((att) => (
+            <a
+              key={att.id}
+              href={attachmentUrl(att.id)}
+              target="_blank"
+              rel="noreferrer"
+              title={att.filename ?? "テキストファイル"}
+              className="rounded-md px-2 py-1 text-[11px] text-ch-t2 hover:text-ch-t1 max-w-[240px] truncate transition-colors"
+              style={{ border: "1px solid var(--ch-sep)" }}
+            >
+              📄 {att.filename ?? "テキストファイル"}
+            </a>
+          ))}
+        </div>
+      )}
       {audios.length > 0 && (
         <div className="flex flex-col gap-1.5 items-end mb-1">
           {audios.map((att) => (

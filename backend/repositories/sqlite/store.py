@@ -152,6 +152,7 @@ class SQLiteStore(
         self._migrate_add_scenario_turn_variants()
         self._migrate_add_bubble_color()
         self._migrate_rename_chat_images_to_attachments()
+        self._migrate_add_attachment_filename()
         self._migrate_drop_enabled_providers()
 
     def get_session(self) -> Session:

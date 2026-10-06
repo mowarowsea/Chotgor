@@ -80,10 +80,16 @@ def session_to_dict(s) -> dict:
 
 
 def _attachment_to_dict(attachment_id: str, sqlite) -> dict:
-    """添付IDに mime_type を添えて返す。メタデータを引けなければ id だけ。"""
+    """添付IDに mime_type（とあれば filename）を添えて返す。メタデータを引けなければ id だけ。"""
     meta = sqlite.get_chat_attachment(attachment_id) if sqlite else None
+    result = {"id": attachment_id}
     mime = getattr(meta, "mime_type", None) if meta else None
-    return {"id": attachment_id, "mime_type": mime} if mime else {"id": attachment_id}
+    if mime:
+        result["mime_type"] = mime
+    filename = getattr(meta, "filename", None) if meta else None
+    if isinstance(filename, str) and filename:
+        result["filename"] = filename
+    return result
 
 
 def message_to_dict(m, sqlite=None) -> dict:

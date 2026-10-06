@@ -153,13 +153,13 @@ export default function App() {
   const activeCharNameOnly = charNameOf(selectedModel || activeSession?.model_id || characterName);
   /**
    * 選択中プリセットが受け取れる添付種別。プロバイダーによって「聴ける／聴けない」が
-   * 割れるため、入力欄の FileDialog と選択後検査へ流す。未取得時は画像のみ。
+   * 割れるため、入力欄の FileDialog と選択後検査へ流す。未取得時は画像・テキスト。
    */
   const attachmentKinds = useMemo<AttachmentKind[]>(() => {
     const modelId = selectedModel || activeSession?.model_id || "";
     const kinds = models.find((m) => m.id === modelId)?.attachment_kinds;
-    return (kinds ?? ["image"]).filter(
-      (k): k is AttachmentKind => k === "image" || k === "audio",
+    return (kinds ?? ["image", "text"]).filter(
+      (k): k is AttachmentKind => k === "image" || k === "audio" || k === "text",
     );
   }, [models, selectedModel, activeSession?.model_id]);
   const activeCharacter = characters.find((c) => c.name === activeCharNameOnly);
@@ -500,7 +500,7 @@ export default function App() {
     if (files.length > 0) {
       try {
         const uploaded = await uploadAttachments(activeSessionId, files);
-        attachments = uploaded.map((u) => ({ id: u.id, mime_type: u.mime_type }));
+        attachments = uploaded.map((u) => ({ id: u.id, mime_type: u.mime_type, filename: u.filename }));
       } catch (e) {
         setError(String(e));
         return;

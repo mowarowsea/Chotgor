@@ -1607,3 +1607,28 @@ class SQLiteMigrationsMixin:
                     conn.exec_driver_sql(
                         "ALTER TABLE chat_messages RENAME COLUMN images TO attachments"
                     )
+
+    def _migrate_add_attachment_filename(self) -> None:
+        """chat_attachments に filename 列を追加する（テキスト添付のファイル名）。
+
+        既存行（画像・音声）は NULL のまま。新規DBは ORM 定義で既に列を持つため何もしない。冪等。
+        """
+        with self.engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "chat_attachments" not in tables:
+                return
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info(chat_attachments)"
+                ).fetchall()
+            }
+            if "filename" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE chat_attachments ADD COLUMN filename TEXT"
+                )

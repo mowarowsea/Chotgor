@@ -55,11 +55,13 @@ export interface Session {
   updated_at: string;
 }
 
-/** メッセージに紐づく添付1件。mime_type から画像／音声の表示を出し分ける。 */
+/** メッセージに紐づく添付1件。mime_type から画像／音声／テキストの表示を出し分ける。 */
 export interface Attachment {
   id: string;
   /** メタデータを引けなかった場合のみ欠ける（表示は画像扱いになる）。 */
   mime_type?: string;
+  /** 元のファイル名。テキスト添付のチップ表示に使う。旧レコードには無い。 */
+  filename?: string;
 }
 
 export interface ChatMessage {
@@ -214,11 +216,11 @@ export async function* streamMessage(
   yield* parseSSEStream<StreamEvent>(res);
 }
 
-/** 添付ファイル（画像・音声）をアップロードしてセッションに紐づける。 */
+/** 添付ファイル（画像・音声・テキスト）をアップロードしてセッションに紐づける。 */
 export async function uploadAttachments(
   sessionId: string,
   files: File[]
-): Promise<{ id: string; url: string; mime_type: string; kind: string }[]> {
+): Promise<{ id: string; url: string; mime_type: string; kind: string; filename?: string }[]> {
   const form = new FormData();
   for (const file of files) {
     form.append("files", file);
@@ -227,7 +229,11 @@ export async function uploadAttachments(
     method: "POST",
     body: form,
   });
-  if (!res.ok) throw new Error("添付のアップロードに失敗しました");
+  if (!res.ok) {
+    // 400 の detail（形式不可・サイズ超過）はユーザにそのまま見せる
+    const detail = await res.json().then((b) => b?.detail).catch(() => null);
+    throw new Error(typeof detail === "string" ? detail : "添付のアップロードに失敗しました");
+  }
   return res.json();
 }
 

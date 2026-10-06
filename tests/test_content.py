@@ -141,25 +141,31 @@ class TestApplyContextWindow:
 
 
 class _FakeAttachment:
-    """ChatAttachment ORM の代わりに mime_type だけを持つスタブ。"""
+    """ChatAttachment ORM の代わりに mime_type と filename だけを持つスタブ。"""
 
-    def __init__(self, mime_type: str):
+    def __init__(self, mime_type: str, filename: str | None = None):
         self.mime_type = mime_type
+        self.filename = filename
 
 
 class _FakeSqlite:
     """get_chat_attachment だけを提供する最小のストアスタブ。
 
-    id → mime_type の辞書を受け取り、未登録IDには None を返す
-    （実装が「メタデータを引けない添付」をどう扱うかも検証できるようにする）。
+    id → mime_type（またはファイル名付きの (mime_type, filename)）の辞書を受け取り、
+    未登録IDには None を返す（実装が「メタデータを引けない添付」をどう扱うかも
+    検証できるようにする）。
     """
 
-    def __init__(self, mapping: dict[str, str]):
+    def __init__(self, mapping: dict):
         self._mapping = mapping
 
     def get_chat_attachment(self, attachment_id: str):
-        mime = self._mapping.get(attachment_id)
-        return _FakeAttachment(mime) if mime else None
+        entry = self._mapping.get(attachment_id)
+        if not entry:
+            return None
+        if isinstance(entry, tuple):
+            return _FakeAttachment(*entry)
+        return _FakeAttachment(entry)
 
 
 def _hist_msg(role: str, content: str, attachments=None, is_system=None) -> SimpleNamespace:
@@ -221,6 +227,27 @@ class TestAttachmentTrace:
         """本文が空なら痕跡だけを返すこと（先頭の空行を作らない）。"""
         sqlite = _FakeSqlite({"a1": "audio/mpeg"})
         assert attachment_trace("", ["a1"], sqlite) == "[音声を聴かせた]"
+
+    def test_text_trace_carries_filenames(self):
+        """テキスト添付はファイル名を並べた1行になること。
+
+        画像・音声と違い、テキストは「さっきの README」のようにファイル名が
+        会話の参照点になるため、種別だけでなく名前も残す。
+        """
+        sqlite = _FakeSqlite({"a1": ("text/markdown", "README.md"), "a2": ("text/plain", "memo.txt")})
+        result = attachment_trace("読んで", ["a1", "a2"], sqlite)
+        assert result == "読んで\n[テキストファイルを渡した: README.md, memo.txt]"
+
+    def test_text_trace_without_filename(self):
+        """ファイル名が無いテキスト添付は種別だけの痕跡になること（旧レコード等）。"""
+        sqlite = _FakeSqlite({"a1": "text/plain"})
+        assert attachment_trace("読んで", ["a1"], sqlite) == "読んで\n[テキストファイルを渡した]"
+
+    def test_text_and_image_keep_order(self):
+        """テキストと画像が混在しても、出現順に1行ずつ並ぶこと。"""
+        sqlite = _FakeSqlite({"a1": "image/png", "a2": ("text/plain", "a.txt")})
+        result = attachment_trace("両方", ["a1", "a2"], sqlite)
+        assert result == "両方\n[画像を見せた]\n[テキストファイルを渡した: a.txt]"
 
 
 class TestBuild1on1HistoryAttachments:
@@ -338,6 +365,47 @@ class TestBuildMessageContent:
         uploads = self._uploads(tmp_path, {"a1": b"ABC"})
         sqlite = _FakeSqlite({"a1": "application/pdf"})
         assert build_message_content("なにか", ["a1"], sqlite, uploads) == "なにか"
+
+    def test_text_becomes_wrapped_text_part(self, tmp_path):
+        """テキストは <file name="..."> で包んだ text パートになること。
+
+        先頭の空行は claude_cli がテキストパートを区切りなしで連結する対策。
+        """
+        uploads = self._uploads(tmp_path, {"a1": "一行目\n二行目\n".encode("utf-8")})
+        sqlite = _FakeSqlite({"a1": ("text/plain", "memo.txt")})
+        result = build_message_content("読んで", ["a1"], sqlite, uploads)
+        assert result[1] == {
+            "type": "text",
+            "text": '\n\n<file name="memo.txt">\n一行目\n二行目\n</file>',
+        }
+
+    def test_text_in_cp932_is_decoded(self, tmp_path):
+        """UTF-8 で読めない Shift_JIS（CP932）のテキストも文字化けせず読めること。"""
+        uploads = self._uploads(tmp_path, {"a1": "こんにちは".encode("cp932")})
+        sqlite = _FakeSqlite({"a1": ("text/plain", "sjis.txt")})
+        result = build_message_content("読んで", ["a1"], sqlite, uploads)
+        assert "こんにちは" in result[1]["text"]
+
+    def test_text_utf8_bom_is_stripped(self, tmp_path):
+        """UTF-8 の BOM は本文に混ぜないこと。"""
+        uploads = self._uploads(tmp_path, {"a1": "\ufeffabc".encode("utf-8")})
+        sqlite = _FakeSqlite({"a1": ("text/plain", "bom.txt")})
+        result = build_message_content("読んで", ["a1"], sqlite, uploads)
+        assert "\ufeff" not in result[1]["text"]
+
+    def test_text_filename_is_escaped(self, tmp_path):
+        """ファイル名の引用符はエスケープし、タグを壊さないこと。"""
+        uploads = self._uploads(tmp_path, {"a1": b"x"})
+        sqlite = _FakeSqlite({"a1": ("text/plain", 'a"b.txt')})
+        result = build_message_content("読んで", ["a1"], sqlite, uploads)
+        assert '<file name="a&quot;b.txt">' in result[1]["text"]
+
+    def test_text_without_filename_uses_bare_tag(self, tmp_path):
+        """ファイル名が無ければ name 属性なしの <file> で包むこと。"""
+        uploads = self._uploads(tmp_path, {"a1": b"x"})
+        sqlite = _FakeSqlite({"a1": "text/plain"})
+        result = build_message_content("読んで", ["a1"], sqlite, uploads)
+        assert result[1]["text"] == "\n\n<file>\nx\n</file>"
 
     def test_missing_file_is_skipped(self, tmp_path):
         """実体ファイルが消えている添付は飛ばすこと（例外を投げない）。"""
