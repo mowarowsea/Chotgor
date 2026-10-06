@@ -198,16 +198,50 @@ class TestFormatConversationSpeakerTags:
         assert "<human>問い</human>" in result
         assert result.endswith("</history>\n\n次の問い\n\n<turn_context>\n文脈\n</turn_context>")
 
+    def test_turn_context_literal_in_user_text_stays_inside_user_tag(self):
+        """発言本文に `<turn_context>` の文字列が含まれても、本文の途中で切らないこと。
+
+        ガイド文書（DEAR_GHOST.md）を貼り付けた発言で、本文中の
+        「`<turn_context>` で包まれた」の位置に `</もわ>` が差し込まれ、発言の後半が
+        文脈ブロック扱いになる事故があった（2026-10-06）。末尾に付く本物の注釈だけを
+        境目にし、本文中の言及はユーザタグの内側に残す。
+        """
+        spoken = "ガイドに「**`<turn_context>`** で包まれた」って書いてあるよ"
+        messages = [
+            {"role": "user", "content": spoken + "\n\n<turn_context>\n記憶\n</turn_context>"},
+        ]
+        result = _format_conversation(messages, "はる", "もわ")
+        assert result == (
+            f"<もわ>{spoken}</もわ>\n\n<turn_context>\n記憶\n</turn_context>"
+        )
+
+    def test_turn_context_literal_without_annotation_is_not_split(self):
+        """注釈のないターンで本文に `<turn_context>` が含まれても、分割しないこと。
+
+        末尾が `</turn_context>` で閉じていない以上、本文中の開始タグは本物の
+        注釈ではないため、発言全体をユーザタグで包む。
+        """
+        spoken = "`<turn_context>` ってタグがあるんだって"
+        messages = [{"role": "user", "content": spoken}]
+        assert _format_conversation(messages, "はる", "もわ") == f"<もわ>{spoken}</もわ>"
+
     def test_turn_context_tag_matches_request_builder(self):
         """分割に使うタグ名が request_builder の注釈タグと一致していること。
 
         providers→services の import 逆流を避けるため値を複製しているので、
         片方だけ改名されると分割が効かなくなり注釈がユーザ発言に取り込まれる。
         """
-        from backend.providers.claude_cli_provider import _TURN_CONTEXT_OPEN
-        from backend.services.chat.request_builder import TURN_CONTEXT_OPEN
+        from backend.providers.claude_cli_provider import (
+            _TURN_CONTEXT_CLOSE,
+            _TURN_CONTEXT_OPEN,
+        )
+        from backend.services.chat.request_builder import (
+            TURN_CONTEXT_CLOSE,
+            TURN_CONTEXT_OPEN,
+        )
 
         assert _TURN_CONTEXT_OPEN == TURN_CONTEXT_OPEN
+        assert _TURN_CONTEXT_CLOSE == TURN_CONTEXT_CLOSE
 
 
 class TestMakeEnvBatchContext:

@@ -810,10 +810,11 @@ async def _run_claude(
     return await asyncio.to_thread(run)
 
 
-# ターン注釈を包むタグの開始。request_builder.TURN_CONTEXT_OPEN と同じ値でなければならない
+# ターン注釈を包むタグ。request_builder.TURN_CONTEXT_OPEN/CLOSE と同じ値でなければならない
 # （providers から services を import すると依存が逆流するため複製している。
 # 一致は tests/test_claude_cli_format.py で検証）。
 _TURN_CONTEXT_OPEN = "<turn_context>"
+_TURN_CONTEXT_CLOSE = "</turn_context>"
 
 
 def _content_text(content) -> str:
@@ -832,11 +833,24 @@ def _content_text(content) -> str:
 def _format_latest_turn(text: str, user_tag: str) -> str:
     """最新 user メッセージをユーザ発言部分と `<turn_context>` 部分に分けて整形する。
 
-    ターン注釈は append_turn_annotation で本文末尾へ連結されて届くため、最初の
+    ターン注釈は append_turn_annotation で本文末尾へ連結されて届くため、最後の
     `<turn_context>` の手前だけをユーザ発言として `<user_tag>` で包む。手前が空
     （発話予約の単独発火など Chotgor 由来の文脈だけのターン）ならユーザタグは付けない。
+
+    落とし穴: ユーザ発言そのもの（ガイド文書の貼り付け・テキスト添付等）に
+    `<turn_context>` という文字列が含まれうる。最初の出現で切ると発言の後半が
+    文脈ブロック扱いになり誤帰属するため、末尾が `</turn_context>` で閉じている
+    ときだけ、末尾から連続する注釈ブロック（合成注釈＋通常注釈の2連など）の
+    先頭で分割する。
     """
-    idx = text.find(_TURN_CONTEXT_OPEN)
+    idx = -1
+    if text.rstrip().endswith(_TURN_CONTEXT_CLOSE):
+        idx = text.rfind(_TURN_CONTEXT_OPEN)
+        while idx > 0 and text[:idx].rstrip().endswith(_TURN_CONTEXT_CLOSE):
+            prev = text.rfind(_TURN_CONTEXT_OPEN, 0, idx)
+            if prev == -1:
+                break
+            idx = prev
     if idx == -1:
         spoken, context = text, ""
     else:
