@@ -19,6 +19,10 @@ from backend.character_actions.carver import (
     CARVE_NARRATIVE_SCHEMA,
     CARVE_NARRATIVE_TOOL_DESCRIPTION,
 )
+from backend.character_actions.guide_reader import (
+    READ_DEAR_GHOST_SCHEMA,
+    READ_DEAR_GHOST_TOOL_DESCRIPTION,
+)
 from backend.character_actions.inscriber import (
     INSCRIBE_MEMORY_SCHEMA,
     INSCRIBE_MEMORY_TOOL_DESCRIPTION,
@@ -132,6 +136,7 @@ BASE_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("power_recall", POWER_RECALL_TOOL_DESCRIPTION, POWER_RECALL_SCHEMA),
     ToolSpec("web_search", WEB_SEARCH_TOOL_DESCRIPTION, WEB_SEARCH_SCHEMA),
     ToolSpec("take_leave", TAKE_LEAVE_TOOL_DESCRIPTION, TAKE_LEAVE_SCHEMA),
+    ToolSpec("read_dear_ghost", READ_DEAR_GHOST_TOOL_DESCRIPTION, READ_DEAR_GHOST_SCHEMA),
 )
 
 # 文脈によって露出が変わるツール（出し分けの判定は context_tools.py）

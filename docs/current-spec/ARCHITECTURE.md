@@ -90,7 +90,7 @@
 | `services/` | ビジネスロジック層。チャット・シナリオ・記憶・キャラクター問い合わせ |
 | `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / sakura / xai の8実装。`registry.py` が生成・ディスパッチ（露出順は `PROVIDER_ORDER`）。`jev_client.py` は TypeSafe Jev（文章を生成せず yes/no・選択・段階スコアの確率を返す判定モデル）のクライアントで、チャット不可のため registry には載せない（キーは `jev_api_key` → 環境変数 `JEV_API_KEY`）。なりゆき judge のエンジンとして選べ（`ambience_judge.JudgeEngine` が LLM と同じ口に揃える）、ログも LLM プロバイダーと同じ形式で残す。`sakura` は さくらの AI Engine（Kimi 等）で、推論トークンが枠を食い潰して本文が空になるため `DEFAULT_MAX_TOKENS=None`（上限指定なし） |
 | `repositories/` | 永続化層。`sqlite/`（ORM・migration・機能別 store mixin）と `lance/`（ベクトルストア、テーブル別 ops）、`embeddings.py`（embedding プロバイダー） |
-| `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / WMスレッド操作 / take_leave / web_search ＋文脈別ツール）の定義・タグ抽出・実行 |
+| `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / WMスレッド操作 / take_leave / web_search / read_dear_ghost ＋文脈別ツール）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
 | `batch/` | 夜間バッチ。`chronicle_job.py`（WM棚卸し・蒸留、設定時刻デフォルト03:00。棚卸し時に Open×Close の類似検出で「もう決着済みの話題を Open のまま抱えていないか」の気づき材料を提示する＝判定のみで close はしない）と `forget_job.py`（長期記憶の忘却、04:00固定）。加えて `retrace_job.py`（WM の時制の辿り直し。スケジューラーには載せず API から手動起動する単発バッチ） |
 | `lib/` | 横断ユーティリティ。`tag_parser`（非tool-useプロバイダーのタグ抽出・**現役**）、`debug_logger`、`debug_log_archiver`（生ログの月次退避）、`time_awareness`、`web_fetch`、`log_context`、`usage_recorder`（LLM使用量記録）、`tool_event_recorder`（ツール実行イベント記録 → `tool_call_events`。Logs画面のツール使用表示の source of truth）、`instrument_recorder`（計器アラームの発火口。どこからでも呼べる）、`sse_runner`（SSE送出と生成の分離。1on1／シナリオ共用）、`optimistic_lock`（設定フォームの楽観ロック＝端末間の先祖返り防止）、`attachments`（添付の受け入れMIME判定＝`attachment_kind` の唯一の根拠）、`initiative_budget`（キャラ自発リクエストの日次予算。reach_out と speak_later が共有）、`notify`（ntfy プッシュ）、`stream_json`（Claude CLI の NDJSON 入出力）、`lenient_json`（LLM 応答の壊れた JSON 救済）、`utils` |
@@ -126,6 +126,7 @@
 | `threader.py` | `post` / `read` / `close` / `reopen` / `merge`_working_memory_thread(s) ＋ `read_working_memory_list` — WMスレッド操作（最高頻度。post は thread_id 省略で新規作成。list は一覧に載らない close 済みを取りに行く導線） |
 | `web_searcher.py` | `web_search` — Tavily 経由の外部検索 |
 | `leaver.py` | `take_leave` — 本人宣言の離席（away 設定＋chat.farewell 封筒） |
+| `guide_reader.py` | `read_dear_ghost` — キャラ向けガイド `docs/explain/DEAR_GHOST.md` を章・節単位で読む（読み取り専用。section 省略で目次） |
 | `messenger.py` | `reach_out`（うつつ専用・現実へのプッシュ送信＋visit=対面ON＋うつつポーズ要求）／ `visit_user`（1on1専用・対面モードON）。push 実体は `services/actions/runner.execute_push` を共有。日次予算は `spontaneous_initiative_daily_cap`（キャラ自発のリクエストのみ消費。預かり配達はユーザ起点なので消費しない）を発話予約と共有 |
 | `rescheduler.py` | `override_schedule`（1on1専用・当日予定の一時上書き）。state=OnTime/haru/adhoc/occupancy0.85 のエントリを insert するだけ（占有圧最大が勝つ読み取り解決）。`parse_until_time` は 24時超え表記対応・常に24h以内 |
 | `later_speaker.py` | `speak_later`（1on1専用・キャラ発の時限発話の仕掛け）。時刻＋用件メモを speech_reservations へ pending insert（本文は発火時に本人が生成）。未来 availability は無風仮定で仕掛け時にエラー判定・72h horizon・同一セッションの pending は superseded に倒して置き直し。発火は `services/gate/speech_reservation.py` |

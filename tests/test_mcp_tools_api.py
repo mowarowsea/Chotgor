@@ -57,7 +57,7 @@ class TestListTools:
         """公開されるツール一覧が想定どおり全種返ること。
 
         MCP 公開ツール（基本セット）は tool_specs.BASE_TOOL_SPECS の台帳と
-        同一の並び・同一の 11 種であること。並びと数が変わったらこのテストが知らせる。
+        同一の並び・同一の 12 種であること。並びと数が変わったらこのテストが知らせる。
         コンテキスト別追加ツール（reach_out 等）はクエリ付きの場合のみ合成される
         （TestContextToolExposure を参照）。
         """
@@ -77,6 +77,7 @@ class TestListTools:
             "power_recall",
             "web_search",
             "take_leave",
+            "read_dear_ghost",
         ]
 
     def test_each_tool_has_required_fields(self, client_local):

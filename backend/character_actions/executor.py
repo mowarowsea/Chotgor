@@ -25,6 +25,7 @@ from backend.character_actions.tool_specs import BASE_TOOL_SPECS
 from backend.character_actions.carver import Carver, extract_carve_narrative_tags
 from backend.character_actions.inscriber import Inscriber, extract_inscribe_memory_tags
 from backend.character_actions.threader import Threader
+from backend.character_actions.guide_reader import read_dear_ghost
 from backend.character_actions.web_searcher import WebSearcher
 from backend.character_actions.later_speaker import LaterSpeaker
 from backend.character_actions.leaver import Leaver
@@ -375,6 +376,8 @@ class ToolExecutor:
                 reason=str(tool_input.get("reason", "")),
                 hours=tool_input.get("hours"),
             )
+        if tool_name == "read_dear_ghost":
+            return read_dear_ghost(section=str(tool_input.get("section", "") or ""))
         if tool_name == "reach_out":
             # うつつ専用: 相手へ現実のメッセージを送る（context_tools.py が露出を制御）。
             # Messenger は現在の default_origin（execute() の origin 上書き込み）で
