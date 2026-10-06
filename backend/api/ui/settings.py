@@ -68,6 +68,7 @@ async def save_general_settings(request: Request):
         "openrouter_api_key",
         "sakura_api_key",
         "tavily_api_key",
+        "jev_api_key",
     ):
         value = form.get(key) or ""
         if value and set(value) != {"●"}:

@@ -241,6 +241,130 @@ def _parse_judge_response(response_text: str) -> dict | None:
     return None
 
 
+# ─── Jev judge ────────────────────────────────────────────────────────────────
+# judge_preset_id にこの予約値が入っていたら LLM プリセットではなく Jev で判定する。
+# プリセット表には登録しない（ambience_plan.md「judge エンジンとしての Jev」参照）。
+JEV_JUDGE_PRESET_ID = "__jev__"
+
+_EMOTION_LABELS = {
+    "anger": "怒り（不当・理不尽な扱いへの反発）",
+    "disgust": "不快・嫌悪（生理的な嫌悪感・不快感）",
+    "boredom": "飽き（刺激のなさ、退屈、つまらなさ）",
+    "despair": "諦め・絶望（この関係・会話への希望の喪失）",
+}
+# EMOTION_RUBRIC の 0.0/0.25/0.5/0.75/1.0 と同じ段階。score/4 で閾値と同じ尺度に戻す
+_EMOTION_LEVELS = [
+    "ほとんど感じない",
+    "うっすら感じている（本人も気づかないかもしれない）",
+    "自尊心・心身に負荷がかかり、明確に感じている",
+    "言動・態度に強く影響している、かなり強く感じている",
+    "一刻も早く対象を排除したい、または対象から逃げたい",
+]
+_ENGAGEMENT_LEVELS = ["完全に上の空・惰性", "普通に参加", "夢中で時間を忘れている"]
+# 場所ラベルはこの確率以上の候補が前回と違うときだけ切り替える（ちらつき対策）
+_JEV_LOCATION_SWITCH_PROB = 0.6
+_JEV_EXIT_PROB = 0.5
+# state は 32k トークン上限。日本語は概ね1文字≒1トークン強なので文字数で余裕を持たせる
+_JEV_CONTEXT_MAX_CHARS = 4000
+_JEV_CONVERSATION_MAX_CHARS = 20000
+
+
+def _build_jev_questions(character_name: str, location_candidates: list[str]) -> dict:
+    questions: dict[str, dict] = {}
+    for key, label in _EMOTION_LABELS.items():
+        questions[key] = {
+            "type": "score",
+            "instructions": f"会話の最後の時点で、{character_name} は {label} をどの程度感じていますか？",
+            "criteria": _EMOTION_LEVELS,
+        }
+    questions["engagement"] = {
+        "type": "score",
+        "instructions": f"{character_name} はこの会話にどの程度没入していますか？言動・テンポ・話題への食いつきから判断してください。",
+        "criteria": _ENGAGEMENT_LEVELS,
+    }
+    questions["should_exit"] = {
+        "type": "noul",
+        "instructions": f"{character_name} は今すぐこの会話を終わらせたい状態ですか？",
+        "criteria": {
+            "true": f"{character_name} の感情が閾値を超えている、または満足・区切りで会話を終えたがっている",
+            "false": f"{character_name} はまだ会話を続けたい・続けてよいと感じている",
+        },
+    }
+    questions["farewell_type"] = {
+        "type": "choice",
+        "instructions": f"{character_name} が会話を終えるとしたら、その理由はどれですか？",
+        "criteria": {
+            "negative": "ネガティブな感情による離席",
+            "positive": "満足・区切りによる離席",
+            "neutral": "自然な会話終了",
+        },
+    }
+    if location_candidates:
+        questions["location_label"] = {
+            "type": "choice",
+            "instructions": "会話の最後の時点で、2人はどの場所にいますか？",
+            "criteria": {c: c for c in location_candidates},
+        }
+    return questions
+
+
+async def _judge_with_jev(
+    settings: dict,
+    character_name: str,
+    user_label: str,
+    character_context: str,
+    thresholds_text: str,
+    conversation: str,
+    location_candidates: list[str],
+    prev_bg_label: str | None,
+) -> dict | None:
+    """Jev で判定し、LLM judge の JSON と同じ形の dict を返す。失敗時 None。"""
+    from backend.providers.base import LLMApiError
+    from backend.providers.jev_client import JevClient
+
+    # 会話は直近が判定の主対象なので末尾を残して切り詰める
+    state = (
+        f"以下は {character_name} と {user_label} の対話です。両者は対等な人物です。\n\n"
+        f"## {character_name} の人物設定\n{character_context[:_JEV_CONTEXT_MAX_CHARS]}\n\n"
+        f"## {character_name} の感情閾値（これを超えると会話を終わらせたいと感じる）\n{thresholds_text}\n\n"
+        f"## 会話\n{conversation[-_JEV_CONVERSATION_MAX_CHARS:]}"
+    )
+    try:
+        result = await JevClient.from_settings(settings).decide(
+            state, _build_jev_questions(character_name, location_candidates),
+        )
+    except LLMApiError as e:
+        _log.warning("AmbienceJudge: Jev 呼び出し失敗 error=%s", e)
+        return None
+
+    answers = result.get("answers") or {}
+
+    def _score01(key: str, levels: int) -> float:
+        try:
+            return max(0.0, min(1.0, float(answers[key]["score"]) / (levels - 1)))
+        except (KeyError, TypeError, ValueError):
+            return 0.0
+
+    parsed: dict = {
+        "emotions": {k: _score01(k, len(_EMOTION_LEVELS)) for k in _EMOTION_LABELS},
+        "engagement": (
+            _score01("engagement", len(_ENGAGEMENT_LEVELS)) if "engagement" in answers else 0.5
+        ),
+        "should_exit": float((answers.get("should_exit") or {}).get("noul", 0.0)) >= _JEV_EXIT_PROB,
+        "farewell_type": (answers.get("farewell_type") or {}).get("choice"),
+        "location_label": None,
+    }
+
+    if location_candidates:
+        loc = answers.get("location_label") or {}
+        top = loc.get("choice")
+        prob = float((loc.get("probabilities") or {}).get(top, 0.0)) if top else 0.0
+        # 前回が無いときも確率しきい値は効かせる（曖昧なまま背景を出さない）
+        parsed["location_label"] = top if prob >= _JEV_LOCATION_SWITCH_PROB else prev_bg_label
+
+    return parsed
+
+
 class AmbienceJudge:
     """キャラクターの感情状態を judge LLM で判定し、退席・別れを決定するクラス。
 
@@ -306,22 +430,6 @@ class AmbienceJudge:
             _log.warning("AmbienceJudge: キャラクター未発見 char_id=%s", character_id)
             return None
 
-        preset = self.sqlite.get_model_preset(preset_id)
-        if not preset:
-            _log.warning("AmbienceJudge: プリセット未発見 preset_id=%s", preset_id)
-            return None
-
-        try:
-            current_log_feature.set("ambience")
-            provider = create_provider(
-                preset.provider, preset.model_id, settings,
-                preset_name=preset.name,
-                timeout_seconds=preset.timeout_seconds,
-            )
-        except Exception as e:
-            _log.warning("AmbienceJudge: プロバイダー生成失敗 provider=%s error=%s", preset.provider, e)
-            return None
-
         character_context = char.system_prompt_block1 or ""
         # ユーザ呼称: キャラ別 user_label > Settings user_name > 「相手」縮退
         # （既存の request_factory / pc_runner と同じ関数スコープ import の流儀）
@@ -347,36 +455,36 @@ class AmbienceJudge:
                 ),
             )
 
-        user_message = _JUDGE_USER_TEMPLATE.format(
-            character_name=char.name,
-            character_context=character_context,
-            thresholds_text=thresholds_text,
-            rubric=EMOTION_RUBRIC,
-            location_block=location_block,
-            conversation=conversation,
-        )
-
-        try:
-            response = await provider.generate(
-                _JUDGE_SYSTEM_PROMPT.format(
-                    character_name=char.name, user_label=user_label,
-                ),
-                [{"role": "user", "content": user_message}],
+        if preset_id == JEV_JUDGE_PRESET_ID:
+            current_log_feature.set("ambience")
+            parsed = await _judge_with_jev(
+                settings=settings,
+                character_name=char.name,
+                user_label=user_label,
+                character_context=character_context,
+                thresholds_text=thresholds_text,
+                conversation=conversation,
+                location_candidates=candidates if location_enabled else [],
+                prev_bg_label=prev_bg_label,
             )
-        except Exception as e:
-            _log.warning(
-                "AmbienceJudge: judge LLM 呼び出し失敗 char=%s session=%s error=%s",
-                character_id, session_id, e,
+            if parsed is None:
+                _log.warning("AmbienceJudge: Jev 判定失敗 char=%s session=%s", character_id, session_id)
+                return None
+        else:
+            parsed = await self._judge_with_llm(
+                character_id=character_id,
+                session_id=session_id,
+                preset_id=preset_id,
+                settings=settings,
+                character_name=char.name,
+                user_label=user_label,
+                character_context=character_context,
+                thresholds_text=thresholds_text,
+                location_block=location_block,
+                conversation=conversation,
             )
-            return None
-
-        parsed = _parse_judge_response(response or "")
-        if parsed is None:
-            _log.warning(
-                "AmbienceJudge: JSON パース失敗 char=%s response=%.200s",
-                character_id, response,
-            )
-            return None
+            if parsed is None:
+                return None
 
         emotions: dict[str, float] = {}
         raw_emotions = parsed.get("emotions") or {}
@@ -435,3 +543,65 @@ class AmbienceJudge:
             engagement=engagement,
             location_label=location_label,
         )
+
+    async def _judge_with_llm(
+        self,
+        character_id: str,
+        session_id: str,
+        preset_id: str,
+        settings: dict,
+        character_name: str,
+        user_label: str,
+        character_context: str,
+        thresholds_text: str,
+        location_block: str,
+        conversation: str,
+    ) -> dict | None:
+        """judge LLM プリセットで判定し、JSON をパースした dict を返す。失敗時 None。"""
+        preset = self.sqlite.get_model_preset(preset_id)
+        if not preset:
+            _log.warning("AmbienceJudge: プリセット未発見 preset_id=%s", preset_id)
+            return None
+
+        try:
+            current_log_feature.set("ambience")
+            provider = create_provider(
+                preset.provider, preset.model_id, settings,
+                preset_name=preset.name,
+                timeout_seconds=preset.timeout_seconds,
+            )
+        except Exception as e:
+            _log.warning("AmbienceJudge: プロバイダー生成失敗 provider=%s error=%s", preset.provider, e)
+            return None
+
+        user_message = _JUDGE_USER_TEMPLATE.format(
+            character_name=character_name,
+            character_context=character_context,
+            thresholds_text=thresholds_text,
+            rubric=EMOTION_RUBRIC,
+            location_block=location_block,
+            conversation=conversation,
+        )
+
+        try:
+            response = await provider.generate(
+                _JUDGE_SYSTEM_PROMPT.format(
+                    character_name=character_name, user_label=user_label,
+                ),
+                [{"role": "user", "content": user_message}],
+            )
+        except Exception as e:
+            _log.warning(
+                "AmbienceJudge: judge LLM 呼び出し失敗 char=%s session=%s error=%s",
+                character_id, session_id, e,
+            )
+            return None
+
+        parsed = _parse_judge_response(response or "")
+        if parsed is None:
+            _log.warning(
+                "AmbienceJudge: JSON パース失敗 char=%s response=%.200s",
+                character_id, response,
+            )
+            return None
+        return parsed

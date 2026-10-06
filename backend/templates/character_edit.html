@@ -553,12 +553,17 @@
             </summary>
             <div class="ch-field" style="margin-bottom:0">
                 <label class="ch-label" for="judge_preset_id">judge モデル{{ ch_help(
-                    '場のなりゆき判定（退席・背景の切替）に使う judge LLM プリセット。'
+                    '場のなりゆき判定（退席・背景の切替）に使う judge LLM プリセット、または判定専用の Jev。'
                     '未設定なら疲労離席の縮退動作のみになります。'
                 ) }}
                 </label>
                 <select id="judge_preset_id" name="judge_preset_id" class="ch-select">
                     <option value="">(未設定)</option>
+                    {# 予約値: プリセット表に無い判定専用モデル（ambience_judge.JEV_JUDGE_PRESET_ID） #}
+                    <option value="__jev__"
+                        {% if character and character.judge_preset_id == "__jev__" %}selected{% endif %}>
+                        Jev (TypeSafe 判定モデル)
+                    </option>
                     {% for preset in model_presets %}
                     <option value="{{ preset.id }}"
                         {% if character and character.judge_preset_id == preset.id %}selected{% endif %}>

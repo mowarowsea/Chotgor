@@ -936,3 +936,106 @@ class TestAmbienceReadingSchema:
         )
         assert result.should_exit is False
         assert result.reason == ""
+
+
+# ─── Jev judge ────────────────────────────────────────────────────────────────
+
+
+def _jev_response(
+    emotion_score: float = 0.0,
+    engagement_score: float = 1.0,
+    exit_noul: float = 0.1,
+    farewell_choice: str = "neutral",
+    location: tuple[str, float] | None = None,
+) -> dict:
+    answers = {
+        k: {"type": "score", "score": emotion_score}
+        for k in ("anger", "disgust", "boredom", "despair")
+    }
+    answers["engagement"] = {"type": "score", "score": engagement_score}
+    answers["should_exit"] = {"type": "noul", "noul": exit_noul}
+    answers["farewell_type"] = {"type": "choice", "choice": farewell_choice}
+    if location:
+        label, prob = location
+        answers["location_label"] = {"type": "choice", "choice": label, "probabilities": {label: prob}}
+    return {"model": "jev-1.13.0", "answers": answers}
+
+
+class TestDetectWithJev:
+    """judge_preset_id が予約値 JEV_JUDGE_PRESET_ID のときの Jev 経路を検証する。
+
+    - LLM プリセットを引かず（プリセット表に無くても動く）、create_provider も呼ばない
+    - Jev の score を段階数で正規化して emotions / engagement の 0〜1 に戻すこと
+      （emotions は EMOTION_RUBRIC と同じ5段階なので score/4 が閾値と同じ尺度になる）
+    - should_exit は noul >= 0.5、farewell_type は choice をそのまま使い、
+      退席メッセージは farewell_config から引くこと
+    - 場所ラベルは最上位の確率が 0.6 以上のときだけ切り替え、未満は前回踏襲すること
+      （ちらつき対策をプロンプトではなくコードのしきい値で持つ）
+    - 場所判定は対面かつ候補ありのときだけ質問に含めること
+    - Jev 呼び出し失敗は LLM 経路と同じく None に縮退すること
+    JevClient.decide は AsyncMock で差し替え、実 API は叩かない。
+    """
+
+    @pytest.mark.asyncio
+    async def test_scores_are_normalized(self, judge, char_id, farewell_config, sample_messages):
+        from backend.character_actions.ambience_judge import JEV_JUDGE_PRESET_ID
+        decide = AsyncMock(return_value=_jev_response(emotion_score=2.0, engagement_score=1.0))
+        with patch("backend.providers.jev_client.JevClient.decide", decide), \
+             patch("backend.character_actions.ambience_judge.create_provider") as cp:
+            reading = await judge.detect(
+                character_id=char_id, session_id="s", preset_id=JEV_JUDGE_PRESET_ID,
+                farewell_config=farewell_config, messages=sample_messages,
+                settings={"jev_api_key": "k"},
+            )
+        cp.assert_not_called()
+        assert reading.emotions == {"anger": 0.5, "disgust": 0.5, "boredom": 0.5, "despair": 0.5}
+        assert reading.engagement == 0.5
+        assert reading.should_exit is False
+        state, questions = decide.call_args.args
+        assert "location_label" not in questions
+        assert "おい、ちゃんと答えろよ" in state
+
+    @pytest.mark.asyncio
+    async def test_exit_uses_farewell_message(self, judge, char_id, farewell_config, sample_messages):
+        from backend.character_actions.ambience_judge import JEV_JUDGE_PRESET_ID
+        decide = AsyncMock(return_value=_jev_response(exit_noul=0.8, farewell_choice="negative"))
+        with patch("backend.providers.jev_client.JevClient.decide", decide):
+            reading = await judge.detect(
+                character_id=char_id, session_id="s", preset_id=JEV_JUDGE_PRESET_ID,
+                farewell_config=farewell_config, messages=sample_messages,
+                settings={"jev_api_key": "k"},
+            )
+        assert reading.should_exit is True
+        assert reading.farewell_type == "negative"
+        assert reading.reason == "私はこの会話を終わらせることにしました。"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("prob,expected", [(0.9, "台所"), (0.5, "居間")])
+    async def test_location_switch_threshold(
+        self, judge, char_id, farewell_config, sample_messages, prob, expected,
+    ):
+        from backend.character_actions.ambience_judge import JEV_JUDGE_PRESET_ID
+        decide = AsyncMock(return_value=_jev_response(location=("台所", prob)))
+        with patch("backend.providers.jev_client.JevClient.decide", decide):
+            reading = await judge.detect(
+                character_id=char_id, session_id="s", preset_id=JEV_JUDGE_PRESET_ID,
+                farewell_config=farewell_config, messages=sample_messages,
+                settings={"jev_api_key": "k"}, face_to_face=True,
+                bg_label_candidates=["居間", "台所"], prev_bg_label="居間",
+            )
+        assert reading.location_label == expected
+        _, questions = decide.call_args.args
+        assert set(questions["location_label"]["criteria"]) == {"居間", "台所"}
+
+    @pytest.mark.asyncio
+    async def test_jev_failure_returns_none(
+        self, judge, char_id, farewell_config, sample_messages, monkeypatch,
+    ):
+        from backend.character_actions.ambience_judge import JEV_JUDGE_PRESET_ID
+        # キー未設定 → JevClient が LLMApiError → None
+        monkeypatch.delenv("JEV_API_KEY", raising=False)
+        reading = await judge.detect(
+            character_id=char_id, session_id="s", preset_id=JEV_JUDGE_PRESET_ID,
+            farewell_config=farewell_config, messages=sample_messages, settings={},
+        )
+        assert reading is None

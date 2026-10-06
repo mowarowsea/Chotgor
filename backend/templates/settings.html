@@ -124,6 +124,14 @@
                    "tvly-… (leave blank to keep current)",
                    "Not configured. Web search will be disabled."
                ) }}
+
+            {{ masked_api_key_input(
+                   "jev_api_key",
+                   "Jev API Key",
+                   "Optional — なりゆき judge を Jev（TypeSafe 判定モデル）にするとき使用",
+                   "(leave blank to keep current)",
+                   "Not configured. 環境変数 JEV_API_KEY があればそちらを使います。"
+               ) }}
             </details>
 
             <hr class="ch-divider">
