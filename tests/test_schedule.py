@@ -236,6 +236,19 @@ class TestScheduledAvailability:
         a = check_availability(char, _MON.replace(hour=12), sqlite=sqlite_store)
         assert a.state == "OnTime" and a.available is True
 
+    def test_away_overrides_face_to_face(self, sqlite_store):
+        """対面中でも away_until が未来なら offline 相当（本人の離席は対面より優先・§7.5 改定）。"""
+        char = self._enabled_char(
+            sqlite_store, face_to_face_mode=1,
+            away_until=_MON.replace(hour=13), away_reason="疲労のため休息中",
+        )
+        a = check_availability(char, _MON.replace(hour=12), sqlite=sqlite_store)
+        assert a.state == "offline" and a.available is False
+        assert a.reason == "疲労のため休息中"
+        # 期限が過ぎれば対面の OnTime 強制に戻る
+        a2 = check_availability(char, _MON.replace(hour=14), sqlite=sqlite_store)
+        assert a2.state == "OnTime"
+
     def test_away_overrides_entry(self, sqlite_store):
         """away_until が未来なら offline 相当（エントリより優先・§7.5）。"""
         char = self._enabled_char(

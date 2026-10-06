@@ -3,8 +3,8 @@
 2系統の判定経路を持つ（生活カレンダーのキャラ単位トグルで切り替わる）:
 
 **従来経路**（living_schedule_enabled = 0）— aliveness_plan.md §5.1 の二値ゲート:
-    1. 対面モード（既存）      : 対面中は常に available（目の前にいる）
-    2. away 状態（動的）       : 疲労離席・take_leave が設定した不在期限
+    1. away 状態（動的）       : 疲労離席・take_leave が設定した不在期限
+    2. 対面モード（既存）      : 対面中は available（目の前にいる）
     3. うつつシーン進行中      : 無人シーンの最中は席にいない
     4. 生活時間割（週間スケジュール）: キャラクター設計者（ユーザ）が管理UIで設定
 
@@ -12,8 +12,12 @@
     availability を二値から **(state, 占有圧, 返信率, チェック間隔)** の連続量へ一般化する。
     now を含む planned な schedule_entries のうち占有圧（occupancy）最大が勝つ。
     エントリ皆無の時間帯は OnTime（完全リアルタイム）。
-    優先順位: 対面(OnTime強制) > away_until(offline相当) > schedule_entries(占有圧最大) >
+    優先順位: away_until(offline相当) > 対面(OnTime強制) > schedule_entries(占有圧最大) >
               エントリなし(OnTime)。
+
+両経路とも away が対面より上にあるのは、take_leave（本人の宣言）と疲労離席（体の物理）を
+対面中でも効かせるため。対面の「聖域」が防ぐのは世界からの割り込みで、本人の離席ではない
+（schedule_plan.md §7.5「2026-10-07 改定」）。
     ※ この経路では「うつつシーン進行中 = unavailable」は削除された（§7.5）— シーンは
       ②④エントリの内側で走り、そのエントリの state が配達値を直接決めるため不要。
 
@@ -239,26 +243,38 @@ def check_availability(
     return _check_availability_legacy(character, now, usual_scene_running)
 
 
+def _away_availability(character, now: datetime) -> Availability | None:
+    """away_until（疲労離席・take_leave 由来）が未来なら offline 相当を返す。なければ None。
+
+    両経路の最優先判定。配達値とは別系統の動的オーバーライドで（schedule_plan.md §7.5）、
+    対面中でも効く — 本人の宣言・体の物理による離席を対面が握りつぶさないため。
+    """
+    away_until = getattr(character, "away_until", None)
+    if away_until is None or away_until <= now:
+        return None
+    return _availability_from_state(
+        "offline",
+        reason=str(getattr(character, "away_reason", None) or "away"),
+        occupancy=1.0,
+    )
+
+
 def _check_availability_legacy(
     character, now: datetime, usual_scene_running: bool
 ) -> Availability:
     """従来の二値ゲート（living_schedule_enabled=0）。
 
-    優先順位: 対面モード（available 確定）→ away → うつつシーン進行中 → 生活時間割。
+    優先順位: away → 対面モード（available 確定）→ うつつシーン進行中 → 生活時間割。
     連続量は available から導出する（True→OnTime / False→offline）ため、二値しか見ない
     既存呼び出しはそのまま動く。
     """
-    # 対面中は目の前にいる — 他のすべての不在理由に優先して available
+    away = _away_availability(character, now)
+    if away is not None:
+        return away
+
+    # 対面中は目の前にいる — 本人の離席以外の不在理由に優先して available
     if int(getattr(character, "face_to_face_mode", 0) or 0):
         return _availability_from_state("OnTime")
-
-    away_until = getattr(character, "away_until", None)
-    if away_until is not None and away_until > now:
-        return _availability_from_state(
-            "offline",
-            reason=str(getattr(character, "away_reason", None) or "away"),
-            occupancy=1.0,
-        )
 
     if usual_scene_running:
         return _availability_from_state("offline", reason="usual_scene", occupancy=1.0)
@@ -273,7 +289,7 @@ def _check_availability_legacy(
 def _check_availability_scheduled(character, now: datetime, sqlite) -> Availability:
     """生活カレンダー経路（living_schedule_enabled=1）— schedule_plan.md §2/§7.5。
 
-    優先順位: 対面(OnTime強制) > away_until(offline相当) > schedule_entries(占有圧最大) >
+    優先順位: away_until(offline相当) > 対面(OnTime強制) > schedule_entries(占有圧最大) >
               エントリなし(OnTime)。うつつシーン進行中は判定材料にしない（§7.5で削除）。
 
     Args:
@@ -284,18 +300,13 @@ def _check_availability_scheduled(character, now: datetime, sqlite) -> Availabil
     Returns:
         占有圧最大エントリの (state, 占有圧, 返信率, チェック間隔)。エントリ皆無なら OnTime。
     """
-    # 対面中は割り込まれない — OnTime を強制（§7 (a)）
+    away = _away_availability(character, now)
+    if away is not None:
+        return away
+
+    # 対面中は予定に割り込まれない — OnTime を強制（§7 (a)）
     if int(getattr(character, "face_to_face_mode", 0) or 0):
         return _availability_from_state("OnTime")
-
-    # away_until（疲労離席・take_leave 由来）は配達値とは別系統の動的オーバーライド（§7.5）
-    away_until = getattr(character, "away_until", None)
-    if away_until is not None and away_until > now:
-        return _availability_from_state(
-            "offline",
-            reason=str(getattr(character, "away_reason", None) or "away"),
-            occupancy=1.0,
-        )
 
     # now を含む planned エントリのうち占有圧最大が勝つ（重なりは読み取り時に解決）
     entries = sqlite.get_active_schedule_entries(character.id, now)

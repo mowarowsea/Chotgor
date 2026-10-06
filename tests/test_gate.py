@@ -2,7 +2,9 @@
 
 検証対象（docs/planned/aliveness_plan.md §5.1〜5.2）:
     1. check_availability: 純関数の判定優先順位
-       （対面 > away > うつつシーン進行中 > 生活時間割）と日跨ぎ時間帯
+       （away > 対面 > うつつシーン進行中 > 生活時間割）と日跨ぎ時間帯。
+       away が対面より上なのは、本人の離席（take_leave・疲労離席）を対面中でも
+       効かせるため（schedule_plan.md §7.5「2026-10-07 改定」）
     2. メッセージ預かり（escrow）: delivered=False 保存では封筒が作られず、
        配達（mark_messages_delivered）で初めて chat.message 封筒ができること。
        時間差注釈の整形
@@ -88,14 +90,33 @@ class TestCheckAvailability:
         after = _MONDAY_NOON + timedelta(hours=3)
         assert check_availability(char, after).available is True
 
-    def test_face_to_face_overrides_everything(self):
-        """対面モード中は away・時間割に関係なく available（目の前にいる）。"""
+    def test_face_to_face_overrides_schedule(self):
+        """対面モード中は時間割・うつつ進行中に関係なく available（目の前にいる）。"""
         char = _FakeChar(
             face_to_face=1,
-            away_until=_MONDAY_NOON + timedelta(hours=2),
             schedule={"mon": [{"from": "00:00", "to": "23:59", "label": "仕事"}]},
         )
         assert check_availability(char, _MONDAY_NOON).available is True
+        assert check_availability(
+            char, _MONDAY_NOON, usual_scene_running=True
+        ).available is True
+
+    def test_away_overrides_face_to_face(self):
+        """対面中でも away_until が未来なら unavailable（本人の離席は対面より強い）。
+
+        旧仕様（対面 > away）では、対面中に take_leave や疲労離席が発火しても
+        次の発言で即応答させられていた。期限が過ぎれば対面の OnTime に戻る。
+        """
+        char = _FakeChar(
+            face_to_face=1,
+            away_until=_MONDAY_NOON + timedelta(hours=2),
+            away_reason="ちょっと外の空気を吸ってくる",
+        )
+        a = check_availability(char, _MONDAY_NOON)
+        assert a.available is False and a.state == "offline"
+        assert a.reason == "ちょっと外の空気を吸ってくる"
+        after = _MONDAY_NOON + timedelta(hours=3)
+        assert check_availability(char, after).state == "OnTime"
 
     def test_usual_scene_running_blocks(self):
         """うつつシーン進行中は unavailable("usual_scene")。"""
@@ -259,6 +280,29 @@ class TestFatigueLeave:
         )
         assert farewells[0].payload["farewell_type"] == "fatigue"
 
+    def test_fatigue_leave_effective_in_face_to_face(self, sqlite_store):
+        """対面中に疲労離席が発火しても、休息が明けるまで応答しない（対面は離席を握りつぶさない）。
+
+        旧仕様では対面が away より優先され、挨拶を残して休んだはずのキャラが
+        次の発言で即座に呼び戻されていた。対面フラグ自体は落とさない。
+        """
+        char_id, char_name = _make_character(sqlite_store, face_to_face_mode=1)
+        sid = str(uuid.uuid4())
+        sqlite_store.create_chat_session(session_id=sid, model_id=f"{char_name}@d")
+        now = datetime(2026, 7, 10, 12, 0)
+        self._exhaust(sqlite_store, char_id, count=300, base=now)
+        fired = check_fatigue_leave(
+            sqlite_store, char_id, char_name, sid,
+            farewell_config={"fatigue": {"theta_hard": 0.9}},
+            engagement=1.0,
+            now=now,
+        )
+        assert fired is True
+        char = sqlite_store.get_character(char_id)
+        assert char.face_to_face_mode == 1
+        a = check_availability(char, now + timedelta(minutes=1))
+        assert a.available is False and a.state == "offline"
+
     def test_engagement_raises_threshold(self, sqlite_store):
         """没入度が高いと閾値が持ち上がり、同じ体調圧でも発火しない。"""
         char_id, char_name = _make_character(sqlite_store)
@@ -307,6 +351,23 @@ class TestTakeLeave:
             char_id, event_type_prefixes=["chat.farewell"],
         )[0]
         assert ev.payload["farewell_type"] == "take_leave"
+
+    def test_take_leave_effective_in_face_to_face(self, sqlite_store):
+        """対面中に take_leave しても、戻るまでは応答しない（呼べば必ず執行される権利）。
+
+        対面フラグは落とさない — 席を外すのは「その場をいったん離れる」ことで、
+        戻れば同じ空間に戻る。期限が過ぎれば対面の OnTime に戻ることも確認する。
+        """
+        char_id, _ = _make_character(sqlite_store, face_to_face_mode=1)
+        Leaver(char_id, str(uuid.uuid4()), sqlite_store).take_leave(
+            reason="少し一人になりたい", hours=1,
+        )
+        char = sqlite_store.get_character(char_id)
+        assert char.face_to_face_mode == 1
+        a = check_availability(char)
+        assert a.available is False and a.reason == "少し一人になりたい"
+        back = datetime.now() + timedelta(hours=1, minutes=5)
+        assert check_availability(char, back).state == "OnTime"
 
     def test_hours_clamped(self, sqlite_store):
         """離席時間は上限12時間・不正値は既定2時間にクランプされる。"""

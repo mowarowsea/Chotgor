@@ -275,6 +275,9 @@ class TestStreamMessage:
         character.name = "alice"
         character.system_prompt_block1 = ""
         character.meta_instructions = ""
+        # 応答可能性ゲートは away_until を最初に datetime と比較する。MagicMock のままだと
+        # 比較できないので「離席していない」を明示する（ゲートを素通りして即時応答させる）。
+        character.away_until = None
 
         preset = MagicMock()
         preset.id = "preset-1"
@@ -404,6 +407,9 @@ class TestStreamMessage:
         character.name = "alice"
         character.system_prompt_block1 = ""
         character.meta_instructions = ""
+        # 応答可能性ゲートは away_until を最初に datetime と比較する。MagicMock のままだと
+        # 比較できないので「離席していない」を明示する（ゲートを素通りして即時応答させる）。
+        character.away_until = None
 
         preset = MagicMock()
         preset.id = "preset-1"
@@ -579,6 +585,9 @@ class TestStreamMessageRegenerate:
         character.name = "alice"
         character.system_prompt_block1 = ""
         character.meta_instructions = ""
+        # 応答可能性ゲートは away_until を最初に datetime と比較する。MagicMock のままだと
+        # 比較できないので「離席していない」を明示する（ゲートを素通りして即時応答させる）。
+        character.away_until = None
 
         def fake_archive(session_id, anchor_message_id):
             calls.append(("archive", anchor_message_id))
