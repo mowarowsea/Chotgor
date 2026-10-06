@@ -204,6 +204,16 @@ Jev には「0〜1 の連続値」「真偽」を直接返す型が無いため�
 
 Jev 版の出力は LLM 版の JSON と同じ dict 形へ詰め替え、以降の検証・縮退処理（候補外→前回踏襲 等）は共通。
 
+### 判定エンジンのラッパ（2026-10-06）
+`ambience_judge.JudgeEngine`（`LlmJudgeEngine` / `JevJudgeEngine`）で LLM と Jev を同じ口に揃える。
+- `resolve_judge_engine(sqlite, judge_preset_id, settings)` がエンジンを返す（予約値なら Jev、それ以外はプリセット）
+- `engine.read(JudgeInput)` → LLM judge の JSON と同じ形の dict。問い方の差はエンジン内に閉じる
+- `AmbienceJudge.detect()` はエンジンを区別しない（スキップ判定・値の検証・縮退・AmbienceReading 組み立てのみ）
+- ログ: 両エンジンとも下層（`BaseLLMProvider._log_request/_log_response` ／ `JevClient.decide`）が
+  `logger.log_provider_request/response(preset_name, ...)` で同じ形式に残す。logs 画面では
+  どちらも `ambience` のサブ行として並び、preset 欄が LLM プリセット名か `Jev` になる
+  （以前は Jev が何も残さず、判定が走ったか logs 画面から判別できなかった）
+
 ### 棄却した案（検討記録）
 | 案 | 棄却理由 |
 |---|---|

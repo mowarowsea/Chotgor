@@ -60,3 +60,36 @@ class TestJevClient:
         monkeypatch.setenv("JEV_API_KEY", "env")
         assert resolve_api_key({"jev_api_key": "db"}) == "db"
         assert resolve_api_key({}) == "env"
+
+
+class TestJevClientDebugLog:
+    """decide() が BaseLLMProvider と同じ形式で request / response をログへ残すことを検証する。
+
+    logs 画面で LLM judge と Jev judge を同等に並べるため、Jev もプリセット名
+    （既定 "Jev"）で log_provider_request / log_provider_response を呼ぶ。
+    失敗時もエラー文字列をレスポンスとして記録し、ログ上で失敗が判別できること。
+    """
+
+    @pytest.mark.asyncio
+    async def test_logs_request_and_response(self, monkeypatch):
+        calls = []
+        # インスタンスではなくクラスを差し替える（インスタンス属性に setattr すると、
+        # undo 後も束縛済みメソッドがインスタンスに残り、後続テストのクラス patch を隠す）
+        from backend.lib.debug_logger import ChotgorLogger
+        monkeypatch.setattr(ChotgorLogger, "log_provider_request", lambda self, n, d: calls.append(("req", n, d)))
+        monkeypatch.setattr(ChotgorLogger, "log_provider_response", lambda self, n, d: calls.append(("res", n, d)))
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"answers": {}}))
+        await JevClient("k", transport=transport).decide("x", {})
+        assert [(c[0], c[1]) for c in calls] == [("req", "Jev"), ("res", "Jev")]
+        assert calls[0][2]["state"] == "x"
+
+    @pytest.mark.asyncio
+    async def test_logs_error_as_response(self, monkeypatch):
+        calls = []
+        from backend.lib.debug_logger import ChotgorLogger
+        monkeypatch.setattr(ChotgorLogger, "log_provider_request", lambda self, n, d: None)
+        monkeypatch.setattr(ChotgorLogger, "log_provider_response", lambda self, n, d: calls.append(d))
+        transport = httpx.MockTransport(lambda r: httpx.Response(401, text="bad key"))
+        with pytest.raises(LLMApiError):
+            await JevClient("k", transport=transport).decide("x", {})
+        assert "401" in calls[0]

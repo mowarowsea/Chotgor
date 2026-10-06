@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 
+from backend.lib.debug_logger import logger
 from backend.providers.base import LLMApiError
 
 BASE_URL = "https://api.typesafe.ai/v1"
@@ -40,6 +41,7 @@ class JevClient:
         api_key: str,
         model: str = DEFAULT_MODEL,
         base_url: str = BASE_URL,
+        preset_name: str = "Jev",
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ):
@@ -47,6 +49,9 @@ class JevClient:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        # ログ（debug/ のファイル名・debug_log_entries.preset）に出す名前。
+        # BaseLLMProvider.preset_name と同じ役割で、logs 画面で LLM と並べて見える
+        self.preset_name = preset_name
         # テスト用に httpx.MockTransport を差し込めるようにしている
         self._transport = transport
 
@@ -85,7 +90,16 @@ class JevClient:
     async def decide(self, state: Any, questions: dict[str, dict], model: str = "") -> dict:
         """state に対して questions を判定し、レスポンス全体（model / answers / usage）を返す。"""
         body = {"model": model or self.model, "state": state, "questions": questions}
-        return await self._request("POST", "/systemone", json=body)
+        # BaseLLMProvider._log_request / _log_response / _log_error と同じ記録の仕方。
+        # feature が非メイン（ambience 等）ならここで debug_log_entries のサブ行が立つ
+        logger.log_provider_request(self.preset_name, body)
+        try:
+            result = await self._request("POST", "/systemone", json=body)
+        except LLMApiError as e:
+            logger.log_provider_response(self.preset_name, str(e))
+            raise
+        logger.log_provider_response(self.preset_name, result)
+        return result
 
 
 async def _connection_check() -> None:
