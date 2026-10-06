@@ -969,8 +969,8 @@ class TestDetectWithJev:
       （emotions は EMOTION_RUBRIC と同じ5段階なので score/4 が閾値と同じ尺度になる）
     - should_exit は noul >= 0.5、farewell_type は choice をそのまま使い、
       退席メッセージは farewell_config から引くこと
-    - 場所ラベルは最上位の確率が 0.6 以上のときだけ切り替え、未満は前回踏襲すること
-      （ちらつき対策をプロンプトではなくコードのしきい値で持つ）
+    - 場所ラベルは choice をそのまま採用し、前回判定は LLM 版と同じく質問文で渡すこと
+      （確率しきい値などの独自の切替規則は持たない）
     - 場所判定は対面かつ候補ありのときだけ質問に含めること
     - Jev 呼び出し失敗は LLM 経路と同じく None に縮退すること
     JevClient.decide は AsyncMock で差し替え、実 API は叩かない。
@@ -1010,12 +1010,9 @@ class TestDetectWithJev:
         assert reading.reason == "私はこの会話を終わらせることにしました。"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("prob,expected", [(0.9, "台所"), (0.5, "居間")])
-    async def test_location_switch_threshold(
-        self, judge, char_id, farewell_config, sample_messages, prob, expected,
-    ):
+    async def test_location_choice_is_used_as_is(self, judge, char_id, farewell_config, sample_messages):
         from backend.character_actions.ambience_judge import JEV_JUDGE_PRESET_ID
-        decide = AsyncMock(return_value=_jev_response(location=("台所", prob)))
+        decide = AsyncMock(return_value=_jev_response(location=("台所", 0.5)))
         with patch("backend.providers.jev_client.JevClient.decide", decide):
             reading = await judge.detect(
                 character_id=char_id, session_id="s", preset_id=JEV_JUDGE_PRESET_ID,
@@ -1023,9 +1020,10 @@ class TestDetectWithJev:
                 settings={"jev_api_key": "k"}, face_to_face=True,
                 bg_label_candidates=["居間", "台所"], prev_bg_label="居間",
             )
-        assert reading.location_label == expected
+        assert reading.location_label == "台所"
         _, questions = decide.call_args.args
         assert set(questions["location_label"]["criteria"]) == {"居間", "台所"}
+        assert "前回の判定: 居間" in questions["location_label"]["instructions"]
 
     @pytest.mark.asyncio
     async def test_jev_failure_returns_none(

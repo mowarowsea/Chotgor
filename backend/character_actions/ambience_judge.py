@@ -261,38 +261,46 @@ _EMOTION_LEVELS = [
     "一刻も早く対象を排除したい、または対象から逃げたい",
 ]
 _ENGAGEMENT_LEVELS = ["完全に上の空・惰性", "普通に参加", "夢中で時間を忘れている"]
-# 場所ラベルはこの確率以上の候補が前回と違うときだけ切り替える（ちらつき対策）
-_JEV_LOCATION_SWITCH_PROB = 0.6
+# noul は確率でしか返らないため真偽へ戻す境界（技術的制約による唯一の変換）
 _JEV_EXIT_PROB = 0.5
 # state は 32k トークン上限。日本語は概ね1文字≒1トークン強なので文字数で余裕を持たせる
 _JEV_CONTEXT_MAX_CHARS = 4000
 _JEV_CONVERSATION_MAX_CHARS = 20000
 
 
-def _build_jev_questions(character_name: str, location_candidates: list[str]) -> dict:
+def _build_jev_questions(
+    character_name: str,
+    user_label: str,
+    location_candidates: list[str],
+    prev_bg_label: str | None,
+) -> dict:
+    # 文言は LLM judge（_JUDGE_USER_TEMPLATE / _LOCATION_BLOCK_TEMPLATE）に揃える。
+    # 変えるのは Jev の型に載せるための技術的に必要な部分だけ。
     questions: dict[str, dict] = {}
     for key, label in _EMOTION_LABELS.items():
         questions[key] = {
             "type": "score",
-            "instructions": f"会話の最後の時点で、{character_name} は {label} をどの程度感じていますか？",
+            "instructions": (
+                f"{character_name} の現在の {label} のスコアは？"
+                "閾値を超えているなら閾値以上の段階を選ぶこと。"
+            ),
             "criteria": _EMOTION_LEVELS,
         }
     questions["engagement"] = {
         "type": "score",
-        "instructions": f"{character_name} はこの会話にどの程度没入していますか？言動・テンポ・話題への食いつきから判断してください。",
+        "instructions": (
+            f"{character_name} の会話への没入度は？"
+            "言動・テンポ・話題への食いつきから判断すること。"
+        ),
         "criteria": _ENGAGEMENT_LEVELS,
     }
     questions["should_exit"] = {
         "type": "noul",
         "instructions": f"{character_name} は今すぐこの会話を終わらせたい状態ですか？",
-        "criteria": {
-            "true": f"{character_name} の感情が閾値を超えている、または満足・区切りで会話を終えたがっている",
-            "false": f"{character_name} はまだ会話を続けたい・続けてよいと感じている",
-        },
     }
     questions["farewell_type"] = {
         "type": "choice",
-        "instructions": f"{character_name} が会話を終えるとしたら、その理由はどれですか？",
+        "instructions": f"{character_name} が会話を終わらせるとしたら、その種別は？",
         "criteria": {
             "negative": "ネガティブな感情による離席",
             "positive": "満足・区切りによる離席",
@@ -302,7 +310,13 @@ def _build_jev_questions(character_name: str, location_candidates: list[str]) ->
     if location_candidates:
         questions["location_label"] = {
             "type": "choice",
-            "instructions": "会話の最後の時点で、2人はどの場所にいますか？",
+            "instructions": (
+                f"いま {character_name} と {user_label} は対面で会っています。"
+                "会話の内容から「いま2人がいる場所」を1つ選んでください。"
+                f"前回の判定: {prev_bg_label or 'なし'}。"
+                "会話から場所が明確に変わったと判断できる場合のみ新しい場所を選び、"
+                "そうでなければ前回の判定と同じ場所を選ぶこと。"
+            ),
             "criteria": {c: c for c in location_candidates},
         }
     return questions
@@ -331,7 +345,8 @@ async def _judge_with_jev(
     )
     try:
         result = await JevClient.from_settings(settings).decide(
-            state, _build_jev_questions(character_name, location_candidates),
+            state,
+            _build_jev_questions(character_name, user_label, location_candidates, prev_bg_label),
         )
     except LLMApiError as e:
         _log.warning("AmbienceJudge: Jev 呼び出し失敗 error=%s", e)
@@ -356,11 +371,8 @@ async def _judge_with_jev(
     }
 
     if location_candidates:
-        loc = answers.get("location_label") or {}
-        top = loc.get("choice")
-        prob = float((loc.get("probabilities") or {}).get(top, 0.0)) if top else 0.0
-        # 前回が無いときも確率しきい値は効かせる（曖昧なまま背景を出さない）
-        parsed["location_label"] = top if prob >= _JEV_LOCATION_SWITCH_PROB else prev_bg_label
+        # 候補外・欠落時の前回踏襲は detect() 側の共通検証が行う
+        parsed["location_label"] = (answers.get("location_label") or {}).get("choice")
 
     return parsed
 
