@@ -48,6 +48,7 @@ from datetime import datetime, timedelta
 
 from backend.lib.debug_logger import logger as debug_logger
 from backend.lib.log_context import (
+    current_log_feature,
     current_log_session_id,
     current_log_target,
     new_message_id,
@@ -322,6 +323,8 @@ async def _deliver_session(
             last_text, last.attachments or [],
             sqlite, state.uploads_dir,
         )
+        # pending[:-1] は上で注釈付き本文へ置換済み（再度 format すると二重注釈になる）
+        log_user_message = "\n\n".join([*(m.content for m in pending[:-1]), last_text])
 
         # 配達マークは LLM 呼び出しの前（SSE 経路と同順・再送ループ防止）
         sqlite.mark_messages_delivered([m.id for m in pending])
@@ -336,10 +339,22 @@ async def _deliver_session(
         user_content = build_message_content(
             extra_annotation, [], sqlite, state.uploads_dir,
         )
+        log_user_message = extra_annotation
         logger.info(
             "発話予約: 合成注釈のみで発話を生成 char=%s session=%s",
             char.name, session.id,
         )
+
+    # Chotgor 起点のリクエストもメイン行として残す（発話・応答・preset が logs 画面に載る）。
+    # user_message にはキャラへ実際に渡した文面（時間差注釈・合成注釈込み）を記録する。
+    # 以降 preparation が feature を "chat" に切り替えるが、行の source_type は INSERT 時の値のまま。
+    current_log_feature.set(feature)
+    debug_logger.log_front_input({
+        "content": log_user_message,
+        "session_id": session.id,
+        "model_id": session.model_id,
+        "delivered_message_ids": [m.id for m in pending],
+    })
 
     chat_request = await build_1on1_chat_request(state, session, history, user_content)
 

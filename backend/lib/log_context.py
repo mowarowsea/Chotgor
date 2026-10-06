@@ -14,6 +14,13 @@ from contextvars import ContextVar
 # debug_logger は ensure_message_id() で書き込み直前に検出・lazy 採番する。
 UNSET_MESSAGE_ID = "--------"
 
+# Chotgor 側が起点の 1on1 応答生成（ユーザのリクエストではない）の source_type。
+# 1on1 と同じくメイン行（発話・応答・reasoning を持つ行）として記録し、
+# logs 画面では Chat タブに出し、発信元を system と表示する。
+#   escrow_delivery   : 預かり分の能動配達（遅配）
+#   speech_reservation: 発話予約（speak_later）の発火
+SYSTEM_MAIN_SOURCE_TYPES = frozenset({"escrow_delivery", "speech_reservation"})
+
 # リクエスト識別子（チャット1回ごと、chronicle/forgetキャラごとにセット）
 # 再生成時は旧 request_id を引き継ぐためにここだけ上書きされる。
 current_message_id: ContextVar[str] = ContextVar("current_message_id", default=UNSET_MESSAGE_ID)

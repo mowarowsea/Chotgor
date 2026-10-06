@@ -241,9 +241,11 @@ class ChotgorLogger:
         # GM・PC のレスポンスが続けて走る）が、各レスポンスを独立した MAIN 行として
         # 扱う設計（loop_strategies._run_gm / pc_runner の冒頭で log_front_input が
         # 呼ばれ、MAIN 行が新規 INSERT される）。
+        from .log_context import SYSTEM_MAIN_SOURCE_TYPES
         _MAIN_SOURCE_TYPES = {
             "chat", "scenario", "scenario_chat", "scenario_chat_pc",
             "usual_days", "usual_days_pc",
+            *SYSTEM_MAIN_SOURCE_TYPES,
         }
         if feature in _MAIN_SOURCE_TYPES:
             self._update_main_entry_preset(preset_name)

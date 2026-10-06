@@ -639,6 +639,14 @@ stream_message が history 内の預かり分を配達）。**(b) 能動配達**
 両系統とも配達手順（時間差注釈は LLM 渡しのコピーのみ・delivered_at と chat.message
 封筒の確定）は共通。**能動配達に日次コストガードは掛からない**（下記）。
 
+**ログ（2026-10-06）**: 能動配達・発話予約の発火は Chotgor 起点のリクエストとして、
+1on1 と同じメイン行（`debug_log_entries`、source_type=`escrow_delivery` / `speech_reservation`）を
+`_deliver_session` の生成前に INSERT する。user_message はキャラへ実際に渡した文面
+（時間差注釈・合成注釈込み）。logs 画面では Chat タブに出て、発信元は system と表示される
+（種別は `log_context.SYSTEM_MAIN_SOURCE_TYPES` に集約）。以前は配達経路がメイン行を作らず、
+LLM 応答の「メイン行更新」が空振りして遅配の返信が logs 画面から消えていた。
+なお預かった時点のユーザリクエスト行（受付だけで応答なし）はそのまま残る — 応答は配達側の行に載る。
+
 #### 日次コストガードの定義 — Spontaneous Initiative（2026-07-21 裁定）
 
 cap の目的は「**ユーザが意図しないリクエストの暴走を防ぐ**」こと。したがって

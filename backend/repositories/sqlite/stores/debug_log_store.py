@@ -196,7 +196,9 @@ class DebugLogStoreMixin:
         # 場面進行であり、性質としては Scenario と同類）。
         # "farewell" は旧名。ambience（なりゆき）にリネームされたが、
         # 既存レコードの source_type との後方互換のため両名を含める。
-        _CHAT_TYPES = ("chat", "ambience", "farewell", "trigger")
+        # SYSTEM_MAIN_SOURCE_TYPES（能動配達・発話予約）は Chotgor 起点だが 1on1 の応答なので Chat 側。
+        from backend.lib.log_context import SYSTEM_MAIN_SOURCE_TYPES
+        _CHAT_TYPES = ("chat", "ambience", "farewell", "trigger", *sorted(SYSTEM_MAIN_SOURCE_TYPES))
         _SCENARIO_TYPES = (
             "scenario", "scenario_chat", "scenario_chat_pc",
             "usual_days", "usual_days_pc",

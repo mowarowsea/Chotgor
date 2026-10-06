@@ -339,3 +339,37 @@ class TestDeliverSession:
         assert flow.calls == 0
         assert [m for m in sqlite_store.list_chat_messages(sid)
                 if m.role == "character"] == []
+
+
+class TestDeliveryDebugLog:
+    """能動配達（Chotgor 起点のリクエスト）が logs 画面用のメイン行を残すことを検証する。
+
+    以前は配達経路が log_front_input を呼ばず、LLM 応答は「メイン行の更新」を
+    試みても対象行が無いため何も残らなかった（遅配の返信が logs 画面から消える不具合）。
+    - source_type は配達の機構名（escrow_delivery）でメイン行が INSERT されること
+    - user_message はキャラへ実際に渡した文面で、預かり複数件の時間差注釈が
+      二重にならないこと（先行分は本文置換済みのため再 format しない）
+    - 返信メッセージの log_message_id と行の request_id が一致し、
+      チャット画面からログへ辿れること
+    """
+
+    @pytest.mark.asyncio
+    async def test_main_row_is_inserted(self, sqlite_store, _patched_llm, monkeypatch):
+        from backend.lib.debug_logger import logger as debug_logger
+        monkeypatch.setattr(debug_logger, "_sqlite", sqlite_store)
+
+        char_id, _, sid = _make_char_session(sqlite_store)
+        _escrow(sqlite_store, sid, content="1通目")
+        _escrow(sqlite_store, sid, content="2通目")
+        state = _make_state(sqlite_store)
+        session = sqlite_store.get_chat_session(sid)
+        char = sqlite_store.get_character(char_id)
+
+        await _deliver_session(state, session, char)
+
+        reply = next(m for m in sqlite_store.list_chat_messages(sid) if m.role == "character")
+        rows = sqlite_store.get_debug_log_entries_by_request_id(reply.log_message_id)
+        assert [r["source_type"] for r in rows] == ["escrow_delivery"]
+        msg = rows[0]["user_message"]
+        assert "1通目" in msg and "2通目" in msg
+        assert msg.count("席を外している間に届いていた") == 2

@@ -428,7 +428,9 @@ def _build_entry_from_db_rows(
     if not rows:
         return {}
 
-    _MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat", "scenario_chat_pc"}
+    from backend.lib.log_context import SYSTEM_MAIN_SOURCE_TYPES
+    _USER_MAIN_SOURCE_TYPES = {"chat", "scenario", "scenario_chat", "scenario_chat_pc"}
+    _MAIN_SOURCE_TYPES = _USER_MAIN_SOURCE_TYPES | SYSTEM_MAIN_SOURCE_TYPES
 
     main_row = next((r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES), rows[0])
     main_rows = [r for r in rows if r["source_type"] in _MAIN_SOURCE_TYPES]
@@ -543,7 +545,7 @@ def _build_entry_from_db_rows(
         "model_id": model_id,
         "source_type": source_type,
         "source_types": source_types,
-        "source": "system" if source_type not in _MAIN_SOURCE_TYPES else "ユーザ",
+        "source": "ユーザ" if source_type in _USER_MAIN_SOURCE_TYPES else "system",
         "user_message": main_row.get("user_message") or "",
         # 後方互換（JSON API・サマリー表示用）
         "character_response": latest_main.get("response") or "",
