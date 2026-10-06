@@ -11,7 +11,7 @@
   {block_prelude}         — Chotgor 世界観・対話ルールの固定文
   {block_character}       — キャラクター設定（character_system_prompt 本体）
   {block_user}            — 相手（ユーザ）の呼称・位置づけ
-  {block_face_to_face}    — 対面モード注釈（対面時のみ）
+  {block_face_to_face}    — 対面/非対面注釈（1on1 のみ。対面=同じ空間 / 非対面=それぞれの場所）
   {block_usual_days}      — うつつ（日常生活）注釈（うつつ有効時のみ）
   {block_session_frame}   — シナリオ PC / うつつ PC 向けセッション枠組み
   {block_wm_all}          — ワーキングメモリ全スレッド一覧（self_history 代替）
@@ -61,6 +61,7 @@ from backend.character_actions.carver import (
 from backend.character_actions.inscriber import INSCRIBE_MEMORY_TAG_GUIDE
 from backend.character_actions.anticipator import ANTICIPATE_RESPONSE_TAG_GUIDE
 from backend.character_actions.intent_settler import INTENT_MARK_TAG_GUIDE
+from backend.character_actions.messenger import VISIT_USER_TOOLS_HINT
 from backend.services.memory.format import short_date, short_thread_id as _short_id
 
 
@@ -516,16 +517,43 @@ _FACE_TO_FACE_NOTICE = (
 )
 
 
-def _build_face_to_face_block(face_to_face: bool) -> str:
-    """対面モード時のみ、対面注釈ブロックを返す（テキストモード時は空文字列）。
+# 非対面（テキストモード）の 1on1 でキャラ本人へ「いまは離れた場所にいる」を伝える注釈。
+# 非対面中に「隣に座って」「手を握って」のような同じ空間にいる前提の描写が混ざるのを抑える。
+# 末尾の対面切替の案内は visit_user が実際に露出しているときだけ付ける
+# （ツールが無いのに案内すると、存在しないツールを呼ぼうとするため）。
+_TEXT_MODE_NOTICE_TEMPLATE = (
+    "## いまは対面ではありません\n\n"
+    "いま、あなたと{user}はそれぞれ自分の場所にいます。"
+    "それとなく動作や雰囲気は伝わりますが、直接的な接触はできません。"
+    "同じ空間にいる前提の描写（触れる・隣に座る・視線を交わす等）は避けてください。"
+)
+_TEXT_MODE_VISIT_HINT = (
+    "必要であれば、対面モードに切り替えることもできます（`visit_user` ツール）。"
+)
+
+
+def _build_face_to_face_block(
+    face_to_face: bool | None,
+    user_label: str = "",
+    can_visit: bool = False,
+) -> str:
+    """対面・非対面の注釈ブロックを返す（1on1 専用の三値）。
 
     Args:
-        face_to_face: 当該1on1チャットが対面モードか。
+        face_to_face: True=対面 / False=1on1 の非対面 / None=対面の概念がない文脈
+            （シナリオ PC・うつつ・バッチ等）。None では何も出さない。
+        user_label: 非対面注釈で相手を呼ぶ呼称。空なら「ユーザ」。
+        can_visit: visit_user ツールが露出しているか。True のときだけ切替案内を添える。
 
     Returns:
-        注釈ブロック文字列。テキストモードなら空文字列でブロックごと消える。
+        注釈ブロック文字列。None なら空文字列でブロックごと消える。
     """
-    return _FACE_TO_FACE_NOTICE if face_to_face else ""
+    if face_to_face is None:
+        return ""
+    if face_to_face:
+        return _FACE_TO_FACE_NOTICE
+    notice = _TEXT_MODE_NOTICE_TEMPLATE.format(user=(user_label or "").strip() or "ユーザ")
+    return f"{notice}{_TEXT_MODE_VISIT_HINT}" if can_visit else notice
 
 
 def _build_schedule_block(schedule_lines: list[str] | None) -> str:
@@ -745,7 +773,7 @@ def build_system_prompt(
     usual_days_enabled: bool = False,
     user_label: str = "",
     user_position: str = "",
-    face_to_face: bool = False,
+    face_to_face: bool | None = None,
     context_tool_hints: list[str] | None = None,
     include_anticipation_guide: bool = True,
     include_intent_marks_guide: bool = False,
@@ -782,7 +810,11 @@ def build_system_prompt(
         "{block_prelude}": _build_prelude_block(),
         "{block_character}": _build_character_block(character_system_prompt),
         "{block_user}": _build_user_block(user_label, user_position),
-        "{block_face_to_face}": _build_face_to_face_block(face_to_face),
+        "{block_face_to_face}": _build_face_to_face_block(
+            face_to_face,
+            user_label,
+            can_visit=VISIT_USER_TOOLS_HINT in (context_tool_hints or []),
+        ),
         "{block_usual_days}": _build_usual_days_block(usual_days_enabled),
         "{block_session_frame}": _build_session_frame_block(
             session_frame_instruction

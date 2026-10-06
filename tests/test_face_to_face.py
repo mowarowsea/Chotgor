@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 
 import backend.main as mainmod
 import backend.services.scenario_chat.service as svc
+from backend.character_actions.messenger import VISIT_USER_TOOLS_HINT
 from backend.services.chat.request_builder import (
     _FACE_TO_FACE_NOTICE,
     build_system_prompt,
@@ -269,7 +270,7 @@ class TestFaceToFaceSystemPrompt:
         assert _FACE_TO_FACE_NOTICE in prompt
 
     def test_block_absent_when_false(self):
-        """face_to_face=False では対面ブロックが入らない。"""
+        """face_to_face=False では対面ブロックが入らない（代わりに非対面注釈が入る）。"""
         prompt = build_system_prompt(
             character_system_prompt="テストキャラ",
             user_label="太郎",
@@ -278,12 +279,68 @@ class TestFaceToFaceSystemPrompt:
         assert "対面でユーザと向き合っています" not in prompt
 
     def test_block_absent_by_default(self):
-        """face_to_face を渡さないデフォルトでも対面ブロックは入らない。"""
+        """face_to_face を渡さないデフォルト（None）では対面ブロックも非対面注釈も入らない。"""
         prompt = build_system_prompt(
             character_system_prompt="テストキャラ",
             user_label="太郎",
         )
         assert "対面でユーザと向き合っています" not in prompt
+        assert "いまは対面ではありません" not in prompt
+
+
+class TestTextModeNotice:
+    """1on1 の非対面（face_to_face=False）注釈の出し分けを検証する。
+
+    目的は、非対面中に「同じ空間にいる」前提の描写（触れる・隣に座る等）が混ざるのを
+    抑えること。注意点は次の2つ:
+    - 既定（None）では出さない。シナリオ PC・うつつ・バッチは対面の概念を持たないため、
+      「それぞれ自分の場所にいる」を誤爆させてはいけない。
+    - visit_user の案内は、ツールが実際に露出している（hint が渡っている）ときだけ添える。
+    """
+
+    def test_notice_appears_when_false(self):
+        """face_to_face=False で非対面注釈が入り、ユーザの呼称で相手を呼ぶ。"""
+        prompt = build_system_prompt(
+            character_system_prompt="テストキャラ",
+            user_label="太郎",
+            face_to_face=False,
+        )
+        assert "## いまは対面ではありません" in prompt
+        assert "あなたと太郎はそれぞれ自分の場所にいます" in prompt
+        assert "直接的な接触はできません" in prompt
+
+    def test_user_label_falls_back(self):
+        """呼称が空なら「ユーザ」で呼ぶ。"""
+        prompt = build_system_prompt(
+            character_system_prompt="テストキャラ",
+            face_to_face=False,
+        )
+        assert "あなたとユーザはそれぞれ自分の場所にいます" in prompt
+
+    def test_visit_hint_only_when_tool_exposed(self):
+        """visit_user が露出しているときだけ対面切替の案内が付く。"""
+        without = build_system_prompt(
+            character_system_prompt="テストキャラ",
+            user_label="太郎",
+            face_to_face=False,
+        )
+        with_tool = build_system_prompt(
+            character_system_prompt="テストキャラ",
+            user_label="太郎",
+            face_to_face=False,
+            context_tool_hints=[VISIT_USER_TOOLS_HINT],
+        )
+        assert "対面モードに切り替えることもできます" not in without
+        assert "対面モードに切り替えることもできます（`visit_user` ツール）" in with_tool
+
+    def test_not_in_face_to_face(self):
+        """対面中は非対面注釈が入らない（対面注釈のみ）。"""
+        prompt = build_system_prompt(
+            character_system_prompt="テストキャラ",
+            user_label="太郎",
+            face_to_face=True,
+        )
+        assert "いまは対面ではありません" not in prompt
 
 
 # ---------------------------------------------------------------------------

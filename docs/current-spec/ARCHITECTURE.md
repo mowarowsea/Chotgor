@@ -182,7 +182,13 @@ frontend useChat
       2.  メッセージ内URLの自動fetch → fetched ブロック（ターン注釈側 {block_fetched}）
       3.  request_builder が二層で組み立て（プロンプトキャッシュ対応。二層化の根拠は
           request_builder.py モジュール docstring）:
-          - build_system_prompt: 安定ブロックのみ（前提/キャラ/ユーザ像/WM一覧・固定/inner_narrative/ガイド）
+          - build_system_prompt: 安定ブロックのみ（前提/キャラ/ユーザ像/対面・非対面注釈/WM一覧・固定/inner_narrative/ガイド）
+            - 対面・非対面注釈 `{block_face_to_face}` は **1on1 専用の三値**（`face_to_face`: None=1on1以外で注釈なし /
+              True=対面「同じ空間にいる」 / False=非対面「それぞれ自分の場所にいる・直接接触はできない」）。
+              非対面側は visit_user が露出しているときだけ「対面に切り替えられる」旨を添える。
+              目的は非対面中の「同じ空間にいる」描写（身体接触・視線など）の抑止。
+              **棄却**: 非対面注釈を `face_to_face=False` 全般へ出す案 — シナリオ PC・うつつ・バッチは
+              既定が False のため「それぞれ自分の場所にいる」が誤爆する。そのため既定を None にして三値化した
           - build_turn_annotation + append_turn_annotation: 変動ブロック（想起記憶/時刻/fetched/
             WM heat想起/圧力・意図/前回期待）を `<turn_context>` で包んで最新userメッセージ
             末尾へ注釈として付加（LLMリクエスト限り。DB履歴には残らない）
@@ -291,8 +297,11 @@ frontend useChat
       裸で置かれ、その直後にタグ無しのターン注釈（キャラ一人称の想起記憶を含む）が
       地続きで続いていた。どこからどこまでが誰の発言か読み取りにくく、キャラが
       自分の発言をユーザの発言と取り違える事故が少なくない頻度で起きていた。
-    - 最新の user メッセージは最初の `<turn_context>` で分割し、手前だけをユーザ発言
-      として `<user_label>` で包む。手前が空（発話予約の単独発火＝合成注釈だけの
+    - 最新の user メッセージは、末尾に連続する `<turn_context>` ブロックの先頭で分割し、
+      手前だけをユーザ発言として `<user_label>` で包む（末尾が `</turn_context>` で
+      閉じていなければ分割しない）。最初の出現で切る方式は、ガイド文書の貼り付け等で
+      発言本文に `<turn_context>` の文字列が含まれると本文の途中で `</user_label>` が
+      差し込まれ、後半が文脈扱いになるため棄却した。手前が空（発話予約の単独発火＝合成注釈だけの
       ターン）ならユーザタグは付けない。発話予約の合成注釈も `<turn_context>` で包む
       （Chotgor 由来の文脈をユーザ発言として見せないため）。
     - `user_label` を渡さない経路（character_query のバッチ問い合わせ等）は旧形式
@@ -693,6 +702,6 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 | `docs/planned/block_naming_cleanup_plan.md` | §2 `request_builder.py` — ブロック命名（`session_frame`・Block N 廃止） |
 | `docs/planned/sse_disconnect_resilience_plan.md` | §3 1on1フロー — SSE送出と生成の分離 |
 | `docs/planned/audio_attachment_plan.md` | §3 1on1フロー「添付」— 音声・画像の受け渡しと寿命 |
+| `docs/planned/text_attachment_plan.md` | §3 1on1フロー「添付」— テキストファイルの受け渡し |
 | `docs/planned/switch_angle_removal_plan.md` | 撤去記録（現行コードに機能は無い） |
 | `docs/old/backend_data_design.md` | アーカイブ。現行のテーブル定義は `repositories/sqlite/models.py` が正 |
-| `docs/planned/text_attachment_plan.md` | §3 1on1フロー「添付」— テキストファイルの受け渡し |
