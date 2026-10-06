@@ -88,7 +88,7 @@
 | `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。dashboard（`/ui/` 入口）/ characters / memories / presets / scenarios / settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル）。共通部品は `common.py`。編集フォームは自動保存＋楽観ロック（下の「設定フォームの楽観ロック」参照） |
 | `api/logs_ui/` | デバッグログ閲覧UI（`/ui/logs`）と JSON API（`/api/logs`） |
 | `services/` | ビジネスロジック層。チャット・シナリオ・記憶・キャラクター問い合わせ |
-| `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / sakura / xai の8実装。`registry.py` が生成・ディスパッチ（露出順は `PROVIDER_ORDER`）。`sakura` は さくらの AI Engine（Kimi 等）で、推論トークンが枠を食い潰して本文が空になるため `DEFAULT_MAX_TOKENS=None`（上限指定なし） |
+| `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / sakura / xai の8実装。`registry.py` が生成・ディスパッチ（露出順は `PROVIDER_ORDER`）。`jev_client.py` は TypeSafe Jev（文章を生成せず yes/no・選択・段階スコアの確率を返す判定モデル）のクライアントで、チャット不可のため registry には載せない（キーは `jev_api_key` → 環境変数 `JEV_API_KEY`）。`sakura` は さくらの AI Engine（Kimi 等）で、推論トークンが枠を食い潰して本文が空になるため `DEFAULT_MAX_TOKENS=None`（上限指定なし） |
 | `repositories/` | 永続化層。`sqlite/`（ORM・migration・機能別 store mixin）と `lance/`（ベクトルストア、テーブル別 ops）、`embeddings.py`（embedding プロバイダー） |
 | `character_actions/` | キャラクターが使うツール（inscribe / recall / carve / WMスレッド操作 / take_leave / web_search ＋文脈別ツール）の定義・タグ抽出・実行 |
 | `adapters/openai/` | OpenAI互換API（`/v1/models`, `/v1/chat/completions`）。外部クライアント向けの残存経路 |
