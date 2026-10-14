@@ -8,7 +8,7 @@
     - 枝の切替で下流が巻き戻ること・下流は復元しないこと
     - turn_index が飛んでも会話順が保たれること
     - 封筒（タイムライン）の retract と再活性化時の append
-    - 発話本文の手動上書き
+    - 1 レスポンス全体の手動書き換え
     - ユーザ発話の編集（物理削除）が枝ごと一掃すること
     - あらすじ境界（synopsis_last_turn_index）のクランプ
 """
@@ -451,39 +451,179 @@ class TestTimelineEnvelopes:
         assert len(alive) == 1
 
 
-class TestManualEdit:
-    """発話本文の手動上書きを検証する。"""
-
-    def test_update_content(self, sqlite_store, session_with_first_response):
-        """本文を上書きできること。"""
-        session, _ = session_with_first_response
-        target = sqlite_store.list_scenario_turns(session.id)[-1]
-
-        updated = sqlite_store.update_scenario_turn_content(
-            session.id, target.id, "書き換えた本文",
-        )
-        assert updated.content == "書き換えた本文"
-        assert sqlite_store.list_scenario_turns(session.id)[-1].content == "書き換えた本文"
-
-    def test_raw_response_untouched(self, sqlite_store, session_with_first_response):
-        """手編集で raw_response（モデルの生出力記録）を汚さないこと。"""
-        session, _ = session_with_first_response
-        target = sqlite_store.list_scenario_turns(session.id)[-1]
-        before = target.raw_response
-
-        updated = sqlite_store.update_scenario_turn_content(
-            session.id, target.id, "書き換えた本文",
-        )
-        assert updated.raw_response == before
-
-    def test_update_unknown_turn_returns_none(
-        self, sqlite_store, session_with_first_response
+    def test_rewrite_reenvelopes_only_changed_speakers(
+        self, sqlite_store, usual_session
     ):
-        """存在しないターン・別セッションのターンは None を返すこと。"""
-        session, _ = session_with_first_response
-        assert (
-            sqlite_store.update_scenario_turn_content(session.id, "nope", "x") is None
+        """書き換えでは話者が変わった行・増えた行だけ封筒が積み直され、
+        消えた行の封筒は retract されること。本文だけの変更では封筒に触らない。"""
+        session, char_id = usual_session
+        turns = _make_generation(sqlite_store, session.id, "gen1", -1, ["A", "B", "C"])
+        before = len(self._scene_envelopes(sqlite_store, char_id))
+        assert before == 3
+
+        sqlite_store.rewrite_scenario_response(
+            session.id, turns[0].id,
+            _blocks(("Narrator", "A改"), ("レイカ", "B改")),
         )
+
+        envelopes = self._scene_envelopes(sqlite_store, char_id)
+        alive = {e.source_id: e for e in envelopes if e.retracted_at is None}
+        # 1 行目: 本文のみ変更 → 元の封筒が生きたまま（積み直しなし）
+        # 2 行目: Narrator → レイカ → 旧封筒 retract + 新封筒（actor=npc:レイカ）
+        # 3 行目: 削除 → retract のみ
+        assert set(alive) == {turns[0].id, turns[1].id}
+        assert alive[turns[1].id].actor == "npc:レイカ"
+        assert len(envelopes) == 4
+
+
+def _blocks(*pairs):
+    """(話者名, 本文) の組から store へ渡すブロック列を作る（全員 Narrator 型以外は NPC 型）。"""
+    return [
+        {
+            "speaker_type": "narrator" if name == "Narrator" else "npc",
+            "speaker_id": None,
+            "speaker_name": name,
+            "content": content,
+        }
+        for name, content in pairs
+    ]
+
+
+class TestResponseRewrite:
+    """1 レスポンス全体の手動書き換え（store 層）を検証する。
+
+    設計は scenario_turn_variants_plan.md「レスポンス単位の書き換え」。
+    観点:
+        - 起点がどのバブルでも、同一 raw_response の連続区間（1 レスポンス）が対象になること
+        - 同数ブロックは id・turn_index を再利用して本文と話者だけ差し替えること
+        - ブロックが減ると余りの行が物理削除されること
+        - ブロックが増えると後続の turn_index / branch_point_index / 蒸留境界が繰り下がり、
+          会話順と兄弟枝の判定が壊れないこと
+        - reasoning は先頭行、anticipation は末尾行へ付け替わること
+        - raw_response（モデルの生出力記録）は汚さないこと
+        - ユーザ発話・存在しないターンは対象外（None）
+    """
+
+    @pytest.fixture
+    def two_responses(self, sqlite_store):
+        """reqA → resA(2 ブロック) → reqB → resB(1 ブロック) まで進んだセッション。"""
+        scenario = _make_scenario(sqlite_store)
+        session = _make_session(sqlite_store, scenario.id)
+        req_a = _make_turn(sqlite_store, session.id, content="reqA")
+        res_a = _make_generation(
+            sqlite_store, session.id, "genA", req_a.turn_index, ["A-1", "A-2"],
+        )
+        token_g = current_generation_id.set("genB")
+        token_b = current_branch_point_index.set(res_a[-1].turn_index)
+        try:
+            req_b = _make_turn(sqlite_store, session.id, content="reqB")
+            res_b = _make_turn(
+                sqlite_store, session.id, speaker_type="narrator",
+                speaker_name="Narrator", content="B-1", raw_response="genB",
+            )
+        finally:
+            current_generation_id.reset(token_g)
+            current_branch_point_index.reset(token_b)
+        return session, res_a, req_b, res_b
+
+    def test_same_count_reuses_rows(self, sqlite_store, two_responses):
+        """同数なら既存行の id / turn_index を保ったまま本文・話者が差し替わること。"""
+        session, res_a, _, _ = two_responses
+        result = sqlite_store.rewrite_scenario_response(
+            session.id, res_a[1].id, _blocks(("Narrator", "新1"), ("レイカ", "新2")),
+        )
+        assert result["index_shift"] == 0
+        assert [t.id for t in result["turns"]] == [t.id for t in res_a]
+        assert [(t.speaker_name, t.content) for t in result["turns"]] == [
+            ("Narrator", "新1"), ("レイカ", "新2"),
+        ]
+
+    def test_raw_response_untouched(self, sqlite_store, two_responses):
+        """手編集で raw_response を汚さないこと（増えた行も末尾行の値を引き継ぐ）。"""
+        session, res_a, _, _ = two_responses
+        result = sqlite_store.rewrite_scenario_response(
+            session.id, res_a[0].id,
+            _blocks(("Narrator", "x"), ("Narrator", "y"), ("Narrator", "z")),
+        )
+        assert {t.raw_response for t in result["turns"]} == {"genA"}
+        assert {t.generation_id for t in result["turns"]} == {"genA"}
+
+    def test_shrink_deletes_extra_rows(self, sqlite_store, two_responses):
+        """ブロックが減ると余りの行が DB から消えること（枝として残さない）。"""
+        session, res_a, _, _ = two_responses
+        sqlite_store.rewrite_scenario_response(
+            session.id, res_a[0].id, _blocks(("Narrator", "ひとつだけ")),
+        )
+        contents = [t.content for t in sqlite_store.list_scenario_turns(session.id)]
+        assert contents == ["reqA", "ひとつだけ", "reqB", "B-1"]
+        from backend.repositories.sqlite.store import ScenarioTurn
+        with sqlite_store.get_session() as s:
+            assert s.get(ScenarioTurn, res_a[1].id) is None
+
+    def test_grow_keeps_order_and_shifts_following(self, sqlite_store, two_responses):
+        """ブロックが増えても会話順が保たれ、後続の turn_index が繰り下がること。"""
+        session, res_a, req_b, res_b = two_responses
+        result = sqlite_store.rewrite_scenario_response(
+            session.id, res_a[0].id,
+            _blocks(("Narrator", "1"), ("レイカ", "2"), ("Narrator", "3"), ("トウコ", "4")),
+        )
+        assert result["index_shift"] == 2
+        turns = sqlite_store.list_scenario_turns(session.id)
+        assert [t.content for t in turns] == ["reqA", "1", "2", "3", "4", "reqB", "B-1"]
+        indexes = [t.turn_index for t in turns]
+        assert indexes == sorted(indexes) and len(set(indexes)) == len(indexes)
+        by_id = {t.id: t for t in turns}
+        assert by_id[req_b.id].turn_index == req_b.turn_index + 2
+        assert by_id[res_b.id].turn_index == res_b.turn_index + 2
+
+    def test_grow_shifts_branch_point_of_later_generation(
+        self, sqlite_store, two_responses
+    ):
+        """後に生えた枝の分岐点が新しい末尾行へ追従し、兄弟判定が保たれること。"""
+        session, res_a, req_b, _ = two_responses
+        sqlite_store.rewrite_scenario_response(
+            session.id, res_a[0].id,
+            _blocks(("Narrator", "1"), ("Narrator", "2"), ("Narrator", "3")),
+        )
+        turns = sqlite_store.list_scenario_turns(session.id)
+        new_tail = [t for t in turns if t.content == "3"][0]
+        moved_req_b = [t for t in turns if t.id == req_b.id][0]
+        assert moved_req_b.branch_point_index == new_tail.turn_index
+
+    def test_grow_shifts_synopsis_boundary(self, sqlite_store, two_responses):
+        """レスポンス全体が蒸留済みなら、境界も新しい末尾行へ繰り下がること。"""
+        session, res_a, _, _ = two_responses
+        sqlite_store.update_scenario_session_synopsis(
+            session.id, last_turn_index=res_a[-1].turn_index,
+        )
+        result = sqlite_store.rewrite_scenario_response(
+            session.id, res_a[0].id,
+            _blocks(("Narrator", "1"), ("Narrator", "2"), ("Narrator", "3")),
+        )
+        assert result["synopsis_last_turn_index"] == res_a[-1].turn_index + 1
+        assert (
+            sqlite_store.get_scenario_session(session.id).synopsis_last_turn_index
+            == result["turns"][-1].turn_index
+        )
+
+    def test_reasoning_and_anticipation_move_to_ends(self, sqlite_store, two_responses):
+        """スケッチは先頭行、予想は末尾行へ付け替わること（ブロック数が変わっても）。"""
+        session, res_a, _, _ = two_responses
+        sqlite_store.update_scenario_turn(res_a[0].id, reasoning="スケッチ")
+        sqlite_store.update_scenario_turn(res_a[1].id, anticipation="予想")
+        result = sqlite_store.rewrite_scenario_response(
+            session.id, res_a[0].id,
+            _blocks(("Narrator", "1"), ("Narrator", "2"), ("Narrator", "3")),
+        )
+        assert [t.reasoning for t in result["turns"]] == ["スケッチ", None, None]
+        assert [t.anticipation for t in result["turns"]] == [None, None, "予想"]
+
+    def test_user_turn_and_unknown_are_not_targets(self, sqlite_store, two_responses):
+        """ユーザ発話・存在しないターンを起点にすると None を返すこと。"""
+        session, _, req_b, _ = two_responses
+        blocks = _blocks(("Narrator", "x"))
+        assert sqlite_store.rewrite_scenario_response(session.id, req_b.id, blocks) is None
+        assert sqlite_store.rewrite_scenario_response(session.id, "nope", blocks) is None
 
 
 class TestUserEditWipesVariants:

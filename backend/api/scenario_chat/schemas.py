@@ -132,8 +132,8 @@ class StreamRequest(BaseModel):
     yield_to: str | None = None
 
 
-class TurnUpdate(BaseModel):
-    """発話本文の手動上書きリクエスト（枝は生やさない）。"""
+class ResponseRewrite(BaseModel):
+    """1 レスポンス全体の手動書き換えリクエスト（`@話者: 本文` 形式・枝は生やさない）。"""
 
     content: str
 

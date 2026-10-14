@@ -42,7 +42,7 @@ import type { ActionHandler } from "../ChatBubbles";
 import MessageInput from "../MessageInput";
 import { trimEnd } from "./helpers";
 import { NpcDetailDialog } from "./npc";
-import { GMBubbleRow, SynopsisDivider } from "./rows";
+import { GMBubbleRow, GMResponseEditor, SynopsisDivider } from "./rows";
 
 /** ストリーミング中の未確定吹き出し情報。
  *
@@ -104,8 +104,9 @@ interface Props {
   /** 枝（レスポンスガチャ）の切替。分岐点より後の本線は巻き戻される。
    *  戻り値の Promise が解決するまで枝ナビは無効化される（連打で切替要求が競合しないように）。 */
   onSwitchVariant: (generationId: string) => void | Promise<void>;
-  /** GM / PC 発話の手動書き換え（枝は生やさず本文だけ差し替える）。 */
-  onEditResponse: (turnId: string, newContent: string) => void;
+  /** GM / PC 応答の手動書き換え。`turnId` が属する 1 レスポンス全体を `@話者: 本文` 形式の
+   *  テキストで上書きする（枝は生やさない）。true で成功（エディタを閉じる）。 */
+  onEditResponse: (turnId: string, newContent: string) => Promise<boolean>;
   /**
    * ensemble_pc 専用「ターンを譲る」操作。指定先（PC枠名 / "GM" / "ALL"）に発話を回す。
    * チップ群が押されたときに呼ばれる。バックエンドでは auto_advance=true + yield_to で処理され、
@@ -166,6 +167,9 @@ function ScenarioChatViewInner({
 }: Props) {
   /** クリックされた NPC の詳細ダイアログ表示用 state（null なら閉じている）。 */
   const [npcDialogTarget, setNpcDialogTarget] = useState<ScenarioNpc | null>(null);
+  /** 全体編集中のレスポンスの末尾バブル id（null なら編集していない）。
+   *  編集中はそのレスポンスの全バブルを 1 つのテキストエリアに置き換える。 */
+  const [editingGroupTailId, setEditingGroupTailId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
   const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
@@ -281,15 +285,22 @@ function ScenarioChatViewInner({
    *   コピー用テキスト。MessageActionBar（コピー/ログ/再生成）はグループ末尾のみに出す。
    * - lastGMTurnId: 「最新グループ」の末尾バブル id。再生成 / 破棄の対象となるのは
    *   このバブルだけ（過去グループはコピー + ログのみ）。末尾が user / turns が空なら null。
+   * - groupTailOf: GM ターン id → 所属グループの末尾 turn id。全体編集の対象グループ判定に使う
+   *   （コピー用テキスト＝編集テキストは末尾 id で引ける）。
    *
    * グルーピングは response_key（raw_response の指紋）の連続性で判定する: GM の 1 回の
    * LLM 呼出で生成された一連の GM 話者ブロックが「同一レスポンス」を構成する。
    * user ターンは境界。
    */
-  const { gmGroupTailById, lastGMTurnId } = useMemo(() => {
+  const { gmGroupTailById, lastGMTurnId, groupTailOf } = useMemo(() => {
     const tailById = new Map<string, string>();
+    const tailOf = new Map<string, string>();
     if (turns.length === 0) {
-      return { gmGroupTailById: tailById, lastGMTurnId: null as string | null };
+      return {
+        gmGroupTailById: tailById,
+        lastGMTurnId: null as string | null,
+        groupTailOf: tailOf,
+      };
     }
     // 連続する同 response_key の GM ターン（=話者ブロック）を 1 レスポンスグループとして畳む。
     // 末尾に達するか次が user / response_key 不一致になったらフラッシュする。
@@ -302,6 +313,7 @@ function ScenarioChatViewInner({
         parts.push(`@${name}: ${trimEnd(t.content)}`);
       }
       tailById.set(turns[end].id, parts.join("\n\n"));
+      for (let i = start; i <= end; i++) tailOf.set(turns[i].id, turns[end].id);
     };
     let groupStart = -1;
     let groupKey: string | null | undefined = undefined;
@@ -325,7 +337,7 @@ function ScenarioChatViewInner({
     // 最新グループ末尾は turns の末尾が GM である場合のみ存在
     const lastTurn = turns[turns.length - 1];
     const lastGMId = lastTurn.speaker_type === "user" ? null : lastTurn.id;
-    return { gmGroupTailById: tailById, lastGMTurnId: lastGMId };
+    return { gmGroupTailById: tailById, lastGMTurnId: lastGMId, groupTailOf: tailOf };
   }, [turns]);
 
   const resolveAvatar = (
@@ -497,6 +509,26 @@ function ScenarioChatViewInner({
                 }
               />
             );
+          } else if (
+            editingGroupTailId !== null &&
+            groupTailOf.get(t.id) === editingGroupTailId
+          ) {
+            // 全体編集中のレスポンス: 末尾バブルの位置に 1 つだけエディタを出し、他のバブルは隠す。
+            // 編集テキスト（コピー用の連結）が末尾 id で引けるため、キーも末尾 id で持つ。
+            if (t.id !== editingGroupTailId) {
+              return <React.Fragment key={t.id}>{divider}</React.Fragment>;
+            }
+            bubble = (
+              <GMResponseEditor
+                value={gmGroupTailById.get(t.id) ?? ""}
+                onSubmit={async (text) => {
+                  // 失敗時（400 等）はエディタを開いたまま残し、書いた内容を失わせない。
+                  const ok = await onEditResponse(t.id, text);
+                  if (ok) setEditingGroupTailId(null);
+                }}
+                onCancel={() => setEditingGroupTailId(null)}
+              />
+            );
           } else {
             // 既知 NPC のときだけアバタークリックを有効化（詳細ダイアログを開く）。
             // narrator や未知 NPC は対応する ScenarioNpc レコードが無いのでクリック無効。
@@ -540,9 +572,9 @@ function ScenarioChatViewInner({
                 copyText={groupCopyText}
                 onRegenerate={onRegenerate}
                 onDiscard={onDiscard}
-                onEditCommit={
-                  canMutate
-                    ? (newContent) => onEditResponse(t.id, newContent)
+                onEditStart={
+                  canMutate && editingGroupTailId === null
+                    ? () => setEditingGroupTailId(groupTailOf.get(t.id) ?? t.id)
                     : undefined
                 }
                 variantIndex={variantIndex}

@@ -390,21 +390,38 @@ export async function deleteScenarioTurnsFrom(
   if (!res.ok) throw new Error("ターンの削除に失敗しました");
 }
 
-/** 発話本文をユーザの手で上書きする（枝は生やさない）。 */
-export async function patchScenarioTurn(
+/** `rewriteScenarioResponse` の戻り値。 */
+export interface ScenarioResponseRewriteResult {
+  /** 書き換え後のレスポンス行（話者ブロック列）。 */
+  turns: ScenarioTurn[];
+  /** ブロックが増えた分だけ後続ターンの turn_index が繰り下がった量（減った場合は 0）。 */
+  index_shift: number;
+  /** 書き換え後のあらすじ蒸留境界。 */
+  synopsis_last_turn_index: number;
+}
+
+/** `turnId` が属する 1 レスポンス全体を `@話者: 本文` 形式のテキストで書き換える（枝は生やさない）。
+ *  話者の付け替え・ブロックの増減も可。ユーザ／PC の発話を混ぜると 400（detail を投げる）。 */
+export async function rewriteScenarioResponse(
   sessionId: string,
   turnId: string,
   content: string,
-): Promise<ScenarioTurn> {
+): Promise<ScenarioResponseRewriteResult> {
   const res = await fetch(
-    `/api/scenario_chat/sessions/${sessionId}/turns/${turnId}`,
+    `/api/scenario_chat/sessions/${sessionId}/responses/${turnId}`,
     {
-      method: "PATCH",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     },
   );
-  if (!res.ok) throw new Error("発話の書き換えに失敗しました");
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((b) => (typeof b?.detail === "string" ? b.detail : null))
+      .catch(() => null);
+    throw new Error(detail ?? "レスポンスの書き換えに失敗しました");
+  }
   return res.json();
 }
 

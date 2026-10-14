@@ -432,26 +432,51 @@ class TestTurnVariantsApi:
         )
         assert res.status_code == 404
 
-    def test_patch_turn_content(self, sqlite_store):
-        """発話本文を上書きできること（枝は増えない）。"""
+    def test_rewrite_response(self, sqlite_store):
+        """`@話者: 本文` で 1 レスポンス全体を書き換えられること（枝は増えない）。
+
+        ブロックの増加・話者の付け替えができ、繰り下げ量が返ること。
+        """
         client, sess_id = self._session(sqlite_store)
         turns = _seed_generation(sqlite_store, sess_id, "gen1", -1, ["A"])
 
-        res = client.patch(
-            f"/api/scenario_chat/sessions/{sess_id}/turns/{turns[0].id}",
-            json={"content": "書き換え"},
+        res = client.put(
+            f"/api/scenario_chat/sessions/{sess_id}/responses/{turns[0].id}",
+            json={"content": "@Narrator: 地の文\n\n@レイカ: こんにちは"},
         )
         assert res.status_code == 200
-        assert res.json()["content"] == "書き換え"
+        data = res.json()
+        assert data["index_shift"] == 1
+        assert [(t["speaker_type"], t["speaker_name"], t["content"]) for t in data["turns"]] == [
+            ("narrator", "Narrator", "地の文"),
+            ("npc", "レイカ", "こんにちは"),
+        ]
         body = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()
-        assert [t["content"] for t in body] == ["書き換え"]
+        assert [t["content"] for t in body] == ["地の文", "こんにちは"]
+        assert {t["variant_count"] for t in body} == {1}
 
-    def test_patch_unknown_turn(self, sqlite_store):
+    def test_rewrite_rejects_empty_and_player_speech(self, sqlite_store):
+        """本文が空・ユーザ PC の発話を混ぜた書き換えは 400 で拒否すること。"""
+        client, sess_id = self._session(sqlite_store)
+        turns = _seed_generation(sqlite_store, sess_id, "gen1", -1, ["A"])
+        url = f"/api/scenario_chat/sessions/{sess_id}/responses/{turns[0].id}"
+        assert client.put(url, json={"content": "   "}).status_code == 400
+        session = sqlite_store.get_scenario_session(sess_id)
+        scenario = sqlite_store.get_scenario(session.scenario_id)
+        from backend.services.scenario_chat.serializers import resolve_user_speaker_name
+        name = resolve_user_speaker_name(scenario, session, sqlite_store)
+        res = client.put(url, json={"content": f"@{name}: 代弁"})
+        assert res.status_code == 400
+        # 拒否時は何も書き換わらない
+        body = client.get(f"/api/scenario_chat/sessions/{sess_id}/turns").json()
+        assert [t["content"] for t in body] == ["A"]
+
+    def test_rewrite_unknown_turn(self, sqlite_store):
         """存在しないターンは 404。"""
         client, sess_id = self._session(sqlite_store)
-        res = client.patch(
-            f"/api/scenario_chat/sessions/{sess_id}/turns/nope",
-            json={"content": "x"},
+        res = client.put(
+            f"/api/scenario_chat/sessions/{sess_id}/responses/nope",
+            json={"content": "@Narrator: x"},
         )
         assert res.status_code == 404
 

@@ -3,7 +3,7 @@
  * ユーザ発話は 1on1 と共通の UserBubble を使う（ScenarioChatView から直接）。
  * GMBubbleRow は React.memo 化されており、props が同一なら再描画しない。
  */
-import React, { useState } from "react";
+import React from "react";
 
 import { useEditingLock } from "../../hooks/useEditingLock";
 import {
@@ -68,8 +68,9 @@ interface GMBubbleRowProps {
   onRegenerate?: ActionHandler;
   /** 末尾 GM レスポンスを破棄してユーザ入力待ちに戻す（再ストリームしない）。 */
   onDiscard?: ActionHandler;
-  /** 発話の手動書き換え確定。新しい本文を受け取る。 */
-  onEditCommit?: (newContent: string) => void;
+  /** 手動書き換えの開始。押すとこのバブルが属する 1 レスポンス全体が
+   *  テキストエリアに置き換わる（エディタは親 = ScenarioChatView が描く）。 */
+  onEditStart?: () => void;
   /** 枝ナビの現在位置と総数（このバブルが属するレスポンスの兄弟枝）。 */
   variantIndex?: number;
   variantCount?: number;
@@ -112,7 +113,7 @@ function GMBubbleRowImpl({
   copyText,
   onRegenerate,
   onDiscard,
-  onEditCommit,
+  onEditStart,
   variantIndex,
   variantCount,
   onPrevVariant,
@@ -124,39 +125,18 @@ function GMBubbleRowImpl({
   reasoningStreaming = false,
 }: GMBubbleRowProps) {
   const displayContent = trimEnd(content);
-  const [editing, setEditing] = useState(false);
-  // 編集中は下部の新規メッセージ入力・送信を無効化する。
-  // 書き換え自体は先の展開に触れないが、送信すると編集フォームごと流れて内容が失われるため。
-  useEditingLock(editing);
   // 操作ボタンは露出中のバブルにだけ描画する（DOM 肥大対策 + 画面内で 1 つだけ）。
   // 再生成・破棄が効く末尾レスポンスだけはホバーを待たずに出す（削除直後の一拍を消す）。
-  const { revealed, rowProps, bubbleProps } = useRevealControls(!editing, isLastGM);
+  const { revealed, rowProps, bubbleProps } = useRevealControls(true, isLastGM);
 
-  // 本文表示 or 編集フォーム。編集はバブル内で本文だけを差し替える
-  // （ユーザ発話の編集と違い、この書き換えは先の展開に手を触れない）。
-  const body = editing ? (
-    <InlineEditor
-      value={content}
-      tone="character"
-      rows={5}
-      note="Ctrl+Enter で確定 / Esc でキャンセル（この応答の本文だけを書き換えます）"
-      submitLabel="確定"
-      onSubmit={(newContent) => {
-        setEditing(false);
-        onEditCommit?.(newContent);
-      }}
-      onCancel={() => setEditing(false)}
-    />
-  ) : (
-    <MarkdownContent content={displayContent} />
-  );
+  const body = <MarkdownContent content={displayContent} />;
 
   // 編集の鉛筆はアバター列の下端（バブル左下の余白）へ置く。バブル下の操作バーへ足すと
-  // 行が間延びするため。1 レスポンスは複数の話者ブロックに割れるので、末尾かどうかに
-  // 関わらず全バブルに出す（末尾ブロックしか直せないと「無理やり直す」用途に届かない）。
+  // 行が間延びするため。どのバブルから押してもレスポンス全体の編集になるが、
+  // 押したい場所の近くに出すため全バブルに置く。
   const editPencil =
-    !editing && onEditCommit && revealed ? (
-      <EditButton onClick={() => setEditing(true)} title="この発話を書き換える" />
+    onEditStart && revealed ? (
+      <EditButton onClick={onEditStart} title="このレスポンス全体を書き換える" />
     ) : undefined;
 
   // 想起記憶・スケッチの折りたたみ。1on1 のキャラクター応答と同じ ThinkingBlock を使う。
@@ -174,7 +154,7 @@ function GMBubbleRowImpl({
   // 1 応答 = 1 操作バーを保つ。再生成・破棄は最新グループ末尾でのみ有効。
   // 編集はここに置かない（鉛筆はアバター列の下端へ出す）。
   const actions =
-    editing || !isGroupTail ? null : (
+    !isGroupTail ? null : (
       <MessageActionBar
         copyText={copyText ?? content}
         onRegenerate={isLastGM ? onRegenerate : undefined}
@@ -275,7 +255,7 @@ function GMBubbleRowImpl({
  *
  * 注: 関数 props が「捕捉している外部 state」が変わってもバブルは再描画されない。
  * 本プロジェクトでは関数の振る舞いはプリミティブ props（content / 等）と同期するため
- * 実用上問題ない（onEditCommit は turnId をクロージャーキャプチャするだけ、等）。
+ * 実用上問題ない（onEditStart は turnId をクロージャーキャプチャするだけ、等）。
  */
 export const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
   return (
@@ -294,9 +274,53 @@ export const GMBubbleRow = React.memo(GMBubbleRowImpl, (prev, next) => {
     prev.reasoning === next.reasoning &&
     prev.reasoningStreaming === next.reasoningStreaming &&
     // 関数の同一性は見ないが「渡されているか」は見る（書き換えの可否が切り替わるため）。
-    (prev.onEditCommit === undefined) === (next.onEditCommit === undefined)
+    (prev.onEditStart === undefined) === (next.onEditStart === undefined)
   );
 });
+
+/**
+ * 1 レスポンス全体の書き換えエディタ。レスポンスの全バブルの代わりに 1 つだけ描かれる。
+ *
+ * 中身はコピー用テキストと同じ `@話者: 本文` の空行区切り。確定するとサーバで再パースされ、
+ * 話者の付け替え・ブロックの増減もそのままバブル列に反映される（先の展開には触れない）。
+ * 確定処理中は二度押しを防ぎ、失敗したら書いた内容を残したまま開いておく（親の責務）。
+ */
+export function GMResponseEditor({
+  value,
+  onSubmit,
+  onCancel,
+}: {
+  value: string;
+  onSubmit: (text: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  // 編集中は下部の新規メッセージ入力・送信を無効化する。
+  // 書き換え自体は先の展開に触れないが、送信すると編集フォームごと流れて内容が失われるため。
+  useEditingLock(true);
+  const [busy, setBusy] = React.useState(false);
+  const rows = Math.min(20, Math.max(5, value.split("\n").length + 1));
+  return (
+    <div className="w-full">
+      <InlineEditor
+        value={value}
+        tone="character"
+        rows={rows}
+        note="Ctrl+Enter で確定 / Esc でキャンセル（@話者: 本文 の形で、このレスポンス全体を書き換えます）"
+        submitLabel={busy ? "保存中…" : "確定"}
+        onSubmit={async (text) => {
+          if (busy) return;
+          setBusy(true);
+          try {
+            await onSubmit(text);
+          } finally {
+            setBusy(false);
+          }
+        }}
+        onCancel={onCancel}
+      />
+    </div>
+  );
+}
 
 /**
  * あらすじまとめ済み／未まとめの境界を示す区切り線。

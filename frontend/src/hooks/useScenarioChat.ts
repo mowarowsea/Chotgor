@@ -27,8 +27,8 @@ import {
   fetchScenarioSynopsis,
   fetchScenarioTurns,
   patchScenarioSynopsis,
-  patchScenarioTurn,
   regenerateScenarioSynopsis,
+  rewriteScenarioResponse,
   startScenarioSession,
   streamScenarioMessage,
   updateScenarioSession,
@@ -175,8 +175,9 @@ interface UseScenarioChatResult {
   handleScenarioDeleteUserTurn: (turnId: string) => Promise<void>;
   /** 枝（レスポンスガチャ）の切替。分岐点より後の本線は巻き戻される。 */
   handleScenarioSwitchVariant: (generationId: string) => Promise<void>;
-  /** GM / PC 発話の手動上書き（枝は生やさず本文だけ差し替える）。 */
-  handleScenarioEditResponse: (turnId: string, newContent: string) => Promise<void>;
+  /** GM / PC 応答の手動上書き。`turnId` が属する 1 レスポンス全体を `@話者: 本文` 形式の
+   *  テキストで書き換える（枝は生やさない）。成功で true（失敗時はエラー表示して false）。 */
+  handleScenarioEditResponse: (turnId: string, newContent: string) => Promise<boolean>;
   /** あらすじの部分更新（auto/manual）。 */
   handleSynopsisChange: (patch: { auto?: string; manual?: string }) => Promise<void>;
   /** あらすじ作成（強制蒸留）を裏で起動する。 */
@@ -903,25 +904,50 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
   );
 
   /**
-   * GM / PC / NPC / Narrator の発話をユーザの手で上書きする。
+   * GM / PC / NPC / Narrator の応答を 1 レスポンス単位でユーザの手で上書きする。
    *
-   * 枝は生やさず、その場で本文だけを差し替える（先の展開はそのまま残る）。
+   * 枝は生やさず、その場で差し替える（先の展開はそのまま残る）。話者の付け替えや
+   * ブロックの増減で行が入れ替わるため、旧レスポンス行を新しい行列で置き換える。
+   * ブロックが増えるとサーバ側で後続の turn_index が繰り下がるので、ローカルの
+   * 後続ターンと蒸留境界にも同じ量を足す（再取得すると読み込み済みの過去ページを失うため）。
    * ユーザ発話の編集（`handleScenarioEditUserTurn`）とは別物。
    */
   const handleScenarioEditResponse = useCallback(
     async (turnId: string, newContent: string) => {
-      if (!activeScenarioSession) return;
+      if (!activeScenarioSession) return false;
       try {
-        const updated = await patchScenarioTurn(
+        const res = await rewriteScenarioResponse(
           activeScenarioSession.id,
           turnId,
           newContent,
         );
-        setScenarioTurns((prev) =>
-          prev.map((t) => (t.id === turnId ? updated : t)),
+        setScenarioTurns((prev) => {
+          const pos = prev.findIndex((t) => t.id === turnId);
+          if (pos < 0) return prev;
+          // サーバと同じ規則で旧レスポンスの区間を求める（user 以外・同一 response_key の連続）。
+          const key = prev[pos].response_key;
+          const same = (t: ScenarioTurn) =>
+            t.speaker_type !== "user" && t.response_key === key;
+          let start = pos;
+          while (start > 0 && same(prev[start - 1])) start--;
+          let end = pos;
+          while (end + 1 < prev.length && same(prev[end + 1])) end++;
+          const following = prev
+            .slice(end + 1)
+            .map((t) =>
+              res.index_shift
+                ? { ...t, turn_index: t.turn_index + res.index_shift }
+                : t,
+            );
+          return [...prev.slice(0, start), ...res.turns, ...following];
+        });
+        setScenarioSynopsis((prev) =>
+          prev ? { ...prev, last_turn_index: res.synopsis_last_turn_index } : prev,
         );
+        return true;
       } catch (e) {
         setError(String(e));
+        return false;
       }
     },
     [activeScenarioSession, setError],

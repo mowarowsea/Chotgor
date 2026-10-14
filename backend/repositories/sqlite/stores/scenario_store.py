@@ -14,6 +14,7 @@
   - NPC はシナリオ側で管理する。プレイ画面では追加・編集しない。
 """
 
+import uuid
 from datetime import datetime
 
 from sqlalchemy import false
@@ -1220,33 +1221,177 @@ class ScenarioChatStoreMixin:
             session.commit()
             return True
 
-    def update_scenario_turn_content(
-        self, session_id: str, turn_id: str, content: str
-    ):
-        """発話本文をユーザの手で上書きする（枝は生やさない）。
+    def _find_response_group(self, session, session_id: str, turn_id: str) -> list:
+        """`turn_id` が属する 1 レスポンス（活性行）を turn_index 昇順で返す。
 
-        `raw_response` は触らない。あれはモデルが実際に何を出したかのデバッグ記録であり、
-        手編集で汚さない。封筒も触らない（発話があった事実自体は変わらないため）。
-        あらすじ蒸留済み区間の編集も許可し、境界のクランプはしない
-        （あらすじ本文の整合はユーザの手編集に委ねる方針と揃える）。
+        フロントのグルーピングと同じ規則: 活性行の並びで、user 以外かつ
+        `raw_response` が起点と等しい連続区間。起点が無い・非活性・user なら空。
+        """
+        from backend.repositories.sqlite.store import ScenarioTurn
+
+        pivot = session.get(ScenarioTurn, turn_id)
+        if (
+            pivot is None
+            or pivot.session_id != session_id
+            or int(pivot.is_active) != 1
+            or pivot.speaker_type == "user"
+        ):
+            return []
+        active = (
+            session.query(ScenarioTurn)
+            .filter(
+                ScenarioTurn.session_id == session_id,
+                ScenarioTurn.is_active == 1,
+            )
+            .order_by(ScenarioTurn.turn_index.asc())
+            .all()
+        )
+        pos = next(i for i, t in enumerate(active) if t.id == turn_id)
+
+        def same(t) -> bool:
+            return t.speaker_type != "user" and t.raw_response == pivot.raw_response
+
+        start = pos
+        while start > 0 and same(active[start - 1]):
+            start -= 1
+        end = pos
+        while end + 1 < len(active) and same(active[end + 1]):
+            end += 1
+        return active[start : end + 1]
+
+    def get_scenario_response_group(self, session_id: str, turn_id: str) -> list:
+        """`turn_id` が属する 1 レスポンスの活性行を返す（書き換え前の話者解決用）。"""
+        with self.get_session() as session:
+            group = self._find_response_group(session, session_id, turn_id)
+            for t in group:
+                session.expunge(t)
+            return group
+
+    def rewrite_scenario_response(
+        self, session_id: str, turn_id: str, blocks: list[dict]
+    ) -> dict | None:
+        """`turn_id` が属する 1 レスポンス全体をユーザの手で書き換える（枝は生やさない）。
+
+        設計: docs/planned/scenario_turn_variants_plan.md「レスポンス単位の書き換え」。
+        既存行へ先頭から割り当て、余りは物理削除、不足分は新規行を末尾行の直後へ足す。
+        増えた分だけ後続の `turn_index` / `branch_point_index` / 蒸留境界を繰り下げる
+        （`turn_index` は非活性枝も含む連番なので、隙間に差し込めないため）。
+        `raw_response` は触らない（モデルの生出力記録を手編集で汚さない）。
 
         Args:
-            session_id: 対象セッション ID。
-            turn_id: 上書きするターン ID。
-            content: 新しい本文。
+            blocks: `[{speaker_type, speaker_id, speaker_name, content}, ...]`（1 個以上）。
+                話者解決は呼び出し側（API 層）の責務。
 
         Returns:
-            更新後の ScenarioTurn。見つからなければ None。
+            `{"turns": [新しいレスポンス行], "index_shift": int,
+            "synopsis_last_turn_index": int}`。対象が見つからなければ None。
         """
+        if not blocks:
+            raise ValueError("blocks は 1 個以上必要")
         with self.get_session() as session:
-            from backend.repositories.sqlite.store import ScenarioTurn
-            obj = session.get(ScenarioTurn, turn_id)
-            if obj is None or obj.session_id != session_id:
+            from backend.repositories.sqlite.store import ScenarioSession, ScenarioTurn
+
+            group = self._find_response_group(session, session_id, turn_id)
+            if not group:
                 return None
-            obj.content = content
+            tail = group[-1]
+            tail_index = int(tail.turn_index)
+            shift = max(0, len(blocks) - len(group))
+            sess_obj = session.get(ScenarioSession, session_id)
+
+            if shift:
+                session.query(ScenarioTurn).filter(
+                    ScenarioTurn.session_id == session_id,
+                    ScenarioTurn.turn_index > tail_index,
+                ).update(
+                    {ScenarioTurn.turn_index: ScenarioTurn.turn_index + shift},
+                    synchronize_session=False,
+                )
+                session.query(ScenarioTurn).filter(
+                    ScenarioTurn.session_id == session_id,
+                    ScenarioTurn.branch_point_index >= tail_index,
+                ).update(
+                    {ScenarioTurn.branch_point_index: ScenarioTurn.branch_point_index + shift},
+                    synchronize_session=False,
+                )
+                if (
+                    sess_obj is not None
+                    and sess_obj.synopsis_last_turn_index is not None
+                    and int(sess_obj.synopsis_last_turn_index) >= tail_index
+                ):
+                    sess_obj.synopsis_last_turn_index = (
+                        int(sess_obj.synopsis_last_turn_index) + shift
+                    )
+                    sess_obj.updated_at = datetime.now()
+
+            head_reasoning = group[0].reasoning
+            tail_anticipation = tail.anticipation
+            last = len(blocks) - 1
+            rows = []
+            for i, b in enumerate(blocks):
+                if i < len(group):
+                    row = group[i]
+                    speaker_changed = (
+                        row.speaker_type != b["speaker_type"]
+                        or row.speaker_id != b.get("speaker_id")
+                        or row.speaker_name != b["speaker_name"]
+                    )
+                    row.speaker_type = b["speaker_type"]
+                    row.speaker_id = b.get("speaker_id")
+                    row.speaker_name = b["speaker_name"]
+                    row.content = b["content"]
+                    if speaker_changed:
+                        # 封筒の actor は話者で決まるため、話者が変わった行だけ積み直す
+                        self._retract_timeline_events_in_session(
+                            session, "scenario_turns", [row.id]
+                        )
+                        self._append_scene_turn_envelopes(session, row)
+                else:
+                    row = ScenarioTurn(
+                        id=str(uuid.uuid4()),
+                        session_id=session_id,
+                        turn_index=tail_index + (i - len(group) + 1),
+                        speaker_type=b["speaker_type"],
+                        speaker_id=b.get("speaker_id"),
+                        speaker_name=b["speaker_name"],
+                        content=b["content"],
+                        raw_response=tail.raw_response,
+                        log_request_id=tail.log_request_id,
+                        is_active=1,
+                        generation_id=tail.generation_id,
+                        branch_point_index=tail.branch_point_index,
+                        created_at=tail.created_at,
+                    )
+                    session.add(row)
+                    self._append_scene_turn_envelopes(session, row)
+                row.reasoning = head_reasoning if i == 0 else None
+                row.anticipation = tail_anticipation if i == last else None
+                rows.append(row)
+
+            removed = group[len(blocks):]
+            if removed:
+                removed_ids = [t.id for t in removed]
+                self._retract_timeline_events_in_session(
+                    session, "scenario_turns", removed_ids
+                )
+                session.query(ScenarioTurn).filter(
+                    ScenarioTurn.id.in_(removed_ids)
+                ).delete(synchronize_session=False)
+
             session.commit()
-            session.refresh(obj)
-            return obj
+            for row in rows:
+                session.refresh(row)
+                session.expunge(row)
+            boundary = (
+                int(sess_obj.synopsis_last_turn_index)
+                if sess_obj is not None and sess_obj.synopsis_last_turn_index is not None
+                else -1
+            )
+            return {
+                "turns": rows,
+                "index_shift": shift,
+                "synopsis_last_turn_index": boundary,
+            }
 
     def get_next_scenario_turn_index(self, session_id: str) -> int:
         """次に使うべき turn_index を返す（既存最大値+1、なければ 0）。

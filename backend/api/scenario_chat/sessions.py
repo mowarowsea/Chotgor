@@ -10,13 +10,17 @@ from backend.api.scenario_chat.schemas import (
     SessionUpdate,
     SynopsisRegenerate,
     SynopsisUpdate,
-    TurnUpdate,
+    ResponseRewrite,
 )
 from backend.lib.log_context import (
     current_log_feature,
     current_log_session_id,
     current_log_target,
     new_message_id,
+)
+from backend.services.scenario_chat.response_rewrite import (
+    ResponseRewriteError,
+    rewrite_scenario_response,
 )
 from backend.services.scenario_chat.service import (
     compute_synopsis_progress,
@@ -324,23 +328,31 @@ async def delete_turns_from(
     return {"deleted": True}
 
 
-@router.patch("/sessions/{session_id}/turns/{turn_id}")
-async def update_turn(
-    request: Request, session_id: str, turn_id: str, body: TurnUpdate
+@router.put("/sessions/{session_id}/responses/{turn_id}")
+async def rewrite_response(
+    request: Request, session_id: str, turn_id: str, body: ResponseRewrite
 ):
-    """発話本文をユーザの手で上書きする（枝は生やさない）。
+    """`turn_id` が属する 1 レスポンス全体をユーザの手で書き換える（枝は生やさない）。
 
-    GM / PC / NPC / Narrator の応答を「無理やり書き換える」ための口。
-    `raw_response` は触らない（モデルが実際に何を出したかの記録を手編集で汚さない）。
+    `content` は `@話者: 本文` を並べたテキスト。話者の付け替え・ブロックの増減も可。
+    ブロックが増えた分だけ後続の `turn_index` が繰り下がるため、繰り下げ量と
+    新しい蒸留境界も返す（フロントが再取得せずに差し替えられるように）。
     """
     sqlite = request.app.state.sqlite
     if sqlite.get_scenario_session(session_id) is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
-    updated = sqlite.update_scenario_turn_content(session_id, turn_id, body.content)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="ターンが見つかりません")
+    try:
+        result = rewrite_scenario_response(sqlite, session_id, turn_id, body.content)
+    except ResponseRewriteError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="レスポンスが見つかりません")
     variants = sqlite.list_scenario_generation_variants(session_id)
-    return scenario_turn_to_dict(updated, variants)
+    return {
+        "turns": [scenario_turn_to_dict(t, variants) for t in result["turns"]],
+        "index_shift": result["index_shift"],
+        "synopsis_last_turn_index": result["synopsis_last_turn_index"],
+    }
 
 
 @router.post("/sessions/{session_id}/turns/activate")

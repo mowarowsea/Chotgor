@@ -115,7 +115,10 @@ retract を取り消すと「なかったことが再びあったことになる
 
 ## 手動書き換え
 
-- `PATCH /api/scenario_chat/sessions/{sid}/turns/{turn_id}` で `content` を**上書き**する。
+> 追補（2026-10-14）: 書き換えの単位を「話者ブロック 1 つ」から **「1 レスポンス全体」** に変更した。
+> 下記「レスポンス単位の書き換え」節を参照。旧 `PATCH /turns/{turn_id}` は廃止。
+
+- `PUT /api/scenario_chat/sessions/{sid}/responses/{turn_id}` で 1 レスポンスを**上書き**する。
   枝は生やさない。
 - 対象は GM / PC / NPC / Narrator の発話（活性行のみ）。全ターンで可能（末尾に限らない）。
 - `raw_response` は触らない。あれはモデルが実際に何を出したかのデバッグ記録であり、
@@ -142,7 +145,46 @@ retract を取り消すと「なかったことが再びあったことになる
 | バブル | 鉛筆の挙動 |
 |--------|-----------|
 | ユーザ | 以降を巻き戻して再ストリーム（従来通り） |
-| GM / PC / NPC / Narrator | その場で上書き（先はそのまま） |
+| GM / PC / NPC / Narrator | そのバブルが属する 1 レスポンス全体をその場で上書き（先はそのまま） |
+
+### レスポンス単位の書き換え（2026-10-14 追補）
+
+1 レスポンス（同一 `raw_response` の連続する活性 GM 側ターン＝フロントのグループと同じ規則）を
+まとめて書き換える。話者ブロック単位の編集では「話者の付け替え」「ブロックの追加・削除」が
+できず、「無理やり直す」用途に届かなかったため。
+
+- **UI**: どのバブルの鉛筆を押しても、そのレスポンスの全バブルが 1 つのテキストエリアに
+  置き換わる。中身はコピー用テキストと同じ `@話者名: 本文` を空行区切りで並べた形
+  （Narrator は `@Narrator:`）。確定すると再パースしてバブル列として再表示する。
+- **パース**: intro と同じ `parse_intro_to_turns` を流用（行頭 `@名前:` で区切る・
+  先頭の `@` なし地の文は Narrator・空本文ブロックは捨てる）。話者解決の優先順は
+  1. 書き換え前のレスポンスに居た話者名 → その行の `speaker_type` / `speaker_id` を引き継ぐ
+     （PC 応答の `pc` 型などを保つため）
+  2. Narrator / 既知 NPC / それ以外は ephemeral NPC
+- **拒否（400）**: ブロックが 0 個になる／ユーザ PC 名・（そのレスポンスに居ない）PC 枠名の
+  ブロックがある。ユーザ・PC の発話を GM レスポンスへ混ぜると誰の発話かが壊れるため。
+  レスポンスを丸ごと消したい場合は破棄（末尾のみ）を使う。
+- **行の対応**: 先頭から順に既存行へ割り当てる（id・`turn_index` を再利用）。
+  - 余った既存行は**物理削除**＋封筒 retract（書き換えは枝を生やさないので、非活性化して
+    残す意味がない）。
+  - 足りない分は新しい行を作り、`raw_response` / `log_request_id` / `generation_id` /
+    `branch_point_index` / `created_at` は末尾の既存行から引き継ぐ（同一レスポンス・同一枝に留める）。
+  - 話者が変わった行は封筒を retract → 新しい actor で積み直す。本文だけの変更は従来どおり封筒に触らない。
+  - `reasoning`（スケッチ）は先頭行、`anticipation` は末尾行へ付け替える。
+- **`turn_index` の繰り下げ**: ブロックが k 個増えると末尾行の直後に k 個の番号が要る。
+  `turn_index` は非活性枝も含めたセッション内連番なので、同一トランザクションで
+  - 末尾行より後の全行（非活性含む）の `turn_index` を +k
+  - `branch_point_index >= 末尾行` の全行を +k（このレスポンスの後に生えた枝の分岐点を新しい末尾へ）
+  - `synopsis_last_turn_index >= 末尾行` なら +k（レスポンス全体が蒸留済みなら境界も新しい末尾へ）
+  を行う。API は新しいレスポンス行・繰り下げ量・新しい蒸留境界を返し、フロントは
+  再取得せずにローカルのターン列を差し替える（読み込み済みの過去ページを捨てないため）。
+- **検討して棄却した案**
+  - *ブロック数の増加を禁止する*: 番号の繰り下げが不要になり実装は小さいが、
+    「地の文の間に NPC の一言を足す」ような直しができず、全体編集にする意味が薄れる。
+  - *書き換えで新しい枝を生やす*: ガチャ枝と手書きが同じ枝ナビに並び、
+    「同じ発言のまま引き直した候補」という枝の意味が崩れる。上書き方針を維持。
+  - *フロントが対象 turn_id 列を送る*: グループ判定をサーバ側でも持つ方が、
+    古い画面から送られた不整合な id 列を弾く手間がない。起点 1 つだけ送る。
 
 ## ログ（debug_log_entries）
 
@@ -157,7 +199,7 @@ retract を取り消すと「なかったことが再びあったことになる
 |---------|------|------|
 | GET | `/sessions/{sid}/turns` | 既存。各ターンに `generation_id` / `variant_index` / `variant_count` / `variant_siblings` を追加して返す。`?limit` / `?before_index` でウィンドウ取得（→ `scenario_history_perf_plan.md`） |
 | POST | `/sessions/{sid}/turns/activate` | body `{generation_id}`。下流を巻き戻して指定枝を活性化し、切替後の本線を返す。`?limit` でウィンドウ取得 |
-| PATCH | `/sessions/{sid}/turns/{turn_id}` | body `{content}`。発話の上書き |
+| PUT | `/sessions/{sid}/responses/{turn_id}` | body `{content}`（`@話者: 本文` 形式）。`turn_id` が属する 1 レスポンス全体の上書き。返り値 `{turns, index_shift, synopsis_last_turn_index}`（2026-10-14 で `PATCH /turns/{turn_id}` から置換） |
 | DELETE | `/sessions/{sid}/turns/from/{turn_id}` | 既存。既定で**非活性化**、`?keep_variants=false` で従来の物理削除 |
 
 枝情報を一覧レスポンスに埋め込むことで、枝ナビ表示のための追加リクエストを不要にする。
@@ -191,7 +233,7 @@ retract を取り消すと「なかったことが再びあったことになる
 |---------|------|
 | `repositories/sqlite/models.py` | `ScenarioTurn` に列3つ |
 | `repositories/sqlite/migrations.py` | `_migrate_add_scenario_turn_variants`（ADD COLUMN ×3、backfill 不要） |
-| `repositories/sqlite/stores/scenario_store.py` | `list_scenario_turns` に活性フィルタ / `delete_scenario_turns_from` → `deactivate_scenario_turns_from` / `activate_scenario_generation` / `update_scenario_turn_content` / 封筒ヘルパ切り出し / `get_unchronicled_usual_turns_for_character` に活性フィルタ |
+| `repositories/sqlite/stores/scenario_store.py` | `list_scenario_turns` に活性フィルタ / `delete_scenario_turns_from` → `deactivate_scenario_turns_from` / `activate_scenario_generation` / `update_scenario_turn_content`（2026-10-14 `rewrite_scenario_response` へ置換） / 封筒ヘルパ切り出し / `get_unchronicled_usual_turns_for_character` に活性フィルタ |
 | `lib/log_context.py` | `current_generation_id` / `current_branch_point_index` の contextvar |
 | `services/scenario_chat/turns.py` | `_save_turn` が新列を埋める |
 | `services/scenario_chat/service.py` | `scenario_turn_to_dict` に枝情報を追加 |
@@ -208,7 +250,7 @@ retract を取り消すと「なかったことが再びあったことになる
 
 | ファイル | 変更 |
 |---------|------|
-| `api/scenario.ts` | `activateScenarioGeneration` / `patchScenarioTurn` 追加、`regenerateRequestId` 削除 |
+| `api/scenario.ts` | `activateScenarioGeneration` / `patchScenarioTurn`（2026-10-14 `rewriteScenarioResponse` へ置換） 追加、`regenerateRequestId` 削除 |
 | `hooks/useScenarioChat.ts` | 再生成を非破壊化、枝切替・発話上書きハンドラ |
 | `components/ScenarioChatView/index.tsx` | 配線 |
 | `components/ScenarioChatView/rows.tsx` | 枝ナビ、GM バブルの編集 |
