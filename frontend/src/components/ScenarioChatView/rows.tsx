@@ -68,7 +68,7 @@ interface GMBubbleRowProps {
   onRegenerate?: ActionHandler;
   /** 末尾 GM レスポンスを破棄してユーザ入力待ちに戻す（再ストリームしない）。 */
   onDiscard?: ActionHandler;
-  /** 手動書き換えの開始。押すとこのバブルが属する 1 レスポンス全体が
+  /** 手動書き換えの開始（レスポンス末尾のバブルにだけ渡る）。押すと 1 レスポンス全体が
    *  テキストエリアに置き換わる（エディタは親 = ScenarioChatView が描く）。 */
   onEditStart?: () => void;
   /** 枝ナビの現在位置と総数（このバブルが属するレスポンスの兄弟枝）。 */
@@ -132,8 +132,8 @@ function GMBubbleRowImpl({
   const body = <MarkdownContent content={displayContent} />;
 
   // 編集の鉛筆はアバター列の下端（バブル左下の余白）へ置く。バブル下の操作バーへ足すと
-  // 行が間延びするため。どのバブルから押してもレスポンス全体の編集になるが、
-  // 押したい場所の近くに出すため全バブルに置く。
+  // 行が間延びするため。編集はレスポンス全体が対象なので、親はレスポンス末尾のバブルにだけ
+  // onEditStart を渡す。
   const editPencil =
     onEditStart && revealed ? (
       <EditButton onClick={onEditStart} title="このレスポンス全体を書き換える" />

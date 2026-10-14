@@ -573,8 +573,9 @@ function ScenarioChatViewInner({
                 onRegenerate={onRegenerate}
                 onDiscard={onDiscard}
                 onEditStart={
-                  canMutate && editingGroupTailId === null
-                    ? () => setEditingGroupTailId(groupTailOf.get(t.id) ?? t.id)
+                  // 編集はレスポンス全体が対象なので、鉛筆はレスポンス末尾のバブルにだけ出す。
+                  canMutate && isGroupTail && editingGroupTailId === null
+                    ? () => setEditingGroupTailId(t.id)
                     : undefined
                 }
                 variantIndex={variantIndex}
