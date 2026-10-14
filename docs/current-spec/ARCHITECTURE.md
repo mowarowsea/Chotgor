@@ -258,7 +258,9 @@ frontend useChat
     `[Error: CHOTGOR_CHARACTER_ID が設定されていません]` になる（debug/2a46c2cb で
     Chronicle が6回空振り→JSON へ自力リカバリ）。`generate()` は
     `--strict-mcp-config`（`--mcp-config` 未指定と併せて MCP サーバー0本）で起動し、
-    使えない手を最初から見せない。`generate_with_tools()` は MCP ループ本体なので
+    使えない手を最初から見せない。ストリーミングのツール無し経路
+    `generate_stream_typed()`（シナリオ GM・あらすじ生成）も同様に閉じる。
+    `generate_with_tools()` / `generate_with_tools_stream()` は MCP ループ本体なので
     従来どおり接続する。
   - **1on1 は逐次表示（`STREAMS_TOOL_TURNS`）**: ツールループが CLI 内で完結するため、
     ChatFlow はツール方式でも `generate_with_tools_stream()` で本文を逐次流す

@@ -647,8 +647,12 @@ class ClaudeCliProvider(BaseLLMProvider):
         プロセス起動失敗・非ゼロ終了などのエラーは ("error", msg) として yield する。
         呼び出し側は ("error", ...) を出力に積まず、状況に応じて UI 表示・蒸留スキップ
         などの分岐を行う。
+
+        ツールを渡さない契約なので generate() と同じく MCP を閉じて起動する。
+        閉じないとシナリオ GM・あらすじ生成にも Chotgor MCP のツール一覧が見え、
+        character_id 不在で必ず失敗する手を見せてしまう（_build_cli_args 参照）。
         """
-        async for item in self._stream_typed(system_prompt, messages, self._make_env()):
+        async for item in self._stream_typed(system_prompt, messages, self._make_env(), mcp_enabled=False):
             yield item
 
     async def generate_with_tools_stream(
@@ -670,7 +674,9 @@ class ClaudeCliProvider(BaseLLMProvider):
         async for item in self._stream_typed(system_prompt, messages, env):
             yield item
 
-    async def _stream_typed(self, system_prompt: str, messages: list[dict], env: dict):
+    async def _stream_typed(
+        self, system_prompt: str, messages: list[dict], env: dict, mcp_enabled: bool = True,
+    ):
         """CLI を Popen で起動し、stream-json を行単位で読んで型付きチャンクを yield する。
 
         stream 系3メソッドの共通実装。チャンクの切り出しは _StreamChunkParser 参照。
@@ -705,7 +711,7 @@ class ClaudeCliProvider(BaseLLMProvider):
             parser = _StreamChunkParser()
             try:
                 proc, pre_lines = _spawn_cli_mcp_guarded(
-                    _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools),
+                    _build_cli_args(sys_file.name, self.model, self.thinking_level, self.allowed_tools, mcp_enabled),
                     stdin_bytes,
                     env,
                 )

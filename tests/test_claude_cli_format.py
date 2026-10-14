@@ -372,6 +372,42 @@ class TestMcpEnabledFlag:
         )
         assert captured.get("mcp_enabled", True) is True
 
+    async def test_generate_stream_typed_closes_mcp(self, monkeypatch):
+        """generate_stream_typed() が mcp_enabled=False で CLI を起動すること。
+
+        シナリオ GM・あらすじ生成はこの経路を通る。閉じ忘れると GM に記憶ツールの
+        一覧が見え、thinking で「ツールは使わなくていい」と迷う原因になる。
+        """
+        from backend.providers.claude_cli_provider import ClaudeCliProvider
+
+        captured = {}
+
+        async def fake_stream(self, system_prompt, messages, env, **kwargs):
+            captured.update(kwargs)
+            yield ("text", "ok")
+
+        monkeypatch.setattr(ClaudeCliProvider, "_stream_typed", fake_stream)
+        provider = ClaudeCliProvider(character_name="GM")
+        async for _ in provider.generate_stream_typed("sys", [{"role": "user", "content": "hi"}]):
+            pass
+        assert captured.get("mcp_enabled") is False
+
+    async def test_generate_with_tools_stream_keeps_mcp(self, monkeypatch):
+        """generate_with_tools_stream() は MCP を閉じないこと（1on1 の記憶ツールの生命線）。"""
+        from backend.providers.claude_cli_provider import ClaudeCliProvider
+
+        captured = {}
+
+        async def fake_stream(self, system_prompt, messages, env, **kwargs):
+            captured.update(kwargs)
+            yield ("text", "ok")
+
+        monkeypatch.setattr(ClaudeCliProvider, "_stream_typed", fake_stream)
+        provider = ClaudeCliProvider(character_name="はる", character_id="char-abc")
+        async for _ in provider.generate_with_tools_stream("sys", [{"role": "user", "content": "hi"}], None):
+            pass
+        assert captured.get("mcp_enabled", True) is True
+
 
 class TestExtractUsageFromStreamJson:
     """Claude CLI の stream-json 出力からトークン使用量を抽出する関数のテスト。
