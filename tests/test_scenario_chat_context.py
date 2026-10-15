@@ -3,8 +3,10 @@
 backend.services.scenario_chat.context モジュールの各関数を検証する。
 
 検証する観点:
-    - resolve_history_limits の優先順（session 直書き > settings > 既定値）
-    - slice_history のターン数上限・文字数上限の **AND** 動作
+    - resolve_history_limits の優先順（レスポンス数=シナリオ > settings > 既定値、
+      文字数=GM プリセット > settings > 既定値）
+    - group_responses / count_responses のレスポンス単位の束ね
+    - slice_history のレスポンス数上限・文字数上限の **AND** 動作と、レスポンス途中で切らないこと
     - 切り出し結果が時系列昇順を維持すること
     - format_turn_for_gm が話者種別ごとに正しいタグを使うこと
     - format_history_for_gm が改行区切りで連結すること
@@ -20,7 +22,9 @@ from backend.services.scenario_chat.context import (
     DEFAULT_HISTORY_MAX_CHARS,
     DEFAULT_HISTORY_MAX_TURNS,
     TurnView,
+    count_responses,
     dropped_history,
+    group_responses,
     format_history_for_gm,
     format_turn_for_gm,
     resolve_history_limits,
@@ -33,14 +37,28 @@ from backend.services.scenario_chat.context import (
 
 @dataclass
 class FakeSession:
-    """ScenarioSession 風のダミーオブジェクト。テスト用。"""
+    """Scenario 風のダミーオブジェクト（レスポンス数上限だけを持つ）。テスト用。"""
 
     history_max_turns: object = None
-    history_max_chars: object = None
+
+
+@dataclass
+class FakePreset:
+    """LLMModelPreset 風のダミーオブジェクト（文字数上限だけを持つ）。テスト用。"""
+
+    history_budget_chars: object = None
+
+
+@dataclass
+class RawTurn:
+    """raw_response を持つ ScenarioTurn 風ダミー。レスポンス単位の束ねを検証する。"""
+
+    content: str
+    raw_response: object = None
 
 
 def _turn(speaker_type: str = "user", speaker_name: str = "プレイヤー", content: str = "x") -> TurnView:
-    """簡易 TurnView ファクトリ。"""
+    """簡易 TurnView ファクトリ（raw_response を持たない＝1 行 1 レスポンス）。"""
     return TurnView(speaker_type=speaker_type, speaker_name=speaker_name, content=content)
 
 
@@ -51,47 +69,57 @@ class TestResolveHistoryLimits:
     """履歴上限の解決優先順を検証する。
 
     優先順:
-        1. session.history_max_turns / history_max_chars（None でなければ）
-        2. settings["scenario_chat_default_history_max_turns"] / "_chars"
-        3. DEFAULT_HISTORY_MAX_* 定数
+        レスポンス数: scenario.history_max_turns → settings["scenario_chat_default_history_max_turns"]
+            → DEFAULT_HISTORY_MAX_TURNS
+        文字数: GM プリセットの history_budget_chars → settings["scenario_chat_default_history_max_chars"]
+            → DEFAULT_HISTORY_MAX_CHARS
+    文字数をシナリオでなく GM プリセットから引くのは、読める量がモデル側の性質だから
+    （2026-10-15 にシナリオ側 history_max_chars を廃止）。
     """
 
     def test_all_none_falls_back_to_defaults(self):
-        """セッション・settings 両方とも未設定なら既定値が返ること。"""
+        """シナリオ・プリセット・settings いずれも未設定なら既定値が返ること。"""
         session = FakeSession()
         turns, chars = resolve_history_limits(session, settings={})
         assert turns == DEFAULT_HISTORY_MAX_TURNS
         assert chars == DEFAULT_HISTORY_MAX_CHARS
 
-    def test_session_value_takes_priority(self):
-        """セッション直書きの値が settings より優先されること。"""
-        session = FakeSession(history_max_turns=10, history_max_chars=500)
+    def test_scenario_turns_and_preset_chars_take_priority(self):
+        """シナリオのレスポンス数・プリセットの文字数が settings より優先されること。"""
+        session = FakeSession(history_max_turns=10)
         settings = {
             "scenario_chat_default_history_max_turns": 999,
             "scenario_chat_default_history_max_chars": 999999,
         }
-        turns, chars = resolve_history_limits(session, settings=settings)
+        turns, chars = resolve_history_limits(
+            session, settings=settings, gm_preset=FakePreset(history_budget_chars=500),
+        )
         assert turns == 10
         assert chars == 500
 
-    def test_settings_used_when_session_none(self):
-        """セッション None・settings 有りなら settings が使われること。"""
+    def test_settings_used_when_scenario_and_preset_none(self):
+        """シナリオ・プリセットが未設定なら settings が使われること。"""
         session = FakeSession()
         settings = {
             "scenario_chat_default_history_max_turns": 50,
             "scenario_chat_default_history_max_chars": 12345,
         }
-        turns, chars = resolve_history_limits(session, settings=settings)
+        turns, chars = resolve_history_limits(
+            session, settings=settings, gm_preset=FakePreset(),
+        )
         assert turns == 50
         assert chars == 12345
 
-    def test_partial_session_override(self):
-        """片方だけ session で上書きされたケース。もう片方は settings or 既定値。"""
-        session = FakeSession(history_max_turns=7, history_max_chars=None)
-        settings = {"scenario_chat_default_history_max_chars": 1000}
-        turns, chars = resolve_history_limits(session, settings=settings)
-        assert turns == 7
-        assert chars == 1000
+    def test_scenario_chars_attribute_is_ignored(self):
+        """シナリオ側に旧 history_max_chars 属性が残っていても参照しないこと（廃止済み）。"""
+
+        @dataclass
+        class LegacyScenario:
+            history_max_turns: object = None
+            history_max_chars: object = 500
+
+        _, chars = resolve_history_limits(LegacyScenario(), settings={})
+        assert chars == DEFAULT_HISTORY_MAX_CHARS
 
     def test_invalid_int_in_settings_fallback(self):
         """settings の値が int 変換できないなら既定値に落ちること。"""
@@ -126,12 +154,48 @@ class TestResolveHistoryLimits:
 # ─── slice_history ────────────────────────────────────────────────────────────
 
 
+class TestGroupResponses:
+    """ターン列をレスポンス単位へ束ねる挙動を検証する。
+
+    レスポンス = 1 回の LLM 呼出で生まれたターン群。raw_response が同じで連続する行を
+    1 つに束ね、raw_response が None / 空の行（ユーザ発話・intro）は 1 行で 1 レスポンス。
+    """
+
+    def test_same_raw_consecutive_rows_grouped(self):
+        """同じ raw_response の連続行が 1 グループになること。"""
+        turns = [
+            RawTurn("u", None),
+            RawTurn("g1", "R1"), RawTurn("g2", "R1"), RawTurn("g3", "R1"),
+            RawTurn("u2", None),
+            RawTurn("g4", "R2"),
+        ]
+        groups = group_responses(turns)
+        assert [[t.content for t in g] for g in groups] == [
+            ["u"], ["g1", "g2", "g3"], ["u2"], ["g4"],
+        ]
+        assert count_responses(turns) == 4
+
+    def test_none_and_empty_raw_are_single_rows(self):
+        """raw_response が None / 空文字の行は連続していても束ねないこと。"""
+        turns = [RawTurn("a", None), RawTurn("b", None), RawTurn("c", ""), RawTurn("d", "")]
+        assert count_responses(turns) == 4
+
+    def test_same_raw_not_consecutive_split(self):
+        """同じ raw_response でも間に別行が挟まれば別グループになること。"""
+        turns = [RawTurn("a", "R"), RawTurn("u", None), RawTurn("b", "R")]
+        assert count_responses(turns) == 3
+
+    def test_turns_without_raw_attribute(self):
+        """raw_response 属性を持たない行（TurnView 等）は 1 行 1 レスポンスとして扱うこと。"""
+        assert count_responses([_turn(), _turn()]) == 2
+
+
 class TestSliceHistory:
-    """履歴切り出し（直近 N ターン × T 文字 AND）の挙動を検証する。
+    """履歴切り出し（直近 N レスポンス × T 文字 AND）の挙動を検証する。
 
     切り出し方針:
-        - 直近側から逆順に詰める
-        - max_turns に達するか max_chars を超えそうなら停止
+        - 直近側からレスポンス単位で逆順に詰める（レスポンスの途中では切らない）
+        - max_turns（レスポンス数）に達するか max_chars を超えそうなら停止
         - 結果は時系列昇順で返す
     """
 
@@ -184,6 +248,34 @@ class TestSliceHistory:
             content: object = None
 
         result = slice_history([T(content=None), T(content="ok")], max_turns=10, max_chars=10)
+        assert len(result) == 2
+
+    def test_max_turns_counts_responses_not_rows(self):
+        """max_turns がバブル行数ではなくレスポンス数で効くこと。"""
+        turns = [
+            RawTurn("u1", None),
+            RawTurn("a1", "A"), RawTurn("a2", "A"), RawTurn("a3", "A"),
+            RawTurn("u2", None),
+            RawTurn("b1", "B"), RawTurn("b2", "B"),
+        ]
+        result = slice_history(turns, max_turns=3, max_chars=10000)
+        # 直近 3 レスポンス = A(3行) / u2 / B(2行) → 6 行
+        assert [t.content for t in result] == ["a1", "a2", "a3", "u2", "b1", "b2"]
+
+    def test_chars_limit_does_not_split_response(self):
+        """文字数上限でもレスポンスの途中から始まらないこと（グループごと落とす）。"""
+        turns = [
+            RawTurn("x" * 10, "A"), RawTurn("x" * 10, "A"),
+            RawTurn("y" * 10, "B"),
+        ]
+        # 25 文字: B(10) は入るが A(20) を足すと 30 で超過 → A は丸ごと落ちる
+        result = slice_history(turns, max_turns=99, max_chars=25)
+        assert [t.content for t in result] == ["y" * 10]
+
+    def test_first_response_exceeds_chars_still_included_whole(self):
+        """直近 1 レスポンスが単体で max_chars を超えても、そのレスポンスは丸ごと入ること。"""
+        turns = [RawTurn("x" * 50, "A"), RawTurn("x" * 50, "A")]
+        result = slice_history(turns, max_turns=5, max_chars=10)
         assert len(result) == 2
 
     def test_first_item_exceeds_chars_still_included(self):

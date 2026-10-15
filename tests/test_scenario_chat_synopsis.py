@@ -7,6 +7,8 @@ update_auto_synopsis 自体は LLM プロバイダー呼出を含むため、本
 検証する観点:
     - `build_synopsis_system_prompt` の主要要素
       （主役の埋め込み・既存 auto の埋め込み・空のときセクション省略・蒸留方針の明示）
+    - `synopsis_char_cap` が「生ログ上限 × 4/6」と「既存あらすじの長さ」の大きい方を返すこと
+      （モデル切替であらすじが不可逆に縮まないラチェット）と、その値がプロンプトに載ること
     - `update_auto_synopsis` が new_turns 空・preset 不在・LLM 出力空 などのエッジで
       None を返すこと
     - `update_auto_synopsis` が成功時、既存 auto への単純追記ではなく
@@ -22,6 +24,7 @@ import pytest
 
 from backend.services.scenario_chat.synopsis import (
     build_synopsis_system_prompt,
+    synopsis_char_cap,
     update_auto_synopsis,
 )
 
@@ -173,6 +176,39 @@ class TestBuildSynopsisSystemPrompt:
         out = build_synopsis_system_prompt(FakeScenario(), existing_auto="   \n ")
         assert "継承規則" not in out
         assert "これまでのあらすじ" not in out
+
+
+class TestSynopsisCharCap:
+    """あらすじ上限（生ログ：あらすじ ＝ 6：4、ラチェット付き）を検証する。
+
+    あらすじ上限は GM プリセットの生ログ文字数上限 × 4/6 から決まる。ただし既存あらすじが
+    それより長いときは既存の長さを下回らない。あらすじは上書き保存で前世代を残さないため、
+    小さい窓のモデルへ切り替えた瞬間に上限を縮めると、次の蒸留で情報が不可逆に失われる
+    （大きいモデルへ戻しても復元できない）。その事故を防ぐ不変条件を固定する。
+    """
+
+    def test_ratio_six_to_four(self):
+        """既存あらすじが短いときは「生ログ上限 × 4/6」になること。"""
+        assert synopsis_char_cap(60000, "") == 40000
+        assert synopsis_char_cap(60000, "短い") == 40000
+
+    def test_ratchet_keeps_existing_length(self):
+        """既存あらすじが比率の上限より長ければ、既存の長さを上限とすること（縮めない）。"""
+        existing = "あ" * 12000
+        # 生ログ 6000 字のモデルへ切り替えても、上限は 4000 ではなく 12000 のまま
+        assert synopsis_char_cap(6000, existing) == 12000
+
+    def test_cap_appears_in_prompt(self):
+        """算出した上限文字数がプロンプトの圧縮規則に載り、旧来の固定値は消えていること。"""
+        out = build_synopsis_system_prompt(FakeScenario(), existing_auto="", max_chars=12345)
+        assert "12345字" in out
+        assert "2500字" not in out
+        assert "3000字" not in out
+
+    def test_prompt_does_not_demand_padding(self):
+        """上限まで埋める必要はない旨が明示されること（大きい上限で水増しを誘わない）。"""
+        out = build_synopsis_system_prompt(FakeScenario(), existing_auto="", max_chars=50000)
+        assert "埋める必要はない" in out
 
 
 # ─── update_auto_synopsis（end-to-end with mock provider） ──────────────────
@@ -403,3 +439,59 @@ class TestUpdateAutoSynopsis:
             provider_factory=_factory_for(provider),
         )
         assert result is None
+
+
+# ─── compute_synopsis_progress（レスポンス単位・GM プリセット上限） ─────────────
+
+
+class TestSynopsisProgressUnits:
+    """あらすじ進捗の数え方と上限の出どころを検証する。
+
+    進捗の turns は「話者バブル行数」ではなく**レスポンス数**（同じ raw_response の連続行で
+    1 つ）で数える。max_chars はシナリオではなく**セッションの GM プリセット**の
+    history_budget_chars から引く（未設定なら設定既定）。旧仕様ではバブル行数で数えたため、
+    GM が 1 応答で複数バブルを返すと「100 ターン」が実質 100 バブルで頭打ちになっていた。
+    """
+
+    def _sqlite(self, turns, gm_preset):
+        from unittest.mock import MagicMock
+
+        sqlite = MagicMock()
+        sqlite.list_scenario_turns.return_value = turns
+        sqlite.get_scenario_session_synopsis.return_value = {"last_turn_index": -1}
+        sqlite.get_scenario_session.return_value = MagicMock(gm_preset_id="gm")
+        sqlite.get_model_preset.side_effect = lambda pid: gm_preset if pid == "gm" else None
+        return sqlite
+
+    def test_turns_counted_as_responses_and_chars_from_gm_preset(self):
+        """3 バブルの GM 応答は 1 と数え、max_chars は GM プリセットの値になること。"""
+        from types import SimpleNamespace
+
+        from backend.services.scenario_chat.auto_synopsis import compute_synopsis_progress
+
+        turns = [
+            SimpleNamespace(turn_index=0, content="u", raw_response=None),
+            SimpleNamespace(turn_index=1, content="a", raw_response="R"),
+            SimpleNamespace(turn_index=2, content="b", raw_response="R"),
+            SimpleNamespace(turn_index=3, content="c", raw_response="R"),
+        ]
+        sqlite = self._sqlite(turns, SimpleNamespace(history_budget_chars=30000))
+        progress = compute_synopsis_progress(
+            sqlite, {}, SimpleNamespace(history_max_turns=None), "s1",
+        )
+        assert progress["turns"] == 2
+        assert progress["chars"] == 4
+        assert progress["max_chars"] == 30000
+
+    def test_gm_preset_without_budget_falls_back_to_default(self):
+        """GM プリセットに上限が無ければ設定既定（80000）へフォールバックすること。"""
+        from types import SimpleNamespace
+
+        from backend.services.scenario_chat.auto_synopsis import compute_synopsis_progress
+        from backend.services.scenario_chat.context import DEFAULT_HISTORY_MAX_CHARS
+
+        sqlite = self._sqlite([], SimpleNamespace(history_budget_chars=None))
+        progress = compute_synopsis_progress(
+            sqlite, {}, SimpleNamespace(history_max_turns=None), "s1",
+        )
+        assert progress["max_chars"] == DEFAULT_HISTORY_MAX_CHARS

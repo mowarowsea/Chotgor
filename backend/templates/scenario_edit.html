@@ -104,21 +104,13 @@
             <div class="ch-formgrid">
                 <div class="ch-field">
                     <label class="ch-label" for="history_max_turns">History Max Turns{{ ch_help(
-                        'GM に送る履歴のターン（<code>@話者:</code> ブロック）上限。空欄なら設定の既定値。'
+                        'GM に送る履歴のレスポンス数上限（1 回の GM 応答＝ 1 レスポンス）。空欄なら設定の既定値。'
+                        '文字数上限は GM に使うモデルプリセット側で設定します。'
                     ) }}
                     </label>
                     <input type="number" id="history_max_turns" name="history_max_turns" class="ch-input"
                         value="{% if scenario and scenario.history_max_turns %}{{ scenario.history_max_turns }}{% endif %}"
                         min="0" placeholder="100">
-                </div>
-                <div class="ch-field">
-                    <label class="ch-label" for="history_max_chars">History Max Chars{{ ch_help(
-                        'GM に送る履歴の文字数上限。空欄なら設定の既定値。'
-                    ) }}
-                    </label>
-                    <input type="number" id="history_max_chars" name="history_max_chars" class="ch-input"
-                        value="{% if scenario and scenario.history_max_chars %}{{ scenario.history_max_chars }}{% endif %}"
-                        min="0" placeholder="80000">
                 </div>
             </div>
 

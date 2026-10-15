@@ -734,27 +734,19 @@
             </div>
 
             {# あらすじ起稿タイミングのノブ＝履歴上限（シナリオ編集と同形）。
-               うつつは無人ゆえ、シーン完走ごとに「未蒸留ターンが上限の半分に達したら」
+               うつつは無人ゆえ、シーン完走ごとに「未蒸留分が上限の半分に達したら」
                あらすじを自動起稿する。上限を縮めるほど早く・頻繁に起稿される。空欄は設定既定。 #}
             <div class="ch-formgrid">
                 <div class="ch-field">
-                    <label class="ch-label" for="usual_history_max_turns">履歴上限ターン{{ ch_help(
-                        'GM に渡す履歴のターン上限。未蒸留ターンがこの半分に達するとあらすじを自動起稿します'
-                        '（上限を縮めるほど早く・頻繁に起稿）。空欄なら設定の既定値。'
+                    <label class="ch-label" for="usual_history_max_turns">履歴上限レスポンス{{ ch_help(
+                        'GM に渡す履歴のレスポンス数上限（1 回の応答＝ 1 レスポンス）。未蒸留分がこの半分に'
+                        '達するとあらすじを自動起稿します（上限を縮めるほど早く・頻繁に起稿）。空欄なら設定の既定値。'
+                        '文字数上限は GM に使うモデルプリセット側で設定します。'
                     ) }}
                     </label>
                     <input type="number" id="usual_history_max_turns" name="usual_history_max_turns" class="ch-input"
                         min="0" step="1" placeholder="100"
                         value="{% if usual_scenario and usual_scenario.history_max_turns %}{{ usual_scenario.history_max_turns }}{% endif %}">
-                </div>
-                <div class="ch-field">
-                    <label class="ch-label" for="usual_history_max_chars">履歴上限文字数{{ ch_help(
-                        'GM に渡す履歴の文字数上限。空欄なら設定の既定値。'
-                    ) }}
-                    </label>
-                    <input type="number" id="usual_history_max_chars" name="usual_history_max_chars" class="ch-input"
-                        min="0" step="1000" placeholder="80000"
-                        value="{% if usual_scenario and usual_scenario.history_max_chars %}{{ usual_scenario.history_max_chars }}{% endif %}">
                 </div>
             </div>
 

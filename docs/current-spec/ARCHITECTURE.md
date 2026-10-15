@@ -418,6 +418,15 @@ synopsis / chronicle から枝は見えない。`turn_index` は非活性行を�
 `response_key` だけを返す（レスポンスグループの畳み込みと再生成対象の探索にしか
 使われないため）。詳細は `docs/planned/scenario_history_perf_plan.md`。
 
+**GM へ渡す履歴窓とあらすじ** — GM には直近の生ログ（`context.slice_history`）と
+あらすじ（`synopsis_auto`）を渡す。生ログ窓は「レスポンス数上限」と「文字数上限」の AND。
+レスポンス＝ 1 回の LLM 呼出で生まれたバブル群（`raw_response` が同じ連続行。ユーザ発話は
+1 行で 1 レスポンス）で、窓はレスポンスの途中で切れない。レスポンス数上限は
+`scenarios.history_max_turns`、文字数上限は **GM プリセットの `history_budget_chars`**
+（空なら設定既定 → 80000）。あらすじ上限は「生ログ上限 × 4/6」と「既存あらすじの長さ」の
+大きい方（モデルを小さい窓へ切り替えても、あらすじを不可逆に縮めないラチェット）。
+詳細・棄却案は `docs/planned/scenario_history_budget_plan.md`。
+
 ### うつつ（Usual Days — キャラの無人生活モード）
 
 ユーザ不在のあいだ、キャラが自律的に「生活」し続ける裏の世界。シナリオチャットの
@@ -464,7 +473,8 @@ main.py うつつ tick（_run_every_minute 同乗・冪等キー=日付+スロ�
   enabled/slots/event_categories/event_probability/max_turns_per_scene/
   gm・pc・synopsis_preset_id）。`synopsis_preset_id` は空なら GM プリセットへ
   フォールバックする（蒸留はシーン完走ごとに走るので、GM と別の軽いモデルを選べる）。
-  履歴上限は `scenarios.history_max_turns/chars` 列（うつつフォームで設定）。
+  履歴のレスポンス数上限は `scenarios.history_max_turns` 列（うつつフォームで設定）、
+  文字数上限は GM プリセットの `history_budget_chars`。
   `scenario_sessions.engine_type="usual_days"`（永続1本セッション）。
 - あらすじ（履歴切り捨て時の保険）: 通常シナリオはフロントが進捗バーを見てユーザが
   プリセットを選び `/synopsis/regenerate` を叩くが、うつつは無人ゆえ介入者がいない。

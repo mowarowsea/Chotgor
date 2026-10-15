@@ -1057,7 +1057,7 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
     const rc = max_chars > 0 ? chars / max_chars : 0;
     const text =
       rt >= rc
-        ? `あらすじ未作成（${turns}/${max_turns}ターン）`
+        ? `あらすじ未作成（${turns}/${max_turns}レスポンス）`
         : `あらすじ未作成（${chars}/${max_chars}文字）`;
     return { text, danger: synopsisRatio > 0.8 };
   }, [synopsisProgress, synopsisGenerating, synopsisModalOpen, synopsisRatio]);

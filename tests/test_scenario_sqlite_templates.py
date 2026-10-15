@@ -50,13 +50,13 @@ class TestScenarioCRUD:
             user_alias="ヴァン",
             scenario="魔導書を探す。古城。詩的に語る。slow テンポ。",
             history_max_turns=50,
-            history_max_chars=40000,
         )
         fetched = sqlite_store.get_scenario(scenario.id)
         assert fetched is not None
         assert "魔導書" in fetched.scenario
         assert fetched.history_max_turns == 50
-        assert fetched.history_max_chars == 40000
+        # 文字数上限は GM プリセット側へ移管済み（シナリオには列が無い）
+        assert not hasattr(fetched, "history_max_chars")
 
     def test_get_nonexistent_returns_none(self, sqlite_store):
         """存在しないシナリオ ID で取得した場合 None。"""

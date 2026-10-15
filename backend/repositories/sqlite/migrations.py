@@ -322,6 +322,32 @@ class SQLiteMigrationsMixin:
                 "ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300"
             )
 
+    def _migrate_add_preset_history_budget_chars(self) -> None:
+        """`llm_model_presets` に `history_budget_chars` 列を追加する（NULL=設定既定）。冪等。"""
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql("PRAGMA table_info(llm_model_presets)").fetchall()
+            }
+            if not cols or "history_budget_chars" in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE llm_model_presets ADD COLUMN history_budget_chars INTEGER"
+            )
+
+    def _migrate_drop_scenario_history_max_chars(self) -> None:
+        """`scenarios.history_max_chars` を削除する（GM プリセットの history_budget_chars へ移管）。
+
+        SQLite 3.35+ の DROP COLUMN を使う。値は移行しない（既存は全シナリオ NULL だった）。冪等。
+        """
+        with self.engine.begin() as conn:
+            cols = {
+                r[1]
+                for r in conn.exec_driver_sql("PRAGMA table_info(scenarios)").fetchall()
+            }
+            if "history_max_chars" in cols:
+                conn.exec_driver_sql("ALTER TABLE scenarios DROP COLUMN history_max_chars")
+
     def _migrate_add_debug_log_entries(self) -> None:
         """`debug_log_entries` テーブルが存在しない既存 DB への互換マイグレーション。
 

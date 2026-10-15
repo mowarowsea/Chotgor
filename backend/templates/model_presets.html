@@ -61,6 +61,13 @@
                         <input type="number" id="new-timeout-seconds" name="timeout_seconds" class="ch-input"
                                min="1" step="1" value="300">
                     </div>
+                    <div class="ch-field">
+                        <label class="ch-label" for="new-history-budget-chars">シナリオ生ログ上限（文字）
+                            <span class="ch-hint">GM 用。空欄 = 既定80000。あらすじ上限はこの4/6</span>
+                        </label>
+                        <input type="number" id="new-history-budget-chars" name="history_budget_chars" class="ch-input"
+                               min="1" step="1000" placeholder="80000">
+                    </div>
                     <div class="ch-formgrid__action">
                         <button type="button" class="ch-btn ch-btn--primary" onclick="submitNew()">追加</button>
                     </div>
@@ -161,6 +168,14 @@
                         </label>
                         <input type="number" name="timeout_seconds" class="ch-input"
                                value="{{ preset.timeout_seconds or 300 }}" min="1" step="1">
+                    </div>
+                    <div class="ch-field">
+                        <label class="ch-label">シナリオ生ログ上限（文字）
+                            <span class="ch-hint">GM 用。空欄 = 既定80000。あらすじ上限はこの4/6</span>
+                        </label>
+                        <input type="number" name="history_budget_chars" class="ch-input"
+                               value="{{ preset.history_budget_chars or '' }}" min="1" step="1000"
+                               placeholder="80000">
                     </div>
                     <hr class="ch-divider">
                     <div class="ch-meta" style="margin-top:12px">

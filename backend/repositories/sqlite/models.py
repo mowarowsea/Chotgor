@@ -338,6 +338,9 @@ class LLMModelPreset(Base):
     # プロバイダーAPIリクエストのタイムアウト秒数。デフォルトは5分（=300秒）。
     # 現状はOllamaのみ参照する（ローカルモデルは応答が遅いケースが多いため）。
     timeout_seconds = Column(Integer, nullable=False, default=300)
+    # シナリオ GM として使うときに渡す生ログの文字数上限。NULL=設定既定（80000）。
+    # あらすじ上限もこの値 × 4/6 から決まる（services/scenario_chat/synopsis.py）。
+    history_budget_chars = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now())
 
 
@@ -362,8 +365,7 @@ class Scenario(Base):
     intro = Column(Text, nullable=True)                    # 導入部（@キャラ:記法）。セッション開始時に固定ターンとして挿入
     # （旧 user_alias 列は廃止。ユーザPCも pc_slots の 1 枠として表現し、
     #   セッションの pc_assignments で player_type="user" を割り当てる。）
-    history_max_turns = Column(Integer, nullable=True)     # 送信履歴の最大ターン数。NULL=settings 既定
-    history_max_chars = Column(Integer, nullable=True)     # 送信履歴の最大文字数。NULL=settings 既定
+    history_max_turns = Column(Integer, nullable=True)     # 送信履歴の最大レスポンス数。NULL=settings 既定（文字数上限は GM プリセットの history_budget_chars）
     custom_system_prompt = Column(Text, nullable=True)     # GMシステムプロンプトの完全カスタマイズ。NULLなら自動生成ロジック使用
     # ダイスプール仕様（JSON: {"d6": 10, "d100": 5} 等）。NULL/未指定なら engine 側で {"d6": 10} を既定値として使う。
     # ensemble_pc エンジン時のみ参照する。毎ターン engine 内で乱数生成して GM system prompt の {dice_pool} へ注入。

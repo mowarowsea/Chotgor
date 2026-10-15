@@ -57,7 +57,6 @@ USUAL_SCENARIO_FIELDS = (
     "pc_slots",
     "usual_config",
     "history_max_turns",
-    "history_max_chars",
 )
 
 #: シナリオ編集フォームが無条件に上書きするカラム（banner_data は条件付きのため対象外）。
@@ -66,7 +65,6 @@ SCENARIO_FIELDS = (
     "scenario",
     "intro",
     "history_max_turns",
-    "history_max_chars",
     "custom_system_prompt",
     "dice_pool_spec",
     "pc_slots",

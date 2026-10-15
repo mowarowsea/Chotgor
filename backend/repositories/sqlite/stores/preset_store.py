@@ -12,6 +12,7 @@ class PresetStoreMixin:
         model_id: str,
         thinking_level: str = "default",
         timeout_seconds: int = 300,
+        history_budget_chars: int | None = None,
     ):
         """LLMモデルプリセットを新規作成する。
 
@@ -26,6 +27,7 @@ class PresetStoreMixin:
                 model_id=model_id,
                 thinking_level=thinking_level,
                 timeout_seconds=timeout_seconds,
+                history_budget_chars=history_budget_chars,
             )
             session.add(preset)
             session.commit()

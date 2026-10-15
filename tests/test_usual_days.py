@@ -1663,7 +1663,6 @@ class TestUsualFormParsing:
             "usual_event_probability": "0.3",
             "usual_max_responses": "6",
             "usual_history_max_turns": "40",
-            "usual_history_max_chars": "30000",
         }
         scn_kwargs, cfg = _parse_usual_form(form, "はる")
 
@@ -1679,7 +1678,8 @@ class TestUsualFormParsing:
         assert cfg["synopsis_preset_id"] == "syn-p"
         # 履歴上限（あらすじ起稿タイミングのノブ）は scenario 列へ保存される
         assert scn_kwargs["history_max_turns"] == 40
-        assert scn_kwargs["history_max_chars"] == 30000
+        # 文字数上限は GM プリセット側へ移管済み（うつつフォームからは保存しない）
+        assert "history_max_chars" not in scn_kwargs
         # 主人公 PC 枠はキャラ名で 1 枠
         assert scn_kwargs["pc_slots"][0]["name"] == "はる"
         assert scn_kwargs["pc_slots"][0]["description"] == "3年目デザイナー。"
@@ -1699,7 +1699,6 @@ class TestUsualFormParsing:
         assert scn_kwargs["scenario"] is None
         # 履歴上限は空欄 → None（設定既定に委ねる）で保存される
         assert scn_kwargs["history_max_turns"] is None
-        assert scn_kwargs["history_max_chars"] is None
 
     def test_invalid_numbers_fallback(self):
         """確率・上限レスポンス数が不正値なら既定値にフォールバックすること。"""

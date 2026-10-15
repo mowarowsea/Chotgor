@@ -17,7 +17,6 @@ def scenario_to_dict(scenario: Any) -> dict:
         "scenario": scenario.scenario,
         "intro": scenario.intro,
         "history_max_turns": scenario.history_max_turns,
-        "history_max_chars": scenario.history_max_chars,
         "custom_system_prompt": scenario.custom_system_prompt,
         "dice_pool_spec": getattr(scenario, "dice_pool_spec", None),
         "pc_slots": getattr(scenario, "pc_slots", None) or [],

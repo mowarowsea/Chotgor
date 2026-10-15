@@ -299,8 +299,13 @@ class EnsembleEngine:
         Raises:
             ValueError: preset_id に対応するプリセットが見つからない場合。
         """
-        # 1. 履歴切り出しと整形
-        max_turns, max_chars = resolve_history_limits(scenario, settings)
+        # 1. 履歴切り出しと整形（文字数上限は GM プリセットが持つため先にプリセットを引く）
+        preset = self._preset_loader(gm_preset_id)
+        if preset is None:
+            raise ValueError(
+                f"GM プリセットが見つかりません: gm_preset_id={gm_preset_id}"
+            )
+        max_turns, max_chars = resolve_history_limits(scenario, settings, preset)
         sliced = slice_history(history, max_turns=max_turns, max_chars=max_chars)
 
         # 1b. GM への「今回のリクエスト本文」を決める。
@@ -346,11 +351,6 @@ class EnsembleEngine:
         )
 
         # 3. プロバイダ生成
-        preset = self._preset_loader(gm_preset_id)
-        if preset is None:
-            raise ValueError(
-                f"GM プリセットが見つかりません: gm_preset_id={gm_preset_id}"
-            )
         provider = self._provider_factory(
             preset.provider,
             model=preset.model_id,

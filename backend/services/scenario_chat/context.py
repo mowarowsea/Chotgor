@@ -1,16 +1,18 @@
 """シナリオチャット用 履歴整形・切り出しユーティリティ。
 
-GM への送信時に、`scenario_turns` 全件のうち直近 N ターン（または T 文字以内）を
+GM への送信時に、`scenario_turns` 全件のうち直近 N レスポンス（かつ T 文字以内）を
 切り出し、`@話者名: 本文` 形式のテキストに整形する。
 
-用語: ここでの「ターン」= @話者: ブロック単位（scenario_turns 1 行）。
-      GM の 1 レスポンス（=1 LLM 呼出）が複数話者ブロックを生むため、
-      ここでのターン数上限は「話者ブロック数」基準であって、LLM 呼出回数とは別軸。
+用語: 「ターン」= @話者: ブロック単位（scenario_turns 1 行）。
+      「レスポンス」= 1 回の LLM 呼出で生まれたターン群（`raw_response` が同じ連続行）。
+      ユーザ発話・intro（`raw_response` が NULL）は 1 行で 1 レスポンス。
+      上限 `history_max_turns` は列名に反してレスポンス数で数える（2026-10-15 変更）。
 
 仕様:
     - 履歴は DB に全件保持し、送信時のみ切り出す
-    - 切り出しは「ターン数上限」と「文字数上限」の **AND** で決まる
-      （先に到達した方が利く）
+    - 切り出しは「レスポンス数上限」と「文字数上限」の **AND** で決まる
+      （先に到達した方が利く）。レスポンスの途中では切らない
+    - 文字数上限は GM プリセットの `history_budget_chars`（空なら設定既定）
     - ユーザ発話は `@{user_alias}: ...`
     - Narrator は `@Narrator: ...`
     - NPC（known/unknown 問わず）は `@{speaker_name}: ...`
@@ -56,24 +58,21 @@ def _coalesce_int(value: Any, fallback: int) -> int:
 def resolve_history_limits(
     scenario: Any,
     settings: dict | None = None,
+    gm_preset: Any = None,
 ) -> tuple[int, int]:
-    """シナリオごとの履歴切り出し上限を解決する。
+    """履歴切り出し上限 (max_responses, max_chars) を解決する。
 
-    優先順:
-        1. Scenario.history_max_turns / history_max_chars（NULL でなければ）
-        2. settings の "scenario_chat_default_history_max_turns" / "_max_chars"
-        3. ハードコード既定値 (DEFAULT_HISTORY_MAX_TURNS / DEFAULT_HISTORY_MAX_CHARS)
+    レスポンス数: Scenario.history_max_turns → settings
+        "scenario_chat_default_history_max_turns" → DEFAULT_HISTORY_MAX_TURNS
+    文字数: GM プリセットの history_budget_chars → settings
+        "scenario_chat_default_history_max_chars" → DEFAULT_HISTORY_MAX_CHARS
 
-    Args:
-        scenario: Scenario ORM（もしくは同等フィールドを持つオブジェクト）。
-        settings: グローバル設定辞書（None なら使わない）。
-
-    Returns:
-        (max_turns, max_chars) のタプル。
+    文字数をシナリオではなく GM プリセットに持たせるのは、読める量がモデル側の性質だから。
+    あらすじ蒸留に別プリセットを使っていても、基準は GM プリセット（あらすじを読むのは GM）。
     """
     settings = settings or {}
     scen_turns = getattr(scenario, "history_max_turns", None)
-    scen_chars = getattr(scenario, "history_max_chars", None)
+    preset_chars = getattr(gm_preset, "history_budget_chars", None)
 
     settings_turns = _coalesce_int(
         settings.get("scenario_chat_default_history_max_turns"),
@@ -85,8 +84,31 @@ def resolve_history_limits(
     )
 
     max_turns = _coalesce_int(scen_turns, settings_turns)
-    max_chars = _coalesce_int(scen_chars, settings_chars)
+    max_chars = _coalesce_int(preset_chars, settings_chars)
     return max_turns, max_chars
+
+
+def group_responses(turns: list[Any]) -> list[list[Any]]:
+    """ターン列をレスポンス単位のグループ列へ束ねる（時系列順を保つ）。
+
+    `raw_response` が同じで連続する行を 1 グループにする（フロントの `response_key` による
+    レスポンスグループと同じ単位）。`raw_response` が None / 空の行は 1 行で 1 グループ。
+    """
+    groups: list[list[Any]] = []
+    prev_raw: str | None = None
+    for t in turns:
+        raw = getattr(t, "raw_response", None) or None
+        if groups and raw is not None and raw == prev_raw:
+            groups[-1].append(t)
+        else:
+            groups.append([t])
+        prev_raw = raw
+    return groups
+
+
+def count_responses(turns: list[Any]) -> int:
+    """ターン列に含まれるレスポンス数を返す。"""
+    return len(group_responses(turns))
 
 
 def slice_history(
@@ -94,37 +116,27 @@ def slice_history(
     max_turns: int,
     max_chars: int,
 ) -> list[Any]:
-    """履歴を直近 max_turns ターンかつ累計 max_chars 文字以内に切り出す。
+    """履歴を直近 max_turns レスポンスかつ累計 max_chars 文字以内に切り出す。
 
-    両方の上限を **AND**（先に到達した方が利く）で適用する。
-    切り出しは直近側から行い、結果は時系列昇順で返す。
-
-    Args:
-        turns: ScenarioTurn 風オブジェクトのリスト（時系列昇順を前提）。
-        max_turns: 最大ターン数。0 以下なら 0 件。
-        max_chars: 最大文字数（content の長さの合計で計測）。0 以下なら 0 件。
-
-    Returns:
-        切り出し後のリスト（時系列昇順）。
+    両方の上限を **AND**（先に到達した方が利く）で適用する。切り出しは直近側から
+    レスポンス単位で行い、レスポンスの途中では切らない。結果は時系列昇順で返す。
+    直近 1 レスポンスだけは max_chars を超えていても入れる（何も渡らない事態を避ける）。
     """
     if max_turns <= 0 or max_chars <= 0:
         return []
 
-    # 直近側から逆順に詰めていく
-    chosen: list[Any] = []
+    chosen_groups: list[list[Any]] = []
     char_sum = 0
-    for t in reversed(turns):
-        body = getattr(t, "content", "") or ""
-        if len(chosen) >= max_turns:
+    for group in reversed(group_responses(turns)):
+        if len(chosen_groups) >= max_turns:
             break
-        if char_sum + len(body) > max_chars and chosen:
-            # 1 件目だけは max_chars 超過でも入れる選択肢もあるが、
-            # ここは厳密に上限を守る方針（先に入れた直近側を優先）。
+        body_len = sum(len(getattr(t, "content", "") or "") for t in group)
+        if char_sum + body_len > max_chars and chosen_groups:
             break
-        chosen.append(t)
-        char_sum += len(body)
-    chosen.reverse()
-    return chosen
+        chosen_groups.append(group)
+        char_sum += body_len
+    chosen_groups.reverse()
+    return [t for g in chosen_groups for t in g]
 
 
 def dropped_history(
@@ -140,7 +152,7 @@ def dropped_history(
 
     Args:
         turns: ScenarioTurn 風オブジェクトのリスト（時系列昇順を前提）。
-        max_turns: 最大ターン数（slice_history と同じ意味）。
+        max_turns: 最大レスポンス数（slice_history と同じ意味）。
         max_chars: 最大文字数（slice_history と同じ意味）。
 
     Returns:

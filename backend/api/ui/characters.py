@@ -475,7 +475,6 @@ def _parse_usual_form(
         "pc_slots": pc_slots,
         "usual_config": usual_config,
         "history_max_turns": _int_or_none("usual_history_max_turns"),
-        "history_max_chars": _int_or_none("usual_history_max_chars"),
     }
     return scenario_kwargs, usual_config
 

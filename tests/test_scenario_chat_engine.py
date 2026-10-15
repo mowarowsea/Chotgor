@@ -48,7 +48,6 @@ class FakeScenario:
     user_alias: str = "プレイヤー"
     scenario: str | None = None
     history_max_turns: int | None = None
-    history_max_chars: int | None = None
 
 
 @dataclass

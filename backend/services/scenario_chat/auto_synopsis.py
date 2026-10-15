@@ -6,24 +6,33 @@
 
 import logging
 
-from backend.services.scenario_chat.context import resolve_history_limits
+from backend.services.scenario_chat.context import (
+    count_responses,
+    resolve_history_limits,
+)
 from backend.services.scenario_chat.serializers import resolve_user_speaker_name
 from backend.services.scenario_chat.synopsis import update_auto_synopsis
 
 logger = logging.getLogger(__name__)
 
 # あらすじ自動更新のトリガー閾値。
-# 「未蒸留 dropped 群」のターン数または累積文字数が history 上限の半分に達したら
+# 「未蒸留 dropped 群」のレスポンス数または累積文字数が history 上限の半分に達したら
 # synopsis_auto を再蒸留する（OR 判定）。
 # 上限到達直後に毎レスポンス LLM 呼出が走るのを避けるための間引き閾値で、
-# シナリオごとの history_max_turns / history_max_chars に追従させる。
+# history 上限（resolve_history_limits）に追従させる。
 # 手動 regenerate API では無視する（force=True で呼ぶ）。
 #
-# 用語: ここでの「ターン」は @話者: ブロック単位（scenario_turns 1 行）。
-#       GM の 1 レスポンス（=1 LLM 呼出）が複数の話者ブロックを生むため、
-#       1 レスポンス ≠ 1 ターンであることに注意。トリガー比は **ターン基準** で
-#       history_max_turns（こちらも話者ブロック単位）と整合している。
+# 用語: history_max_turns はレスポンス単位（context.group_responses）。トリガー判定・
+#       進捗の「turns」も同じくレスポンス数で数える。
 SYNOPSIS_AUTO_TRIGGER_RATIO = 0.5
+
+
+def _load_gm_preset(sqlite, session):
+    """セッションの GM プリセットを返す（文字数上限の解決用）。見つからなければ None。"""
+    gm_preset_id = getattr(session, "gm_preset_id", "") if session is not None else ""
+    if not gm_preset_id:
+        return None
+    return sqlite.get_model_preset(gm_preset_id)
 
 
 async def maybe_update_auto_synopsis(
@@ -40,8 +49,8 @@ async def maybe_update_auto_synopsis(
 
     呼び出しタイミング:
         - 通常チャットフロー: 各レスポンス直前に best-effort で呼ぶ（force=False）。
-          前回蒸留からの新規ターン（話者ブロック）が history 上限の SYNOPSIS_AUTO_TRIGGER_RATIO に
-          ターン数・文字数のどちらも届いていなければ何もしない。
+          前回蒸留からの新規レスポンス数・文字数が history 上限の SYNOPSIS_AUTO_TRIGGER_RATIO に
+          どちらも届いていなければ何もしない。
         - 手動 regenerate API: force=True で呼ぶ。閾値判定をスキップする。
 
     あらすじは生ログから押し出されたタイミングではなく **last_turn_index 以降の新規ターン**
@@ -59,7 +68,10 @@ async def maybe_update_auto_synopsis(
         失敗時も None（best-effort）。
     """
     try:
-        max_turns, max_chars = resolve_history_limits(scenario, settings)
+        synopsis_session = sqlite.get_scenario_session(session_id)
+        max_turns, max_chars = resolve_history_limits(
+            scenario, settings, _load_gm_preset(sqlite, synopsis_session),
+        )
         if not history:
             logger.debug(
                 "auto synopsis skip session=%s 理由=履歴空 force=%s",
@@ -97,7 +109,7 @@ async def maybe_update_auto_synopsis(
 
         if not force:
             total_chars = sum(len(getattr(t, "content", "") or "") for t in new_turns)
-            total_turns = len(new_turns)
+            total_turns = count_responses(new_turns)
             trigger_turns = max(1, int(max_turns * SYNOPSIS_AUTO_TRIGGER_RATIO))
             trigger_chars = max(1, int(max_chars * SYNOPSIS_AUTO_TRIGGER_RATIO))
             if total_turns < trigger_turns and total_chars < trigger_chars:
@@ -122,7 +134,6 @@ async def maybe_update_auto_synopsis(
             force,
         )
         # ユーザPC名を解決してあらすじ蒸留プロンプトへ渡す（旧 user_alias 廃止）。
-        synopsis_session = sqlite.get_scenario_session(session_id)
         user_speaker_name = resolve_user_speaker_name(
             scenario, synopsis_session, sqlite,
         )
@@ -133,6 +144,7 @@ async def maybe_update_auto_synopsis(
             settings=settings,
             preset_loader=loader,
             synopsis_preset_id=synopsis_preset_id,
+            history_max_chars=max_chars,
             user_speaker_name=user_speaker_name,
             # シナリオ本文の {npc_name[n]} を GM プロンプトと同じに解決するため。
             npcs=sqlite.list_scenario_npcs(scenario.id),
@@ -163,11 +175,11 @@ async def maybe_update_auto_synopsis(
 def compute_synopsis_progress(
     sqlite, settings: dict, scenario, session_id: str
 ) -> dict | None:
-    """前回あらすじ蒸留以降の累積（ターン数・文字数）と history 上限を返す。
+    """前回あらすじ蒸留以降の累積（レスポンス数・文字数）と history 上限を返す。
 
     あらすじ作成バーの進捗表示・自動表示判定に使う。LLM 蒸留は一切実行しない。
     前回蒸留（synopsis_last_turn_index）以降の新規ターンを対象に、
-    「ターン数」「累積文字数」を数え、それぞれの上限（resolve_history_limits）と
+    「レスポンス数」「累積文字数」を数え、それぞれの上限（resolve_history_limits）と
     併せて返す。閾値（50% / 80% など）の判定・色分けは UI 側に委ねる。
 
     Args:
@@ -182,7 +194,10 @@ def compute_synopsis_progress(
     """
     try:
         history = sqlite.list_scenario_turns(session_id)
-        max_turns, max_chars = resolve_history_limits(scenario, settings)
+        max_turns, max_chars = resolve_history_limits(
+            scenario, settings,
+            _load_gm_preset(sqlite, sqlite.get_scenario_session(session_id)),
+        )
         synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
             "last_turn_index": -1,
         }
@@ -192,7 +207,7 @@ def compute_synopsis_progress(
         ]
         total_chars = sum(len(getattr(t, "content", "") or "") for t in new_turns)
         return {
-            "turns": len(new_turns),
+            "turns": count_responses(new_turns),
             "max_turns": max_turns,
             "chars": total_chars,
             "max_chars": max_chars,

@@ -16,7 +16,6 @@ class ScenarioCreate(BaseModel):
     scenario: str | None = None
     intro: str | None = None
     history_max_turns: int | None = None
-    history_max_chars: int | None = None
     custom_system_prompt: str | None = None
     dice_pool_spec: dict | None = None
     # 全PC（ユーザPC含む）を定義する単一ソース。旧 user_alias は廃止し、ユーザPCも
@@ -31,7 +30,6 @@ class ScenarioUpdate(BaseModel):
     scenario: str | None = None
     intro: str | None = None
     history_max_turns: int | None = None
-    history_max_chars: int | None = None
     custom_system_prompt: str | None = None
     dice_pool_spec: dict | None = None
     pc_slots: list[dict] | None = None

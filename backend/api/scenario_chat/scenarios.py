@@ -53,7 +53,6 @@ async def create_scenario(request: Request, body: ScenarioCreate):
         scenario=body.scenario,
         intro=body.intro,
         history_max_turns=body.history_max_turns,
-        history_max_chars=body.history_max_chars,
         custom_system_prompt=body.custom_system_prompt,
         dice_pool_spec=body.dice_pool_spec,
         pc_slots=_normalize_pc_slots_input(body.pc_slots),

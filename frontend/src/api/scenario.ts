@@ -17,7 +17,6 @@ export interface ScenarioTemplate {
   scenario: string | null;
   intro: string | null;
   history_max_turns: number | null;
-  history_max_chars: number | null;
   /** PC枠定義（engine_type="ensemble_pc" 用）。各枠は人物像・知っていること等を
    *  description に 1 テキストで持つ。セッション開始時に「誰が演じるか」を割り当てる。 */
   pc_slots?: PcSlot[];
@@ -146,7 +145,7 @@ export interface ScenarioSynopsis {
 /**
  * あらすじ作成バー用の進捗情報。
  *
- * 前回あらすじ蒸留以降に積み上がった「ターン数（=話者ブロック数） / 文字数」とそれぞれの history 上限。
+ * 前回あらすじ蒸留以降に積み上がった「レスポンス数（1 回の LLM 呼出＝ 1） / 文字数」とそれぞれの history 上限。
  * フロントは max(turns/max_turns, chars/max_chars) の比率でバーの表示可否（>50%）と
  * 色（>80% で赤）を決める。turn_complete 時とあらすじ作成（regenerate）時に更新される。
  */

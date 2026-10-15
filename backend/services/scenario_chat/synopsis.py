@@ -20,7 +20,10 @@ import logging
 from typing import Any, Callable
 
 from backend.providers.registry import create_provider
-from backend.services.scenario_chat.context import format_history_for_gm
+from backend.services.scenario_chat.context import (
+    DEFAULT_HISTORY_MAX_CHARS,
+    format_history_for_gm,
+)
 from backend.services.scenario_chat.template_tags import (
     build_tag_context,
     expand_value_tags,
@@ -28,10 +31,25 @@ from backend.services.scenario_chat.template_tags import (
 
 logger = logging.getLogger(__name__)
 
+# 生ログ：あらすじ ＝ 6：4。あらすじ上限 = 生ログ文字数上限 × この比。
+SYNOPSIS_TO_HISTORY_RATIO = 4 / 6
+
+
+def synopsis_char_cap(history_max_chars: int, existing_auto: str = "") -> int:
+    """あらすじの最大文字数を返す。
+
+    「生ログ上限 × SYNOPSIS_TO_HISTORY_RATIO」と「既存あらすじの長さ」の大きい方（ラチェット）。
+    あらすじは上書き保存で前世代を残さないため、小さい窓のモデルへ切り替えた途端に上限を
+    縮めると、次の蒸留で不可逆に情報を失う（大きいモデルへ戻しても復元できない）。
+    """
+    by_ratio = int(max(0, history_max_chars) * SYNOPSIS_TO_HISTORY_RATIO)
+    return max(by_ratio, len((existing_auto or "").strip()))
+
 
 def build_synopsis_system_prompt(
     scenario: Any,
     existing_auto: str,
+    max_chars: int | None = None,
     narrator_name: str = "Narrator",
     user_speaker_name: str = "プレイヤー",
     npcs: Any = None,
@@ -52,6 +70,7 @@ def build_synopsis_system_prompt(
     Args:
         scenario: Scenario ORM 風オブジェクト（user_alias / scenario を使う）。
         existing_auto: 既存の synopsis_auto テキスト（空文字列も可）。
+        max_chars: あらすじの最大文字数（synopsis_char_cap の値）。None なら既定の生ログ上限から算出。
         narrator_name: Narrator のタグ名。
 
     Returns:
@@ -70,6 +89,8 @@ def build_synopsis_system_prompt(
         ),
     )
     has_existing = bool(existing_auto and existing_auto.strip())
+    if max_chars is None:
+        max_chars = synopsis_char_cap(DEFAULT_HISTORY_MAX_CHARS, existing_auto)
 
     parts = [
         "あなたは物語の経緯を「あらすじ」として蒸留・更新する記録役です。",
@@ -101,7 +122,8 @@ def build_synopsis_system_prompt(
         "- 時系列順の簡潔な箇条書きでよい（地の文でも可）",
         "- 肥大化を避ける圧縮は「各区間の記述を短くする／古い区間をマージする」ことで行う。",
         "  区間の丸ごと削除ではなく、圧縮・マージで残すこと",
-        "- **全体で 2500字前後、最大 3000字を超えないよう圧縮する**",
+        f"- **全体で最大 {max_chars}字を超えないよう圧縮する**（上限まで埋める必要はない。",
+        "  水増しせず、書くべき事実の量に見合った長さでよい）",
         "- 出力はあらすじ本文だけ。前置き・作業宣言・後書きを書かない",
         "  （「〜を統合して再構成する」「以上をまとめると」等のメタ言及は禁止）",
     ]
@@ -146,6 +168,7 @@ async def update_auto_synopsis(
     settings: dict,
     preset_loader: Callable[[str], Any],
     synopsis_preset_id: str,
+    history_max_chars: int = DEFAULT_HISTORY_MAX_CHARS,
     provider_factory: Callable[..., Any] = create_provider,
     narrator_name: str = "Narrator",
     user_speaker_name: str = "プレイヤー",
@@ -170,6 +193,7 @@ async def update_auto_synopsis(
                             （ScenarioSession.synopsis_preset_id）。
                             GM 用とは独立に指定でき、レートリミット節約用に
                             軽量モデルを割り当てられる。
+        history_max_chars: GM へ渡す生ログの文字数上限。あらすじ上限の算出に使う。
         provider_factory: プロバイダ生成関数（デフォルト registry.create_provider）。
         narrator_name: Narrator のタグ名。
         npcs: 既知 NPC のリスト。シナリオ本文の `{npc_name[n]}` 解決にだけ使う。
@@ -209,6 +233,7 @@ async def update_auto_synopsis(
     system_prompt = build_synopsis_system_prompt(
         scenario=scenario,
         existing_auto=existing_auto or "",
+        max_chars=synopsis_char_cap(history_max_chars, existing_auto),
         narrator_name=narrator_name,
         user_speaker_name=user_speaker_name,
         npcs=npcs,
