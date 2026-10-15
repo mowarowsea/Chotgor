@@ -44,6 +44,7 @@ async def maybe_update_auto_synopsis(
     synopsis_preset_id: str,
     *,
     force: bool = False,
+    errors: list[str] | None = None,
 ) -> dict | None:
     """前回蒸留以降の新規ターン群（話者ブロック）を `synopsis_auto` へ統合し全体を再蒸留する。
 
@@ -62,6 +63,9 @@ async def maybe_update_auto_synopsis(
     既存の synopsis_auto は単純追記せず、新ターンと統合して**全体を再蒸留**する
     （肥大化を防ぐ）。`synopsis_last_turn_index` によって、すでに蒸留へ
     反映済みのターンは再度対象に含めない。`synopsis_manual` には触らない。
+
+    `errors` を渡すと、失敗したとき（何もすることが無かった場合は除く）にユーザ向けの
+    理由が追記される。手動作成 API はこれで失敗を UI へ返す。自動蒸留は渡さない（best-effort）。
 
     Returns:
         更新した場合は新しい synopsis dict、何もしなかった場合は None。
@@ -148,6 +152,7 @@ async def maybe_update_auto_synopsis(
             user_speaker_name=user_speaker_name,
             # シナリオ本文の {npc_name[n]} を GM プロンプトと同じに解決するため。
             npcs=sqlite.list_scenario_npcs(scenario.id),
+            errors=errors,
         )
         if new_auto is None:
             # update_auto_synopsis 側の WARN で詳細理由は出ているので、ここは要約のみ
@@ -169,6 +174,8 @@ async def maybe_update_auto_synopsis(
         )
     except Exception:
         logger.exception("auto synopsis 更新に失敗 session=%s", session_id)
+        if errors is not None:
+            errors.append("あらすじの作成中にエラーが発生しました（詳細はサーバーログ）")
         return None
 
 

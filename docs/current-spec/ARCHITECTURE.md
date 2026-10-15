@@ -478,7 +478,8 @@ main.py うつつ tick（_run_every_minute 同乗・冪等キー=日付+スロ�
   文字数上限は GM プリセットの `context_window_tokens` から振り分ける。
   `scenario_sessions.engine_type="usual_days"`（永続1本セッション）。
 - あらすじ（履歴切り捨て時の保険）: 通常シナリオはフロントが進捗バーを見てユーザが
-  プリセットを選び `/synopsis/regenerate` を叩くが、うつつは無人ゆえ介入者がいない。
+  プリセットを選び `/synopsis/regenerate` を叩く（蒸留に失敗したら 502 で理由を返し、
+  UI は GM ターン失敗と同じ上部エラーバナーに出す。失敗した蒸留は保存しない）が、うつつは無人ゆえ介入者がいない。
   そこで **シーン完走を蒸留チェックポイント** にし、`run_usual_days_scene` が
   `maybe_update_auto_synopsis(force=False)` を呼ぶ。閾値（履歴上限 × 0.5）に達した
   ときだけ実走し、スライディングウィンドウから古いターンが押し出される前に先回りする。

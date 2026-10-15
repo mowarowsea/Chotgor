@@ -1000,7 +1000,8 @@ export function useScenarioChat(deps: UseScenarioChatDeps): UseScenarioChatResul
             setSynopsisProgress(res.progress);
           }
         })
-        .catch((e) => setError(String(e)))
+        // 蒸留失敗は API が 502 + 理由で返す。GM ターン失敗と同じ上部バナーへ出す。
+        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
         .finally(() => setSynopsisGenerating(false));
     },
     [activeScenarioSession, activeSessionIdRef, setError],

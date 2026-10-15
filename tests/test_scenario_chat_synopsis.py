@@ -450,6 +450,73 @@ class TestUpdateAutoSynopsis:
         assert result is None
 
 
+class TestUpdateAutoSynopsisErrors:
+    """蒸留失敗時に、ユーザ向けの理由が `errors` へ積まれることを検証する。
+
+    手動の「あらすじ作成」は、失敗しても以前は HTTP 200 で既存あらすじを返していたため、
+    UI からは成功と見分けがつかなかった（Claude CLI の OAuth 期限切れで実際に発生）。
+    `errors` に理由を積み、API が GM ターン失敗と同じエラーバナーへ出せるようにする。
+    一方、new_turns 空（何もすることが無い）は失敗ではないので積まない。
+    """
+
+    async def _run(self, provider, preset=None, new_turns=None):
+        errors: list[str] = []
+        result = await update_auto_synopsis(
+            scenario=FakeScenario(),
+            new_turns=new_turns if new_turns is not None else [
+                FakeTurn(speaker_type="user", speaker_name="P", content="やぁ")
+            ],
+            existing_auto="既存",
+            settings={},
+            preset_loader=_loader_for(preset),
+            synopsis_preset_id="preset-001",
+            provider_factory=_factory_for(provider),
+            errors=errors,
+        )
+        return result, errors
+
+    @pytest.mark.asyncio
+    async def test_provider_error_reason_collected(self):
+        """プロバイダの error チャンクの内容が理由として積まれること。"""
+        provider = FakeProvider(chunks=[("error", "Failed to authenticate: OAuth session expired")])
+        result, errors = await self._run(provider, FakePreset())
+        assert result is None
+        assert len(errors) == 1
+        assert "OAuth session expired" in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_empty_output_reason_collected(self):
+        """出力が空のときも理由が積まれること。"""
+        provider = FakeProvider(chunks=[("text", "  ")])
+        result, errors = await self._run(provider, FakePreset())
+        assert result is None
+        assert errors and "空" in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_missing_preset_reason_collected(self):
+        """プリセットが見つからないときも理由が積まれること。"""
+        provider = FakeProvider(chunks=[("text", "蒸留結果")])
+        result, errors = await self._run(provider, None)
+        assert result is None
+        assert errors and "プリセット" in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_nothing_to_do_is_not_error(self):
+        """new_turns 空は失敗ではないので errors は空のままであること。"""
+        provider = FakeProvider(chunks=[("text", "蒸留結果")])
+        result, errors = await self._run(provider, FakePreset(), new_turns=[])
+        assert result is None
+        assert errors == []
+
+    @pytest.mark.asyncio
+    async def test_success_leaves_errors_empty(self):
+        """成功時は errors に何も積まれないこと。"""
+        provider = FakeProvider(chunks=[("text", "蒸留結果")])
+        result, errors = await self._run(provider, FakePreset())
+        assert result == "蒸留結果"
+        assert errors == []
+
+
 # ─── compute_synopsis_progress（レスポンス単位・GM プリセット上限） ─────────────
 
 

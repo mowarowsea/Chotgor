@@ -171,6 +171,7 @@ async def update_auto_synopsis(
     narrator_name: str = "Narrator",
     user_speaker_name: str = "プレイヤー",
     npcs: Any = None,
+    errors: list[str] | None = None,
 ) -> str | None:
     """既存 `existing_auto` と `new_turns` を統合し、全体を再蒸留した結果を返す。
 
@@ -195,6 +196,8 @@ async def update_auto_synopsis(
         provider_factory: プロバイダ生成関数（デフォルト registry.create_provider）。
         narrator_name: Narrator のタグ名。
         npcs: 既知 NPC のリスト。シナリオ本文の `{npc_name[n]}` 解決にだけ使う。
+        errors: 渡すと、蒸留に失敗したときユーザ向けの理由を 1 件追記する
+                （手動作成 API が失敗を UI へ返すため）。new_turns 空は失敗ではないので積まない。
 
     Returns:
         再蒸留後の synopsis_auto 文字列（全体置き換え版）。new_turns が空、
@@ -204,13 +207,18 @@ async def update_auto_synopsis(
         logger.debug("synopsis 蒸留 skip 理由=new_turns空")
         return None
 
+    def _fail(reason: str) -> None:
+        if errors is not None:
+            errors.append(reason)
+        return None
+
     preset = preset_loader(synopsis_preset_id)
     if preset is None:
         logger.warning(
             "synopsis 蒸留 skip 理由=preset_loader が None を返却 synopsis_preset_id=%s",
             synopsis_preset_id,
         )
-        return None
+        return _fail(f"あらすじ用のモデルプリセットが見つかりません（{synopsis_preset_id}）")
 
     try:
         provider = provider_factory(
@@ -226,7 +234,7 @@ async def update_auto_synopsis(
             getattr(preset, "provider", None),
             getattr(preset, "model_id", None),
         )
-        return None
+        return _fail(f"{preset.name}: プロバイダーを初期化できませんでした")
 
     system_prompt = build_synopsis_system_prompt(
         scenario=scenario,
@@ -284,7 +292,7 @@ async def update_auto_synopsis(
                     getattr(preset, "model_id", None),
                     (content or "")[:300],
                 )
-                return None
+                return _fail(f"{preset.name}: {(content or '').strip()[:300] or 'プロバイダーエラー'}")
             if chunk_type != "text" or not content:
                 continue
             chunks.append(content)
@@ -294,7 +302,7 @@ async def update_auto_synopsis(
             getattr(preset, "provider", None),
             getattr(preset, "model_id", None),
         )
-        return None
+        return _fail(f"{preset.name}: 生成中にエラーが発生しました（詳細はサーバーログ）")
 
     new_synopsis = "".join(chunks).strip()
     if not new_synopsis:
@@ -303,6 +311,6 @@ async def update_auto_synopsis(
             getattr(preset, "provider", None),
             getattr(preset, "model_id", None),
         )
-        return None
+        return _fail(f"{preset.name}: モデルの出力が空でした")
 
     return new_synopsis

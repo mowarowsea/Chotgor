@@ -481,6 +481,7 @@ async def regenerate_session_synopsis(
         raise HTTPException(status_code=400, detail="元シナリオが見つかりません")
     settings = sqlite.get_all_settings()
     history = sqlite.list_scenario_turns(session_id)
+    errors: list[str] = []
     updated = await maybe_update_auto_synopsis(
         sqlite=sqlite,
         settings=settings,
@@ -493,7 +494,15 @@ async def regenerate_session_synopsis(
             or ""
         ),
         force=True,
+        errors=errors,
     )
+    if errors:
+        # GM ターンの失敗と同じく UI 上部のエラーバナーに出すため、HTTP エラーで返す。
+        # 失敗した蒸留は保存しないので、既存あらすじと進捗はそのまま残る。
+        raise HTTPException(
+            status_code=502,
+            detail=f"あらすじの作成に失敗しました: {errors[0]}",
+        )
     if updated is None:
         # 追記対象が無い、または LLM 呼び出し失敗（best-effort）。現状を返す。
         synopsis = sqlite.get_scenario_session_synopsis(session_id) or {
