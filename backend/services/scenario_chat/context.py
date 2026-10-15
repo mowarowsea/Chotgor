@@ -12,7 +12,7 @@ GM への送信時に、`scenario_turns` 全件のうち直近 N レスポンス
     - 履歴は DB に全件保持し、送信時のみ切り出す
     - 切り出しは「レスポンス数上限」と「文字数上限」の **AND** で決まる
       （先に到達した方が利く）。レスポンスの途中では切らない
-    - 文字数上限は GM プリセットの `history_budget_chars`（空なら設定既定）
+    - 文字数上限は GM プリセットの `context_window_tokens` から振り分ける（空なら設定既定）
     - ユーザ発話は `@{user_alias}: ...`
     - Narrator は `@Narrator: ...`
     - NPC（known/unknown 問わず）は `@{speaker_name}: ...`
@@ -30,6 +30,13 @@ from typing import Any, Iterable
 # settings から読む既定値（main.py または settings UI で上書き可能）
 DEFAULT_HISTORY_MAX_TURNS = 100
 DEFAULT_HISTORY_MAX_CHARS = 80000
+
+# GM プリセットのコンテキスト長からの振り分け。履歴（生ログ＋あらすじ）にはコンテキストの
+# 半分を使い、残りはシステムプロンプト・シナリオ本文・出力・思考の余白に残す。
+# 履歴は 生ログ 6：あらすじ 4（あらすじ側の比は synopsis.SYNOPSIS_TO_HISTORY_RATIO）。
+# 日本語は 1 トークン ≒ 1 文字と見なし、トークン数をそのまま文字数として扱う（概算）。
+HISTORY_SHARE_OF_CONTEXT = 1 / 2
+RAW_LOG_SHARE = 6 / 10
 
 
 @dataclass
@@ -64,15 +71,18 @@ def resolve_history_limits(
 
     レスポンス数: Scenario.history_max_turns → settings
         "scenario_chat_default_history_max_turns" → DEFAULT_HISTORY_MAX_TURNS
-    文字数: GM プリセットの history_budget_chars → settings
-        "scenario_chat_default_history_max_chars" → DEFAULT_HISTORY_MAX_CHARS
+    文字数: GM プリセットの context_window_tokens × HISTORY_SHARE_OF_CONTEXT × RAW_LOG_SHARE
+        → settings "scenario_chat_default_history_max_chars" → DEFAULT_HISTORY_MAX_CHARS
 
-    文字数をシナリオではなく GM プリセットに持たせるのは、読める量がモデル側の性質だから。
+    コンテキスト長はモデル（プリセット）の性質、振り分けはシナリオの都合なので分けて持つ。
     あらすじ蒸留に別プリセットを使っていても、基準は GM プリセット（あらすじを読むのは GM）。
     """
     settings = settings or {}
     scen_turns = getattr(scenario, "history_max_turns", None)
-    preset_chars = getattr(gm_preset, "history_budget_chars", None)
+    window = _coalesce_int(getattr(gm_preset, "context_window_tokens", None), 0)
+    preset_chars = (
+        int(window * HISTORY_SHARE_OF_CONTEXT * RAW_LOG_SHARE) if window > 0 else None
+    )
 
     settings_turns = _coalesce_int(
         settings.get("scenario_chat_default_history_max_turns"),

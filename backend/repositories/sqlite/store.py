@@ -154,7 +154,7 @@ class SQLiteStore(
         self._migrate_rename_chat_images_to_attachments()
         self._migrate_add_attachment_filename()
         self._migrate_drop_enabled_providers()
-        self._migrate_add_preset_history_budget_chars()
+        self._migrate_add_preset_context_window_tokens()
         self._migrate_drop_scenario_history_max_chars()
 
     def get_session(self) -> Session:

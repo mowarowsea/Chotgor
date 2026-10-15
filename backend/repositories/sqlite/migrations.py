@@ -322,18 +322,27 @@ class SQLiteMigrationsMixin:
                 "ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300"
             )
 
-    def _migrate_add_preset_history_budget_chars(self) -> None:
-        """`llm_model_presets` に `history_budget_chars` 列を追加する（NULL=設定既定）。冪等。"""
+    def _migrate_add_preset_context_window_tokens(self) -> None:
+        """`llm_model_presets` に `context_window_tokens` 列を追加する（NULL=未設定）。冪等。
+
+        同日に一度入れた `history_budget_chars`（生ログ文字数を直接持つ列）は、プリセットには
+        コンテキスト長だけを持たせる方針へ変えたため削除する（値は未設定だったので移行なし）。
+        """
         with self.engine.begin() as conn:
             cols = {
                 r[1]
                 for r in conn.exec_driver_sql("PRAGMA table_info(llm_model_presets)").fetchall()
             }
-            if not cols or "history_budget_chars" in cols:
+            if not cols:
                 return
-            conn.exec_driver_sql(
-                "ALTER TABLE llm_model_presets ADD COLUMN history_budget_chars INTEGER"
-            )
+            if "context_window_tokens" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE llm_model_presets ADD COLUMN context_window_tokens INTEGER"
+                )
+            if "history_budget_chars" in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE llm_model_presets DROP COLUMN history_budget_chars"
+                )
 
     def _migrate_drop_scenario_history_max_chars(self) -> None:
         """`scenarios.history_max_chars` を削除する（GM プリセットの history_budget_chars へ移管）。

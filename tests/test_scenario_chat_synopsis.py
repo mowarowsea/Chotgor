@@ -449,7 +449,8 @@ class TestSynopsisProgressUnits:
 
     進捗の turns は「話者バブル行数」ではなく**レスポンス数**（同じ raw_response の連続行で
     1 つ）で数える。max_chars はシナリオではなく**セッションの GM プリセット**の
-    history_budget_chars から引く（未設定なら設定既定）。旧仕様ではバブル行数で数えたため、
+    context_window_tokens から振り分ける（コンテキスト長の 1/2 を履歴へ、そのうち 6/10 が生ログ。
+    未設定なら設定既定）。旧仕様ではバブル行数で数えたため、
     GM が 1 応答で複数バブルを返すと「100 ターン」が実質 100 バブルで頭打ちになっていた。
     """
 
@@ -464,7 +465,7 @@ class TestSynopsisProgressUnits:
         return sqlite
 
     def test_turns_counted_as_responses_and_chars_from_gm_preset(self):
-        """3 バブルの GM 応答は 1 と数え、max_chars は GM プリセットの値になること。"""
+        """3 バブルの GM 応答は 1 と数え、max_chars は GM プリセットのコンテキスト長から出ること。"""
         from types import SimpleNamespace
 
         from backend.services.scenario_chat.auto_synopsis import compute_synopsis_progress
@@ -475,22 +476,23 @@ class TestSynopsisProgressUnits:
             SimpleNamespace(turn_index=2, content="b", raw_response="R"),
             SimpleNamespace(turn_index=3, content="c", raw_response="R"),
         ]
-        sqlite = self._sqlite(turns, SimpleNamespace(history_budget_chars=30000))
+        sqlite = self._sqlite(turns, SimpleNamespace(context_window_tokens=100000))
         progress = compute_synopsis_progress(
             sqlite, {}, SimpleNamespace(history_max_turns=None), "s1",
         )
         assert progress["turns"] == 2
         assert progress["chars"] == 4
+        # 100,000 トークン × 1/2 × 6/10 = 30,000 字
         assert progress["max_chars"] == 30000
 
     def test_gm_preset_without_budget_falls_back_to_default(self):
-        """GM プリセットに上限が無ければ設定既定（80000）へフォールバックすること。"""
+        """GM プリセットにコンテキスト長が無ければ設定既定（80000）へフォールバックすること。"""
         from types import SimpleNamespace
 
         from backend.services.scenario_chat.auto_synopsis import compute_synopsis_progress
         from backend.services.scenario_chat.context import DEFAULT_HISTORY_MAX_CHARS
 
-        sqlite = self._sqlite([], SimpleNamespace(history_budget_chars=None))
+        sqlite = self._sqlite([], SimpleNamespace(context_window_tokens=None))
         progress = compute_synopsis_progress(
             sqlite, {}, SimpleNamespace(history_max_turns=None), "s1",
         )

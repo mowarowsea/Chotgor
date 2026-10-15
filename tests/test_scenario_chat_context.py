@@ -44,9 +44,9 @@ class FakeSession:
 
 @dataclass
 class FakePreset:
-    """LLMModelPreset 風のダミーオブジェクト（文字数上限だけを持つ）。テスト用。"""
+    """LLMModelPreset 風のダミーオブジェクト（コンテキスト長だけを持つ）。テスト用。"""
 
-    history_budget_chars: object = None
+    context_window_tokens: object = None
 
 
 @dataclass
@@ -71,10 +71,10 @@ class TestResolveHistoryLimits:
     優先順:
         レスポンス数: scenario.history_max_turns → settings["scenario_chat_default_history_max_turns"]
             → DEFAULT_HISTORY_MAX_TURNS
-        文字数: GM プリセットの history_budget_chars → settings["scenario_chat_default_history_max_chars"]
-            → DEFAULT_HISTORY_MAX_CHARS
-    文字数をシナリオでなく GM プリセットから引くのは、読める量がモデル側の性質だから
-    （2026-10-15 にシナリオ側 history_max_chars を廃止）。
+        文字数: GM プリセットの context_window_tokens × 1/2（履歴に使う分）× 6/10（生ログ分）
+            → settings["scenario_chat_default_history_max_chars"] → DEFAULT_HISTORY_MAX_CHARS
+    プリセットはコンテキスト長（モデルの性質）だけを持ち、生ログ・あらすじへの振り分けは
+    シナリオ側の定数で行う（2026-10-15 にシナリオ側 history_max_chars を廃止）。
     """
 
     def test_all_none_falls_back_to_defaults(self):
@@ -84,18 +84,21 @@ class TestResolveHistoryLimits:
         assert turns == DEFAULT_HISTORY_MAX_TURNS
         assert chars == DEFAULT_HISTORY_MAX_CHARS
 
-    def test_scenario_turns_and_preset_chars_take_priority(self):
-        """シナリオのレスポンス数・プリセットの文字数が settings より優先されること。"""
+    def test_scenario_turns_and_preset_window_take_priority(self):
+        """シナリオのレスポンス数・プリセットのコンテキスト長が settings より優先されること。
+
+        200,000 トークン → 履歴総量 100,000 字 → 生ログ 60,000 字（1 トークン ≒ 1 文字）。
+        """
         session = FakeSession(history_max_turns=10)
         settings = {
             "scenario_chat_default_history_max_turns": 999,
             "scenario_chat_default_history_max_chars": 999999,
         }
         turns, chars = resolve_history_limits(
-            session, settings=settings, gm_preset=FakePreset(history_budget_chars=500),
+            session, settings=settings, gm_preset=FakePreset(context_window_tokens=200000),
         )
         assert turns == 10
-        assert chars == 500
+        assert chars == 60000
 
     def test_settings_used_when_scenario_and_preset_none(self):
         """シナリオ・プリセットが未設定なら settings が使われること。"""

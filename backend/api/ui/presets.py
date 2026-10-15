@@ -36,8 +36,8 @@ def _parse_timeout_seconds(raw: str | None) -> int:
     return value if value > 0 else 300
 
 
-def _parse_history_budget_chars(raw: str | None) -> int | None:
-    """フォーム入力から生ログ文字数上限を解釈する。空欄・不正値・0以下は None（設定既定）。"""
+def _parse_context_window_tokens(raw: str | None) -> int | None:
+    """フォーム入力からコンテキスト長を解釈する。空欄・不正値・0以下は None（未設定）。"""
     if not raw:
         return None
     try:
@@ -58,7 +58,7 @@ async def create_model_preset(request: Request):
     preset_id = str(uuid.uuid4())
     thinking_level = form.get("thinking_level") or "default"
     timeout_seconds = _parse_timeout_seconds(form.get("timeout_seconds"))
-    history_budget_chars = _parse_history_budget_chars(form.get("history_budget_chars"))
+    context_window_tokens = _parse_context_window_tokens(form.get("context_window_tokens"))
     request.app.state.sqlite.create_model_preset(
         preset_id=preset_id,
         name=name,
@@ -66,7 +66,7 @@ async def create_model_preset(request: Request):
         model_id=model_id,
         thinking_level=thinking_level,
         timeout_seconds=timeout_seconds,
-        history_budget_chars=history_budget_chars,
+        context_window_tokens=context_window_tokens,
     )
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 
@@ -79,7 +79,7 @@ async def update_model_preset(request: Request, preset_id: str):
     model_id = (form.get("model_id") or "").strip()
     thinking_level = form.get("thinking_level") or "default"
     timeout_seconds = _parse_timeout_seconds(form.get("timeout_seconds"))
-    history_budget_chars = _parse_history_budget_chars(form.get("history_budget_chars"))
+    context_window_tokens = _parse_context_window_tokens(form.get("context_window_tokens"))
     if name and provider:
         request.app.state.sqlite.update_model_preset(
             preset_id,
@@ -88,7 +88,7 @@ async def update_model_preset(request: Request, preset_id: str):
             model_id=model_id,
             thinking_level=thinking_level,
             timeout_seconds=timeout_seconds,
-            history_budget_chars=history_budget_chars,
+            context_window_tokens=context_window_tokens,
         )
     return RedirectResponse(url="/ui/model-presets", status_code=303)
 
