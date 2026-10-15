@@ -205,10 +205,19 @@ class TestSynopsisCharCap:
         assert "2500字" not in out
         assert "3000字" not in out
 
-    def test_prompt_does_not_demand_padding(self):
-        """上限まで埋める必要はない旨が明示されること（大きい上限で水増しを誘わない）。"""
+    def test_prompt_compresses_only_when_over_cap(self):
+        """圧縮は上限に収めるための手段であり、余裕があれば具体的に残してよいと示すこと。
+
+        旧プロンプトは 3000 字上限時代の「簡潔な箇条書き」「古い経緯は 1〜2 行に畳んでよい」を
+        無条件に出しており、上限 20 万字・材料 18 万字でも 3717 字まで潰し、余裕があるのに
+        台詞を「…」で省略していた。圧縮指示は「上限に収まらないとき」に限定し、
+        水増しはしない旨も残す。
+        """
         out = build_synopsis_system_prompt(FakeScenario(), existing_auto="", max_chars=50000)
-        assert "埋める必要はない" in out
+        assert "余裕があるうち" in out
+        assert "上限に収まらないときだけ圧縮" in out
+        assert "簡潔な" not in out
+        assert "水増し" in out
 
 
 # ─── update_auto_synopsis（end-to-end with mock provider） ──────────────────
