@@ -41,6 +41,14 @@ class OpenAIProvider(BaseLLMProvider):
     # サブクラスで None に上書きして上限を撤廃する。
     DEFAULT_MAX_TOKENS: int | None = 4096
 
+    # 出力上限を送るときのパラメータ名。OpenAI 本家は旧名 max_tokens も受け付けるが、
+    # 未知パラメータを 400 で弾くサーバ（Sarashina）は max_completion_tokens しか受けない。
+    _MAX_TOKENS_PARAM = "max_tokens"
+
+    # ストリーミング時に stream_options.include_usage を送るか。
+    # 未知パラメータを 400 で弾くサーバでは False にする（usage は送らなくても末尾に来る場合がある）。
+    _STREAM_INCLUDE_USAGE = True
+
     def __init__(self, api_key: str, model: str = "", base_url: str | None = None, thinking_level: str = "default"):
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
@@ -86,6 +94,19 @@ class OpenAIProvider(BaseLLMProvider):
         """thinking_level に対応する reasoning_effort 文字列を返す。"""
         return self._REASONING_MAP.get(self.thinking_level)
 
+    def _apply_output_limit(self, call_kwargs: dict, effort: str | None) -> None:
+        """reasoning_effort と出力トークン上限を call_kwargs へ書き込む（3経路共通）。"""
+        if effort:
+            # o系モデルは reasoning_effort + max_completion_tokens を使用する
+            call_kwargs["reasoning_effort"] = effort
+            call_kwargs["max_completion_tokens"] = 16000
+        elif self.DEFAULT_MAX_TOKENS is not None:
+            call_kwargs[self._MAX_TOKENS_PARAM] = self.DEFAULT_MAX_TOKENS
+
+    def _prepare_api_messages(self, messages: list[dict]) -> list[dict]:
+        """送信直前のメッセージ整形フック。既定は無加工。"""
+        return messages
+
     def _make_openai_client(self):
         """OpenAIクライアントを初期化して返す内部ヘルパー。"""
         from openai import OpenAI
@@ -128,17 +149,14 @@ class OpenAIProvider(BaseLLMProvider):
         """OpenAI APIから応答テキストを一括生成する。"""
         client = self._make_openai_client()
         api_messages = [{"role": "system", "content": system_prompt}]
-        api_messages += [m for m in messages if m.get("role") in ("user", "assistant")]
+        api_messages += self._prepare_api_messages(
+            [m for m in messages if m.get("role") in ("user", "assistant")]
+        )
         effort = self._reasoning_effort()
 
         def run():
             call_kwargs: dict = {"model": self.model, "messages": api_messages}
-            if effort:
-                # o系モデルは reasoning_effort + max_completion_tokens を使用する
-                call_kwargs["reasoning_effort"] = effort
-                call_kwargs["max_completion_tokens"] = 16000
-            elif self.DEFAULT_MAX_TOKENS is not None:
-                call_kwargs["max_tokens"] = self.DEFAULT_MAX_TOKENS
+            self._apply_output_limit(call_kwargs, effort)
             self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
             self._log_response(response.model_dump())
@@ -182,7 +200,9 @@ class OpenAIProvider(BaseLLMProvider):
         client = self._make_openai_client()
 
         api_messages = [{"role": "system", "content": system_prompt}]
-        api_messages += [m for m in messages if m.get("role") in ("user", "assistant")]
+        api_messages += self._prepare_api_messages(
+            [m for m in messages if m.get("role") in ("user", "assistant")]
+        )
         effort = self._reasoning_effort()
 
         def run():
@@ -194,16 +214,12 @@ class OpenAIProvider(BaseLLMProvider):
                     "model": self.model,
                     "messages": api_messages,
                     "stream": True,
+                }
+                if self._STREAM_INCLUDE_USAGE:
                     # ストリーミング末尾で usage 入りチャンクを送らせるためのフラグ。
                     # OpenAI互換サーバの一部は本オプション非対応だが、無視されるのが一般的。
-                    "stream_options": {"include_usage": True},
-                }
-                if effort:
-                    # o-seriesモデルはreasoning_effort + max_completion_tokensを使用
-                    call_kwargs["reasoning_effort"] = effort
-                    call_kwargs["max_completion_tokens"] = 16000
-                elif self.DEFAULT_MAX_TOKENS is not None:
-                    call_kwargs["max_tokens"] = self.DEFAULT_MAX_TOKENS
+                    call_kwargs["stream_options"] = {"include_usage": True}
+                self._apply_output_limit(call_kwargs, effort)
                 self._log_request(call_kwargs)
                 response = client.chat.completions.create(**call_kwargs)
                 for chunk in response:
@@ -260,7 +276,7 @@ class OpenAIProvider(BaseLLMProvider):
         client = self._make_openai_client()
 
         # OpenAI形式ではsystemメッセージを先頭に追加する
-        all_messages = [{"role": "system", "content": system_prompt}] + messages
+        all_messages = [{"role": "system", "content": system_prompt}] + self._prepare_api_messages(messages)
         effort = self._reasoning_effort()
 
         def run() -> ToolTurnResult:
@@ -272,11 +288,7 @@ class OpenAIProvider(BaseLLMProvider):
                 "tools": OPENAI_TOOLS + to_openai_tools(self.extra_tools or []),
                 "tool_choice": "auto",
             }
-            if effort:
-                call_kwargs["reasoning_effort"] = effort
-                call_kwargs["max_completion_tokens"] = 16000
-            elif self.DEFAULT_MAX_TOKENS is not None:
-                call_kwargs["max_tokens"] = self.DEFAULT_MAX_TOKENS
+            self._apply_output_limit(call_kwargs, effort)
 
             self._log_request(call_kwargs)
             response = client.chat.completions.create(**call_kwargs)
@@ -301,6 +313,10 @@ class OpenAIProvider(BaseLLMProvider):
             self._log_error(err)
             return ToolTurnResult(text=err, tool_calls=[], error=True)
 
+    def _assistant_tool_message(self, message) -> dict:
+        """ツール呼び出しを含む SDK の message を、次ターンへ積む dict に変換する。"""
+        return message.model_dump(exclude_unset=False)
+
     def _extend_messages_with_results(
         self,
         messages: list[dict],
@@ -323,7 +339,7 @@ class OpenAIProvider(BaseLLMProvider):
         new_messages = list(messages)
 
         # アシスタントメッセージ（tool_calls フィールドを含む）を追加する
-        new_messages.append(message.model_dump(exclude_unset=False))
+        new_messages.append(self._assistant_tool_message(message))
 
         # 各ツール結果を role: tool メッセージとして追加する
         for tc in turn_result.tool_calls:

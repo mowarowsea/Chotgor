@@ -12,6 +12,7 @@ from backend.providers.google_provider import GoogleProvider
 from backend.providers.ollama_provider import OllamaProvider
 from backend.providers.openai_provider import OpenAIProvider
 from backend.providers.sakura_provider import SakuraProvider
+from backend.providers.sarashina_provider import SarashinaProvider
 from backend.providers.xai_provider import XAIProvider
 from backend.providers.registry import (
     PROVIDER_LABELS,
@@ -29,7 +30,7 @@ from backend.providers.registry import (
 class TestProviderRegistry:
     def test_all_expected_providers_registered(self):
         assert set(PROVIDER_REGISTRY.keys()) == {
-            "claude_cli", "anthropic", "openai", "xai", "google", "ollama", "openrouter", "sakura"
+            "claude_cli", "anthropic", "openai", "xai", "google", "ollama", "openrouter", "sakura", "sarashina"
         }
 
     def test_provider_classes_are_correct(self):
@@ -40,6 +41,7 @@ class TestProviderRegistry:
         assert PROVIDER_REGISTRY["google"] is GoogleProvider
         assert PROVIDER_REGISTRY["ollama"] is OllamaProvider
         assert PROVIDER_REGISTRY["sakura"] is SakuraProvider
+        assert PROVIDER_REGISTRY["sarashina"] is SarashinaProvider
 
     def test_provider_order_matches_registry(self):
         for pid in PROVIDER_ORDER:

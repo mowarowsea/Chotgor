@@ -67,6 +67,7 @@ async def save_general_settings(request: Request):
         "google_api_key",
         "openrouter_api_key",
         "sakura_api_key",
+        "sarashina_api_key",
         "tavily_api_key",
         "jev_api_key",
     ):

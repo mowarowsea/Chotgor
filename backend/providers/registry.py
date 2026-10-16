@@ -23,6 +23,7 @@ from backend.providers.ollama_provider import OllamaProvider
 from backend.providers.openai_provider import OpenAIProvider
 from backend.providers.openrouter_provider import OpenRouterProvider
 from backend.providers.sakura_provider import SakuraProvider
+from backend.providers.sarashina_provider import SarashinaProvider
 from backend.providers.xai_provider import XAIProvider
 
 PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
@@ -33,6 +34,7 @@ PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
     GoogleProvider.PROVIDER_ID: GoogleProvider,
     OpenRouterProvider.PROVIDER_ID: OpenRouterProvider,
     SakuraProvider.PROVIDER_ID: SakuraProvider,
+    SarashinaProvider.PROVIDER_ID: SarashinaProvider,
     OllamaProvider.PROVIDER_ID: OllamaProvider,
 }
 
@@ -45,11 +47,12 @@ PROVIDER_LABELS: dict[str, str] = {
     "google": "Google Gemini",
     "openrouter": "OpenRouter",
     "sakura": "さくらの AI Engine",
+    "sarashina": "Sarashina (SB Intuitions)",
     "ollama": "Ollama (ローカル)",
 }
 
 # UI での表示順
-PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "openrouter", "sakura", "ollama"]
+PROVIDER_ORDER: list[str] = ["claude_cli", "anthropic", "openai", "xai", "google", "openrouter", "sakura", "sarashina", "ollama"]
 
 
 def provider_sort_key(provider_id: str) -> tuple[int, str]:
