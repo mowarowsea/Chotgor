@@ -123,6 +123,12 @@
         window.addEventListener('resize', replaceOpen);
         document.addEventListener('click', function (e) {
           var btn = e.target.closest && e.target.closest('.ch-help__btn');
+          // 補足本文は ch-switch-row（label）の子孫。ここを押して行のトグルが
+          // 反転しないよう、label の既定動作を止める（本文は開いたまま）。
+          if (!btn && e.target.closest && e.target.closest('.ch-help__body')) {
+            e.preventDefault();
+            return;
+          }
           if (!btn) { closeAll(null); return; }
           e.preventDefault();
           e.stopPropagation();
@@ -140,6 +146,12 @@
         });
         document.addEventListener('keydown', function (e) {
           if (e.key === 'Escape') closeAll(null);
+          // ⓘ は span[role=button] のため、Enter/Space をクリックへ読み替える
+          if ((e.key === 'Enter' || e.key === ' ') && e.target.classList
+              && e.target.classList.contains('ch-help__btn')) {
+            e.preventDefault();
+            e.target.click();
+          }
         });
       })();
     </script>

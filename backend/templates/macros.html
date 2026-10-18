@@ -13,7 +13,9 @@
   クリック固定と右端の見切れ回避は base.html のスクリプトが担当。
 #}
 {% macro ch_help(text, label="補足を表示") -%}
-<span class="ch-help"><button type="button" class="ch-help__btn" aria-label="{{ label }}">i</button><span class="ch-help__body" role="tooltip">{{ text|safe }}</span></span>
+{#- ⓘ は <button> にしない。button は labelable 要素なので、<label> 内に置くと
+    行のどこを押してもクリックが ⓘ へ転送され、トグルが切り替わらなくなる。 -#}
+<span class="ch-help"><span role="button" tabindex="0" class="ch-help__btn" aria-label="{{ label }}">i</span><span class="ch-help__body" role="tooltip">{{ text|safe }}</span></span>
 {%- endmacro %}
 
 {#

@@ -104,7 +104,10 @@ def compute_time_awareness(
     Returns:
         TimeAwareness データクラス。
     """
-    enabled = settings.get("enable_time_awareness", "true") == "true"
+    # get_all_settings() は JSON 復元後の bool（True/False）を返す一方、旧データや
+    # テストでは文字列 "true"/"false" も混在するため、両方を受ける。
+    raw = settings.get("enable_time_awareness", True)
+    enabled = raw if isinstance(raw, bool) else str(raw).strip().lower() == "true"
     if not enabled:
         return TimeAwareness(enabled=False, current_time_str="", time_since_last_interaction="")
 
