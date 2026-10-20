@@ -243,6 +243,8 @@ function UserBubbleImpl({
   return (
     <div
       className={`group flex flex-col items-end gap-0.5 ml-auto ${userBubbleMaxWidthClass}`}
+      // 応答完了時に「最後のユーザ発話」へスクロールを戻す目印（MessageList が参照）。
+      data-user-bubble=""
       // 画面外のレイアウト・ペイントをスキップする（長いセッションでの DOM 肥大対策）。
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
       {...rowProps}

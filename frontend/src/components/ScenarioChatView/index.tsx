@@ -193,6 +193,52 @@ function ScenarioChatViewInner({
   }, [lastTurnId, pendingBubbles]);
 
   /**
+   * 応答が出揃った瞬間（送信中→完了）に、その送信の起点ターンを画面上端へ寄せる。
+   * 長いレスポンスを頭から読めるようにするため（上の最下端追従より後に宣言して上書きする）。
+   *
+   * 起点は「送信開始時点の末尾より後に増えた最初のターン」。ふつうはユーザ発話。
+   * 「ターンを譲る」や引き直しでユーザ発話が増えなかった場合は最初の GM バブルになるが、
+   * その直前がユーザ発話（引き直し）ならそちらを起点にする。
+   */
+  const prevSendingRef = useRef(sending);
+  /** 送信開始時点の末尾ターン id。undefined は「記録なし」（送信を見ていない）。 */
+  const sendStartLastTurnIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const wasSending = prevSendingRef.current;
+    prevSendingRef.current = sending;
+    if (sending && !wasSending) {
+      sendStartLastTurnIdRef.current = lastTurnId;
+      return;
+    }
+    if (!wasSending || sending) return;
+    const startLastId = sendStartLastTurnIdRef.current;
+    sendStartLastTurnIdRef.current = undefined;
+    if (startLastId === undefined) return;
+    const startIdx =
+      startLastId === null ? 0 : turns.findIndex((t) => t.id === startLastId) + 1;
+    // 送信中に起点の手前が窓から外れた等で見つからないときは、最下端のままにしておく。
+    if (startLastId !== null && startIdx === 0) return;
+    const first = turns[startIdx];
+    if (!first) return;
+    const prev = turns[startIdx - 1];
+    const anchorTurn =
+      first.speaker_type !== "user" && prev?.speaker_type === "user" ? prev : first;
+    const el = scrollRef.current;
+    // ラッパーは display: contents で箱を持たないので、中身の要素で位置を測る。
+    const anchor = el
+      ?.querySelector(`[data-turn-id="${anchorTurn.id}"]`)
+      ?.firstElementChild;
+    if (!el || !anchor) return;
+    // 64px = 浮遊ヘッダー分の上余白（pt-16）。ヘッダーの下に起点の頭が来るように。
+    const top =
+      el.scrollTop +
+      anchor.getBoundingClientRect().top -
+      el.getBoundingClientRect().top -
+      64;
+    el.scrollTo({ top, behavior: "smooth" });
+  }, [sending, lastTurnId, turns]);
+
+  /**
    * 遡り読み込みで先頭に追加されたぶん、見ている位置がずれないよう補正する。
    *
    * 発火時に「下端からの距離（scrollHeight - scrollTop）」を控えておき、
@@ -596,7 +642,10 @@ function ScenarioChatViewInner({
           return (
             <React.Fragment key={t.id}>
               {divider}
-              {bubble}
+              {/* 応答完了時のスクロール起点を引くための目印。contents なので flex の並びは変えない。 */}
+              <div data-turn-id={t.id} className="contents">
+                {bubble}
+              </div>
             </React.Fragment>
           );
         })}

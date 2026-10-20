@@ -97,6 +97,8 @@ export default function MessageList({
     const restoredForRef = useRef<string | null>(null);
     /** 退避処理の多重予約を防ぐフラグ（スクロールは連続発火するため rAF で間引く）。 */
     const savePendingRef = useRef(false);
+    /** 直前の描画時点の sending。送信中→完了の切り替わりを検出するために持つ。 */
+    const prevSendingRef = useRef(sending);
     /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
     const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
 
@@ -132,8 +134,14 @@ export default function MessageList({
      * セッションを開いた最初の 1 回だけは例外で、退避した位置があればそこへ戻す
      * （過去ログを読んでいる最中にリロードされても、読んでいた場所に戻る）。
      * その初回移動は smooth にしない。長い履歴だと最下部まで延々と流れて見えるため。
+     *
+     * 応答が出揃った瞬間（送信中→完了）だけは最下部ではなく、最後のユーザ発話を
+     * 画面上端へ寄せる。長い応答を頭から読めるようにするため。応答が短ければ
+     * スクロール量が足りずに最下部のまま止まるので、結果的に従来と同じ見た目になる。
      */
     useEffect(() => {
+        const justFinished = prevSendingRef.current && !sending;
+        prevSendingRef.current = sending;
         if (sessionId && restoredForRef.current !== sessionId) {
             // メッセージ描画前に走ると移動先が定まらないので、中身が入るまで待つ。
             if (messages.length === 0) return;
@@ -146,6 +154,20 @@ export default function MessageList({
             }
             bottomRef.current?.scrollIntoView({ behavior: "auto" });
             return;
+        }
+        const container = scrollRef.current;
+        if (justFinished && container) {
+            const userBubbles = container.querySelectorAll<HTMLElement>("[data-user-bubble]");
+            const anchor = userBubbles[userBubbles.length - 1];
+            if (anchor) {
+                // 64px = 浮遊ヘッダー分の上余白（pt-16）。ヘッダーの下に発話の頭が来るように。
+                const top = container.scrollTop
+                    + anchor.getBoundingClientRect().top
+                    - container.getBoundingClientRect().top
+                    - 64;
+                container.scrollTo({ top, behavior: "smooth" });
+                return;
+            }
         }
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, sending, streamingContent, waitingCharacter, sessionId]);
