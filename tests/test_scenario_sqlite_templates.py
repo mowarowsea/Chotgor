@@ -283,3 +283,86 @@ class TestScenarioNpcCRUD:
         assert n1.id != n2.id
 
 
+
+
+# ─── シナリオ複製 ────────────────────────────────────────────────────────
+
+
+class TestScenarioDuplicate:
+    """シナリオテンプレートの複製（duplicate_scenario）を検証する。
+
+    用途: モデルごとに GM プロンプト等を微調整した派生シナリオを作る。
+    複製されるのはテンプレ定義と NPC のみで、プレイセッション・ターンは
+    複製されないこと、複製後は元と独立して編集できることを確認する。
+    うつつ専用シナリオ（owner_character_id あり）は 1 キャラ 1 世界のため複製不可。
+    """
+
+    def test_copies_template_fields_and_npcs(self, sqlite_store):
+        """テンプレの全定義項目と NPC（作成順・属性）が新 ID で写されること。"""
+        src = _make_scenario(
+            sqlite_store,
+            title="廃墟探索",
+            scenario="古城。",
+            intro="@GM: 夜が来る",
+            history_max_turns=30,
+            custom_system_prompt="カスタムGM",
+            dice_pool_spec={"d6": 4},
+            banner_data="data:image/png;base64,AAA",
+        )
+        _make_npc(sqlite_store, src.id, name="レイカ", description="剣士", bubble_color=3)
+        _make_npc(sqlite_store, src.id, name="ミナ", image_data="data:image/png;base64,BBB")
+
+        new_id = str(uuid.uuid4())
+        dup = sqlite_store.duplicate_scenario(src.id, new_id, "廃墟探索（コピー）")
+
+        assert dup.id == new_id
+        assert dup.title == "廃墟探索（コピー）"
+        for field in (
+            "scenario", "intro", "history_max_turns", "custom_system_prompt",
+            "dice_pool_spec", "pc_slots", "banner_data",
+        ):
+            assert getattr(dup, field) == getattr(src, field), field
+        npcs = sqlite_store.list_scenario_npcs(new_id)
+        assert [n.name for n in npcs] == ["レイカ", "ミナ"]
+        assert npcs[0].description == "剣士"
+        assert npcs[0].bubble_color == 3
+        assert npcs[1].image_data == "data:image/png;base64,BBB"
+        # NPC は新しい ID で作られ、元の NPC とは別レコード
+        src_ids = {n.id for n in sqlite_store.list_scenario_npcs(src.id)}
+        assert not src_ids & {n.id for n in npcs}
+
+    def test_sessions_are_not_copied(self, sqlite_store):
+        """プレイセッション・ターンは複製されないこと。"""
+        src = _make_scenario(sqlite_store)
+        sess = _make_session(sqlite_store, src.id)
+        _make_turn(sqlite_store, sess.id)
+        new_id = str(uuid.uuid4())
+        sqlite_store.duplicate_scenario(src.id, new_id, "コピー")
+        assert sqlite_store.list_scenario_sessions_by_scenario(new_id) == []
+        assert len(sqlite_store.list_scenario_sessions_by_scenario(src.id)) == 1
+
+    def test_copy_is_independent(self, sqlite_store):
+        """複製先の編集・削除が元シナリオと NPC に波及しないこと。"""
+        src = _make_scenario(sqlite_store, custom_system_prompt="元のGM")
+        _make_npc(sqlite_store, src.id, name="レイカ")
+        new_id = str(uuid.uuid4())
+        sqlite_store.duplicate_scenario(src.id, new_id, "コピー")
+
+        sqlite_store.update_scenario(new_id, custom_system_prompt="調整版GM")
+        sqlite_store.delete_scenario(new_id)
+
+        assert sqlite_store.get_scenario(src.id).custom_system_prompt == "元のGM"
+        assert [n.name for n in sqlite_store.list_scenario_npcs(src.id)] == ["レイカ"]
+
+    def test_missing_source_returns_none(self, sqlite_store):
+        """存在しない ID を指定したら None を返し、何も作らないこと。"""
+        new_id = str(uuid.uuid4())
+        assert sqlite_store.duplicate_scenario("no-such-id", new_id, "x") is None
+        assert sqlite_store.get_scenario(new_id) is None
+
+    def test_usual_scenario_is_not_duplicated(self, sqlite_store):
+        """うつつ専用シナリオは複製できない（1 キャラ 1 世界を壊さない）こと。"""
+        src = _make_scenario(sqlite_store, owner_character_id="char-1")
+        new_id = str(uuid.uuid4())
+        assert sqlite_store.duplicate_scenario(src.id, new_id, "x") is None
+        assert sqlite_store.get_scenario(new_id) is None

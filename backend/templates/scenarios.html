@@ -47,6 +47,9 @@
             <div class="ch-row__meta">
                 <div class="ch-row__actions">
                     <a href="/ui/scenarios/{{ s.id }}/edit" class="ch-btn ch-btn--sm" data-stop>編集</a>
+                    <form method="post" action="/ui/scenarios/{{ s.id }}/duplicate" data-stop>
+                        <button type="submit" class="ch-btn ch-btn--sm">複製</button>
+                    </form>
                     <form method="post" action="/ui/scenarios/{{ s.id }}/delete" data-stop
                           onsubmit="return confirm('Delete {{ s.title }}? 紐づくプレイセッションも全て削除されます。')">
                         <button type="submit" class="ch-btn ch-btn--danger ch-btn--sm">削除</button>

@@ -171,6 +171,56 @@ class ScenarioChatStoreMixin:
             session.refresh(obj)
             return obj
 
+    def duplicate_scenario(self, source_id: str, new_id: str, title: str):
+        """シナリオテンプレートを NPC ごと複製する（1 トランザクション）。
+
+        モデルごとにプロンプトを微調整した派生版を作る用途。複製するのはテンプレ定義
+        （本文・GM プロンプト・PC 枠・ダイス・バナー）と NPC だけで、プレイセッション・
+        ターンは複製しない。custom_system_prompt は元の値をそのまま写す
+        （空なら空のまま。デフォルトテンプレの焼き込み直しはしない）。
+        うつつ専用シナリオは「1 キャラ 1 世界」のため複製対象外（None を返す）。
+
+        Returns:
+            新しい Scenario。元が存在しない・うつつ専用なら None。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import Scenario, ScenarioNpc
+            src = session.get(Scenario, source_id)
+            if src is None or src.owner_character_id:
+                return None
+            obj = Scenario(
+                id=new_id,
+                title=title,
+                scenario=src.scenario,
+                intro=src.intro,
+                history_max_turns=src.history_max_turns,
+                custom_system_prompt=src.custom_system_prompt,
+                dice_pool_spec=src.dice_pool_spec,
+                pc_slots=src.pc_slots,
+                banner_data=src.banner_data,
+            )
+            session.add(obj)
+            npcs = (
+                session.query(ScenarioNpc)
+                .filter(ScenarioNpc.scenario_id == source_id)
+                .order_by(ScenarioNpc.created_at.asc())
+                .all()
+            )
+            for npc in npcs:
+                session.add(ScenarioNpc(
+                    id=str(uuid.uuid4()),
+                    scenario_id=new_id,
+                    name=npc.name,
+                    description=npc.description,
+                    image_data=npc.image_data,
+                    bubble_color=npc.bubble_color,
+                    # 作成順（＝一覧の並び）を元と揃える
+                    created_at=npc.created_at,
+                ))
+            session.commit()
+            session.refresh(obj)
+            return obj
+
     def delete_scenario(self, scenario_id: str) -> bool:
         """シナリオテンプレートを削除する。紐づく NPC・セッション・ターンも全て削除する。
 

@@ -220,6 +220,19 @@ async def update_scenario(request: Request, scenario_id: str):
     )
 
 
+@router.post("/scenarios/{scenario_id}/duplicate")
+async def duplicate_scenario(request: Request, scenario_id: str):
+    """シナリオテンプレートを NPC ごと複製し、複製先の編集画面へ遷移する。"""
+    sqlite = request.app.state.sqlite
+    src = sqlite.get_scenario(scenario_id)
+    if not src:
+        return RedirectResponse(url="/ui/scenarios", status_code=303)
+    new_id = str(uuid.uuid4())
+    if not sqlite.duplicate_scenario(scenario_id, new_id, f"{src.title}（コピー）"):
+        return RedirectResponse(url="/ui/scenarios", status_code=303)
+    return RedirectResponse(url=f"/ui/scenarios/{new_id}/edit", status_code=303)
+
+
 @router.post("/scenarios/{scenario_id}/delete")
 async def delete_scenario(request: Request, scenario_id: str):
     """シナリオテンプレートを削除する（紐づくセッション・ターンも一括削除）。"""
