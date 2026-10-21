@@ -39,8 +39,9 @@ import {
   UserBubble,
 } from "../ChatBubbles";
 import type { ActionHandler } from "../ChatBubbles";
+import { scrollAnchorToTop } from "../../lib/scrollAnchor";
 import MessageInput from "../MessageInput";
-import { trimEnd } from "./helpers";
+import { findLatestSendStart, trimEnd } from "./helpers";
 import { NpcDetailDialog } from "./npc";
 import { GMBubbleRow, GMResponseEditor, SynopsisDivider } from "./rows";
 
@@ -198,8 +199,18 @@ function ScenarioChatViewInner({
     if (el) el.scrollTop = el.scrollHeight;
   }, [lastTurnId, pendingDep]);
 
+  /** ターン id のバブルを画面上端へ寄せる。見つからなければ何もしない（最下端のまま）。 */
+  const scrollTurnToTop = useCallback((turnId: string, behavior: ScrollBehavior) => {
+    const el = scrollRef.current;
+    // ラッパーは display: contents で箱を持たないので、中身の要素で位置を測る。
+    const anchor = el
+      ?.querySelector(`[data-turn-id="${turnId}"]`)
+      ?.firstElementChild;
+    if (el && anchor) scrollAnchorToTop(el, anchor, behavior);
+  }, []);
+
   /**
-   * 応答が出揃った瞬間（送信中→完了）に、その送信の起点ターンを画面上端へ寄せる。
+   * 応答が出揃った瞬間（送信中→完了）に、その送信の起点ターンを smooth で画面上端へ寄せる。
    * 長いレスポンスを頭から読めるようにするため（上の最下端追従より後に宣言して上書きする）。
    *
    * 起点は「送信開始時点の末尾より後に増えた最初のターン」。ふつうはユーザ発話。
@@ -229,21 +240,24 @@ function ScenarioChatViewInner({
     const prev = turns[startIdx - 1];
     const anchorTurn =
       first.speaker_type !== "user" && prev?.speaker_type === "user" ? prev : first;
-    const el = scrollRef.current;
-    // ラッパーは display: contents で箱を持たないので、中身の要素で位置を測る。
-    const anchor = el
-      ?.querySelector(`[data-turn-id="${anchorTurn.id}"]`)
-      ?.firstElementChild;
-    if (!el || !anchor) return;
-    // 64px = 浮遊ヘッダー分の上余白（pt-16）。ヘッダーの下に起点の頭が来るように。
-    // smooth にしないこと: 完了直後の整合性再取得でバブルの高さが変わると、
-    // アニメーションが走り出した直後で打ち切られ、ほとんど戻らずに止まる。
-    el.scrollTop =
-      el.scrollTop +
-      anchor.getBoundingClientRect().top -
-      el.getBoundingClientRect().top -
-      64;
-  }, [sending, lastTurnId, turns]);
+    scrollTurnToTop(anchorTurn.id, "smooth");
+  }, [sending, lastTurnId, turns, scrollTurnToTop]);
+
+  /**
+   * セッションを開いた最初の 1 回（リロード・サイドバーからの切替）も、
+   * 直近の送信の起点を画面上端へ寄せる。こちらは smooth にせずぱっと出す。
+   */
+  const initialScrolledForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (initialScrolledForRef.current === session.id) return;
+    // このセッションのターンが描画されるまで待つ（切替直後は前の表示が残りうる）。
+    const last = turns[turns.length - 1];
+    if (!last || last.session_id !== session.id) return;
+    initialScrolledForRef.current = session.id;
+    // 空のセッションで初回送信したときなど。生成中は最下端追従に任せる。
+    if (sending) return;
+    scrollTurnToTop(findLatestSendStart(turns).id, "auto");
+  }, [session.id, turns, sending, scrollTurnToTop]);
 
   /**
    * 遡り読み込みで先頭に追加されたぶん、見ている位置がずれないよう補正する。

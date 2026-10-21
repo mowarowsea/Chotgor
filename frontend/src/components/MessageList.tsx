@@ -7,6 +7,7 @@ import type { UIEvent } from "react";
 import type { Attachment, ChatMessage } from "../api";
 import { CharacterBubble, CharacterAvatar, CharacterMessageRow, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
 import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
+import { scrollAnchorToTop } from "../lib/scrollAnchor";
 import { loadScrollPos, saveScrollPos } from "../lib/sessionSnapshot";
 
 interface Props {
@@ -131,47 +132,56 @@ export default function MessageList({
     /**
      * メッセージ追加・ストリーミング・待機中は最下部へスクロールする。
      *
-     * セッションを開いた最初の 1 回だけは例外で、退避した位置があればそこへ戻す
-     * （過去ログを読んでいる最中にリロードされても、読んでいた場所に戻る）。
-     * その初回移動は smooth にしない。長い履歴だと最下部まで延々と流れて見えるため。
+     * 例外は 2 つで、どちらも最後のユーザ発話を画面上端へ寄せる（長い応答を頭から読めるように）:
+     *   - 応答が出揃った瞬間（送信中→完了）。smooth で動かす。
+     *   - セッションを開いた最初の 1 回（リロード・サイドバーからの切替）。ぱっと出す。
+     *     ただし退避した位置があればそこへ戻す（過去ログを読んでいる最中にリロードされても、
+     *     読んでいた場所に戻る）。
+     * 応答が短ければスクロール量が足りずに最下部のまま止まるので、従来と同じ見た目になる。
      *
-     * 応答が出揃った瞬間（送信中→完了）だけは最下部ではなく、最後のユーザ発話を
-     * 画面上端へ寄せる。長い応答を頭から読めるようにするため。応答が短ければ
-     * スクロール量が足りずに最下部のまま止まるので、結果的に従来と同じ見た目になる。
+     * 依存は messages そのものではなく末尾 id にする。スナップショット描画のあとの
+     * API 再取得など、中身が同じ配列の差し替えで最下部へ飛ばされないようにするため。
      */
+    const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    /** 表示中メッセージの持ち主。切替直後は前のセッションの messages が残っている。 */
+    const messagesSessionId = messages.length > 0 ? messages[messages.length - 1].session_id : null;
     useEffect(() => {
         const justFinished = prevSendingRef.current && !sending;
         prevSendingRef.current = sending;
+        const container = scrollRef.current;
+        const lastUserBubble = () => {
+            const userBubbles = container?.querySelectorAll<HTMLElement>("[data-user-bubble]");
+            return userBubbles?.[userBubbles.length - 1] ?? null;
+        };
         if (sessionId && restoredForRef.current !== sessionId) {
-            // メッセージ描画前に走ると移動先が定まらないので、中身が入るまで待つ。
-            if (messages.length === 0) return;
+            // このセッションのメッセージが描画されるまで待つ（移動先が定まらないため）。
+            if (messagesSessionId !== sessionId) return;
             restoredForRef.current = sessionId;
+            // 新規セッションの初回送信で楽観バブルが入った場合など。生成中は最下部追従に任せる。
+            if (sending) {
+                bottomRef.current?.scrollIntoView({ behavior: "auto" });
+                return;
+            }
             const saved = loadScrollPos(sessionId);
-            const container = scrollRef.current;
             if (container && saved && !saved.atBottom) {
                 container.scrollTop = saved.scrollTop;
+                return;
+            }
+            const anchor = lastUserBubble();
+            if (container && anchor) {
+                scrollAnchorToTop(container, anchor, "auto");
                 return;
             }
             bottomRef.current?.scrollIntoView({ behavior: "auto" });
             return;
         }
-        const container = scrollRef.current;
-        if (justFinished && container) {
-            const userBubbles = container.querySelectorAll<HTMLElement>("[data-user-bubble]");
-            const anchor = userBubbles[userBubbles.length - 1];
-            if (anchor) {
-                // 64px = 浮遊ヘッダー分の上余白（pt-16）。ヘッダーの下に発話の頭が来るように。
-                // smooth にしないこと: 直前の最下端追従やバブルの高さ変化に
-                // アニメーションが打ち切られ、ほとんど戻らずに止まることがある。
-                container.scrollTop = container.scrollTop
-                    + anchor.getBoundingClientRect().top
-                    - container.getBoundingClientRect().top
-                    - 64;
-                return;
-            }
+        const anchor = justFinished ? lastUserBubble() : null;
+        if (container && anchor) {
+            scrollAnchorToTop(container, anchor, "smooth");
+            return;
         }
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, sending, streamingContent, waitingCharacter, sessionId]);
+    }, [lastMessageId, messagesSessionId, sending, streamingContent, waitingCharacter, sessionId]);
 
     return (
         <div

@@ -145,7 +145,7 @@
 | `api/` | backend 呼び出し層。`chat.ts` / `scenario.ts` / `logs.ts` / `translate.ts` / `sse.ts`（SSE共通処理） |
 | `hooks/` | 状態管理フック。`useSessions` / `useChat` / `useScenarioChat` ほか |
 | `components/` | UI。`ChatBubbles/` と `ScenarioChatView/` は責務別ディレクトリに分割済み |
-| `lib/` | UI に依存しない補助。`sessionSnapshot.ts`（1on1 の画面状態とスクロール位置を sessionStorage へ退避し、リロード復帰で API 応答を待たずに即描画する） |
+| `lib/` | UI に依存しない補助。`sessionSnapshot.ts`（1on1 の画面状態とスクロール位置を sessionStorage へ退避し、リロード復帰で API 応答を待たずに即描画する）、`scrollAnchor.ts`（応答完了時・セッションを開いた時に、直近の送信の起点＝最後のユーザ発話を画面上端へ寄せる。1on1 とシナリオで共有） |
 
 ### data/（gitignore対象）
 
