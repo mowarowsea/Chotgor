@@ -187,10 +187,16 @@ function ScenarioChatViewInner({
    * 最下端へ飛ばされないようにするため。前方に足しても末尾は変わらない。
    */
   const lastTurnId = turns.length > 0 ? turns[turns.length - 1].id : null;
+  /**
+   * 空の pending は null に寄せて依存の同一性を保つ。送信後処理は空配列を
+   * 毎回作り直して渡してくるため、そのままだと「空→空」でも最下端へ飛ばされ、
+   * 下の「応答完了時の起点スクロール」が打ち消されてしまう。
+   */
+  const pendingDep = pendingBubbles.length > 0 ? pendingBubbles : null;
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [lastTurnId, pendingBubbles]);
+  }, [lastTurnId, pendingDep]);
 
   /**
    * 応答が出揃った瞬間（送信中→完了）に、その送信の起点ターンを画面上端へ寄せる。
