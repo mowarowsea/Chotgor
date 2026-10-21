@@ -230,12 +230,13 @@ function ScenarioChatViewInner({
       ?.firstElementChild;
     if (!el || !anchor) return;
     // 64px = 浮遊ヘッダー分の上余白（pt-16）。ヘッダーの下に起点の頭が来るように。
-    const top =
+    // smooth にしないこと: 完了直後の整合性再取得でバブルの高さが変わると、
+    // アニメーションが走り出した直後で打ち切られ、ほとんど戻らずに止まる。
+    el.scrollTop =
       el.scrollTop +
       anchor.getBoundingClientRect().top -
       el.getBoundingClientRect().top -
       64;
-    el.scrollTo({ top, behavior: "smooth" });
   }, [sending, lastTurnId, turns]);
 
   /**

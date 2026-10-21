@@ -161,11 +161,12 @@ export default function MessageList({
             const anchor = userBubbles[userBubbles.length - 1];
             if (anchor) {
                 // 64px = 浮遊ヘッダー分の上余白（pt-16）。ヘッダーの下に発話の頭が来るように。
-                const top = container.scrollTop
+                // smooth にしないこと: 直前の最下端追従やバブルの高さ変化に
+                // アニメーションが打ち切られ、ほとんど戻らずに止まることがある。
+                container.scrollTop = container.scrollTop
                     + anchor.getBoundingClientRect().top
                     - container.getBoundingClientRect().top
                     - 64;
-                container.scrollTo({ top, behavior: "smooth" });
                 return;
             }
         }
