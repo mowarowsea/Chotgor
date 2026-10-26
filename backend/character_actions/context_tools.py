@@ -7,9 +7,14 @@
                           日次上限（Spontaneous Initiative 共有）到達日は露出自体を消す。
     - visit_user        : 1on1（origin=="real" かつ session_id あり）専用。対面モードON。
                           すでに対面中なら露出しない。
+    - peek_at_schedule  : 1on1 専用かつ生活カレンダー有効のみ。対面中も出す（予定の pull 窓）。
     - override_schedule : 1on1 専用かつ生活カレンダー有効（living_schedule_enabled=1）のみ。
+                          対面中は出さない（OnTime 強制で意味を持たず、予定を push しない方針）。
     - speak_later       : 1on1 専用かつ発話予約有効（speak_later_enabled=1）のみ。
                           時限発話の仕掛け（cap は発火側で見るため露出は絞らない）。
+                          対面中は出さない（同じ空間にいれば「あとで」にする理由がない）。
+
+    対面中の出し分けは docs/planned/schedule_plan.md §7.6（二つの時計）。
 
 出し分けの消費者は3系統あり、すべてこのモジュールを参照する（判定の重複を作らない）:
     1. in-process tool-use プロバイダー（anthropic/openai/google）
@@ -65,14 +70,19 @@ def resolve_context_tool_names(
         if not initiative_cap_reached(sqlite, now):
             names.append("reach_out")
     elif origin == "real" and session_id:
+        face_to_face = bool(int(getattr(char, "face_to_face_mode", 0) or 0))
+        living_schedule = bool(int(getattr(char, "living_schedule_enabled", 0) or 0))
         # 1on1 専用: 対面切替（すでに対面中なら不要）
-        if not int(getattr(char, "face_to_face_mode", 0) or 0):
+        if not face_to_face:
             names.append("visit_user")
-        # 1on1 専用: 予定の一時上書き（生活カレンダー有効キャラのみ）
-        if int(getattr(char, "living_schedule_enabled", 0) or 0):
+        # 1on1 専用: 予定のチラ見（生活カレンダー有効キャラのみ。対面中も出す）
+        if living_schedule:
+            names.append("peek_at_schedule")
+        # 1on1 専用: 予定の一時上書き（生活カレンダー有効キャラのみ・対面中は除く）
+        if living_schedule and not face_to_face:
             names.append("override_schedule")
-        # 1on1 専用: 時限発話の仕掛け（発話予約有効キャラのみ。既定 OFF のオプトイン）
-        if int(getattr(char, "speak_later_enabled", 0) or 0):
+        # 1on1 専用: 時限発話の仕掛け（発話予約有効キャラのみ。既定 OFF のオプトイン・対面中は除く）
+        if int(getattr(char, "speak_later_enabled", 0) or 0) and not face_to_face:
             names.append("speak_later")
     return names
 

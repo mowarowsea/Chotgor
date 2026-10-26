@@ -370,10 +370,21 @@ def _build_time_block(
     enable_time_awareness: bool,
     current_time_str: str | None,
     time_since_last_interaction: str | None,
+    face_to_face_since: str | None = None,
 ) -> str:
-    """時刻コンテキストブロックを返す。"""
+    """時刻コンテキストブロックを返す。
+
+    対面中（face_to_face_since あり）は実時刻・前回の交流からの経過を出さず、対面開始時刻を
+    基準点として渡す。チャットの遅さで場の時計と外の時計がずれるため、外の時刻を毎ターン
+    push すると本人に二つの時計を選ばせ続けることになる（schedule_plan.md §7.6）。
+    """
     if not (enable_time_awareness and current_time_str):
         return ""
+    if face_to_face_since:
+        return (
+            f"## 現在の文脈（時間）\n- 【対面開始：{face_to_face_since}】\n"
+            "- 対面中は、場の時間が二人の会話の流れで進みます（外の時刻はここには出しません）"
+        )
     block = f"## 現在の文脈（時間）\n- 【現在時刻：{current_time_str}】"
     if time_since_last_interaction:
         block += f"\n- 【前回の交流から：{time_since_last_interaction}】"
@@ -845,6 +856,7 @@ def build_turn_annotation(
     enable_time_awareness: bool = False,
     current_time_str: str | None = None,
     time_since_last_interaction: str | None = None,
+    face_to_face_since: str | None = None,
     fetched_contents: list[dict] | None = None,
     wm_recalled_threads: list[dict] | None = None,
     motive_lines: list[str] | None = None,
@@ -876,7 +888,8 @@ def build_turn_annotation(
             recalled_identity_memories, recalled_memories
         ),
         "{block_time}": _build_time_block(
-            enable_time_awareness, current_time_str, time_since_last_interaction
+            enable_time_awareness, current_time_str, time_since_last_interaction,
+            face_to_face_since,
         ),
         "{block_place}": _build_place_block(face_to_face, current_bg_label),
         "{block_schedule}": _build_schedule_block(schedule_lines),

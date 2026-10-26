@@ -31,6 +31,7 @@ from backend.character_actions.later_speaker import LaterSpeaker
 from backend.character_actions.leaver import Leaver
 from backend.character_actions.messenger import Messenger
 from backend.character_actions.rescheduler import Rescheduler
+from backend.character_actions.schedule_peeker import SchedulePeeker
 
 # Anthropic形式のツール定義リスト（tool_specs.py の台帳から生成）
 ANTHROPIC_TOOLS: list[dict] = [spec.as_anthropic() for spec in BASE_TOOL_SPECS]
@@ -405,6 +406,16 @@ class ToolExecutor:
                 until=str(tool_input.get("until", "")),
                 reason=str(tool_input.get("reason", "")),
             )
+        if tool_name == "peek_at_schedule":
+            # 1on1 専用: 予定のチラ見（読み取りのみ。context_tools.py が露出を制御）。
+            try:
+                return SchedulePeeker(
+                    self.character_id,
+                    self.memory_manager.sqlite if self.memory_manager is not None else None,
+                ).peek_at_schedule(at=str(tool_input.get("at", "") or ""))
+            except Exception as e:
+                self.logger.exception("peek_at_schedule エラー char=%s", self.character_id)
+                return f"[peek_at_schedule error: {e}]"
         if tool_name == "speak_later":
             # 1on1 専用: 時限発話の仕掛け（context_tools.py が露出を制御）。
             # LaterSpeaker は現在の default_origin で都度生成する — 1on1 経路判定に

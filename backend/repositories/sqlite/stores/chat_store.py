@@ -163,6 +163,49 @@ class ChatStoreMixin:
                 .all()
             )
 
+    def get_face_to_face_run_start(
+        self, session_id: str, before: datetime | None = None
+    ) -> datetime | None:
+        """セッション末尾（before 以前）から連続する対面メッセージ列の、最初の時刻を返す。
+
+        最後の非対面メッセージより後にある最初の対面メッセージの created_at。
+        システムメッセージ（退席通知等）はモードの区切りに数えない。
+        末尾が非対面なら None（before に末尾の対面発話時刻を渡せば、終わった直後の列も引ける）。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ChatMessage
+            not_system = (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0)  # noqa: E711
+            q = session.query(ChatMessage.created_at).filter(
+                ChatMessage.session_id == session_id, not_system,
+            )
+            if before is not None:
+                q = q.filter(ChatMessage.created_at <= before)
+            last_text = (
+                q.filter(ChatMessage.face_to_face == 0)
+                .order_by(ChatMessage.created_at.desc())
+                .first()
+            )
+            run = q.filter(ChatMessage.face_to_face == 1)
+            if last_text is not None:
+                run = run.filter(ChatMessage.created_at > last_text[0])
+            first = run.order_by(ChatMessage.created_at.asc()).first()
+            return first[0] if first else None
+
+    def get_last_character_message(self, session_id: str):
+        """セッション内で最新のキャラ発話（システムメッセージ除く）を返す。無ければ None。"""
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ChatMessage
+            return (
+                session.query(ChatMessage)
+                .filter(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.role == "character",
+                    (ChatMessage.is_system_message == None) | (ChatMessage.is_system_message == 0),  # noqa: E711
+                )
+                .order_by(ChatMessage.created_at.desc())
+                .first()
+            )
+
     def get_messages_for_character_on_date(
         self, character_name: str, date_start: datetime, date_end: datetime
     ) -> list:

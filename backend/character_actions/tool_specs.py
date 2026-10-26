@@ -48,6 +48,11 @@ from backend.character_actions.recaller import (
     POWER_RECALL_SCHEMA,
     POWER_RECALL_TOOL_DESCRIPTION,
 )
+from backend.character_actions.schedule_peeker import (
+    PEEK_AT_SCHEDULE_SCHEMA,
+    PEEK_AT_SCHEDULE_TOOL_DESCRIPTION,
+    PEEK_AT_SCHEDULE_TOOLS_HINT,
+)
 from backend.character_actions.rescheduler import (
     OVERRIDE_SCHEDULE_SCHEMA,
     OVERRIDE_SCHEDULE_TOOL_DESCRIPTION,
@@ -148,6 +153,10 @@ CONTEXT_TOOL_SPECS: dict[str, ToolSpec] = {
     "visit_user": ToolSpec(
         "visit_user", VISIT_USER_TOOL_DESCRIPTION, VISIT_USER_SCHEMA,
         hint=VISIT_USER_TOOLS_HINT,
+    ),
+    "peek_at_schedule": ToolSpec(
+        "peek_at_schedule", PEEK_AT_SCHEDULE_TOOL_DESCRIPTION, PEEK_AT_SCHEDULE_SCHEMA,
+        hint=PEEK_AT_SCHEDULE_TOOLS_HINT,
     ),
     "override_schedule": ToolSpec(
         "override_schedule", OVERRIDE_SCHEDULE_TOOL_DESCRIPTION, OVERRIDE_SCHEDULE_SCHEMA,

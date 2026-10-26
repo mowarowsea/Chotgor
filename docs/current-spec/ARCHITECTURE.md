@@ -129,6 +129,7 @@
 | `guide_reader.py` | `read_dear_ghost` — キャラ向けガイド `docs/explain/DEAR_GHOST.md` を章・節単位で読む（読み取り専用。section 省略で目次） |
 | `messenger.py` | `reach_out`（うつつ専用・現実へのプッシュ送信＋visit=対面ON＋うつつポーズ要求）／ `visit_user`（1on1専用・対面モードON）。push 実体は `services/actions/runner.execute_push` を共有。日次予算は `spontaneous_initiative_daily_cap`（キャラ自発のリクエストのみ消費。預かり配達はユーザ起点なので消費しない）を発話予約と共有 |
 | `rescheduler.py` | `override_schedule`（1on1専用・当日予定の一時上書き）。state=OnTime/haru/adhoc/occupancy0.85 のエントリを insert するだけ（占有圧最大が勝つ読み取り解決）。`parse_until_time` は 24時超え表記対応・常に24h以内 |
+| `schedule_peeker.py` | `peek_at_schedule`（1on1専用・対面中も出る予定の pull 窓・読み取りのみ）。`at` の時刻の予定＋前後2件、省略時は外の時刻。外の時刻より未来は template／本人上書きのみ（伏せ枠・突発は出さない）。対面中の二つの時計は schedule_plan.md §7.6 |
 | `later_speaker.py` | `speak_later`（1on1専用・キャラ発の時限発話の仕掛け）。時刻＋用件メモを speech_reservations へ pending insert（本文は発火時に本人が生成）。未来 availability は無風仮定で仕掛け時にエラー判定・72h horizon・同一セッションの pending は superseded に倒して置き直し。発火は `services/gate/speech_reservation.py` |
 | `context_tools.py` | **コンテキスト別ツール出し分けの単一判定点**。reach_out=うつつのみ（cap到達日は非露出）／visit_user=1on1かつ対面OFF／override_schedule=1on1かつ生活カレンダー有効／speak_later=1on1かつ発話予約有効（speak_later_enabled=1）。消費者は3系統: ①flow.py→provider.extra_tools（in-process tool-use）②mcp_server.py→GET /api/mcp/tools?character_id&origin&session_id（claude_cli）③flow.py→build_system_prompt(context_tool_hints) |
 | `intent_settler.py` | `[INTENT_SETTLED:]` / `[INTENT_FULFILLED:]` タグ抽出・ID解決（短縮8桁の前方一致）・適用。1on1 会話の最中に意図の決着を本人が宣言する受け口で、**anticipator と同じ全プロバイダー一律テキストタグ**（ツール化しない）。settled は終端せず意図圧の起点だけを今へ移す |

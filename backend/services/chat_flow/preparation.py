@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 _log = logging.getLogger(__name__)
@@ -310,10 +311,26 @@ async def prepare_context(
         _sched_sqlite = getattr(memory_manager, "sqlite", None)
         if _sched_sqlite is not None and request.character_id:
             schedule_lines = build_schedule_lines(
-                _sched_sqlite, request.character_id
+                _sched_sqlite, request.character_id,
+                face_to_face=bool(request.face_to_face),
+                session_id=request.session_id or None,
             ) or None
     except Exception:
         _log.exception("予定コンテキスト構築に失敗 char=%s", request.character_id)
+
+    # --- 対面中の時計: 実時刻の代わりに対面開始時刻を渡す（schedule_plan.md §7.6）---
+    face_to_face_since: str | None = None
+    if request.face_to_face:
+        try:
+            from backend.lib.time_awareness import japanese_weekday
+            from backend.services.schedule.awareness import face_to_face_started_at
+            _now = datetime.now()
+            _since = face_to_face_started_at(
+                getattr(memory_manager, "sqlite", None), request.session_id or None, _now,
+            )
+            face_to_face_since = f"{_since:%Y-%m-%d}({japanese_weekday(_since)}) {_since:%H:%M}"
+        except Exception:
+            _log.exception("対面開始時刻の算出に失敗 char=%s", request.character_id)
 
     # --- システムプロンプト構築（安定ブロックのみ） ---
     # 毎ターン変動する情報はターン注釈として最新 user メッセージ側へ付加する
@@ -347,6 +364,7 @@ async def prepare_context(
         enable_time_awareness=request.enable_time_awareness,
         current_time_str=request.current_time_str,
         time_since_last_interaction=request.time_since_last_interaction,
+        face_to_face_since=face_to_face_since,
         fetched_contents=fetched_contents,
         wm_recalled_threads=wm_recalled_threads,
         motive_lines=motive_lines,

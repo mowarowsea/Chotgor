@@ -3,8 +3,10 @@
 検証対象（2026-07-11 要件 ①②④ の露出マトリクス）:
     - reach_out         : うつつ（origin="usual"）専用。日次上限到達日は露出しない。
     - visit_user        : 1on1（origin="real" ＋ session_id）専用。対面中は露出しない。
-    - override_schedule : 1on1 専用かつ生活カレンダー有効のみ。
-    - speak_later       : 1on1 専用かつ発話予約有効（speak_later_enabled=1）のみ。
+    - peek_at_schedule  : 1on1 専用かつ生活カレンダー有効のみ。対面中も露出する（予定の pull 窓）。
+    - override_schedule : 1on1 専用かつ生活カレンダー有効のみ。対面中は露出しない。
+    - speak_later       : 1on1 専用かつ発話予約有効（speak_later_enabled=1）のみ。対面中は露出しない。
+      （対面中の出し分けは schedule_plan.md §7.6「二つの時計」）
     - バッチ（origin="real"・session なし）・シナリオ幕間（interlude）では追加ツールなし。
     - ヒント（resolve_context_tool_hints）はツール露出と同じ判定で並ぶ。
     - sqlite=None / キャラ不在では安全側（空リスト）に倒れる。
@@ -46,27 +48,32 @@ def test_usual_hides_reach_out_when_cap_reached(sqlite_store):
 
 
 def test_oneonone_exposes_visit_and_override(sqlite_store):
-    """1on1（real＋session）では visit_user と override_schedule が露出すること。"""
+    """1on1（real＋session）では visit_user・peek_at_schedule・override_schedule が露出すること。"""
     char_id = _make_character(sqlite_store, living_schedule_enabled=1)
     names = resolve_context_tool_names(
         sqlite_store, char_id, origin="real", session_id="session-1",
     )
-    assert names == ["visit_user", "override_schedule"]
+    assert names == ["visit_user", "peek_at_schedule", "override_schedule"]
 
 
 def test_oneonone_hides_visit_when_face_to_face(sqlite_store):
-    """対面中の 1on1 では visit_user が露出しないこと（切り替える意味がない）。"""
+    """対面中の 1on1 では peek_at_schedule だけが残ること。
+
+    visit_user は切り替える意味がなく、override_schedule は対面中 OnTime 強制で効果が無い
+    うえ予定を push しない方針と噛み合わず、speak_later は同じ空間にいれば「あとで」に
+    する理由がない。予定を覗く pull 窓（peek_at_schedule）だけは対面中こそ要る。
+    """
     char_id = _make_character(
-        sqlite_store, living_schedule_enabled=1, face_to_face_mode=1,
+        sqlite_store, living_schedule_enabled=1, face_to_face_mode=1, speak_later_enabled=1,
     )
     names = resolve_context_tool_names(
         sqlite_store, char_id, origin="real", session_id="session-1",
     )
-    assert names == ["override_schedule"]
+    assert names == ["peek_at_schedule"]
 
 
 def test_oneonone_hides_override_without_living_calendar(sqlite_store):
-    """生活カレンダー無効キャラでは override_schedule が露出しないこと。"""
+    """生活カレンダー無効キャラでは override_schedule・peek_at_schedule が露出しないこと。"""
     char_id = _make_character(sqlite_store, living_schedule_enabled=0)
     names = resolve_context_tool_names(
         sqlite_store, char_id, origin="real", session_id="session-1",
@@ -119,7 +126,7 @@ def test_tools_and_hints_follow_same_gate(sqlite_store):
     hints = resolve_context_tool_hints(
         sqlite_store, char_id, origin="real", session_id="s1",
     )
-    assert [t["name"] for t in tools] == ["visit_user", "override_schedule"]
+    assert [t["name"] for t in tools] == ["visit_user", "peek_at_schedule", "override_schedule"]
     assert len(hints) == len(tools)
     # ツール定義は Anthropic 形式（name / description / input_schema）
     for t in tools:

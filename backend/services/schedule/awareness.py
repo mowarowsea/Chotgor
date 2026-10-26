@@ -18,6 +18,12 @@
 
 出力は淡白な事実の行リスト（圧力ブロックと同じ思想 — どう受け取るかは本人次第）。
 
+対面中の「二つの時計」（docs/planned/schedule_plan.md §7.6）:
+    対面中は予定を push しない（発話予約の段取り行も含めてブロックごと出さない）。
+    本人は peek_at_schedule で覗きたいときだけ引く。対面が終わった直後の最初のターンにだけ
+    「外は◯◯。対面中に過ぎた予定：◯◯」を事実だけで先頭へ置く（つなぎ直し）。
+    対面の開始・終了は chat_messages.face_to_face から割り出し、状態は持たない。
+
 発話予約（speak_later）の相乗り（docs/planned/speak_later_plan.md）:
     pending の予約がある間、「{speak_at} になったら『{note}』をしようと思っている」を
     本人の段取りとして同じ枠に注入する。予約はセッションに紐づくが、注入はセッションを
@@ -27,6 +33,8 @@
 
 import logging
 from datetime import datetime, timedelta
+
+from backend.lib.time_awareness import japanese_weekday
 
 # 本人上書きエントリの payload.kind（rescheduler.py と共有の種別マーカー）
 from backend.character_actions.rescheduler import OVERRIDE_PAYLOAD_KIND
@@ -57,7 +65,60 @@ def _is_self_override(entry) -> bool:
     )
 
 
-def build_schedule_lines(sqlite, character_id: str, now: datetime | None = None) -> list[str]:
+def face_to_face_started_at(sqlite, session_id: str | None, now: datetime) -> datetime:
+    """いまの対面が始まった時刻を返す（セッション末尾から続く対面メッセージ列の先頭）。
+
+    対面メッセージがまだ無い（切り替えた直後の最初のターン等）なら now。
+    """
+    if sqlite is None or not session_id:
+        return now
+    started = sqlite.get_face_to_face_run_start(session_id)
+    return started if started is not None and started <= now else now
+
+
+def build_reconnect_lines(
+    sqlite, character_id: str, session_id: str | None, now: datetime
+) -> list[str]:
+    """対面が終わった直後の最初のターンだけ、外の時刻と対面中に過ぎた予定を返す。
+
+    判定: いまが非対面で、セッション内の最新のキャラ発話が対面のもの。キャラが
+    テキストで一度返せば条件が外れるため、状態を持たずに一度きりになる。
+    """
+    if sqlite is None or not session_id:
+        return []
+    last_char = sqlite.get_last_character_message(session_id)
+    if last_char is None or not int(getattr(last_char, "face_to_face", 0) or 0):
+        return []
+    started = sqlite.get_face_to_face_run_start(session_id, before=last_char.created_at)
+    if started is None:
+        return []
+
+    passed: list[str] = []
+    for entry in sqlite.list_schedule_entries(
+        character_id, since=started, until=now, statuses=["planned", "done"],
+    ):
+        # 外の時刻でもう終わっている予定だけ（進行中のものは「いまの予定」に載る）。
+        # 本人の上書きは過ぎた「予定」ではないので除く。
+        if entry.end_at > now or _is_self_override(entry):
+            continue
+        label = (getattr(entry, "label", None) or "予定").strip()
+        if label not in passed:
+            passed.append(label)
+
+    lines = [f"外は {now.month}/{now.day}({japanese_weekday(now)}) {now:%H:%M}。"]
+    if passed:
+        lines.append(f"対面中に過ぎた予定：{'、'.join(passed)}")
+    return lines
+
+
+def build_schedule_lines(
+    sqlite,
+    character_id: str,
+    now: datetime | None = None,
+    *,
+    face_to_face: bool = False,
+    session_id: str | None = None,
+) -> list[str]:
     """キャラ本人へ渡す予定コンテキストの行リストを組む（LLM 不使用の純関数）。
 
     構成（素材がある行だけ並ぶ）:
@@ -71,18 +132,22 @@ def build_schedule_lines(sqlite, character_id: str, now: datetime | None = None)
         sqlite: SQLiteStore。
         character_id: 対象キャラクター ID。
         now: 基準時刻（テスト注入用）。
+        face_to_face: 対面中なら True（ブロックごと出さない）。
+        session_id: 1on1 セッション ID（対面終了直後のつなぎ直し判定に使う）。
 
     Returns:
         淡白な事実の行リスト。素材なしなら空リスト。
         生活カレンダー無効キャラは 1〜3 を出さない（発話予約の行だけ載りうる）。
     """
+    if face_to_face:
+        return []
     char = sqlite.get_character(character_id)
     if char is None:
         return []
     now = now or datetime.now()
     if not int(getattr(char, "living_schedule_enabled", 0) or 0):
         return _build_reservation_lines(sqlite, character_id, now)
-    lines: list[str] = []
+    lines: list[str] = build_reconnect_lines(sqlite, character_id, session_id, now)
 
     # --- 1. いまの予定（占有圧最大が現実） ---
     active = sqlite.get_active_schedule_entries(character_id, now)
