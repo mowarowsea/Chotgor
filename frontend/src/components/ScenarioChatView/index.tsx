@@ -18,7 +18,6 @@
 import React, {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -32,6 +31,7 @@ import type {
 } from "../../api";
 import { EditingLockProvider, useEditingLocked } from "../../hooks/useEditingLock";
 import { useHeaderVisibilityOnScroll } from "../../hooks/useHeaderVisibilityOnScroll";
+import { useInfiniteScrollTop } from "../../hooks/useInfiniteScrollTop";
 import {
   BubbleColorProvider,
   CharacterAvatar,
@@ -260,50 +260,15 @@ function ScenarioChatViewInner({
   }, [session.id, turns, sending, scrollTurnToTop]);
 
   /**
-   * 遡り読み込みで先頭に追加されたぶん、見ている位置がずれないよう補正する。
-   *
-   * 発火時に「下端からの距離（scrollHeight - scrollTop）」を控えておき、
-   * DOM 反映直後に同じ距離へ戻す。描画前に補正したいので useLayoutEffect を使う。
-   */
-  const olderScrollAnchorRef = useRef<number | null>(null);
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const anchor = olderScrollAnchorRef.current;
-    if (el && anchor !== null) {
-      el.scrollTop = el.scrollHeight - anchor;
-      olderScrollAnchorRef.current = null;
-    }
-  }, [turns]);
-
-  /**
    * 無限スクロール: 履歴の上端に近づいたら過去を 1 ページぶん自動で取りに行く。
-   *
-   * `loadingOlderTurns` を依存に入れているのは、読み込み後もセンチネルが可視域に
-   * 残っている（1 ページでは埋まらなかった）ときに再購読で再発火させるため。
-   * IntersectionObserver は交差状態が「変化した」ときしか呼ばれないので、
-   * 購読し直さないと 2 ページ目以降が出ない。
+   * センチネルの監視と前方追加時の位置補正は 1on1 と共有のフックが担う。
    */
-  const topSentinelRef = useRef<HTMLDivElement>(null);
-  /** 親から渡る関数は毎レンダー変わりうるので、購読を張り直さずに済むよう ref 経由で呼ぶ。 */
-  const onLoadOlderRef = useRef(onLoadOlder);
-  onLoadOlderRef.current = onLoadOlder;
-  useEffect(() => {
-    if (!hasOlderTurns || loadingOlderTurns) return;
-    const root = scrollRef.current;
-    const target = topSentinelRef.current;
-    if (!root || !target) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        olderScrollAnchorRef.current = root.scrollHeight - root.scrollTop;
-        onLoadOlderRef.current?.();
-      },
-      // 上端に届く前から先読みして、遡り続けても途切れて見えないようにする
-      { root, rootMargin: "600px 0px 0px 0px" },
-    );
-    io.observe(target);
-    return () => io.disconnect();
-  }, [hasOlderTurns, loadingOlderTurns]);
+  const topSentinelRef = useInfiniteScrollTop(scrollRef, {
+    hasOlder: hasOlderTurns,
+    loading: loadingOlderTurns,
+    onLoadOlder,
+    items: turns,
+  });
 
   /** NPC 名 → NPC オブジェクトのマップ（既知判定・アバター取得用）。 */
   const npcByName = useMemo(

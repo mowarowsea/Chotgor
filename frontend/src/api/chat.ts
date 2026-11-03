@@ -88,8 +88,17 @@ export interface ChatMessage {
 }
 
 export interface SessionDetail extends Session {
+  /** メッセージ一覧。`limit` 付きで取ったときは直近ウィンドウぶんだけ。 */
   messages: ChatMessage[];
+  /** `messages` より手前にまだメッセージが残っているか（`limit` 付き取得のときだけ意味を持つ）。 */
+  has_older_messages?: boolean;
 }
+
+/**
+ * 1on1 履歴の表示ウィンドウ幅（1 ページの件数）。
+ * セッションを開くときは末尾からこの件数だけ取り、上端に近づくたび同じ幅で過去へ伸ばす。
+ */
+export const MESSAGE_PAGE_SIZE = 60;
 
 /** キャラクターの型定義。 */
 export interface Character {
@@ -140,10 +149,37 @@ export async function fetchSessions(): Promise<Session[]> {
   return res.json();
 }
 
-/** セッションとメッセージ一覧を取得する。 */
-export async function fetchSession(sessionId: string): Promise<SessionDetail> {
-  const res = await fetch(`/api/chat/sessions/${sessionId}`);
+/**
+ * セッションとメッセージ一覧を取得する。
+ *
+ * `limit` を渡すと末尾からその件数だけ（直近ウィンドウ）を `messages` に載せ、
+ * 手前が残っているかを `has_older_messages` で返す。省略すると全件
+ * （エクスポートなど履歴全体が要る用途向け）。
+ */
+export async function fetchSession(
+  sessionId: string,
+  opts?: { limit?: number },
+): Promise<SessionDetail> {
+  const qs = opts?.limit !== undefined ? `?limit=${opts.limit}` : "";
+  const res = await fetch(`/api/chat/sessions/${sessionId}${qs}`);
   if (!res.ok) throw new Error("セッションの取得に失敗しました");
+  return res.json();
+}
+
+/**
+ * 表示中ウィンドウより手前のメッセージを 1 ページぶん取得する（遡り読み込み）。
+ *
+ * `before` はいま表示している先頭メッセージの ID。それより手前の直近 `limit` 件を
+ * 昇順で返す。`has_older` はさらに手前が残っているか。
+ */
+export async function fetchOlderMessages(
+  sessionId: string,
+  before: string,
+  limit: number = MESSAGE_PAGE_SIZE,
+): Promise<{ messages: ChatMessage[]; has_older: boolean }> {
+  const params = new URLSearchParams({ before, limit: String(limit) });
+  const res = await fetch(`/api/chat/sessions/${sessionId}/messages?${params}`);
+  if (!res.ok) throw new Error("メッセージの取得に失敗しました");
   return res.json();
 }
 

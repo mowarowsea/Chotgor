@@ -302,3 +302,93 @@ class TestDeleteChatMessagesFrom:
 
         # sid_b の全メッセージは残っていること
         assert len(sqlite_store.list_chat_messages(sid_b)) == 3
+
+
+# --- list_chat_messages の直近ウィンドウ・遡り読み込み ---
+
+class TestListChatMessagesWindow:
+    """list_chat_messages の `limit` / `before_id`（1on1 履歴ウィンドウ）を検証する。
+
+    scenario_history_perf_plan.md「1on1 への横展開」。`chat_messages` には turn_index が
+    無いので、カーソルは `(created_at, id)` の複合キーで切る。
+    """
+
+    def _make_session(self, store):
+        sid = str(uuid.uuid4())
+        store.create_chat_session(session_id=sid, model_id="alice@gemini")
+        return sid
+
+    def _add_messages(self, store, session_id, count):
+        ids = []
+        for i in range(count):
+            mid = str(uuid.uuid4())
+            store.create_chat_message(
+                message_id=mid, session_id=session_id,
+                role="user" if i % 2 == 0 else "character", content=f"msg-{i}",
+            )
+            ids.append(mid)
+        return ids
+
+    def test_limit_returns_tail_in_ascending_order(self, sqlite_store):
+        """limit は末尾（新しい側）から数え、結果は昇順で返ること。"""
+        sid = self._make_session(sqlite_store)
+        ids = self._add_messages(sqlite_store, sid, 5)
+        window = sqlite_store.list_chat_messages(sid, limit=2)
+        assert [m.id for m in window] == ids[3:]
+
+    def test_limit_larger_than_count_returns_all(self, sqlite_store):
+        """件数より大きい limit は全件を返すこと。"""
+        sid = self._make_session(sqlite_store)
+        ids = self._add_messages(sqlite_store, sid, 3)
+        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=10)] == ids
+
+    def test_before_id_returns_window_just_before_anchor(self, sqlite_store):
+        """before_id はそのメッセージを含まず、手前の直近 limit 件を昇順で返すこと。"""
+        sid = self._make_session(sqlite_store)
+        ids = self._add_messages(sqlite_store, sid, 6)
+        window = sqlite_store.list_chat_messages(sid, limit=2, before_id=ids[4])
+        assert [m.id for m in window] == ids[2:4]
+
+    def test_paging_backwards_covers_everything_without_overlap(self, sqlite_store):
+        """before_id で遡り続けると全件を重複なく辿れること。"""
+        sid = self._make_session(sqlite_store)
+        ids = self._add_messages(sqlite_store, sid, 7)
+        seen = []
+        page = sqlite_store.list_chat_messages(sid, limit=3)
+        while page:
+            seen = [m.id for m in page] + seen
+            page = sqlite_store.list_chat_messages(sid, limit=3, before_id=page[0].id)
+        assert seen == ids
+
+    def test_same_created_at_is_ordered_by_id(self, sqlite_store):
+        """created_at が同一でも id で順序が定まり、カーソルがその順序で切れること。"""
+        from datetime import datetime
+        from backend.repositories.sqlite.store import ChatMessage
+
+        sid = self._make_session(sqlite_store)
+        ids = ["b", "a", "c"]
+        for mid in ids:
+            sqlite_store.create_chat_message(message_id=mid, session_id=sid, role="user", content=mid)
+        same = datetime(2026, 1, 1, 0, 0, 0)
+        with sqlite_store.get_session() as s:
+            s.query(ChatMessage).filter(ChatMessage.session_id == sid).update({"created_at": same})
+            s.commit()
+
+        assert [m.id for m in sqlite_store.list_chat_messages(sid)] == ["a", "b", "c"]
+        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=1, before_id="b")] == ["a"]
+        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=5, before_id="c")] == ["a", "b"]
+
+    def test_unknown_before_id_raises(self, sqlite_store):
+        """このセッションに無い before_id は ValueError。"""
+        sid = self._make_session(sqlite_store)
+        self._add_messages(sqlite_store, sid, 2)
+        with pytest.raises(ValueError):
+            sqlite_store.list_chat_messages(sid, limit=2, before_id="no-such-id")
+
+    def test_before_id_from_other_session_raises(self, sqlite_store):
+        """別セッションのメッセージ ID をカーソルにしても使えないこと。"""
+        sid_a = self._make_session(sqlite_store)
+        sid_b = self._make_session(sqlite_store)
+        ids_b = self._add_messages(sqlite_store, sid_b, 1)
+        with pytest.raises(ValueError):
+            sqlite_store.list_chat_messages(sid_a, limit=2, before_id=ids_b[0])

@@ -27,9 +27,12 @@ export interface SessionSnapshot {
   sessionId: string;
   /** 選択中モデルID（"{char_name}@{preset_name}"）。空なら復元しない。 */
   modelId: string;
+  /** 表示していたメッセージ（直近ウィンドウ＋遡って読み込んだぶん）。 */
   messages: ChatMessage[];
   reasoningMap: Record<string, string>;
   msgLogIds: Record<string, string>;
+  /** 表示の先頭より手前にまだメッセージが残っていたか。古い退避には無い。 */
+  hasOlderMessages?: boolean;
 }
 
 /** 退避したスクロール位置。 */

@@ -144,7 +144,7 @@
 |---|---|
 | `App.tsx` | ルートコンポーネント（状態はフックへ抽出済み） |
 | `api/` | backend 呼び出し層。`chat.ts` / `scenario.ts` / `logs.ts` / `translate.ts` / `sse.ts`（SSE共通処理） |
-| `hooks/` | 状態管理フック。`useSessions` / `useChat` / `useScenarioChat` ほか |
+| `hooks/` | 状態管理フック。`useSessions` / `useChat` / `useScenarioChat` / `useMessageWindow`（1on1 履歴ウィンドウの取得層）/ `useInfiniteScrollTop`（遡り読み込みのセンチネル監視と位置補正。1on1・シナリオ共用）ほか |
 | `components/` | UI。`ChatBubbles/` と `ScenarioChatView/` は責務別ディレクトリに分割済み |
 | `lib/` | UI に依存しない補助。`sessionSnapshot.ts`（1on1 の画面状態とスクロール位置を sessionStorage へ退避し、リロード復帰で API 応答を待たずに即描画する）、`scrollAnchor.ts`（応答完了時・セッションを開いた時に、直近の送信の起点＝最後のユーザ発話を画面上端へ寄せる。1on1 とシナリオで共有） |
 
@@ -218,6 +218,14 @@ frontend useChat
   送信 API の 400 の三段で「渡らないのに渡ったように見える」状態を作らせない。
   テキストは全プロバイダーが受け取れる（1 MB 超はアップロード時に 400）。
   設計と不採用案は `docs/planned/audio_attachment_plan.md`・`docs/planned/text_attachment_plan.md`。
+- **履歴の転送・描画はシナリオと同じ直近ウィンドウ方式**（2026-11-03 横展開）。SPA は
+  `GET /sessions/{id}?limit=60` で末尾 60 件と `has_older_messages` を受け取り、上端に近づくと
+  `GET /sessions/{id}/messages?before=<message_id>&limit=60` で 1 ページずつ遡る（無限スクロール）。
+  カーソルは `(created_at, id)` の複合キー（`chat_messages` に `turn_index` 相当の列が無いため。
+  `list_chat_messages(limit=, before_id=)`）。「まだ上があるか」は N+1 件取って余るかで厳密に出す。
+  スクロール機構（`useInfiniteScrollTop`）はシナリオと共有、取得層（`useMessageWindow`）は個別。
+  `limit` 省略時は従来どおり全件（LLM へ渡す履歴・エクスポートは全件経路）。
+  詳細・裁定は `docs/planned/scenario_history_perf_plan.md`「1on1 への横展開」。
 - **SSE 送出と生成は分離されている（`lib/sse_runner.py`。1on1／シナリオ共用）**。
   生成本体（LLM 呼び出し〜DB 保存）は `asyncio.Task` で走り、送出側は Queue を読むだけ。
   **クライアントが切断してもタスクは cancel せず完走させる** — 保存が `yield` より後ろに
@@ -651,7 +659,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 
 | prefix | ファイル | 用途 |
 |---|---|---|
-| `/api/chat` | `api/chat.py`, `api/chat_attachments.py` | 1on1セッション・ストリーミング・添付（画像・音声・テキスト） |
+| `/api/chat` | `api/chat.py`, `api/chat_attachments.py` | 1on1セッション・ストリーミング・添付（画像・音声・テキスト）。`GET /sessions/{id}?limit=` と `GET /sessions/{id}/messages?before=&limit=` が履歴ウィンドウ |
 | `/api/scenario_chat` | `api/scenario_chat/` | シナリオ（scenarios / sessions / stream） |
 | `/api/characters` | `api/characters.py` | キャラクターCRUD |
 | `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行・Retrace（WM 時制の辿り直し）手動実行 |
@@ -708,7 +716,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 |---|---|
 | `docs/planned/usual_days_plan.md` | §3 うつつ — 無人生活モードの設計・実装計画 |
 | `docs/planned/scenario_turn_variants_plan.md` | §3 シナリオ「ログの枝分かれ」— generation / branch_point_index |
-| `docs/planned/scenario_history_perf_plan.md` | §3 シナリオ「履歴の転送・描画」— ウィンドウ＋`response_key` |
+| `docs/planned/scenario_history_perf_plan.md` | §3 シナリオ「履歴の転送・描画」／1on1「履歴の転送・描画」— ウィンドウ＋`response_key`・1on1 への横展開 |
 
 ### 基盤・リファクタ記録
 

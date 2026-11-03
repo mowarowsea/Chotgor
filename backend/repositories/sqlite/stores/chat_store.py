@@ -152,16 +152,50 @@ class ChatStoreMixin:
             session.refresh(msg)
             return msg
 
-    def list_chat_messages(self, session_id: str) -> list:
-        """セッション内のメッセージを時系列順で返す。"""
+    def list_chat_messages(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_id: str | None = None,
+    ) -> list:
+        """セッション内のメッセージを時系列順（古い順）で返す。
+
+        `limit` を渡すと末尾からその件数だけ（直近ウィンドウ）、`before_id` を併せて渡すと
+        そのメッセージより手前の直近 `limit` 件（遡り読み込み）を返す。どちらも昇順の配列。
+        省略時は全件（LLM へ渡す履歴・エクスポートなど履歴全体が要る用途向け）。
+
+        カーソルは `(created_at, id)` の複合。`chat_messages` には `scenario_turns.turn_index`
+        のような単調増加列が無く、`created_at` だけでは同時刻の衝突で境界が曖昧になるため。
+        並び順も同じ複合キーで固定し、ウィンドウと全件で順序が食い違わないようにする。
+
+        Raises:
+            ValueError: `before_id` がこのセッションに存在しない。
+        """
         with self.get_session() as session:
             from backend.repositories.sqlite.store import ChatMessage
-            return (
-                session.query(ChatMessage)
-                .filter(ChatMessage.session_id == session_id)
-                .order_by(ChatMessage.created_at.asc())
+            q = session.query(ChatMessage).filter(ChatMessage.session_id == session_id)
+            if before_id is not None:
+                anchor = (
+                    session.query(ChatMessage.created_at, ChatMessage.id)
+                    .filter(ChatMessage.session_id == session_id, ChatMessage.id == before_id)
+                    .first()
+                )
+                if anchor is None:
+                    raise ValueError(f"message not found: {before_id}")
+                q = q.filter(
+                    (ChatMessage.created_at < anchor[0])
+                    | ((ChatMessage.created_at == anchor[0]) & (ChatMessage.id < anchor[1]))
+                )
+            if limit is None:
+                return q.order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc()).all()
+            # 末尾（新しい側）から limit 件を取り、昇順へ戻す
+            rows = (
+                q.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .limit(limit)
                 .all()
             )
+            rows.reverse()
+            return rows
 
     def get_face_to_face_run_start(
         self, session_id: str, before: datetime | None = None

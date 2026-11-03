@@ -7,12 +7,19 @@ import type { UIEvent } from "react";
 import type { Attachment, ChatMessage } from "../api";
 import { CharacterBubble, CharacterAvatar, CharacterMessageRow, UserBubble, ThinkingBlock, Bubble } from "./ChatBubbles";
 import { useHeaderVisibilityOnScroll } from "../hooks/useHeaderVisibilityOnScroll";
+import { useInfiniteScrollTop } from "../hooks/useInfiniteScrollTop";
 import { scrollAnchorToTop } from "../lib/scrollAnchor";
 import { loadScrollPos, saveScrollPos } from "../lib/sessionSnapshot";
 
 interface Props {
-    /** 表示するメッセージ一覧 */
+    /** 表示するメッセージ一覧（直近ウィンドウぶん。過去は遡り読み込みで伸びる） */
     messages: ChatMessage[];
+    /** 表示中ウィンドウより過去のメッセージが残っているか（遡りセンチネルの表示可否）。 */
+    hasOlderMessages?: boolean;
+    /** 遡り読み込みの実行中フラグ。 */
+    loadingOlderMessages?: boolean;
+    /** 表示ウィンドウを 1 ページぶん過去へ伸ばす。 */
+    onLoadOlder?: () => void;
     /**
      * セッションID。スクロール位置の退避・復元のキーに使う。
      * 未指定なら復元しない（常に最下部へ寄せる従来動作）。
@@ -72,6 +79,9 @@ interface Props {
  */
 export default function MessageList({
     messages,
+    hasOlderMessages = false,
+    loadingOlderMessages = false,
+    onLoadOlder,
     sessionId,
     userName,
     sending,
@@ -102,6 +112,17 @@ export default function MessageList({
     const prevSendingRef = useRef(sending);
     /** スクロールに応じてヘッダー表示状態を判定する onScroll ハンドラ。 */
     const handleScroll = useHeaderVisibilityOnScroll(onHeaderVisibilityChange);
+    /**
+     * 無限スクロール: 上端に近づいたら過去を 1 ページぶん自動で取りに行く。
+     * センチネルの監視と前方追加時の位置補正はシナリオと共有のフックが担う。
+     * 下の最下部追従は末尾 id にしか反応しないので、前方に足しても最下部へは飛ばない。
+     */
+    const topSentinelRef = useInfiniteScrollTop(scrollRef, {
+        hasOlder: hasOlderMessages,
+        loading: loadingOlderMessages,
+        onLoadOlder,
+        items: messages,
+    });
 
     /**
      * ヘッダー表示判定に加えて、スクロール位置を退避する onScroll ハンドラ。
@@ -191,6 +212,15 @@ export default function MessageList({
         >
           {/* pt-16: 浮遊ヘッダー分の上余白。 */}
           <div className="max-w-[760px] mx-auto px-4 sm:px-6 pt-16 pb-6 space-y-3">
+            {/* 遡り読み込みのセンチネル。可視域に入ると 1 ページぶん過去へ自動で伸びる。 */}
+            {hasOlderMessages && (
+                <div
+                    ref={topSentinelRef}
+                    className="text-ch-t4 text-[11px] min-h-[20px] flex items-center justify-center"
+                >
+                    {loadingOlderMessages && <span className="animate-pulse">読み込み中...</span>}
+                </div>
+            )}
             {messages.length === 0 && !sending && !waitingCharacter && (
                 <p className="text-ch-t4 text-xs text-center mt-20">
                     {emptyMessage}

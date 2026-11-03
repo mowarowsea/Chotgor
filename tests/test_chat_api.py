@@ -198,6 +198,124 @@ class TestGetSession:
         res = client.get("/api/chat/sessions/no-such-id")
         assert res.status_code == 404
 
+    def test_without_limit_returns_all_and_has_older_false(self):
+        """limit 省略時は全件取得（store へ limit を渡さない）で has_older_messages=False。"""
+        sid = "sess-1"
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.return_value = [_fake_message(session_id=sid)]
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get(f"/api/chat/sessions/{sid}")
+        assert res.status_code == 200
+        assert res.json()["has_older_messages"] is False
+        sqlite.list_chat_messages.assert_called_once_with(sid)
+
+    def test_limit_trims_window_and_reports_has_older(self):
+        """limit=N は store へ N+1 件を要求し、余った 1 件を落として has_older_messages=True。"""
+        sid = "sess-1"
+        msgs = [_fake_message(session_id=sid, content=f"m{i}") for i in range(3)]
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.return_value = list(msgs)
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get(f"/api/chat/sessions/{sid}?limit=2")
+        assert res.status_code == 200
+        data = res.json()
+        sqlite.list_chat_messages.assert_called_once_with(sid, limit=3, before_id=None)
+        assert data["has_older_messages"] is True
+        assert [m["content"] for m in data["messages"]] == ["m1", "m2"]
+
+    def test_limit_with_no_overflow_reports_has_older_false(self):
+        """ウィンドウが履歴全体を収めていれば has_older_messages=False。"""
+        sid = "sess-1"
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.return_value = [_fake_message(session_id=sid)]
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get(f"/api/chat/sessions/{sid}?limit=5")
+        assert res.json()["has_older_messages"] is False
+        assert len(res.json()["messages"]) == 1
+
+    def test_variant_info_attached_to_window_tail(self):
+        """ウィンドウ表示でも末尾のキャラ応答に枝ナビ情報が付くこと。"""
+        sid = "sess-1"
+        user = _fake_message(session_id=sid, role="user")
+        char = _fake_message(session_id=sid, role="character")
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.return_value = [user, char]
+        client = TestClient(_make_app(sqlite))
+        # _make_app が「兄弟なし」を既定で入れるので、その後に上書きする
+        sqlite.get_chat_variant_info.return_value = {"index": 2, "count": 3}
+
+        res = client.get(f"/api/chat/sessions/{sid}?limit=10")
+        tail = res.json()["messages"][-1]
+        assert tail["variant_index"] == 2
+        assert tail["variant_count"] == 3
+        assert tail["variant_anchor_id"] == user.id
+
+
+# ---------------------------------------------------------------------------
+# GET /api/chat/sessions/{session_id}/messages（遡り読み込み）
+# ---------------------------------------------------------------------------
+
+class TestListMessages:
+    """履歴ウィンドウの遡り読み込みエンドポイントのテスト。"""
+
+    def test_returns_window_before_cursor(self):
+        """before を store へ渡し、N+1 件の余りを落として has_older を返すこと。"""
+        sid = "sess-1"
+        msgs = [_fake_message(session_id=sid, content=f"m{i}") for i in range(3)]
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.return_value = list(msgs)
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get(f"/api/chat/sessions/{sid}/messages?limit=2&before=cursor-id")
+        assert res.status_code == 200
+        sqlite.list_chat_messages.assert_called_once_with(sid, limit=3, before_id="cursor-id")
+        data = res.json()
+        assert data["has_older"] is True
+        assert [m["content"] for m in data["messages"]] == ["m1", "m2"]
+
+    def test_last_page_has_older_false(self):
+        """余りが無ければ has_older=False で、返った件数はそのまま。"""
+        sid = "sess-1"
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.return_value = [_fake_message(session_id=sid)]
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get(f"/api/chat/sessions/{sid}/messages?limit=2&before=cursor-id")
+        assert res.json() == {
+            "messages": res.json()["messages"],
+            "has_older": False,
+        }
+        assert len(res.json()["messages"]) == 1
+
+    def test_unknown_cursor_returns_404(self):
+        """store が ValueError（カーソル不在）を返したら 404。"""
+        sid = "sess-1"
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.side_effect = ValueError("message not found")
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get(f"/api/chat/sessions/{sid}/messages?before=nope")
+        assert res.status_code == 404
+
+    def test_unknown_session_returns_404(self):
+        """存在しないセッションは 404。"""
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = None
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get("/api/chat/sessions/no-such/messages")
+        assert res.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # PATCH /api/chat/sessions/{session_id}

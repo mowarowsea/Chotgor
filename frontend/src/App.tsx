@@ -15,6 +15,7 @@ import {
   fetchScenarioPresets,
   fetchScenarioTurns,
   updateFaceToFaceMode,
+  MESSAGE_PAGE_SIZE,
 } from "./api";
 import type {
   Attachment,
@@ -46,6 +47,7 @@ import {
 import { useTheme } from "./hooks/useTheme";
 import { useSessions } from "./hooks/useSessions";
 import { useChat } from "./hooks/useChat";
+import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useScenarioChat } from "./hooks/useScenarioChat";
 
 /**
@@ -105,6 +107,12 @@ export default function App() {
   const [exportScenarioTurns, setExportScenarioTurns] = useState<
     ScenarioTurn[] | null
   >(null);
+  /**
+   * エクスポート用に取り直した 1on1 の全メッセージ。
+   * 1on1 も画面は直近ウィンドウだけなので、手前が残っていればダイアログを開くときに
+   * 全件を取得してこちらへ入れる（閉じたら破棄）。null なら表示中の messages をそのまま使う。
+   */
+  const [exportSessionDetail, setExportSessionDetail] = useState<SessionDetail | null>(null);
   /** ライト/ダークテーマの状態と切り替え関数。 */
   const { dark, toggle: toggleTheme } = useTheme();
   /** ヘッダーのモデル切り替えメニューの開閉状態。 */
@@ -319,6 +327,27 @@ export default function App() {
     setMsgLogIds,
   });
 
+  /**
+   * 1on1 履歴の表示ウィンドウ（直近 N 件＋遡り読み込み）。
+   * シナリオの履歴ウィンドウと同じ考え方で、スクロール機構は MessageList 側の共有フックが担う。
+   */
+  const {
+    hasOlderMessages,
+    loadingOlderMessages,
+    applyDetail: applyMessageWindow,
+    loadOlderMessages,
+    setHasOlderMessages,
+    resetWindow: resetMessageWindow,
+  } = useMessageWindow({
+    activeSessionId,
+    activeSessionIdRef,
+    messages,
+    setMessages,
+    setReasoningMap,
+    setMsgLogIds,
+    setError,
+  });
+
   /** Sidebar に渡す統合セッションリスト（更新日時降順）。 */
   const combinedSessions: AnySession[] = useMemo(() => {
     const all: AnySession[] = [...sessions, ...scenarioSessions];
@@ -331,29 +360,16 @@ export default function App() {
   )?.session_type === "scenario";
 
   /**
-   * 1on1 セッション詳細を画面 state へ反映する。
-   * 初回のハッシュ復元とセッション選択の双方から呼ぶ。
+   * 1on1 セッション詳細（直近ウィンドウ）を画面 state へ反映する。
+   * 初回のハッシュ復元とセッション選択の双方から呼ぶ。メッセージ・reasoning・ログ ID の
+   * 反映（表示中の手前側を残すマージ込み）は useMessageWindow が担う。
    */
   const applySessionDetail = useCallback((detail: SessionDetail) => {
     if (detail.model_id) {
       setSelectedModel(detail.model_id);
     }
-    setMessages(detail.messages);
-    // DBに保存された reasoning と log_message_id をメッセージIDに紐付けて復元する
-    const restored: Record<string, string> = {};
-    const restoredLogIds: Record<string, string> = {};
-    for (const msg of detail.messages) {
-      if (msg.reasoning) {
-        restored[msg.id] = msg.reasoning;
-      }
-      if (msg.log_message_id) {
-        restoredLogIds[msg.id] = msg.log_message_id;
-      }
-    }
-    setReasoningMap(restored);
-    setMsgLogIds(restoredLogIds);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    applyMessageWindow(detail);
+  }, [applyMessageWindow]);
 
   /**
    * 初期データ取得。URL ハッシュに対応するセッションがあれば自動選択する。
@@ -375,6 +391,11 @@ export default function App() {
         setMessages(snap.messages);
         setReasoningMap(snap.reasoningMap);
         setMsgLogIds(snap.msgLogIds);
+        // 退避時の上端判定が無い古いスナップショットは、1 ページ以上あれば「まだ上がある」とみなす
+        // （API の応答が着けば正しい値で上書きされる）。
+        setHasOlderMessages(
+          snap.hasOlderMessages ?? snap.messages.length >= MESSAGE_PAGE_SIZE,
+        );
         if (snap.modelId) setSelectedModel(snap.modelId);
       }
     }
@@ -386,7 +407,7 @@ export default function App() {
       fetchScenarioSessions().catch(() => [] as ScenarioSession[]),
       fetchScenarioPresets().catch(() => [] as ScenarioPreset[]),
       hashSessionId
-        ? fetchSession(hashSessionId).catch(() => null)
+        ? fetchSession(hashSessionId, { limit: MESSAGE_PAGE_SIZE }).catch(() => null)
         : Promise.resolve(null),
     ])
       .then(([m, s, u, c, sc, sp, detail]) => {
@@ -415,6 +436,7 @@ export default function App() {
           clearSessionSnapshot();
           setActiveSessionId(null);
           setMessages([]);
+          resetMessageWindow();
         }
       })
       .catch((e) => setError(String(e)));
@@ -437,8 +459,9 @@ export default function App() {
       messages,
       reasoningMap,
       msgLogIds,
+      hasOlderMessages,
     });
-  }, [activeSessionId, isScenarioSession, sending, messages, reasoningMap, msgLogIds, selectedModel]);
+  }, [activeSessionId, isScenarioSession, sending, messages, reasoningMap, msgLogIds, selectedModel, hasOlderMessages]);
 
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
@@ -448,6 +471,7 @@ export default function App() {
     // ストリーミング中だった場合の状態をリセットする
     setSending(false);
     resetChatStreamingState();
+    resetMessageWindow();
     // シナリオ関連の状態もリセット
     resetScenarioState();
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする
@@ -463,7 +487,7 @@ export default function App() {
     }
 
     try {
-      applySessionDetail(await fetchSession(sessionId));
+      applySessionDetail(await fetchSession(sessionId, { limit: MESSAGE_PAGE_SIZE }));
     } catch (e) {
       setError(String(e));
     }
@@ -485,12 +509,13 @@ export default function App() {
         window.location.hash = "";
         setActiveSessionId(null);
         setMessages([]);
+        resetMessageWindow();
         resetScenarioState();
       }
     } catch (e) {
       setError(String(e));
     }
-  }, [activeSessionId, scenarioSessions, deleteScenario, resetScenarioState]);
+  }, [activeSessionId, scenarioSessions, deleteScenario, resetScenarioState, resetMessageWindow]);
 
   /** メッセージ送信。添付がある場合は先にアップロードしてから送信する。 */
   const handleSend = useCallback(async (content: string, files: File[]) => {
@@ -520,8 +545,9 @@ export default function App() {
   /**
    * エクスポートダイアログを開く。
    *
-   * シナリオは画面に直近ウィンドウしか載せていないため、ここで履歴全体を取り直す
-   * （そのまま渡すと出力が途中までになる）。1on1 は messages が全件なのでそのまま。
+   * シナリオも 1on1 も画面には直近ウィンドウしか載せていないため、ここで履歴全体を
+   * 取り直す（そのまま渡すと出力が途中までになる）。1on1 は手前が残っていないときだけ
+   * 表示中の messages をそのまま使う。
    */
   const handleOpenExport = useCallback(async () => {
     if (isScenarioSession && activeScenarioSession) {
@@ -533,9 +559,26 @@ export default function App() {
         setError(String(e));
         return;
       }
+    } else if (activeSessionId && hasOlderMessages) {
+      try {
+        setExportSessionDetail(await fetchSession(activeSessionId));
+      } catch (e) {
+        setError(String(e));
+        return;
+      }
     }
     setExportDialogOpen(true);
-  }, [isScenarioSession, activeScenarioSession]);
+  }, [isScenarioSession, activeScenarioSession, activeSessionId, hasOlderMessages]);
+
+  /** エクスポートに渡す 1on1 の reasoning マップ（全件取り直したときはそちらから組む）。 */
+  const exportReasoningMap = useMemo(() => {
+    if (!exportSessionDetail) return reasoningMap;
+    const map: Record<string, string> = { ...reasoningMap };
+    for (const msg of exportSessionDetail.messages) {
+      if (msg.reasoning) map[msg.id] = msg.reasoning;
+    }
+    return map;
+  }, [exportSessionDetail, reasoningMap]);
 
   return (
     /* CharacterImageProvider: アバター画像リゾルバをアプリ全体へ供給する。
@@ -560,7 +603,7 @@ export default function App() {
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen((o) => !o)}
         onSelectSession={(id) => { handleSelectSession(id); setSidebarOpen(window.innerWidth >= 640); }}
-        onNewChat={handleNewChat}
+        onNewChat={(modelId) => { resetMessageWindow(); handleNewChat(modelId); }}
         onStartScenario={handleStartScenario}
         onDeleteSession={handleDeleteSession}
         onRenameSession={handleRenameSession}
@@ -747,6 +790,9 @@ export default function App() {
           <ChatView
             sessionId={activeSessionId}
             messages={messages}
+            hasOlderMessages={hasOlderMessages}
+            loadingOlderMessages={loadingOlderMessages}
+            onLoadOlder={loadOlderMessages}
             characterName={characterName}
             userName={userName}
             sending={sending}
@@ -781,14 +827,14 @@ export default function App() {
                   exportScenarioTurns ?? scenarioTurns,
                   activeScenarioSession?.id ?? "",
                 )
-              : messages
+              : (exportSessionDetail?.messages ?? messages)
           }
           userName={
             isScenarioSession
               ? (activeScenarioTemplate?.pc_slots?.[0]?.name ?? userName)
               : userName
           }
-          reasoningMap={reasoningMap}
+          reasoningMap={isScenarioSession ? reasoningMap : exportReasoningMap}
           sessionTitle={
             isScenarioSession
               ? activeScenarioSession?.title
@@ -797,6 +843,7 @@ export default function App() {
           onClose={() => {
             setExportDialogOpen(false);
             setExportScenarioTurns(null);
+            setExportSessionDetail(null);
           }}
         />
       )}

@@ -17,8 +17,14 @@ import MessageInput from "./MessageInput";
 interface Props {
   /** セッションID（入力下書きのキャッシュキーに使用） */
   sessionId: string;
-  /** 表示するメッセージ一覧 */
+  /** 表示するメッセージ一覧（直近ウィンドウぶん） */
   messages: ChatMessage[];
+  /** 表示中ウィンドウより過去のメッセージが残っているか。 */
+  hasOlderMessages?: boolean;
+  /** 遡り読み込みの実行中フラグ。 */
+  loadingOlderMessages?: boolean;
+  /** 表示ウィンドウを 1 ページぶん過去へ伸ばす。 */
+  onLoadOlder?: () => void;
   /** キャラクター名（表示用） */
   characterName: string;
   /** ユーザ名（表示用） */
@@ -81,6 +87,9 @@ interface Props {
 export default function ChatView({
   sessionId,
   messages,
+  hasOlderMessages,
+  loadingOlderMessages,
+  onLoadOlder,
   characterName,
   userName,
   sending,
@@ -119,6 +128,9 @@ export default function ChatView({
       <div className="flex flex-col flex-1 h-full overflow-hidden relative" style={wrapperStyle}>
         <MessageList
           messages={messages}
+          hasOlderMessages={hasOlderMessages}
+          loadingOlderMessages={loadingOlderMessages}
+          onLoadOlder={onLoadOlder}
           sessionId={sessionId}
           userName={userName}
           sending={sending}

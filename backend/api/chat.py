@@ -11,7 +11,7 @@ import json
 import threading
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -191,20 +191,72 @@ async def create_session(request: Request, body: SessionCreate):
     return session_to_dict(session)
 
 
+def _list_message_window(
+    sqlite, session_id: str, limit: int | None, before_id: str | None = None
+) -> tuple[list, bool]:
+    """メッセージのウィンドウと「まだ手前があるか」を返す。
+
+    `limit + 1` 件を取って 1 件余れば has_older=True とする（件数一致の近似ではなく厳密）。
+    `limit` が None なら全件で has_older=False。
+    """
+    if limit is None:
+        return sqlite.list_chat_messages(session_id), False
+    rows = sqlite.list_chat_messages(session_id, limit=limit + 1, before_id=before_id)
+    has_older = len(rows) > limit
+    if has_older:
+        rows = rows[1:]
+    return rows, has_older
+
+
 @router.get("/sessions/{session_id}")
-async def get_session(request: Request, session_id: str):
-    """セッションとそのメッセージ一覧を返す。"""
+async def get_session(
+    request: Request,
+    session_id: str,
+    limit: int | None = Query(default=None, ge=1),
+):
+    """セッションとそのメッセージ一覧を返す。
+
+    `limit` を渡すと末尾から `limit` 件（直近ウィンドウ）だけを `messages` に載せ、
+    それより手前が残っているかを `has_older_messages` で返す。過去へ遡るときは
+    `GET /sessions/{id}/messages?before=&limit=` を使う。省略時は従来どおり全件。
+    """
     session = request.app.state.sqlite.get_chat_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    messages = request.app.state.sqlite.list_chat_messages(session_id)
+    messages, has_older = _list_message_window(request.app.state.sqlite, session_id, limit)
     result = session_to_dict(session)
     result["messages"] = [message_to_dict(m, request.app.state.sqlite) for m in messages]
+    result["has_older_messages"] = has_older
     # 枝ナビは最新ターン限定なので、末尾のキャラ応答にだけ付ける。
     anchor = next((m for m in reversed(messages) if m.role == "user"), None)
     if anchor is not None and result["messages"] and messages[-1].role != "user":
         _attach_variant_info(request.app.state, session_id, anchor.id, result["messages"][-1])
     return result
+
+
+@router.get("/sessions/{session_id}/messages")
+async def list_messages(
+    request: Request,
+    session_id: str,
+    limit: int = Query(default=60, ge=1, le=500),
+    before: str | None = Query(default=None),
+):
+    """メッセージの直近ウィンドウを返す（履歴の遡り読み込み用）。
+
+    `before` にメッセージ ID を渡すと、そのメッセージより手前の直近 `limit` 件を
+    昇順で返す。省略時は末尾から `limit` 件。`has_older` はさらに手前が残っているか。
+    """
+    sqlite = request.app.state.sqlite
+    if not sqlite.get_chat_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        messages, has_older = _list_message_window(sqlite, session_id, limit, before)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {
+        "messages": [message_to_dict(m, sqlite) for m in messages],
+        "has_older": has_older,
+    }
 
 
 class VariantActivate(BaseModel):

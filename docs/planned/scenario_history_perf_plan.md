@@ -1,7 +1,7 @@
 # シナリオ履歴の転送・描画コスト削減
 
 > ステータス: **実装完了（2026-07-31, `c242abb` ＋ 無限スクロール `b0a11cd`）**。
-> 残: 1on1 への履歴ウィンドウ横展開（方針決定済・未着手）。
+> 追補: 1on1 への履歴ウィンドウ横展開を実装（2026-11-03）。内訳は末尾「1on1 への横展開」。
 
 ## 目的
 
@@ -137,37 +137,65 @@ false へ戻る）を effect の依存に入れて**購読し直す**ことで�
 | `frontend/src/components/ScenarioChatView/index.tsx` | 指紋比較・遡りセンチネル（無限スクロール）・スクロール制御 |
 | `frontend/src/App.tsx` | エクスポート時の全件取得 |
 
-## 未着手: 1on1 への横展開（優先度: そのうち）
+## 1on1 への横展開（2026-11-03 実装）
 
 **方針は決定済み — 「共通化する。個別実装はなるべく薄く」**（2026-07-31 合意）。
-1on1 にも同じウィンドウ + 無限スクロールを入れ、スクロール機構は両者で共有する。
+1on1 にも同じウィンドウ + 無限スクロールを入れ、スクロール機構は両者で共有した。
 
-### 現状の実測（1on1）
+### 現状の実測（1on1・着手前）
 
 最大セッションで 210 メッセージ / 約 750KB。シナリオ（1098 ターン / 約 2.9MB）ほど
 逼迫していないが、内訳の構造は同じで **`reasoning` がペイロードの 80〜92%** を占める。
 
-### 共有できるもの / できないもの
+### 共有したもの / しなかったもの
 
-- **共有する（新規フック）**: センチネル + `IntersectionObserver` + アンカー復元 +
-  「末尾 ID が変わったときだけ最下端追従」。`useInfiniteScrollTop(scrollRef, {...})` として
-  `ScenarioChatView` から抽出し、1on1 と共有する（約 40 行）。
-- **共有しない（取得層）**: 下記の理由で個別実装になる。共通化を狙うと器だけ増える。
+- **共有（新規フック `hooks/useInfiniteScrollTop.ts`）**: センチネル + `IntersectionObserver`
+  （root=スクロールコンテナ・上方向 600px 先読み）+ 前方追加時のアンカー復元
+  （発火時の「下端からの距離」を控えて `useLayoutEffect` で戻す）+ `loading` 依存の再購読。
+  `ScenarioChatView` から抽出し、`MessageList`（1on1）と両方がこれを呼ぶ。
+  「末尾 ID が変わったときだけ最下端追従」は各画面の既存 effect がそのまま担う
+  （1on1 の `MessageList` は既に末尾 id 依存だったので、前方追加で飛ぶ問題は起きない）。
+- **共有しない（取得層）**: 1on1 は `hooks/useMessageWindow.ts`、シナリオは
+  `useScenarioChat` の `applyTurnWindow` / `mergeTurnWindow` / `loadOlderScenarioTurns`。
+  カーソルも API も違うため、共通化すると器だけ増える。
 
-### 引っかかる点（着手前に決めること）
+### 着手前に決めた 4 点の裁定
 
-1. **1on1 にはメッセージ専用エンドポイントが無い。** `GET /api/chat/sessions/{id}` が
-   `SessionDetail.messages` として同梱で返している。詳細にクエリを生やすか、
-   `GET /sessions/{id}/messages` を新設するか。
-2. **カーソルが無い。** `scenario_turns` の `turn_index`（単調増加の整数）に相当する列が
-   `chat_messages` に無い。`created_at` は同秒衝突があり得るので `(created_at, id)` 複合か
-   offset を選ぶ必要がある。
-3. **`MessageList` の自動スクロールが前方追加と衝突する。** 現在 `bottomRef.scrollIntoView(
-   { behavior: "smooth" })` を `[messages, ...]` 依存で呼んでおり、先頭に足すと
-   スムーズスクロールで最下端へ飛ぶ。コンテナ ref + `scrollTop` 方式へ寄せる
-   （シナリオ側と同じ形にすることが、そのままフック共有の前提になる）。
-4. 枝（variant）機構は 1on1 に無いので、`applyTurnWindow` / `mergeTurnWindow` の
-   使い分けは不要。1on1 はマージ側だけで足りる。
+1. **エンドポイント** — 両方やった。`GET /api/chat/sessions/{id}?limit=N` が末尾 N 件を
+   `messages` に載せて `has_older_messages` を返す（セッションを開く 1 往復のまま）。
+   遡りは新設の `GET /api/chat/sessions/{id}/messages?before=<message_id>&limit=N` →
+   `{messages, has_older}`。`limit` 省略時の詳細は従来どおり全件（エクスポート・既存テスト互換）。
+   「まだ上があるか」はシナリオの件数一致の近似ではなく **N+1 件取って 1 件余るか** で厳密に出す
+   （`api/chat.py _list_message_window`）。
+2. **カーソル** — `(created_at, id)` の複合キー。`chat_messages` に `turn_index` 相当の
+   単調増加列は無く、`created_at` 単独では同時刻の衝突で境界が曖昧になる。
+   `list_chat_messages(session_id, limit=, before_id=)` が複合キーで `<` を切り、並び順も
+   同じ複合キーに固定した（ウィンドウと全件で順序が食い違わないように）。
+   枝（variant）の復元は `created_at` を元の値のまま戻すので、カーソルは崩れない。
+   棄却: rowid（枝の復元で再 INSERT されると順序が created_at と食い違う）、offset
+   （送信で末尾が伸びるたびにずれる）。
+3. **`MessageList` の自動スクロール** — 着手時点で既に依存が `messages` ではなく末尾 id
+   （`lastMessageId`）に変わっていたため、`scrollIntoView` のまま前方追加と衝突しない。
+   コンテナ ref（`scrollRef`）は位置退避のために既にあり、フック共有の前提は満たしていた。
+4. **マージ** — 1on1 は `mergeMessageWindow(prev, fresh)` 1 本（取得ウィンドウの先頭 ID が
+   表示中にあればそれより手前を残す）。リロード復帰ではスナップショット（遡って読んだぶんを
+   含む）を先に描き、API の直近ウィンドウをこのマージで重ねる。手前を残したときは
+   `has_older` を上書きしない（サーバの答えはウィンドウ先頭に対するもので、表示の先頭とは別）。
+
+### そのほかの実装メモ
+
+- **エクスポート**: 1on1 も手前が残っていれば（`hasOlderMessages`）ダイアログを開くときに
+  `limit` 無しで全件を取り直す（`App.handleOpenExport`）。reasoning も全件から組み直す。
+- **スナップショット**（`lib/sessionSnapshot.ts`）に `hasOlderMessages` を足した。無い古い
+  退避は「1 ページ以上あれば上がある」とみなし、API 応答で正す。
+- **reasoning / ログ ID のマップ**は遡って読んだぶんも `useMessageWindow` が足す
+  （セッション読込時にしか復元していなかったため）。
+- ページ幅 `MESSAGE_PAGE_SIZE = 60`（`api/chat.ts`。シナリオの `TURN_PAGE_SIZE` と同値）。
+- 変更ファイル: `repositories/sqlite/stores/chat_store.py`・`api/chat.py`・
+  `frontend/src/api/chat.ts`・`hooks/useInfiniteScrollTop.ts`（新規）・
+  `hooks/useMessageWindow.ts`（新規）・`components/MessageList.tsx`・`ChatView.tsx`・
+  `ScenarioChatView/index.tsx`（フックへ置換）・`App.tsx`・`lib/sessionSnapshot.ts`。
+  テストは `tests/test_sqlite_chat.py`（ウィンドウ・カーソル）と `tests/test_chat_api.py`。
 
 ### 保留にした別案（棄却ではない）
 
@@ -180,4 +208,6 @@ false へ戻る）を effect の依存に入れて**購読し直す**ことで�
 
 - ウィンドウ外にあらすじ境界がある場合、区切り線（`SynopsisDivider`）は表示されない。
   遡って読み込めば出る。仕様として許容する。
+- 1on1 の `GET /sessions/{id}` は `limit` 省略時に全件を返す経路を残している
+  （`/v1` 互換層や既存テストは触らない）。SPA からは `limit` 付きでしか呼ばない。
 - `anticipation`（1.3%）はフロント未使用だが、将来 UI で使う可能性があるため今回は残す。
