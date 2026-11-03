@@ -1,5 +1,12 @@
 # テキスト添付 仕様書 — ファイルを読ませる
 
+> ステータス: **実装完了（2026-10-06, `ec40446`）**。要件合意 2026-10-06。キャラ向けガイドへの追記は `3d4d097`。
+> 2026-11-03 棚卸しで本書の設計項目をコードと突き合わせ、全項目の実装を確認した
+> （種別判定・MIME 正規化＝`lib/attachments.py`、`filename` 列＝`_migrate_add_attachment_filename`、
+> 1 MB 上限と `charset=utf-8` 配信＝`api/chat_attachments.py`、text パートと痕跡＝`services/chat/content.py`、
+> フロントのチップ＝`MessageInput.tsx` / `ChatBubbles/attachments.tsx`。テストは `tests/test_text_attachment.py`）。
+> 入力欄のチップは送信前のローカルファイルなので別タブ表示は吹き出し側だけ。「将来枠」は未着手のまま。
+
 ## 概要
 
 1on1 チャットの添付に **テキストファイル**（`.txt` / `.md` / ソースコード / CSV / JSON など）を
