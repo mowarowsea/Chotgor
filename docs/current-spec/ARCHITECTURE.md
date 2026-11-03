@@ -5,7 +5,8 @@
 
 > **鮮度について**: この文書は実装変更で腐る。ディレクトリ構成・処理フローを変える
 > 変更を入れたら、この文書も同じコミットで更新すること。
-> 最終更新: 2026-08-25（ディレクトリ表を実体へ同期・プロバイダー8実装・関連文書一覧の拡充）
+> 最終更新: 2026-11-03（直近2ヶ月のコミットと突き合わせて棚卸し。1on1 履歴ウィンドウ・デバッグ限定操作・
+> テンプレ複製・予想タグの任意化・関連文書一覧の補完）
 
 ---
 
@@ -85,7 +86,7 @@
 |---|---|
 | `main.py` | エントリポイント。lifespan でストア・マネージャー・ChatService を初期化し `app.state` に集約。Chronicle/Forget/うつつ（Usual Days）スケジューラーもここで起動 |
 | `api/` | HTTPエンドポイント層（ルーター）。下の「APIルーティング一覧」参照 |
-| `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。dashboard（`/ui/` 入口）/ characters / memories / presets / scenarios / settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル）。共通部品は `common.py`。編集フォームは自動保存＋楽観ロック（下の「設定フォームの楽観ロック」参照） |
+| `api/ui/` | 管理UI（Jinja2 サーバーサイドレンダリング）。dashboard（`/ui/` 入口。LLM 使用量の In/Cache/Out とキャッシュ率）/ characters / memories（削除ボタンはデバッグモード `CHOTGOR_DEBUG=1` のときだけ）/ presets（`/ui/model-presets`）/ scenarios（テンプレートの複製 `POST /ui/scenarios/{id}/duplicate` — テンプレ定義と NPC を写し、セッション・ターンは写さない。うつつ専用は対象外）/ settings / instruments（計器）/ forecast（予報）/ timeline（ダイヤル）。共通部品は `common.py`。編集フォームは自動保存＋楽観ロック（下の「設定フォームの楽観ロック」参照） |
 | `api/logs_ui/` | デバッグログ閲覧UI（`/ui/logs`）と JSON API（`/api/logs`）。Chotgor 起点の 1on1 応答（能動配達・発話予約。`log_context.SYSTEM_MAIN_SOURCE_TYPES`）もメイン行として Chat タブに出し、発信元は system |
 | `services/` | ビジネスロジック層。チャット・シナリオ・記憶・キャラクター問い合わせ |
 | `providers/` | LLMプロバイダー抽象層。`base.py`（`BaseLLMProvider`）＋ anthropic / claude_cli / google / ollama / openai / openrouter / sakura / sarashina / xai の9実装。`registry.py` が生成・ディスパッチ（露出順は `PROVIDER_ORDER`）。`jev_client.py` は TypeSafe Jev（文章を生成せず yes/no・選択・段階スコアの確率を返す判定モデル）のクライアントで、チャット不可のため registry には載せない（キーは `jev_api_key` → 環境変数 `JEV_API_KEY`）。なりゆき judge のエンジンとして選べ（`ambience_judge.JudgeEngine` が LLM と同じ口に揃える）、ログも LLM プロバイダーと同じ形式で残す。`sakura` は さくらの AI Engine（Kimi 等）で、推論トークンが枠を食い潰して本文が空になるため `DEFAULT_MAX_TOKENS=None`（上限指定なし）。`sarashina` は SB Intuitions の Sarashina API で、仕様外パラメータを 400 で弾くため OpenAIProvider のフック（`_MAX_TOKENS_PARAM` / `_STREAM_INCLUDE_USAGE` / `_prepare_api_messages` / `_assistant_tool_message`）で送信内容を絞る（content は文字列のみ＝画像不可） |
@@ -133,7 +134,7 @@
 | `later_speaker.py` | `speak_later`（1on1専用・キャラ発の時限発話の仕掛け）。時刻＋用件メモを speech_reservations へ pending insert（本文は発火時に本人が生成）。未来 availability は無風仮定で仕掛け時にエラー判定・72h horizon・同一セッションの pending は superseded に倒して置き直し。発火は `services/gate/speech_reservation.py` |
 | `context_tools.py` | **コンテキスト別ツール出し分けの単一判定点**。reach_out=うつつのみ（cap到達日は非露出）／visit_user=1on1かつ対面OFF／override_schedule=1on1かつ生活カレンダー有効／speak_later=1on1かつ発話予約有効（speak_later_enabled=1）。消費者は3系統: ①flow.py→provider.extra_tools（in-process tool-use）②mcp_server.py→GET /api/mcp/tools?character_id&origin&session_id（claude_cli）③flow.py→build_system_prompt(context_tool_hints) |
 | `intent_settler.py` | `[INTENT_SETTLED:]` / `[INTENT_FULFILLED:]` タグ抽出・ID解決（短縮8桁の前方一致）・適用。1on1 会話の最中に意図の決着を本人が宣言する受け口で、**anticipator と同じ全プロバイダー一律テキストタグ**（ツール化しない）。settled は終端せず意図圧の起点だけを今へ移す |
-| `anticipator.py` | `[ANTICIPATE_RESPONSE:]` タグ抽出（相手の反応への期待）。**予想の対象は相手（1on1=ユーザ／シナリオ GM=PC）の反応だけ**に限定し、それを受けた自分・NPC の返し方は書かせない（予想が次ターンの台本になる自己成就の遮断。GM 側の同趣旨の規則は `scenario_chat/prompt_builder.py` の出力規則） |
+| `anticipator.py` | `[ANTICIPATE_RESPONSE:]` タグ抽出（相手の反応への期待）。1on1 では**任意**（書かなくてもよい。2026-10-07 にガイドを「必ず1つ」から改めた。シナリオ GM 側の指示は従来どおり）。**予想の対象は相手（1on1=ユーザ／シナリオ GM=PC）の反応だけ**に限定し、それを受けた自分・NPC の返し方は書かせない（予想が次ターンの台本になる自己成就の遮断。GM 側の同趣旨の規則は `scenario_chat/prompt_builder.py` の出力規則） |
 | `ambience_judge.py` | なりゆき judge（判定）: LLM がキャラクターの感情状態を毎ターン外部判定。judge プリセットは `judge_preset_id`。将来は場所ラベル等の軸も担う |
 | `character_context.py` | 通常チャット以外でキャラクターとして問い合わせる際の共通コンテキストブロック構築 |
 | `tool_tags.py` | ツール名⇔タグ名・ログ表示ラベル/色の集約 |
@@ -216,7 +217,8 @@ frontend useChat
   能力は `BaseLLMProvider.SUPPORTED_ATTACHMENT_KINDS` が宣言し、`/v1/models` の
   `attachment_kinds` としてフロントへ渡り、FileDialog の accept・選択後の MIME 検査・
   送信 API の 400 の三段で「渡らないのに渡ったように見える」状態を作らせない。
-  テキストは全プロバイダーが受け取れる（1 MB 超はアップロード時に 400）。
+  テキストは全プロバイダーが受け取れる（1 MB 超はアップロード時に 400）。入力欄への
+  クリップボード貼り付け（画像等）も同じ添付経路に乗る（`MessageInput.tsx`）。
   設計と不採用案は `docs/planned/audio_attachment_plan.md`・`docs/planned/text_attachment_plan.md`。
 - **履歴の転送・描画はシナリオと同じ直近ウィンドウ方式**（2026-11-03 横展開）。SPA は
   `GET /sessions/{id}?limit=60` で末尾 60 件と `has_older_messages` を受け取り、上端に近づくと
@@ -661,8 +663,8 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 |---|---|---|
 | `/api/chat` | `api/chat.py`, `api/chat_attachments.py` | 1on1セッション・ストリーミング・添付（画像・音声・テキスト）。`GET /sessions/{id}?limit=` と `GET /sessions/{id}/messages?before=&limit=` が履歴ウィンドウ |
 | `/api/scenario_chat` | `api/scenario_chat/` | シナリオ（scenarios / sessions / stream） |
-| `/api/characters` | `api/characters.py` | キャラクターCRUD |
-| `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行・Retrace（WM 時制の辿り直し）手動実行 |
+| `/api/characters` | `api/characters.py` | キャラクターCRUD。本人領域（`inner_narrative` / `farewell_config` / `relationship_status` 等）の PATCH はデバッグモード限定（403） |
+| `/api/inscribed_memories` | `api/inscribed_memories.py` | 記憶閲覧・Chronicle 手動実行・Retrace（WM 時制の辿り直し）手動実行。記憶の削除・復元はデバッグモード限定（外からの介入を塞ぐ。2026-10-07） |
 | `/api/mcp` | `api/mcp_tools.py` | MCPプロキシ用ツール定義・実行（内部API） |
 | `/api/translate` | `api/translation.py` | 翻訳 |
 | `/api/logs` | `api/logs_ui/` | デバッグログ JSON |
@@ -717,6 +719,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 | `docs/planned/usual_days_plan.md` | §3 うつつ — 無人生活モードの設計・実装計画 |
 | `docs/planned/scenario_turn_variants_plan.md` | §3 シナリオ「ログの枝分かれ」— generation / branch_point_index |
 | `docs/planned/scenario_history_perf_plan.md` | §3 シナリオ「履歴の転送・描画」／1on1「履歴の転送・描画」— ウィンドウ＋`response_key`・1on1 への横展開 |
+| `docs/planned/scenario_history_budget_plan.md` | §3 シナリオ「GM へ渡す履歴窓とあらすじ」— レスポンス単位の窓・コンテキスト長からの振り分け |
 
 ### 基盤・リファクタ記録
 
@@ -725,6 +728,7 @@ character_id を渡さない＝**ツールは提供されない**。ツールを
 | `docs/planned/prompt_cache_plan.md` | §3 1on1フロー 3. — 二層組み立て（安定ブロック／ターン注釈）の根拠と実測 |
 | `docs/planned/block_naming_cleanup_plan.md` | §2 `request_builder.py` — ブロック命名（`session_frame`・Block N 廃止） |
 | `docs/planned/sse_disconnect_resilience_plan.md` | §3 1on1フロー — SSE送出と生成の分離 |
+| `docs/planned/chat_turn_variants_plan.md` | §3 1on1フロー「引き直し」— `chat_message_variants` への退避と枝ナビ |
 | `docs/planned/audio_attachment_plan.md` | §3 1on1フロー「添付」— 音声・画像の受け渡しと寿命 |
 | `docs/planned/text_attachment_plan.md` | §3 1on1フロー「添付」— テキストファイルの受け渡し |
 | `docs/planned/switch_angle_removal_plan.md` | 撤去記録（現行コードに機能は無い） |

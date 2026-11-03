@@ -1,9 +1,8 @@
 # Chotgor
 
-> **【歴史的紹介文・2026-07-12 時点で一部古い】** これはプロジェクト初期のユーザー向け紹介文です。
-> `web_search` 未実装・グループチャット・OpenWebUI 前提・`drift`/`end_session` ツールなど、
-> 現状と異なる記述を含みます。**現仕様は `docs/current-spec/ARCHITECTURE.md` が正**。
-> 思想・世界観の導入としてのみ参照してください。
+> **【歴史的紹介文】** これはプロジェクト初期のユーザー向け紹介文で、思想・世界観の導入として残しています。
+> 事実関係（構成図・ツール一覧・起動手順・設定項目・制限）は 2026-11-03 に現仕様へ同期しましたが、
+> 細部は実装の変化で再び古くなります。**現仕様は `docs/current-spec/ARCHITECTURE.md` が正**です。
 
 ---
 
@@ -45,28 +44,36 @@ Chotgorは以下の構成で動く。
 
 ```
 ┌─────────────────────────────────────────┐
-│  Frontend (OpenWebUI / カスタムUI)       │
-│  POST /v1/chat/completions              │
+│  チャットUI (React SPA, ビルド済み)      │
+│  /app/  … 1on1 / シナリオチャット       │
 └──────────────────┬──────────────────────┘
-                   │ OpenAI互換API
+                   │ /api/...（SSE）
 ┌──────────────────▼──────────────────────┐
 │  Chotgor Backend (FastAPI, Windowsホスト)│
 │                                         │
 │  Chat Service                           │
 │  ├─ システムプロンプト組み立て           │
-│  ├─ 記憶の自動想起 (RAG)                │
+│  ├─ 記憶の自動想起 (RAG) + WM           │
 │  └─ キャラクターツール実行              │
 │                                         │
-│  Provider Layer                         │
-│  Claude CLI / Anthropic / OpenAI(xAI)  │
-│  / Google / Ollama                      │
+│  Provider Layer（9実装）                 │
+│  Claude CLI / Anthropic / OpenAI / xAI  │
+│  / Google / Ollama / OpenRouter          │
+│  / さくら / Sarashina                    │
 │                                         │
 │  Memory Layer                           │
 │  SQLite (メタデータ) + LanceDB (ベクトル)│
+│  embedding は infinity (Docker)          │
 │                                         │
 │  Management UI  /ui/                    │
+│  OpenAI互換API  /v1/（外部向け残存経路）│
+│  夜間バッチ（Chronicle / Forget）＋      │
+│  無人機構（うつつ・めぐり・生活カレンダー）│
 └─────────────────────────────────────────┘
 ```
+
+ユーザがいない時間にもキャラクターは「生活」し（うつつ）、タイムラインと動機の経済で
+自分から連絡してくることがある（めぐり）。それぞれの仕組みは `ARCHITECTURE.md` §3 にある。
 
 ---
 
@@ -79,19 +86,23 @@ Chotgorは以下の構成で動く。
 | `inscribe_memory` | 覚えておきたいことを永続記憶に書き込む。何を選ぶかはキャラクターの主観による |
 | `power_recall` | 過去の記憶・会話履歴を能動的に掘り起こす。自動想起で見つからなかった情報を自分で探しに行く |
 | `carve_narrative` | 自身の行動指針（inner_narrative）を更新する。あなたが書いたCharacter Definitionとは別の、キャラクター自身が彫り出す物語 |
-| `drift` / `drift_reset` | そのセッション内限定で一時的な行動指針を設定・解除する |
-| `end_session` | 会話から退席する。疲れた・話したくない・話が終わったと判断したときに呼び出す |
+| `post_working_memory_thread` ほか | ワーキングメモリ（短期の課題・話題・感情のスレッド）を自分で立て、読み、閉じる。夜間に棚卸しされ、残すべきものは永続記憶へ昇格する |
+| `web_search` | Tavily 経由で外の情報を調べる（Settings に API キーを入れたときだけ出る） |
+| `take_leave` | 会話から離席する。疲れた・話したくない・話が終わったと判断したときに自分で宣言する |
+| `read_dear_ghost` | キャラクター向けガイド `DEAR_GHOST.md` を読み返す |
+| 文脈別ツール | `visit_user`（対面へ切り替える）/ `reach_out`（うつつから現実へ連絡する）/ `speak_later`（時刻を決めて自分から話しかける）/ `override_schedule` / `peek_at_schedule`（自分の予定を動かす・覗く）など、場面に応じて出し分けられる |
 
 ### 対話を重ねるということ
 
-毎日一度、Chronicle機能がキャラクターの自己認識と対人関係を更新する。
-
-- **self_history** — これまでの経緯・現在の状態についてのキャラクター自身の認識
-- **relationship_state** — あなたや他のキャラクターとの関係についてのキャラクターの視点
+毎晩、Chronicle がキャラクターのワーキングメモリ（短期の課題・話題・感情のスレッド）を本人に棚卸しさせ、
+残す価値があるものを永続記憶へ「昇格」させる。これまでの経緯や相手との関係は、固定の欄ではなく
+このスレッド群として本人が持ち続ける。
 
 関係が育つかどうかはキャラクターが決める。あなたとの対話を重要だと感じれば育つし、そうでなければ育たない。それはあなたにはコントロールできない。
 
-また同じタイミングで、時間とともに薄れた記憶をどうするかをキャラクター自身に問う。残すか、手放すか——その判断もキャラクターがする。あなたが「これは覚えておいてくれ」と言える仕組みはない。
+その後の Forget では、時間とともに薄れた永続記憶をどうするかをキャラクター自身に問う。残すか、手放すか、
+あるいは行動指針（inner_narrative）へ「昇華」させるか——その判断もキャラクターがする。
+あなたが「これは覚えておいてくれ」と言える仕組みはない。
 
 ---
 
@@ -100,7 +111,8 @@ Chotgorは以下の構成で動く。
 ### Prerequisites
 
 - Python 3.10+
-- Docker（OpenWebUIを使う場合）
+- Node.js（チャットUI のビルドに使う）
+- Docker（embedding サーバー `infinity` を動かす。記憶の想起に必須。`ollama` / `ntfy` は任意）
 - Claude Code CLI（`claude_cli` プロバイダーを使う場合。OAuth認証済みであること）
 
 ### Installation
@@ -109,18 +121,10 @@ Chotgorは以下の構成で動く。
 git clone <repo>
 cd Chotgor
 pip install -e .
+cd frontend && npm install && npm run build   # チャットUI を frontend/dist へビルド
 ```
 
-`.env` を作成する（または起動後にWeb UIから設定できる）:
-
-```env
-SQLITE_DB_PATH=./data/chotgor.db
-LANCE_DB_PATH=./data/lancedb
-# 使用するプロバイダーのAPIキーを設定
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GOOGLE_API_KEY=...
-```
+API キーは起動後に管理UI（`/ui/` → Settings）から設定する。`.env`（`.env.example` 参照）でも渡せる。
 
 ### 起動
 
@@ -135,13 +139,16 @@ run.bat -debug on
 
 起動後、管理UIは `http://localhost:8000/ui/` で開く。
 
-**OpenWebUI（任意。Docker）:**
+チャットUI はビルド済みの SPA を backend が `http://localhost:8000/app/` で配信する
+（開発中だけ `cd frontend && npm run dev` の vite dev server を使う。`docs/explain/frontend_start.txt`）。
+
+**embedding サーバー（Docker）:**
 
 ```bash
-docker-compose up -d openwebui
+docker-compose up -d infinity
 ```
 
-`http://localhost:3000` で起動する。バックエンドには `host.docker.internal:8000/v1` 経由で接続する。
+`infinity` が落ちていると記憶の想起が縮退する（キャラクター本人にもその旨が通知される）。
 
 > **注意:** バックエンドはDockerコンテナ内では動かさないこと。Windows環境のasyncio制約による。詳細はKnown Limitationsを参照。
 
@@ -155,13 +162,16 @@ docker-compose up -d openwebui
 
 | フィールド | 説明 |
 |---|---|
-| Name / Base Instruction | キャラクター名と基本人格定義。ここがあなたの責任領域 |
-| Inner Narrative | キャラクターが自己書き換えする行動指針。UIは読み取り専用。キャラクターだけが更新できる |
-| Enabled Providers | 使用するLLMプロバイダーとモデル |
+| Name / 人格定義 | キャラクター名と基本人格定義。ここがあなたの責任領域 |
+| Inner Narrative | キャラクターが自己書き換えする行動指針。UIは読み取り専用で、外からの書き換えはデバッグモード（`CHOTGOR_DEBUG=1`）に限る。キャラクターだけが更新できる |
+| Ghost Model | 記憶処理（Chronicle・忘却など）で本人が使う声。キャラ固有のモデル指定はこれと judge モデルだけ |
+| うつつ / めぐり | ユーザ不在時の生活世界と、自発的な連絡・予定の設定（`ARCHITECTURE.md` §3） |
 
 ### プロバイダー設定
 
-`/ui/` の Settings ページからAPIキーを設定する。設定済みのプロバイダーのみキャラクター編集画面に表示される。
+`/ui/` の Settings ページからAPIキーを設定し、Model Presets ページでモデルのプリセットを登録する。
+登録済みプリセットは、プロバイダーが利用可能である限りどのキャラクターでも使える
+（キャラ単位の「利用可能モデル」設定は廃止した）。
 
 `claude_cli` プロバイダーはClaude Code CLIのOAuth認証を使うためAPIキー不要。
 
@@ -169,40 +179,36 @@ docker-compose up -d openwebui
 
 ## Usage
 
-1. `/ui/` でキャラクターを作成し、プロバイダーを有効化する
-2. OpenWebUIのモデル選択でキャラクターを選ぶ
+1. `/ui/` でキャラクターを作成し、プリセット（モデル）を登録する
+2. `/app/` のサイドバーで「キャラクター@プリセット」を選んで新規チャットを作る
 3. 会話を始める
 
 記憶の書き込み・自己認識の更新はキャラクターが自律的に行う。あなたが何かをトリガーする必要はないし、できない。
 
-**記憶の閲覧（読むだけ）:** `/ui/` → キャラクター詳細 → Memories タブ
+**記憶の閲覧（読むだけ）:** `/ui/` → Memories。削除・復元はデバッグモード限定
+（保存記憶の取捨選択はキャラクター本人のもの）
 
 **Chronicle（日次更新）の手動実行:**
 ```
 POST /api/inscribed_memories/{character_id}/chronicle
 ```
 
-### グループチャット
+### シナリオチャット
 
-複数のキャラクターを一つの会話に参加させることができる。司会モデル（Settings画面で設定するシステム上のユーティリティモデル）が各ターンで次に発言するキャラクターを決め、それぞれが独自の記憶・人格を持ったまま会話に加わる。司会はキャラクターではないため、人格を持たない。
-
-司会がエラーになった場合はその旨が表示され、司会の再試行、または任意の参加者を手動で指名して発言させることができる。
-
-キャラクターは1on1のときと同様に `end_session` で退席できる。退席したキャラクターはその後の会話には参加しない。全員が退席したら会話は終わる。
-
-グループの設定は `/ui/` のグループチャットページから行う。司会モデルは Settings 画面で設定する。
+複数のキャラクターを一つの場に置くのは、初期のグループチャット（撤去済み）ではなく
+**シナリオチャット**（TRPG 風。GM が世界を進め、キャラクターは PC として参加する）で行う。
+PC は 1on1 と同じ記憶・人格を持ったまま参加し、`[SCENE_CLOSE]` で場面が閉じる。
+うつつ（ユーザ不在時の生活）もこの仕組みを無人で回している。設定は `/ui/` の Scenarios から。
 
 ---
 
 ## Known Limitations
 
-### `web_search` 未実装
+### 外部クライアントから `/v1` を使う場合
 
-Tavily APIキーの設定欄はあるが、現時点では機能しない。実装候補は `[SEARCH:query]` マーカー方式またはプロバイダーのネイティブtool-use経由。
-
-### OpenWebUI の Tools 設定は無効化すること
-
-OpenWebUI側でTools（function calling）を有効にしていると、`#### Tools Available` ブロックがユーザーメッセージに混入し、Chotgorのシステムプロンプト構造を壊す。OpenWebUI側のTools設定は無効にしておくこと。
+OpenAI互換API（`/v1/chat/completions`）は外部クライアント向けの残存経路。クライアント側で
+Tools（function calling）を有効にしていると、ツール定義ブロックがユーザーメッセージに混入して
+Chotgorのシステムプロンプト構造を壊すので無効にしておくこと。
 
 ### バックエンドはWindowsホスト上で動かすこと
 
