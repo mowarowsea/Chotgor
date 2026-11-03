@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import pytest
 import uuid
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -156,8 +157,10 @@ class TestLifecycle:
         社会圧が 0（＝平常どおり会えている）でも「これを話したい」は時間とともに育つ、
         というのが再設計後の意味。source_kind は由来の記録としてのみ残る。
         """
-        assert intent_pressure(_FakeIntent(10, "social")) == intent_pressure(
-            _FakeIntent(10, "none")
+        # _FakeIntent は生成のたびに datetime.now() を取り直すため、2 体の created_at が
+        # 数マイクロ秒ずれて浮動小数の末尾に出る。等値ではなく近似で比べる。
+        assert intent_pressure(_FakeIntent(10, "social")) == pytest.approx(
+            intent_pressure(_FakeIntent(10, "none")), abs=1e-6
         )
 
     def test_urge_threshold_reached_in_eight_days(self):
