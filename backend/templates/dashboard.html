@@ -18,6 +18,14 @@
 {%- endmacro %}
 
 {#-
+  fmt_ratio — キャッシュ率（0.0〜1.0 / None）を整数パーセントで短く出すマクロ。
+  None（入力の記録なし）は「–」。prompt_cache_plan.md C案の「ヒット率の見える化」。
+-#}
+{% macro fmt_ratio(r) -%}
+{%- if r is none -%}–{%- else -%}{{ (r * 100) | round | int }}%{%- endif -%}
+{%- endmacro %}
+
+{#-
   period_table — 日次/週次/月次テーブルをモーダル本文として描画するマクロ。
   rows は _merge_period_rows でまとめた期間サマリ（label/requests/in/out/cost/providers）。
   プロバイダーが複数の期間だけ内訳行を半透明で追加する。
@@ -32,6 +40,7 @@
                 <th style="text-align:right">リクエスト</th>
                 <th style="text-align:right">In (tok)</th>
                 <th style="text-align:right">Cache (tok)</th>
+                <th style="text-align:right">Cache率</th>
                 <th style="text-align:right">Out (tok)</th>
                 <th style="text-align:right">コスト</th>
             </tr>
@@ -44,6 +53,7 @@
                 <td style="text-align:right"><strong>{{ r.requests }}</strong></td>
                 <td style="text-align:right"><strong>{{ "{:,}".format(r.input_tokens) }}</strong></td>
                 <td style="text-align:right"><strong>{{ "{:,}".format(r.cache_tokens) }}</strong></td>
+                <td style="text-align:right"><strong>{{ fmt_ratio(r.cache_ratio) }}</strong></td>
                 <td style="text-align:right"><strong>{{ "{:,}".format(r.output_tokens) }}</strong></td>
                 <td style="text-align:right">{% if r.cost_usd %}${{ "%.4f"|format(r.cost_usd) }}{% else %}–{% endif %}</td>
             </tr>
@@ -55,6 +65,7 @@
                 <td style="text-align:right">{{ p.requests }}</td>
                 <td style="text-align:right">{{ "{:,}".format(p.input_tokens) }}</td>
                 <td style="text-align:right">{{ "{:,}".format(p.cache_tokens) }}</td>
+                <td style="text-align:right">{{ fmt_ratio(p.cache_ratio) }}</td>
                 <td style="text-align:right">{{ "{:,}".format(p.output_tokens) }}</td>
                 <td style="text-align:right">{% if p.cost_usd %}${{ "%.4f"|format(p.cost_usd) }}{% else %}–{% endif %}</td>
             </tr>
@@ -123,6 +134,7 @@
         <p class="ch-hint" style="margin-bottom:12px">
             In ＝ 新規に処理された入力（キャッシュ外＋キャッシュ作成 1.25x課金）／
             Cache ＝ キャッシュ読出（0.1x課金）／ Out ＝ 出力。
+            括弧内はキャッシュ率（Cache ÷ (In＋Cache)）。
             コストは Claude CLI の参考値のみ。
         </p>
         <div class="ch-cardgrid">
@@ -131,7 +143,7 @@
                 <div class="ch-card__meta">
                     リクエスト {{ usage_today.requests }} 回<br>
                     In {{ fmt_k(usage_today.input_tokens) }} ／
-                    Cache {{ fmt_k(usage_today.cache_tokens) }} ／
+                    Cache {{ fmt_k(usage_today.cache_tokens) }} ({{ fmt_ratio(usage_today.cache_ratio) }}) ／
                     Out {{ fmt_k(usage_today.output_tokens) }} tok
                     {% if usage_today.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_today.cost_usd) }}{% endif %}
                 </div>
@@ -141,7 +153,7 @@
                 <div class="ch-card__meta">
                     リクエスト {{ usage_week.requests }} 回<br>
                     In {{ fmt_k(usage_week.input_tokens) }} ／
-                    Cache {{ fmt_k(usage_week.cache_tokens) }} ／
+                    Cache {{ fmt_k(usage_week.cache_tokens) }} ({{ fmt_ratio(usage_week.cache_ratio) }}) ／
                     Out {{ fmt_k(usage_week.output_tokens) }} tok
                     {% if usage_week.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_week.cost_usd) }}{% endif %}
                 </div>
@@ -151,7 +163,7 @@
                 <div class="ch-card__meta">
                     リクエスト {{ usage_month.requests }} 回<br>
                     In {{ fmt_k(usage_month.input_tokens) }} ／
-                    Cache {{ fmt_k(usage_month.cache_tokens) }} ／
+                    Cache {{ fmt_k(usage_month.cache_tokens) }} ({{ fmt_ratio(usage_month.cache_ratio) }}) ／
                     Out {{ fmt_k(usage_month.output_tokens) }} tok
                     {% if usage_month.cost_usd %}<br>≈ ${{ "%.4f"|format(usage_month.cost_usd) }}{% endif %}
                 </div>
@@ -172,6 +184,7 @@
                         <th>時刻</th><th>対象</th><th>feature</th>
                         <th style="text-align:right">In</th>
                         <th style="text-align:right">Cache</th>
+                        <th style="text-align:right">Cache率</th>
                         <th style="text-align:right">Out</th>
                         <th style="text-align:right">コスト</th>
                     </tr>
@@ -184,6 +197,7 @@
                         <td>{{ e.feature }}</td>
                         <td style="text-align:right">{{ "{:,}".format(e.input_tokens) }}</td>
                         <td style="text-align:right">{{ "{:,}".format(e.cache_tokens) }}</td>
+                        <td style="text-align:right">{{ fmt_ratio(e.cache_ratio) }}</td>
                         <td style="text-align:right">{{ "{:,}".format(e.output_tokens) }}</td>
                         <td style="text-align:right">{% if e.total_cost_usd %}${{ "%.4f"|format(e.total_cost_usd) }}{% else %}–{% endif %}</td>
                     </tr>

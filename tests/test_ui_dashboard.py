@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.testclient import TestClient
 
 from backend.api.ui import common as ui_common
-from backend.api.ui.dashboard import _merge_period_rows, router
+from backend.api.ui.dashboard import _merge_period_rows, cache_hit_ratio, router
 
 _TEMPLATES_DIR = str(Path(__file__).parent.parent / "backend" / "templates")
 
@@ -25,6 +25,27 @@ def dashboard_client(sqlite_store, monkeypatch):
     app.include_router(router)
     app.state.sqlite = sqlite_store
     return TestClient(app)
+
+
+class TestCacheHitRatio:
+    """cache_hit_ratio（キャッシュ読出 ÷ 入力全長）のテスト。prompt_cache_plan.md C案。"""
+
+    def test_ratio_is_cache_over_total_input(self):
+        """cache / (input + cache) を返すこと。"""
+        assert cache_hit_ratio(input_tokens=2500, cache_tokens=7500) == 0.75
+
+    def test_zero_input_is_none(self):
+        """入力が 0（記録なし・出力のみ）なら None を返し、0 除算しないこと。"""
+        assert cache_hit_ratio(0, 0) is None
+
+    def test_no_cache_is_zero(self):
+        """キャッシュ読出が無ければ 0.0（None ではない＝「効いていない」と表示できる）。"""
+        assert cache_hit_ratio(1000, 0) == 0.0
+
+    def test_none_tokens_are_treated_as_zero(self):
+        """None（旧行・未記録）は 0 として扱うこと。"""
+        assert cache_hit_ratio(None, None) is None
+        assert cache_hit_ratio(None, 10) == 1.0
 
 
 class TestMergePeriodRows:
@@ -50,6 +71,10 @@ class TestMergePeriodRows:
         assert m["output_tokens"] == 25
         assert m["cost_usd"] == 0.01
         assert m["providers"] == rows
+        # キャッシュ率は合算後の値（800 / (150 + 800)）と内訳行それぞれに付く
+        assert m["cache_ratio"] == pytest.approx(800 / 950)
+        assert rows[0]["cache_ratio"] == pytest.approx(800 / 900)
+        assert rows[1]["cache_ratio"] == 0.0
 
     def test_keeps_period_order(self):
         """入力の期間順（新しい順）がそのまま保たれること。"""
@@ -102,3 +127,24 @@ class TestDashboardPage:
         assert "1,200" in resp.text  # input_tokens の桁区切り表示
         assert "claude_cli" in resp.text
         assert "織羽" in resp.text
+
+    def test_renders_cache_ratio(self, dashboard_client, sqlite_store):
+        """キャッシュ率がサマリーカードと直近イベントに整数パーセントで出ること。"""
+        sqlite_store.add_llm_usage_event(
+            provider="claude_cli",
+            model="claude-sonnet-4-6",
+            target="織羽",
+            feature="chat",
+            input_tokens=200,
+            cache_creation_input_tokens=300,
+            cache_read_input_tokens=1500,
+            output_tokens=10,
+        )
+
+        resp = dashboard_client.get("/ui/")
+
+        assert resp.status_code == 200
+        # 1500 / (200 + 300 + 1500) = 75%
+        assert "(75%)" in resp.text  # サマリーカード
+        assert "Cache率" in resp.text  # テーブル列
+        assert "1,500" in resp.text
