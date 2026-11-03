@@ -128,6 +128,9 @@ export default function MessageList({
      * ヘッダー表示判定に加えて、スクロール位置を退避する onScroll ハンドラ。
      * 1 フレームに 1 回へ間引く（sessionStorage への書き込みが毎イベント走るのを避ける）。
      */
+    /** 退避時に先頭メッセージの id を添えるための最新 messages。 */
+    const messagesRef = useRef(messages);
+    messagesRef.current = messages;
     const handleScrollAndSave = useCallback((e: UIEvent<HTMLDivElement>) => {
         handleScroll(e);
         const el = e.currentTarget;
@@ -140,6 +143,8 @@ export default function MessageList({
                 // 最下部付近なら位置ではなく「最新を見ていた」として扱う。
                 // 復帰後にメッセージが増えていても最新に追従させたいため。
                 atBottom: el.scrollHeight - el.scrollTop - el.clientHeight < 80,
+                // scrollTop は遡って読んだぶんを含む DOM に対する値。復元先の先頭が違えば使わない。
+                firstMessageId: messagesRef.current[0]?.id,
             });
         });
     }, [handleScroll, sessionId]);
@@ -184,7 +189,11 @@ export default function MessageList({
                 return;
             }
             const saved = loadScrollPos(sessionId);
-            if (container && saved && !saved.atBottom) {
+            // 退避した位置は退避時の DOM（遡って読んだぶんを含む）に対する値。サイドバーから
+            // 戻ってきた直近ウィンドウだけの表示には合わないので、先頭が同じときだけ戻す
+            // （リロード復帰はスナップショットが同じ messages を描くので一致する）。
+            const sameHead = !saved?.firstMessageId || saved.firstMessageId === messagesRef.current[0]?.id;
+            if (container && saved && !saved.atBottom && sameHead) {
                 container.scrollTop = saved.scrollTop;
                 return;
             }

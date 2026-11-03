@@ -228,9 +228,14 @@ async def get_session(
     result["messages"] = [message_to_dict(m, request.app.state.sqlite) for m in messages]
     result["has_older_messages"] = has_older
     # 枝ナビは最新ターン限定なので、末尾のキャラ応答にだけ付ける。
-    anchor = next((m for m in reversed(messages) if m.role == "user"), None)
-    if anchor is not None and result["messages"] and messages[-1].role != "user":
-        _attach_variant_info(request.app.state, session_id, anchor.id, result["messages"][-1])
+    if result["messages"] and messages[-1].role != "user":
+        anchor = next((m for m in reversed(messages) if m.role == "user"), None)
+        if anchor is None and has_older:
+            # ウィンドウがキャラ発話だけで埋まっている（能動配達が続いた等）。起点の
+            # ユーザ発話はウィンドウの外にあるので、全件を舐めずに最新 1 件だけ引く。
+            anchor = request.app.state.sqlite.get_last_chat_message(session_id, role="user")
+        if anchor is not None:
+            _attach_variant_info(request.app.state, session_id, anchor.id, result["messages"][-1])
     return result
 
 

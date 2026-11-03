@@ -256,6 +256,40 @@ class TestGetSession:
         assert tail["variant_index"] == 2
         assert tail["variant_count"] == 3
         assert tail["variant_anchor_id"] == user.id
+        sqlite.get_last_chat_message.assert_not_called()
+
+    def test_variant_anchor_looked_up_outside_window(self):
+        """ウィンドウがキャラ発話だけなら、起点ユーザ発話をウィンドウ外から引いて枝ナビを付けること。"""
+        sid = "sess-1"
+        chars = [_fake_message(session_id=sid, role="character") for _ in range(3)]
+        user_outside = _fake_message(session_id=sid, role="user")
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        # limit=2 に対し 3 件返す → 先頭を落として has_older=True
+        sqlite.list_chat_messages.return_value = list(chars)
+        sqlite.get_last_chat_message.return_value = user_outside
+        client = TestClient(_make_app(sqlite))
+        sqlite.get_chat_variant_info.return_value = {"index": 0, "count": 2}
+
+        res = client.get(f"/api/chat/sessions/{sid}?limit=2")
+        data = res.json()
+        assert data["has_older_messages"] is True
+        sqlite.get_last_chat_message.assert_called_once_with(sid, role="user")
+        assert data["messages"][-1]["variant_anchor_id"] == user_outside.id
+        assert data["messages"][-1]["variant_count"] == 2
+
+    def test_variant_anchor_not_looked_up_when_nothing_older(self):
+        """手前が無い（セッション全体にユーザ発話が無い）ならウィンドウ外を引かないこと。"""
+        sid = "sess-1"
+        sqlite = MagicMock()
+        sqlite.get_chat_session.return_value = _fake_session(sid=sid)
+        sqlite.list_chat_messages.return_value = [_fake_message(session_id=sid, role="character")]
+        client = TestClient(_make_app(sqlite))
+
+        res = client.get(f"/api/chat/sessions/{sid}?limit=5")
+        assert res.status_code == 200
+        sqlite.get_last_chat_message.assert_not_called()
+        assert "variant_anchor_id" not in res.json()["messages"][-1]
 
 
 # ---------------------------------------------------------------------------

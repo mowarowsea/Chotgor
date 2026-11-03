@@ -3,7 +3,25 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import false, or_
+from sqlalchemy import Integer, false, literal_column, or_
+
+# SQLite の暗黙 rowid（挿入順に単調増加）。`chat_messages` には turn_index 相当の列が無いので、
+# 同一 created_at の並びと履歴ウィンドウのカーソルの第 2 キーに使う。
+_ROWID = literal_column("rowid", Integer)
+
+
+def _message_order(ChatMessage, desc: bool = False):
+    """メッセージの正本順 `(created_at, rowid)` の order_by 句を返す。
+
+    created_at は `datetime.now()` 既定で、user 発話と預かり通知のように続けて insert される
+    行は環境（Windows ＋ Python 3.12 以前の約 15ms 分解能）によっては同時刻になる。
+    第 2 キーを id（乱数 UUID）にすると挿入順が崩れるので rowid で挿入順に固定する。
+    ウィンドウ・全件・最新ターン判定・以降削除のすべてがこの順を使い、境界が食い違わないようにする。
+    """
+    if desc:
+        return (ChatMessage.created_at.desc(), _ROWID.desc())
+    return (ChatMessage.created_at.asc(), _ROWID.asc())
+
 
 class ChatStoreMixin:
     """チャットセッション・メッセージ・添付画像の作成・取得・更新・削除を担う Mixin。"""
@@ -164,9 +182,11 @@ class ChatStoreMixin:
         そのメッセージより手前の直近 `limit` 件（遡り読み込み）を返す。どちらも昇順の配列。
         省略時は全件（LLM へ渡す履歴・エクスポートなど履歴全体が要る用途向け）。
 
-        カーソルは `(created_at, id)` の複合。`chat_messages` には `scenario_turns.turn_index`
-        のような単調増加列が無く、`created_at` だけでは同時刻の衝突で境界が曖昧になるため。
-        並び順も同じ複合キーで固定し、ウィンドウと全件で順序が食い違わないようにする。
+        カーソルと並び順は `(created_at, rowid)` の複合（`_message_order`）。`chat_messages` には
+        `scenario_turns.turn_index` のような単調増加列が無く、`created_at` だけでは同時刻の
+        衝突で境界が曖昧になるため。rowid なら同時刻でも挿入順が保たれる
+        （枝の復元で再 INSERT された行は created_at を元の値で戻すので、同時刻の行が
+        他に無い限り位置は変わらない）。
 
         Raises:
             ValueError: `before_id` がこのセッションに存在しない。
@@ -176,7 +196,7 @@ class ChatStoreMixin:
             q = session.query(ChatMessage).filter(ChatMessage.session_id == session_id)
             if before_id is not None:
                 anchor = (
-                    session.query(ChatMessage.created_at, ChatMessage.id)
+                    session.query(ChatMessage.created_at, _ROWID)
                     .filter(ChatMessage.session_id == session_id, ChatMessage.id == before_id)
                     .first()
                 )
@@ -184,18 +204,31 @@ class ChatStoreMixin:
                     raise ValueError(f"message not found: {before_id}")
                 q = q.filter(
                     (ChatMessage.created_at < anchor[0])
-                    | ((ChatMessage.created_at == anchor[0]) & (ChatMessage.id < anchor[1]))
+                    | ((ChatMessage.created_at == anchor[0]) & (_ROWID < anchor[1]))
                 )
             if limit is None:
-                return q.order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc()).all()
+                return q.order_by(*_message_order(ChatMessage)).all()
             # 末尾（新しい側）から limit 件を取り、昇順へ戻す
             rows = (
-                q.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                q.order_by(*_message_order(ChatMessage, desc=True))
                 .limit(limit)
                 .all()
             )
             rows.reverse()
             return rows
+
+    def get_last_chat_message(self, session_id: str, role: str | None = None):
+        """セッション内で最新のメッセージを返す（`role` 指定でその役割に絞る）。無ければ None。
+
+        並びは `list_chat_messages` と同じ正本順。履歴ウィンドウに user 発話が 1 件も
+        載らなかったときに、枝ナビの起点（最新のユーザ発話）をウィンドウ外から引くために使う。
+        """
+        with self.get_session() as session:
+            from backend.repositories.sqlite.store import ChatMessage
+            q = session.query(ChatMessage).filter(ChatMessage.session_id == session_id)
+            if role is not None:
+                q = q.filter(ChatMessage.role == role)
+            return q.order_by(*_message_order(ChatMessage, desc=True)).first()
 
     def get_face_to_face_run_start(
         self, session_id: str, before: datetime | None = None
@@ -420,7 +453,7 @@ class ChatStoreMixin:
                 for row in (
                     session.query(ChatMessage.id)
                     .filter(ChatMessage.session_id == session_id)
-                    .order_by(ChatMessage.created_at.asc())
+                    .order_by(*_message_order(ChatMessage))
                     .all()
                 )
             ]
@@ -508,7 +541,7 @@ class ChatStoreMixin:
         msgs = (
             session.query(ChatMessage)
             .filter(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.created_at.asc())
+            .order_by(*_message_order(ChatMessage))
             .all()
         )
         idx = next((i for i, m in enumerate(msgs) if m.id == anchor_message_id), None)

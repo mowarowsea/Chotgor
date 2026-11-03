@@ -378,7 +378,9 @@ export function useChat(deps: UseChatDeps): UseChatResult {
       if (activeSessionIdRef.current !== sessionId) return;
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === anchorMessageId);
-        return idx >= 0 ? [...prev.slice(0, idx + 1), ...restored] : prev;
+        // 起点ユーザ発話が表示ウィンドウの外（ウィンドウがキャラ発話だけで埋まっている）なら、
+        // 表示中はすべて起点より後ろ＝切替後の応答群そのものに置き換わる。
+        return idx >= 0 ? [...prev.slice(0, idx + 1), ...restored] : restored;
       });
       const reasonings = Object.fromEntries(
         restored.filter((m) => m.reasoning).map((m) => [m.id, m.reasoning as string]),

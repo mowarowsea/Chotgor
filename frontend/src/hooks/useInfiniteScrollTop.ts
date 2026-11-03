@@ -7,9 +7,11 @@
  * 担うこと:
  *   - リスト先頭のセンチネル要素を `IntersectionObserver` で監視し、可視域に入ったら
  *     `onLoadOlder` を呼ぶ（root はスクロールコンテナ。上方向に先読みマージン）。
- *   - 発火時に「下端からの距離（scrollHeight - scrollTop）」を控え、前方に要素が
- *     積まれて DOM が伸びた直後（`useLayoutEffect`）に同じ距離へ戻して、見ている位置が
- *     ずれないよう補正する。
+ *   - 発火時に「下端からの距離（scrollHeight - scrollTop）」と先頭要素の id を控え、
+ *     前方に要素が積まれて先頭が変わった直後（`useLayoutEffect`）に同じ距離へ戻して、
+ *     見ている位置がずれないよう補正する。先頭が変わらない更新（送信で末尾に増えた・
+ *     読み込みが走らず早期 return した）では補正しない。控えた先頭要素がリストから
+ *     消えた（別セッションへ差し替わった）ときは捨てる。
  *
  * 担わないこと:
  *   - 最下端への自動追従。呼び出し側が「末尾の id が変わったときだけ」追従させる
@@ -30,10 +32,10 @@ interface Options {
   /** 表示ウィンドウを 1 ページぶん過去へ伸ばす。 */
   onLoadOlder?: () => void;
   /**
-   * 前方追加の補正を走らせる依存値。表示リスト（turns / messages）そのものを渡す。
-   * この値が変わった描画の直後に、控えておいた下端からの距離へ戻す。
+   * 表示リスト（turns / messages）そのもの。先頭要素の id が変わった描画の直後に、
+   * 控えておいた下端からの距離へ戻す。
    */
-  items: unknown;
+  items: ReadonlyArray<{ id: string }>;
   /** 上端に届く前から先読みするマージン（px）。 */
   prefetchMargin?: number;
 }
@@ -47,20 +49,27 @@ export function useInfiniteScrollTop(
   { hasOlder, loading, onLoadOlder, items, prefetchMargin = 600 }: Options,
 ): RefObject<HTMLDivElement> {
   const sentinelRef = useRef<HTMLDivElement>(null);
-  /** 発火時点の「下端からの距離」。null なら補正待ちではない。 */
-  const anchorRef = useRef<number | null>(null);
+  /** 発火時点の「下端からの距離」と、そのときの先頭要素の id。null なら補正待ちではない。 */
+  const anchorRef = useRef<{ firstId: string; distance: number } | null>(null);
   /** 親から渡る関数は毎レンダー変わりうるので、購読を張り直さずに済むよう ref 経由で呼ぶ。 */
   const onLoadOlderRef = useRef(onLoadOlder);
   onLoadOlderRef.current = onLoadOlder;
+  /** 発火時に先頭要素の id を控えるための最新 items。 */
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   // 前方に積まれたぶんのずれを打ち消す。描画前に補正したいので useLayoutEffect。
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const anchor = anchorRef.current;
-    if (el && anchor !== null) {
-      el.scrollTop = el.scrollHeight - anchor;
-      anchorRef.current = null;
-    }
+    if (!el || anchor === null) return;
+    const firstId = items[0]?.id;
+    // 先頭が変わっていなければ前方追加ではない（末尾に増えただけ・読み込み未実行）。控えたまま待つ。
+    if (firstId === undefined || firstId === anchor.firstId) return;
+    anchorRef.current = null;
+    // 控えた先頭がもう無い＝リストごと差し替わった。補正する相手がいないので捨てる。
+    if (!items.some((item) => item.id === anchor.firstId)) return;
+    el.scrollTop = el.scrollHeight - anchor.distance;
   }, [items, scrollRef]);
 
   useEffect(() => {
@@ -71,7 +80,9 @@ export function useInfiniteScrollTop(
     const io = new IntersectionObserver(
       (entries) => {
         if (!entries[0]?.isIntersecting) return;
-        anchorRef.current = root.scrollHeight - root.scrollTop;
+        const firstId = itemsRef.current[0]?.id;
+        if (firstId === undefined) return;
+        anchorRef.current = { firstId, distance: root.scrollHeight - root.scrollTop };
         onLoadOlderRef.current?.();
       },
       { root, rootMargin: `${prefetchMargin}px 0px 0px 0px` },

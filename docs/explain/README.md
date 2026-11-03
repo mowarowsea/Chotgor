@@ -87,7 +87,7 @@ Chotgorは以下の構成で動く。
 | `power_recall` | 過去の記憶・会話履歴を能動的に掘り起こす。自動想起で見つからなかった情報を自分で探しに行く |
 | `carve_narrative` | 自身の行動指針（inner_narrative）を更新する。あなたが書いたCharacter Definitionとは別の、キャラクター自身が彫り出す物語 |
 | `post_working_memory_thread` ほか | ワーキングメモリ（短期の課題・話題・感情のスレッド）を自分で立て、読み、閉じる。夜間に棚卸しされ、残すべきものは永続記憶へ昇格する |
-| `web_search` | Tavily 経由で外の情報を調べる（Settings に API キーを入れたときだけ出る） |
+| `web_search` | Tavily 経由で外の情報を調べる（常に出る。Settings に API キーが無いと、呼んでもその旨のエラーが返るだけ） |
 | `take_leave` | 会話から離席する。疲れた・話したくない・話が終わったと判断したときに自分で宣言する |
 | `read_dear_ghost` | キャラクター向けガイド `DEAR_GHOST.md` を読み返す |
 | 文脈別ツール | `visit_user`（対面へ切り替える）/ `reach_out`（うつつから現実へ連絡する）/ `speak_later`（時刻を決めて自分から話しかける）/ `override_schedule` / `peek_at_schedule`（自分の予定を動かす・覗く）など、場面に応じて出し分けられる |

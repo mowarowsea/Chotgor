@@ -40,6 +40,11 @@ export interface ScrollPos {
   scrollTop: number;
   /** 最下部付近を見ていたか。true なら復元せず最新へ寄せる。 */
   atBottom: boolean;
+  /**
+   * 退避時に表示していた先頭メッセージの id。scrollTop はそのときの DOM の長さに対する値なので、
+   * 復元先の先頭が違う（遡って読んだぶんが無い直近ウィンドウだけ等）なら使わない。古い退避には無い。
+   */
+  firstMessageId?: string;
 }
 
 /**
@@ -82,7 +87,7 @@ export function loadScrollPos(sessionId: string): ScrollPos | null {
     if (!raw) return null;
     const saved = JSON.parse(raw) as ScrollPos & { sessionId: string };
     if (saved.sessionId !== sessionId) return null;
-    return { scrollTop: saved.scrollTop, atBottom: saved.atBottom };
+    return { scrollTop: saved.scrollTop, atBottom: saved.atBottom, firstMessageId: saved.firstMessageId };
   } catch {
     return null;
   }

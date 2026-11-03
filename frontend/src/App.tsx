@@ -465,13 +465,18 @@ export default function App() {
 
   /** セッション選択時にメッセージ一覧を取得し、reasoningMap を復元する。 */
   const handleSelectSession = useCallback(async (sessionId: string) => {
+    // 同じセッションの再選択（モバイルでサイドバーを閉じるためのタップ等）か、別セッションへの切替か。
+    const switching = sessionId !== activeSessionIdRef.current;
     setActiveSessionId(sessionId);
     setHeaderVisible(true);
     setError(null);
     // ストリーミング中だった場合の状態をリセットする
     setSending(false);
     resetChatStreamingState();
-    resetMessageWindow();
+    // 履歴ウィンドウの状態は切替時だけ捨てる。再選択で捨てると、遡って読んだ手前を
+    // マージで残したときに「まだ上がある」が false のまま固定され、センチネルも
+    // エクスポートの全件取得も効かなくなる（applyDetail は手前を残すと上端判定を上書きしない）。
+    if (switching) resetMessageWindow();
     // シナリオ関連の状態もリセット
     resetScenarioState();
     // URL ハッシュを更新して復帰時に同じセッションを開けるようにする

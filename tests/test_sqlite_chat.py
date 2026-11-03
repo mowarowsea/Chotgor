@@ -310,7 +310,7 @@ class TestListChatMessagesWindow:
     """list_chat_messages の `limit` / `before_id`（1on1 履歴ウィンドウ）を検証する。
 
     scenario_history_perf_plan.md「1on1 への横展開」。`chat_messages` には turn_index が
-    無いので、カーソルは `(created_at, id)` の複合キーで切る。
+    無いので、カーソルは `(created_at, rowid)` の複合キーで切る。
     """
 
     def _make_session(self, store):
@@ -360,23 +360,47 @@ class TestListChatMessagesWindow:
             page = sqlite_store.list_chat_messages(sid, limit=3, before_id=page[0].id)
         assert seen == ids
 
-    def test_same_created_at_is_ordered_by_id(self, sqlite_store):
-        """created_at が同一でも id で順序が定まり、カーソルがその順序で切れること。"""
+    def _add_same_created_at(self, store, session_id, ids):
+        """ids の順で insert し、全行の created_at を同一時刻に揃える（同時刻衝突の再現）。"""
         from datetime import datetime
         from backend.repositories.sqlite.store import ChatMessage
 
-        sid = self._make_session(sqlite_store)
-        ids = ["b", "a", "c"]
         for mid in ids:
-            sqlite_store.create_chat_message(message_id=mid, session_id=sid, role="user", content=mid)
+            store.create_chat_message(message_id=mid, session_id=session_id, role="user", content=mid)
         same = datetime(2026, 1, 1, 0, 0, 0)
-        with sqlite_store.get_session() as s:
-            s.query(ChatMessage).filter(ChatMessage.session_id == sid).update({"created_at": same})
+        with store.get_session() as s:
+            s.query(ChatMessage).filter(ChatMessage.session_id == session_id).update({"created_at": same})
             s.commit()
 
-        assert [m.id for m in sqlite_store.list_chat_messages(sid)] == ["a", "b", "c"]
-        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=1, before_id="b")] == ["a"]
-        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=5, before_id="c")] == ["a", "b"]
+    def test_same_created_at_keeps_insertion_order(self, sqlite_store):
+        """created_at が同一でも挿入順（rowid）で順序が定まり、カーソルがその順序で切れること。
+
+        id（乱数 UUID）を第 2 キーにすると、user 発話と預かり通知のように続けて insert した
+        行の前後が入れ替わる。id を辞書順と逆の順で入れて、挿入順が勝つことを確かめる。
+        """
+        sid = self._make_session(sqlite_store)
+        self._add_same_created_at(sqlite_store, sid, ["b", "a", "c"])
+
+        assert [m.id for m in sqlite_store.list_chat_messages(sid)] == ["b", "a", "c"]
+        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=1, before_id="a")] == ["b"]
+        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=5, before_id="c")] == ["b", "a"]
+        assert [m.id for m in sqlite_store.list_chat_messages(sid, limit=2)] == ["a", "c"]
+
+    def test_delete_from_uses_same_order_as_window(self, sqlite_store):
+        """同時刻の行でも「ここから削除」の境界がウィンドウの並びと一致すること。"""
+        sid = self._make_session(sqlite_store)
+        self._add_same_created_at(sqlite_store, sid, ["b", "a", "c"])
+
+        assert sqlite_store.delete_chat_messages_from(sid, "a") is True
+        assert [m.id for m in sqlite_store.list_chat_messages(sid)] == ["b"]
+
+    def test_get_last_chat_message_by_role(self, sqlite_store):
+        """get_last_chat_message は正本順の末尾を返し、role で絞れること。"""
+        sid = self._make_session(sqlite_store)
+        ids = self._add_messages(sqlite_store, sid, 4)  # user, character, user, character
+        assert sqlite_store.get_last_chat_message(sid).id == ids[3]
+        assert sqlite_store.get_last_chat_message(sid, role="user").id == ids[2]
+        assert sqlite_store.get_last_chat_message(str(uuid.uuid4())) is None
 
     def test_unknown_before_id_raises(self, sqlite_store):
         """このセッションに無い before_id は ValueError。"""

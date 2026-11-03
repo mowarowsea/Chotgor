@@ -223,8 +223,12 @@ frontend useChat
 - **履歴の転送・描画はシナリオと同じ直近ウィンドウ方式**（2026-11-03 横展開）。SPA は
   `GET /sessions/{id}?limit=60` で末尾 60 件と `has_older_messages` を受け取り、上端に近づくと
   `GET /sessions/{id}/messages?before=<message_id>&limit=60` で 1 ページずつ遡る（無限スクロール）。
-  カーソルは `(created_at, id)` の複合キー（`chat_messages` に `turn_index` 相当の列が無いため。
-  `list_chat_messages(limit=, before_id=)`）。「まだ上があるか」は N+1 件取って余るかで厳密に出す。
+  カーソルと並び順は `(created_at, rowid)` の複合キー（`chat_messages` に `turn_index` 相当の列が無く、
+  `created_at` は続けて insert した行が同時刻になりうるため。第 2 キーを id＝乱数 UUID にすると挿入順が
+  崩れるので rowid。`chat_store._message_order` が唯一の定義で、ウィンドウ・全件・最新ターン判定・
+  以降削除が同じ順を使う）。「まだ上があるか」は N+1 件取って余るかで厳密に出す。
+  ウィンドウがキャラ発話だけで埋まった場合、枝ナビの起点（最新ユーザ発話）はウィンドウ外から
+  `get_last_chat_message(role="user")` で引く。
   スクロール機構（`useInfiniteScrollTop`）はシナリオと共有、取得層（`useMessageWindow`）は個別。
   `limit` 省略時は従来どおり全件（LLM へ渡す履歴・エクスポートは全件経路）。
   詳細・裁定は `docs/planned/scenario_history_perf_plan.md`「1on1 への横展開」。
