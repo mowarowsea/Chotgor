@@ -1,8 +1,11 @@
 # switch_angle 機能撤去 計画
 
 > ステータス: **撤去完了（2026-07-19, `a348662`）**。策定 2026-07-18。
-> 残置物: `migrations.py` の `characters.switch_angle_enabled` 列削除マイグレーションと、
-> 過去ログ表示用の `tool_tags.py` メタのみ。
+> 追補（2026-11-03 棚卸し）: `characters.switch_angle_enabled` 列の削除マイグレーション
+> `_migrate_drop_switch_angle_enabled`（`migrations.py`、`store.py` の起動時経路から呼ぶ・冪等）は
+> 実装済みで、テスト `tests/test_migration_drop_switch_angle.py` で旧列つき DB からの起動を検証する。
+> `tool_tags.py` の `SWITCH_ANGLE` メタも既に無く、残っているのは計器 Tier 2 の
+> `_TAG_NAMES`（幻覚でタグ様文字列が漏れた smell の検知用・§I のとおり意図的に残置）だけ。
 
 ## 目的と背景
 
